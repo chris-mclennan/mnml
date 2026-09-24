@@ -203,11 +203,11 @@ test "through the fake server: a full reply's tokens layer over the grammar's sp
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    const file = lsp.TestRig.file;
+    const file = lsp.TestRig.file();
     const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
     const Cond = struct {
         fn landed(a: *App, id: []const u8) bool {
-            const f = a.lsp.semantic.get(lsp.TestRig.file) orelse return false;
+            const f = a.lsp.semantic.get(lsp.TestRig.file()) orelse return false;
             return f.seq != null and f.result_id != null and std.mem.eql(u8, f.result_id.?, id);
         }
         fn full(a: *App) bool {

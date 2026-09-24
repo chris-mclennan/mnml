@@ -707,13 +707,13 @@ test "through the fake server: on-type formatting behind its flag, range formatt
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    const file = lsp.TestRig.file;
+    const file = lsp.TestRig.file();
     const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
     defer Io.Dir.cwd().deleteFile(app.io, file) catch {};
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file);
+            return s.ready and s.isOpen(lsp.TestRig.file());
         }
         fn typed(a: *App) bool {
             return std.mem.startsWith(u8, a.activeEditor().?.buf.editor.bytes(), "  let");
@@ -722,7 +722,7 @@ test "through the fake server: on-type formatting behind its flag, range formatt
             return std.mem.indexOf(u8, a.activeEditor().?.buf.editor.bytes(), "formatted") != null;
         }
         fn saved(a: *App) bool {
-            const t = Io.Dir.cwd().readFileAlloc(a.io, lsp.TestRig.file, a.gpa, .limited(4096)) catch return false;
+            const t = Io.Dir.cwd().readFileAlloc(a.io, lsp.TestRig.file(), a.gpa, .limited(4096)) catch return false;
             defer a.gpa.free(t);
             return std.mem.startsWith(u8, t, "// saved\n");
         }

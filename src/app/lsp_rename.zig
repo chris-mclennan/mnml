@@ -344,20 +344,20 @@ test "through the fake server: a rename over two files opens the preview; an unt
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = lsp.TestRig.dir(), .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    const file = lsp.TestRig.file;
-    const other = lsp.TestRig.other;
+    const file = lsp.TestRig.file();
+    const other = lsp.TestRig.other();
     const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = other, .data = "foo();\nfoo();\n" });
     defer Io.Dir.cwd().deleteFile(io, other) catch {};
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file);
+            return s.ready and s.isOpen(lsp.TestRig.file());
         }
         fn preview(a: *App) bool {
             return a.lsp.rename.preview != null;
@@ -460,9 +460,9 @@ test "csharp-ls's rename shape — `documentChanges`, the open file versioned an
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
-    const file = lsp.TestRig.file;
+    const file = lsp.TestRig.file();
     // Warn.cs's call of `Calc.Add`, closed, on disk.
-    const warn = "/tmp/mnml-zig-fake-lsp-warn.ts";
+    const warn = lsp.TestRig.scratch("mnml-zig-fake-lsp-warn.ts");
     const warn_text = "public static class Warn\n{\n    public static int Noisy() => Calc.Add(1, 2);\n}\n";
     const e = try lsp.TestRig.openFile(&app, file, "public static int Add(int a, int b) => a + b;\n");
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = warn, .data = warn_text });
@@ -470,7 +470,7 @@ test "csharp-ls's rename shape — `documentChanges`, the open file versioned an
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file);
+            return s.ready and s.isOpen(lsp.TestRig.file());
         }
     };
     try lsp.TestRig.pump(&app, &app, Cond.ready, 5000);
