@@ -33,11 +33,16 @@ POSIX-ism outside a platform guard, and what Windows does at each.
 
 On macOS, for every commit:
 
-- `zig build` and `zig build test` — native, 670 tests green, 1
-  skipped (the tty test under a pipe).
+- `zig build` and `zig build test` — native (the tty test skips under
+  a pipe).
 - `zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe`
   and the same with `-Doptimize=Debug` — produce `zig-out/gate/{mnml-zig,
-  test-main,test-pty,test-tui,test-tree-sitter,test-highlight}.exe`.
+  test-main,test-pty,test-tui,test-tree-sitter,test-highlight}.exe`,
+  beside the SDK samples (`mnml-hello`, `mnml-sample`), the Jira and
+  Bitbucket integrations and the fake servers (`mnml-fake-jira`,
+  `mnml-fake-bitbucket`, `mnml-fake-dap`, `mnml-fake-lsp`,
+  `mnml-fake-copilot`). `zig build gate-targets` runs it for all five
+  shipped targets.
   Because Zig analyzes lazily, the `pty` and `tui` test binaries are
   what prove the Windows backends type-check: their `refAllDecls`
   reach every public function of `session_windows.zig`,
@@ -90,10 +95,11 @@ zig build test         # expect the POSIX-only tests to report SKIP, nothing to 
 ```
 
 `zig build test` on Windows skips: the POSIX session tests (the file
-is not even imported there), the three pane tests that script `/bin/sh`
-(`pty_pane.zig`), the two `:term printf` tests (`cmd_term.zig`), the
-`task.run` picker half of the tasks test, the LSP / DAP / jsonrpc /
-IPC socket tests that already skipped, and the tty-under-a-pipe test.
+is not even imported there), every test that scripts a `/bin/sh` fake —
+the pty panes (`pty_pane.zig`), `:term` (`cmd_term.zig`), the LSP /
+DAP / jsonrpc / AI-CLI fakes and more — and the tty-under-a-pipe test.
+`docs/PORTABILITY.md` → *Tests that skip on Windows* counts them per
+file.
 
 ### The interactive loop (Windows Terminal)
 
@@ -123,8 +129,10 @@ zig build
    bracketed.
 6. `:q` — the console is back to normal: cursor visible, no alt
    screen, typing echoes, `ctrl+c` interrupts again.
-7. Crash on purpose (`:lua error()` once Lua lands, or a debug
-   command) — the panic trace prints on a readable console.
+7. Crash on purpose — the panic trace prints on a readable console.
+   No command panics on purpose today (a Lua error is caught and
+   toasted, never a panic), so this step waits for a real crash or a
+   debug hook.
 8. Redirected stdin: `echo | .\zig-out\bin\mnml-zig.exe` — must still
    take keys (it opens `CONIN$`). Redirected stdout must refuse with
    "stdout is not a terminal".
@@ -250,7 +258,8 @@ variable at `0` they are refused rather than run through `cmd`.
   terminates it first, so the close returns; but a child in an
   uninterruptible state could hold it. Untested.
 - **The e2e runner's `shell` steps** (`src/e2e/runner.zig`) are
-  `sh -c`; `mnml-zig test`'s default shell is `$SHELL` or `/bin/sh`.
+  `<shell> -c`; `mnml-zig test`'s shell is `MNML_E2E_SHELL` or
+  `/bin/sh` (never `$SHELL`).
   Windows runs `.test` files fine as long as they have no `shell`
   step.
 - **`~` expansion, the projects dir, the startup picker's home and
@@ -261,9 +270,10 @@ variable at `0` they are refused rather than run through `cmd`.
   empty map.
 - **Tool install hints** (`runners.zig` `Tool.install`) show the
   Homebrew line on Windows.
-- **Bridge v2 mounts** (Unix domain sockets, `has_unix_sockets`) do
-  not exist in mnml-zig yet; when they land, Windows gets named pipes
-  or AF_UNIX (Windows 10 1803+ supports `AF_UNIX` sockets).
+- **Bridge mounts** (`src/bridge/host.zig`, Unix domain sockets,
+  `supported = Io.net.has_unix_sockets`) exist but have never bound a
+  socket on Windows; Windows 10 1803+ supports `AF_UNIX`, and
+  `docs/PORTABILITY.md` → *Sockets* has the rest.
 - **Kitty keyboard / graphics, mode 2027, explicit width**: whatever
   the terminal answers is honoured, but vaxis on Windows never pushes
   the kitty flags (`enableDetectedFeatures` hard-sets legacy SGR

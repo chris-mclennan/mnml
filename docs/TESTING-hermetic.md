@@ -50,8 +50,9 @@ outside the run's temp root.
   App's repository and root-marker walks honour it. A `git` shim first on
   `PATH` (`GitGuard`) follows `-C` to where git will act and, when that
   is a repository outside the temp root, writes it down; the file fails
-  with `git ran against a repository outside the run's temp root (<root>):
-  git <args>`.
+  with `git ran against a repository outside the run's temp root
+  (<repository>): git <args> — a test must never reach the checkout it
+  runs in`.
 - **Flakes are reported, not hidden**: `mnml-zig test` retries a failing
   file once and names a pass on the retry as `FLAKY` — as it happens and
   in the trailer (`N/M passed (…), K FLAKY (passed only on a retry)` then

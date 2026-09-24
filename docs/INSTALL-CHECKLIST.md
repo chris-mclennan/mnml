@@ -90,8 +90,8 @@ regression, not a discovery.
    ```sh
    ./zig-out/bin/mnml-fake-jira --url-file /tmp/jira-url &
    mkdir -p ~/.config/mnml/integrations
-   # the integration's own config; `mnml-jira --write-config` prints a
-   # starting point. Set .email = "fake@acme.com".
+   # the integration's own config; `mnml-jira --write-config` writes a
+   # starting config.zon and prints its path. Set .email = "fake@acme.com".
    JIRA_BASE_URL=@/tmp/jira-url JIRA_API_TOKEN=fake-token mnml
    ```
    Open the INTEGRATIONS section and click the Jira chip.
@@ -291,7 +291,7 @@ not.
    .\run.ps1 profile
    ```
    *Pass:* `data:` under `%USERPROFILE%\.config\mnml` (stable) or
-   `mnml-dev` (dev), `ipc:` a `<workspace>\.mnml\…` path, and `marker:`
+   `mnml-dev` (dev), `ipc:` the literal `<workspace>/.mnml/…` pattern, and `marker:`
    under `%TEMP%`. These are the `data_root.zig` USERPROFILE rung and
    the `%TEMP%` marker — the two Windows path decisions nothing on a Mac
    can confirm.
@@ -333,10 +333,9 @@ not.
    Open the INTEGRATIONS section and click the Jira chip.
    *Pass:* a tab of `ENG` tickets loads. Nothing left the loopback.
    *Things to record:* the integration is launched over a mount socket
-   on POSIX; Windows has no Unix-socket mount path yet
-   (`docs/WINDOWS.md` → *Bridge v2 mounts*), so the expected answer may
-   be that the chip opens the binary as a pty pane instead. Say which
-   happened.
+   (`src/bridge/host.zig`, a Unix domain socket), and that has never
+   bound on Windows (`docs/WINDOWS.md` → *Bridge mounts*). Say whether
+   the pane painted, or what the chip said instead.
 
 10. **Quit and come back.** `:q`, then `mnml .` again.
     *Pass:* the layout, the open files and the cursor positions come

@@ -134,7 +134,7 @@ What each component owns (`src/ui/` unless noted):
 | `toast.zig` · `prompt.zig` · `confirm.zig` · `tooltip.zig` · `which_key.zig` | one transient each, opened through `overlay.box` |
 | `bufferline.zig` | the file tabs (the tab strip in core) |
 | `pane_rail.zig` · `accent_color.zig` | the `▌` rail and the one accent ladder |
-| `focus_cue.zig` | which pane or section has the keys (`ui.focus_cue`): the dim role on what does not (`words`), the unfocused rail stepped back (`rail`), the focused caps header lit (`label`) — asked by `bufferline`, `header`, `tree_view` and `render.drawPaneContent`, never re-decided |
+| `focus_cue.zig` | which pane or section has the keys (`ui.focus_cue`: `.dim`, `.rail`, or `.both` — the default): the dim role on what does not (`words`), the unfocused rail stepped back (`rail`), the focused caps header lit (`label`) — asked by `bufferline`, `header`, `tree_view` and `render.drawPaneContent`, never re-decided |
 | `expander.zig` · `tree_view.zig` | the `▸`/`▾` slot and the tree's connectors |
 | `sdk/mnml-sdk/src/pane/chrome.zig` | the same chrome on the integrations' side of the wire: `capsHeader`, `tabStrip`, `filterPill`, `rowGround`, `scrollbar`, `frameBox` / `frameTitled`, `vrule` / `hrule`, `confirmBox`, `hintRow`, `actionChips` — an integration supplies words and targets, never glyphs |
 
@@ -202,8 +202,10 @@ pointer asks for them, and they are one idiom, not three:
 
 | surface | config | reveals through | the module |
 |---|---|---|---|
-| the side columns | `ui.sidebar = .auto` | the column's screen edge, then the panel itself | `src/app/sidebar_auto.zig` |
+| the side columns | `ui.sidebar = .auto` (and an `.always` column on a terminal narrower than `ui.sidebar_auto_below`, 100 by default) | the column's screen edge, then the panel itself | `src/app/sidebar_auto.zig` |
 | the launcher dock | `ui.dock.mode = .auto_hide` | the edge band of `ui.dock.edge`, then the strip | `src/app/launcher_dock.zig` |
+
+| the menu bar | `ui.menu_bar = .auto` | the chrome row itself | `src/app/menu_bar.zig` |
 
 A bottom launcher dock is the one of the three whose band and whose
 strip can be different rows. The band is the SCREEN's last row — the
@@ -214,7 +216,6 @@ row. Carved and revealed are the same row in both, so the strip never
 moves when the mode does. The grip stays on the band whichever it is,
 which is why an open `:` line puts the grip away under both while only
 `.outer` has its reveal refused.
-| the menu bar | `ui.menu_bar = .auto` | the chrome row itself | `src/app/menu_bar.zig` |
 
 The rules they share:
 
@@ -443,12 +444,17 @@ branch, so there is nothing to pick and nothing to drift.
 
 ## Commands (D5)
 
-- Ids are `<namespace>.<snake_verb>`; `group` must equal the namespace
-  prefix — checked at comptime.
+- Ids are `<namespace>.<snake_verb>` — checked at comptime. `group` is
+  the palette group and may be finer than the namespace
+  (`picker.files` → `go`); only the panel namespaces (`todos`, `notes`,
+  `findings`, `sessions`, `http`) must be grouped under their own name,
+  and that is a compile error (`src/core/command.zig`).
 - Runners live in `src/<sub>.zig` as `pub const table = .{ .@"todos.refresh" = &refresh, … }`
   and are merged into `command.runners` at comptime.
-- Keys are declared per profile in `commands/specs.zig` (`Keys{ vim, standard, both }`).
-  Chord collisions are a compile error per profile.
+- Keys are declared per profile in `commands/specs.zig` (`Keys{ vim, standard, both, vim_handler }` —
+  `vim_handler` is documentation for a chord the vim handler emits itself).
+  Every chord must parse, and an exact duplicate within a profile is a
+  compile error.
 
 ## Editor + input (D4, `src/editor/`, `src/input/`)
 
@@ -472,9 +478,10 @@ branch, so there is nothing to pick and nothing to drift.
   `<data root>/macros.zon` (`src/app/macros_store.zig`).
 - Undo snapshots own their text on the gpa, one per entry; the ring frees
   an entry when it evicts it.
-- Behaviour follows Rust mnml even where it differs from vim (cursor
-  keeps its column after `>>`; `Y` is charwise; `dip` is a charwise
-  range). Deviations are noted at the test that pins them.
+- The vim profile's behaviour follows Neovim: `>>` leaves the cursor
+  on the first non-blank, `Y` is `y$` (Neovim's default, so charwise),
+  `dip` is linewise. Where it still differs, the deviation is noted at
+  the test that pins it.
 
 ## Tests
 
@@ -514,7 +521,9 @@ data — a title, a body of two to four sentences, an optional aside,
   `mnml-docs://` path, `src/app/docs.zig`; the lint fails a heading the
   manual does not have); `.ask` sends a prompt to the Claude session with the target's
   state in it (`askPrompt`: the diagnostics, the branch's files, the
-  unread messages, the config key and value), gated on `ai.route` — off,
+  unread messages, the config key and value), gated on Claude's route
+  (`ai.route(app, .claude)`, from `ai.routing.claude.backend` else
+  `ai.backend`) — off,
   the row becomes a Settings link that says why.
 - **A control without an entry is visible.** The ladder paints the
   tooltip's line with a dim *no help written yet* aside first; `zig build

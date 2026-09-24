@@ -144,7 +144,7 @@ otherwise. Copy what you need; leave the rest out.
     .ui = .{
         .theme = "onedark", // any theme name; an open set
         .cmdline_popup_border_color = "", // "#RRGGBB" for the `:` line's completion popup; "" = the theme's overlay border
-        .theme_toggle = null, // a second theme for ui.toggle_theme
+        .theme_toggle = null, // a second theme for theme.toggle
         .theme_auto_system = false,
         .ascii_icons = false,
         .tree_width = 30, // clamped to 10..80
@@ -360,8 +360,12 @@ otherwise. Copy what you need; leave the rest out.
         //             (`Space f f` under vim, `Ctrl+P` under standard).
         //             j / k walk a list, Tab moves between lists, Enter
         //             acts, `?` opens the cheatsheet; a click acts too.
-        //             Under 30 rows the word mark goes, then SHORTCUTS.
-        //   .minimal  the logo and the shortcut list alone, centred
+        //             What does not fit is dropped whole: under 30
+        //             rows the word mark, then SHORTCUTS, then
+        //             WORKSPACES, then SESSIONS.
+        //   .minimal  the logo, the workspace and its branch, the
+        //             recent files when there is room, the shortcut
+        //             list and the version, every row centred
         //   .off      the bare ground
         .welcome = .full, // .full | .minimal | .off
         .focus_cue = .both, // how the focused pane and section are marked: .dim (every pane WITHOUT the keys paints its tab name, and the tree its workspace path, in the dim colour) | .rail (only the focused pane's rail at full colour — the others stepped back toward the ground — and the focused section's caps header in the accent) | .both (the default). The dim colour and the step-back come from the theme's contrast: never under 2.0:1 on their ground, in the pane's own hue, so a light theme's cue stays visible
@@ -548,10 +552,10 @@ otherwise. Copy what you need; leave the rest out.
         },
         .vim = .{
             .@"space f f" = "picker.files",
-            .@"g d" = "lsp.definition",
+            .@"g d" = "lsp.goto_definition",
         },
         .standard = .{
-            .@"ctrl+b" = "tree.toggle",
+            .@"ctrl+b" = "view.toggle_tree",
         },
     },
 
@@ -694,7 +698,7 @@ otherwise. Copy what you need; leave the rest out.
         // The Claude Code logins the quota chip and the usage pane
         // (ai.claude_usage) poll. `token_path` is the OAuth token file the
         // CLI's keychain item was copied into (`ai.link_claude_token`, or R
-        // in the pane) — `~` expands, a relative path sits under the data
+        // in the pane on macOS) — `~` expands, a relative path sits under the data
         // root beside the default `ai_token`; `active` marks the one the
         // chip shows alone (the CLI's live login wins when the keychain
         // names one). No entries = one `default` account on `ai_token` — or
@@ -702,7 +706,7 @@ otherwise. Copy what you need; leave the rest out.
         // verbatim as `.ai.claude.accounts` and the reader honours as-is.
         // The app edits this list itself, one account per line:
         // ai.claude_add_account (`a` in the usage pane) appends a name with
-        // a token file of its own (`ai_token.<name>`, under the data root),
+        // a token file of its own (`ai_token.<slug of the name>`, under the data root),
         // ai.claude_rename_account changes a name, ai.claude_remove_account
         // drops an entry and deletes its token file when that file is the
         // data root's. Comments inside the list do not survive such an edit.
@@ -1157,7 +1161,10 @@ workspace layer and everything else still applies:
 ask for it by name. Nor is `.integrations.dev_roots`: the INTEGRATIONS
 Dev tab only lists what is there until you build a row.)
 
-The table is `exec_bearing` in `src/config/trust.zig`, and a unit test
+The table is `exec_bearing` in `src/config/trust.zig` — whose one
+other row, an installed script's directory (`<data root>/scripts/<name>/`),
+is not a workspace key: `script.install` puts its claims on screen
+before the first run — and a unit test
 there walks every `Config` key: one whose name reads like it could run
 something (`cmd`, `command`, `binary`, `args`, `env`, `roots`,
 `sources`, …) fails the build until it carries a verdict — a row here,
@@ -1686,18 +1693,23 @@ format on save, …) goes to the workspace's `.mnml/config.zon`; a
 preference (theme, input style, ASCII icons, AI, Sonos, …) goes to the
 home config. The title names the focused row's file — under `~` for a home-scope
 row, and cut from the LEFT when it is longer than the box, so the file
-name is the half that survives. `Esc` puts back
+name is the half that survives. A row whose key a layer loaded after
+its file also sets — a `--config` file, or the workspace's
+`.mnml/config.zon` over a home row — says so there (`→
+~/.config/mnml/config.zon · overridden by .mnml/config.zon`), and
+changing it still writes the row's file and warns that the other
+file's value wins at the next launch. `Esc` puts back
 the config, the input style, the theme, and the exact bytes of every
 file written since the overlay opened — a file that did not exist is
 removed again.
 
 Rows are discrete choices (bools, enums, the theme) and numbers
-(`tree_width`, `right_panel_width`, `bottom_panel_height`, `wheel_lines`, `md_image_rows`,
-`hover_help_height`, `color_column`, `tab_width`, `text_width`,
-`chord_timeout_ms`, `focus_follows_mouse_delay_ms` — 106 rows in all); text (`projects_dir`, the
-`chord_timeout_ms`, `suggest_idle_ms`, `suggest_timeout_ms` — 104 rows
-in all, plus the Reset row); text (`projects_dir`, the
-labels) stays a file edit.
+(`tree_width`, `right_panel_width`, `bottom_panel_height`,
+`sidebar_auto_below`, `wheel_lines`, `md_image_rows`,
+`hover_help_height`, `color_column`, `focus_follows_mouse_delay_ms`,
+`tab_width`, `text_width`, `chord_timeout_ms`, `suggest_idle_ms`,
+`suggest_timeout_ms` — 114 rows in all, plus the Reset row); text
+(`projects_dir`, the labels) stays a file edit.
 
 ### Themes
 

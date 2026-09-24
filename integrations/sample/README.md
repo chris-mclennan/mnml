@@ -64,7 +64,7 @@ hit that does what its key does.
 
 | key | what it does |
 |---|---|
-| `↑` `k` `+` `Space` `⏎` | count up |
+| `↑` `k` `+` `Space` `Enter` | count up |
 | `↓` `j` `-` | count down |
 | `r` | reset |
 | `h` | a toast through the host |

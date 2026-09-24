@@ -22,8 +22,14 @@ file as `src/bridge/wire.zig`). Every example below is what
    | `MNML_THEME` | the theme's name (`onedark`) |
    | `MNML_IPC_DIR` | the file-IPC channel (tier 2, see below) |
    | `MNML_SETTING_<KEY>` | one per `settings[]` entry in the manifest, upper-cased |
+   | `MNML_DATA_ROOT` | mnml's data root, when it has one |
+   | `MNML_REQUEST_LOG`, `MNML_REQUEST_LOG_MAX_MB` | `1` / `0` and the cap, from `.integrations.request_log` |
+   | `MNML_BROKER` | `1` / `0`, from `.integrations.broker`; when `1`, a `<SERVICE>_BROKER_SOCKET` per service mnml brokers (`src/app/broker.zig` `putEnv`) |
 
    stdin / stdout / stderr are `/dev/null`: paint through the socket.
+   (`MNML_CHILD_STDERR=<prefix>` in mnml's own environment sends each
+   child's stderr to `<prefix>.<n>` instead — a debugging aid,
+   `docs/CONTRIBUTING.md`.)
 2. The integration connects. mnml sends `hello`, then `focus`.
 3. The integration sends `title` (optional) and a `frame`. From then on
    both sides send whenever they like; the socket is full-duplex.
@@ -43,7 +49,7 @@ bytes of UTF-8 JSON. One message per frame. A length above
 a 200×60 full frame is ~300 KB, so this is not a limit you meet.
 
 ```
-00 00 00 0b  {"bye":{}}
+0a 00 00 00  {"bye":{}}
 ```
 
 ## Encoding — one rule
@@ -60,7 +66,7 @@ fields. An unknown **tag** is an error.
 
 | tag | payload | when |
 |---|---|---|
-| `hello` | `{protocol, geometry, theme, workspace, capabilities, palette?}` | once, first |
+| `hello` | `{protocol, geometry, theme, workspace, capabilities, palette?, tab_indicator}` | once, first |
 | `resize` | `{geometry}` | the pane's body changed size |
 | `input` | `{event}` | the user did something (below) |
 | `focus` | `true` / `false` | the pane gained / lost the keyboard |
@@ -91,6 +97,9 @@ such field, it reads as `false`, and an integration then sends none —
 which is why the message needed no protocol bump.
 
 `geometry` is the pane's **body** in cells: the tab strip is not yours.
+`tab_indicator` is how mnml's own tab strip marks the tab that is on
+(`block`, `rule`, `line`, `quarter`, `quarter_track`; `block` from a
+host that sends none), so a pane's own tabs can wear the same mark.
 
 ### A toast with something to do about it
 
@@ -178,10 +187,10 @@ before.
 
 | tag | payload | notes |
 |---|---|---|
-| `key` | `{spec}` | mnml's key grammar: `a`, `A`, `enter`, `esc`, `ctrl+p`, `shift+f5`, `alt+left`, `space` |
+| `key` | `{spec}` | mnml's key grammar: `a`, `shift+a` (an uppercase letter always arrives as `shift+` and the lowercase), `enter`, `esc`, `ctrl+p`, `shift+f5`, `alt+left`, `space` |
 | `click` | `{col, row, button}` | pane-relative cells; `button` ∈ `left`, `middle`, `right` |
 | `scroll` | `{col, row, dy}` | one notch; `dy > 0` is up. mnml folds a burst into one event |
-| `hover` | `{col, row}` | the pointer moved over the pane |
+| `hover` | `{col, row, dragging}` | the pointer moved over the pane; `dragging` is true when a button was held (a scrollbar drag). A host that predates the field sends none, and it reads as `false` |
 | `paste` | `{text}` | a bracketed paste |
 
 ```json

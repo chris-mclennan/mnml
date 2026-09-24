@@ -116,6 +116,7 @@ mnml-drive pixel X Y [--expect '#61afef'] [--tolerance 8]
 mnml-drive screen | status | rects
 mnml-drive wait-frame [--timeout MS]
 mnml-drive info
+mnml-drive focus                  # take the keyboard (keys need it)
 mnml-drive quit
 ```
 

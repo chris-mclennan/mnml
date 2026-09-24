@@ -16,9 +16,10 @@ checklist for a real Windows box.
 
 `zig build gate-targets` runs `zig build gate-build -Dtarget=<t>
 -Doptimize=ReleaseSafe` for each of the five shipped targets, one after
-another, each into `zig-out/gate-targets/<t>/`: the exe, every unit-test
-binary, the SDK sample and the Jira / Bitbucket integrations and their
-fake servers. `./run.sh check` runs it; CI's `cross` job is the same
+another, each under its own prefix (`zig-out/gate-targets/<t>/gate/`):
+the exe, every unit-test binary, the SDK samples (`mnml-hello`,
+`mnml-sample`), the Jira / Bitbucket integrations and their fake
+servers, and the fake DAP, LSP and Copilot servers. `./run.sh check` runs it; CI's `cross` job is the same
 five targets as a matrix. A branch is not green until all five are.
 
 What the audit found at `c886d11d` (before this pass):
@@ -105,7 +106,7 @@ The SDK's URL opener is `sdk/mnml-sdk/src/platform.zig`.
 | `src/cdp/client.zig` `candidates` | fixed | Chrome / Chromium / Edge's `Program Files` paths (none is on `PATH` on Windows) |
 | `src/cdp/client.zig` `available` / `spawn` (puppeteer cache) | fixed | `~/.cache/puppeteer` under `USERPROFILE` (it read `HOME`) |
 | `src/app/cmd_app.zig` `onPath` | fixed | had `;`, lacked `PATHEXT`; now `os_path.which` |
-| `src/e2e/runner.zig` `shell` steps, `src/main.zig` `mnml-zig test` (`$SHELL` or `/bin/sh`) | documented | `sh -c` / `$SHELL`: `.test` shell steps are POSIX sh by definition. Windows runs the corpus with `MNML_E2E_ALLOW_SHELL=0` (refused, not run through `cmd`); a Git-for-Windows `sh.exe` on `PATH` with `SHELL` set is the way to run them |
+| `src/e2e/runner.zig` `shell` steps, `src/main.zig` `mnml-zig test` (`MNML_E2E_SHELL` or `/bin/sh`) | documented | `<shell> -c`: `.test` shell steps are POSIX sh by definition, and the runner never reads `$SHELL`. Windows runs the corpus with `MNML_E2E_ALLOW_SHELL=0` (refused, not run through `cmd`); a Git-for-Windows `sh.exe` named by `MNML_E2E_SHELL` is the way to run them |
 | `integrations/jira/src/dispatch.zig` `termLine` / `firePrompt`, `integrations/bitbucket/main.zig` `dispatchSession` | documented | `sh -c 'claude <<'MNML_EOF' …'`: needs an `sh` on `PATH` (Git for Windows' `usr\bin`); without one the host's `:term` fails to spawn and says so. Closing it: pass the prompt as `claude`'s argv (no shell) or through a temp file |
 
 ## Processes and signals
@@ -120,7 +121,7 @@ The SDK's URL opener is `sdk/mnml-sdk/src/platform.zig`.
 | `src/cdp/profile.zig` `SingletonLock` probe, orphan stop | guarded | `free` / true: Chrome's lock is not a symlink on Windows |
 | `src/e2e/runner.zig` `childrenSummary` (`pgrep`) | guarded | null |
 | `sdk/mnml-sdk/src/warm.zig`, `integrations/*/main.zig`, fake servers: `getpid` / `kill(pid, 0)` | guarded | pid 0 / "alive" |
-| `src/app/agents.zig` `runningPids` (`ps -axo pid=,command=`) | documented | no `ps`: the scan finds no process, so every agent transcript reads as done rather than running. Closing it: `Get-CimInstance Win32_Process` (or `wmic process get ProcessId,CommandLine`) for the same pid + command line pairs |
+| `src/app/agents.zig` `runningPids` (`ps -axo pid=,ppid=,pgid=,command=`) | documented | no `ps`: the scan finds no process, so every agent transcript reads as done rather than running. Closing it: `Get-CimInstance Win32_Process` (or `wmic process get ProcessId,CommandLine`) for the same pid + command line pairs |
 | `src/pty/session_windows.zig` job object | documented | `deinit` terminates the direct child only; a shell's own children survive. `CreateJobObjectW` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
 
 ## Opening things, the clipboard
@@ -156,20 +157,21 @@ The SDK's URL opener is `sdk/mnml-sdk/src/platform.zig`.
 
 ## Tests that skip on Windows
 
-113 test blocks `return error.SkipZigTest` on Windows directly (116
-skip sites in 48 files; a few more skip through a helper, like
-`sessions.zig`'s fake `claude`), almost all because they script
-`/bin/sh` fakes — an LSP, a DAP adapter, a pty child. In 42 of the 48
-files other tests in the same file run on Windows. The six whose
-Windows build had no running test:
+138 test blocks `return error.SkipZigTest` on Windows directly (142
+skip sites in 53 files, four of them in helpers the tests call; a few
+more skip through a helper, like `sessions.zig`'s fake `claude`),
+almost all because they script `/bin/sh` fakes — an LSP, a DAP
+adapter, a pty child. In 48 of the 53 files other tests in the same
+file run on Windows. The six whose Windows build had no running test
+when this audit was made (`child.zig` has one now):
 
 | file | skipped | the Windows side |
 |---|---|---|
 | `src/core/child.zig` | 4 | new: "a waited child is gone, on every platform" runs `cmd.exe /d /c exit 3` there |
-| `src/app/cmd_term.zig` | 5 | `pty/root.zig`'s `shellArgv` tests and `win_cmdline.zig` (every host) cover the argv; ConPTY itself has no runtime test |
+| `src/app/cmd_term.zig` | 6 | `pty/root.zig`'s `shellArgv` tests and `win_cmdline.zig` (every host) cover the argv; ConPTY itself has no runtime test |
 | `src/app/pty_search.zig` | 4 | the search is over the ghostty-vt grid; only the child that fills it is POSIX. No Windows-side test |
-| `src/app/ai_grid.zig` | 5 | none: every test drives a fake `claude` shell script |
-| `src/app/script_task.zig` | 1 | none |
+| `src/app/ai_grid.zig` | 6 | none: every test drives a fake `claude` shell script |
+| `src/app/script_task.zig` | 3 | none |
 | `src/e2e/cancel_probe.zig` | 1 | none: a SIGIO-cancellation probe, POSIX by nature |
 
 CI's `check` matrix runs `zig build test` on `windows-latest`, so a

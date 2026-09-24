@@ -77,11 +77,16 @@ by name, so a TOML converts line for line:
 `kind` is one of `.workspace_open_prs`, `.workspace_merged_prs`,
 `.workspace_pipelines`, `.pull_requests`, `.pipelines`, `.branches`;
 `state` `.OPEN` / `.MERGED` / `.DECLINED` / `.SUPERSEDED`; `mode`
-`.mine` / `.reviewing` on a `pull_requests` tab. Two keys have no TOML
-twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins, `@<path>`
-reads a file — one still missing after 5 s is the setup screen and a
-failing `--check`, never a fall back to `api.bitbucket.org`) and `.rate` (`rate_per_sec`, `capacity`, `max_attempts`,
-`default_backoff_secs`, `max_backoff_secs`, `state_path`).
+`.mine` / `.reviewing` on a `pull_requests` tab. Five keys have no
+TOML twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins,
+`@<path>` reads a file — one still missing after 5 s is the setup
+screen and a failing `--check`, never a fall back to
+`api.bitbucket.org`), `.rate` (`rate_per_sec`, `capacity`,
+`max_attempts`, `default_backoff_secs`, `max_backoff_secs`,
+`state_path`), `.required_approvals` (1) and `.merge_strategies`
+(`.merge_commit`, `.squash`, `.fast_forward`) — both read by the merge
+gate below — and `.intervals` (`sdk.warm.Intervals`: `listing_secs`
+300, `builds_secs` 90, `readiness_secs` 0 — on demand only).
 
 The keys that change the config at runtime — `x` hide, `H` un-hide,
 `s` scope, `alt+↑` `alt+↓` order — rewrite the file whole; hand-written
@@ -163,9 +168,9 @@ can drift from what a key does. The keys are the reference's:
 | `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
 | `S` `U` `T` `A` | on a PR tab: the Status picker · the Author picker · the Target-branch picker · show: all → reviewing → awaiting me |
 | `U` `B` `P` `S` `T` | on a pipelines tab: Run by · Branch · Pipeline type · Status · Trigger type — each a picker |
-| `m` · `⇥` `⇤` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
+| `m` · `Tab` `Shift+Tab` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
-| `r` `?` `q` | refresh · keys · quit |
+| `r` `R` `?` `q` `^c` | refresh this tab · full refresh (ignore every cache) · keys · quit |
 
 The pipelines header's `run pipeline`, `schedules` and `caches` open
 that page for the repo under the cursor (its header or any of its
@@ -320,12 +325,12 @@ and the refresh chip turns the host's own spinner ring:
 | `⠋ waiting for the API budget` | held on the shared file bucket (no broker) |
 | `(2 repos · 3 PRs)  fetch failed: <why>` | the last fetch failed, and this is why — for every repo (`network error`), one (`web: HTTP 500`) or some (`2 of 5 repos: …`) |
 | `(2 repos · 3 PRs)  as of 4m ago` | done; the age the family already says |
+| `no pull requests match` | the chips or the `/` query hid every row |
 
 A failed refetch never empties the list: a repo that did not answer
 keeps the rows it had (the same rule the Jira pane follows), and `as
 of` stays on the last time every repo answered. Only a tab with
 nothing to show paints the reason in place of the list.
-| `no pull requests match` | the chips or the `/` query hid every row |
 
 ## The statusline chips
 
@@ -376,7 +381,7 @@ the same shared bucket as everything else, and writes each 2xx GET body
 to `<config dir>/cache/` — one file per URL, with the URL and the time
 in its first line. The pane, on open, serves each GET from that
 directory **once**: the startup fetch lands off the disk, so the first
-paint is rows instead of `loading… 0/13 repos`, and every request after
+paint is rows instead of `loading…` under `fetching… 0/13 repos`, and every request after
 that (a refresh, `r`, the auto-refresh, a detail) goes to the API, so
 nothing shown is more than one open stale. An entry older than an hour
 is ignored. `--prefetch` clears the directory before it starts, so a
@@ -432,8 +437,9 @@ honouring `Retry-After` (a park longer than 30 s is not slept through; the SDK's
 the bucket; nothing else is retried. A repo that fails keeps its row,
 labelled `429 · retry in 30s` / `auth failed` / `no such repo`.
 
-A thirteen-repo prefetch takes minutes under that bucket; the pane
-paints `loading… 7/13 repos` and answers keys meanwhile.
+A thirteen-repo prefetch takes minutes under that bucket; the pane's
+header says `fetching… 7/13 repos` (over `loading…` until the first
+rows land) and it answers keys meanwhile.
 
 ## Testing
 
