@@ -16,6 +16,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tools/fake_bitbucket/main.zig"),
         .target = target,
         .optimize = optimize,
+        // `std.c.kill(parent, 0)`: libc, spelled out for every target
+        // but macOS.
+        .link_libc = true,
     });
     const fake = b.addExecutable(.{ .name = "mnml-fake-bitbucket", .root_module = fake_mod });
     b.installArtifact(fake);

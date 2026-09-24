@@ -744,6 +744,12 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
         .target = target,
         .optimize = optimize,
+        // `warm.zig` probes a pid with `std.c.kill` / `std.c.getpid`.
+        // macOS always links libc, so that compiles there without
+        // asking; on Linux it is a compile error unless the dependency
+        // is spelled out — and every integration importing the SDK
+        // inherits it from here.
+        .link_libc = true,
     });
     root_module.addImport("mnml_sdk", sdk_mod);
     // The SDK's own tests — `ratelimit.zig`'s shared bucket among them,
@@ -825,6 +831,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("integrations/bitbucket/tools/fake_bitbucket/main.zig"),
         .target = target,
         .optimize = optimize,
+        // The orphan probe is `std.c.kill(parent, 0)`: libc, spelled out
+        // for every target but macOS (as `mnml-fake-jira` does).
+        .link_libc = true,
     });
     const fake_bitbucket = b.addExecutable(.{ .name = "mnml-fake-bitbucket", .root_module = fake_bitbucket_mod });
     const fake_bitbucket_install = b.addInstallArtifact(fake_bitbucket, .{});
