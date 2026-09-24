@@ -1,0 +1,55 @@
+# width: 120
+# The standard profile's which-key popup IS its `Ctrl+K` chords. A
+# `Ctrl+K S` typed fast, the same `S` after a pause past the chord
+# timeout, and `S` in the popup the palette's `whichkey.leader` opens all
+# run ONE command — VS Code's Save All (its `Ctrl+K S` on Windows; Linux
+# and macOS have Save without Formatting there, which mnml does not
+# have). It used to be three things: the fast chord and the pause ran
+# `view.activity_sessions`, and the palette's popup was the vim leader
+# tree titled `Ctrl+K`, where `s` descended into `+split`. The sessions
+# section moved to `Ctrl+K A`.
+write a.txt "AAA\n"
+write b.txt "BBB\n"
+open a.txt
+type 1
+open b.txt
+type 1
+expect dirty true
+
+# Fast.
+key ctrl+k
+key s
+wait 300
+expect file a.txt contains "1AAA"
+expect file b.txt contains "1BBB"
+expect dirty false
+
+# The popup from the palette: its `s` row is the same command.
+type 2
+open a.txt
+type 2
+command whichkey.leader
+expect screen contains "┌ Ctrl+K "
+expect screen contains "s → save all"
+expect screen lacks "s → +split"
+type s
+wait 300
+expect screen lacks "┌ Ctrl+K "
+expect file a.txt contains "12AAA"
+expect file b.txt contains "12BBB"
+
+# A pause after Ctrl+K: the same popup, the same command.
+type 3
+key ctrl+k
+wait 700
+expect screen contains "s → save all"
+type s
+wait 300
+expect file a.txt contains "123AAA"
+expect dirty false
+
+# The sessions section kept a chord, VS Code's free `Ctrl+K A`.
+key ctrl+k
+key a
+wait 300
+expect screen contains "SESSIONS"

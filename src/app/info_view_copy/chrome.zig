@@ -118,8 +118,8 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .toggle_right_panel => .{
             .title = if (side.shown(app, .right) != null) "Right column — open" else "Right column — hidden",
             .body = "Shows or hides the right column — the outline, diagnostics, or any section moved to that side from its rail menu. Click toggles; right-click lists what can go there. Its width is `ui.right_panel_width`; whether it opens at start is `ui.right_panel_visible`, both per workspace.",
-            .keys = &.{ .{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }, .{ .command = .@"view.focus_right_panel", .label = "Focus it" } },
-            .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Toggle it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.right_panel_width"), .label = "Right panel width" } } },
+            .keys = &.{.{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }},
+            .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.focus_right_panel", .label = "Focus it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.right_panel_width"), .label = "Right panel width" } } },
         },
         .ai_claude => try aiLauncher(app, .claude),
         .ai_codex => try aiLauncher(app, .codex),
@@ -214,7 +214,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .right_tab => .{
             .title = "Right column — the pane on show",
             .body = "The right column's strip names the pane it is showing; click focuses the column so the keys go to it. Right-click is the column's menu — next and previous tab, close, hide the column. F6 cycles focus through the columns and the panes from the keyboard.",
-            .keys = &.{ .{ .command = .@"view.focus_right_panel", .label = "Focus the column" }, .{ .command = .@"focus.cycle", .label = "Cycle focus" } },
+            .keys = &.{.{ .command = .@"focus.cycle", .label = "Cycle focus" }},
             .links = &.{ .{ .command = .{ .id = .@"view.focus_right_panel", .label = "Focus it" } }, .{ .command = .{ .id = .@"view.right_panel_next_tab", .label = "Next tab" } } },
         },
         .right_new => .{
@@ -541,7 +541,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         .cheatsheet => .{
             .title = "cheatsheet",
             .body = "Every chord in the active profile with the command it runs, grouped by area — the reference for the keymap you have, rebinds included. `/` filters; Enter runs the row. The keymap reference (F1) is the same list as an overlay.",
-            .keys = &.{ .{ .command = .@"view.help", .label = "The keymap reference" }, .{ .command = .@"keys.edit", .label = "Rebind keys" } },
+            .keys = &.{ .{ .command = .@"view.cheatsheet", .label = "Open it" }, .{ .command = .@"view.help", .label = "The keymap reference" } },
             .links = &.{ .{ .command = .{ .id = .@"keys.edit", .label = "Customize the keys" } }, .{ .command = .{ .id = .@"keys.doctor", .label = "Keymap doctor" } } },
         },
         .list => .{

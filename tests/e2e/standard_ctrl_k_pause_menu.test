@@ -12,8 +12,8 @@ open b.txt
 key ctrl+k
 wait 1000
 expect screen contains "┌ Ctrl+K "
-expect screen contains "w → Close all other panes"
-expect screen contains "t → Theme: toggle"
+expect screen contains "w → close others"
+expect screen contains "t → theme light ↔ dark"
 expect screen lacks "write/save"
 expect screen lacks "+split"
 key w
@@ -28,7 +28,7 @@ key ctrl+k
 wait 700
 type g
 expect screen contains "┌ Ctrl+K g "
-expect screen contains "c → Git"
+expect screen contains "c → commit"
 key esc
 expect screen lacks "┌ Ctrl+K "
 

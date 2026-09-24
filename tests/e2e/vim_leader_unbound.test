@@ -1,6 +1,6 @@
 # An unbound leader chord is swallowed whole, as NvChad's which-key
-# does: `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>bx`
-# neither — the hunt's `ca` / `fo` / `gt` are bound now, so the tails
+# does: `<leader>cx` is not `x` (delete a char), `<leader>fx` / `<leader>sx`
+# neither (`<leader>b` is NvChad's `:enew`, a leaf) — the hunt's `ca` / `fo` / `gt` are bound now, so the tails
 # here are ones no group has. The runner settles between keys, so the
 # leader expires into the popup and the tail key is the popup's to drop.
 write a.txt "alpha\nbravo\n"
@@ -24,7 +24,7 @@ expect screen contains "NORMAL"
 expect dirty false
 
 key space
-key b
+key s
 key x
 expect dirty false
 expect screen contains "Ln 1/2 Col 1"

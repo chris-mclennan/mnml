@@ -47,6 +47,6 @@ expect screen lacks "┌ Ctrl+K "
 # fall out of the popup being open by the time the tail arrived.)
 key ctrl+k
 key q
-expect screen contains "no leader mapping: Ctrl+K q"
+expect screen contains "no Ctrl+K chord: Ctrl+K q"
 expect dirty false
 expect screen contains "Ln 1/1 Col 1"

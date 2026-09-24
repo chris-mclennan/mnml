@@ -78,6 +78,13 @@ pub fn title(id: CommandId) []const u8 {
     return spec(id).title;
 }
 
+/// The command's short name — its row in a which-key popup — or its
+/// title when the spec gives none.
+pub fn shortTitle(id: CommandId) []const u8 {
+    const s = spec(id);
+    return if (s.short.len > 0) s.short else s.title;
+}
+
 pub fn group(id: CommandId) []const u8 {
     return spec(id).group;
 }

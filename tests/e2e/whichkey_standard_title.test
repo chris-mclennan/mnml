@@ -5,9 +5,8 @@
 # menus are its leader), and the Info panel on the same screen already
 # says `Ctrl+K Ctrl+I`. A deliberate departure from the reference editor,
 # which titles both profiles `<leader>` (`docs/PARITY.md`).
-# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
-# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
-# `whichkey.leader`, the palette's "Leader menu (which-key)".)
+# (Since 2026-09-24 the standard popup IS its `Ctrl+K` chords, from the
+# palette and the pause alike — `whichkey_standard_ctrl_k.test`.)
 write a.txt "hello\n"
 open a.txt
 command editor.use_standard
@@ -16,16 +15,16 @@ expect screen contains "[F12] Definition"
 command whichkey.leader
 expect screen lacks "┌ <leader> "
 expect screen contains "┌ Ctrl+K "
-expect screen contains "f → +find"
-# A level inside a group carries that group's row after the same key.
-type f
-expect screen contains "┌ Ctrl+K f  +find (4) "
+expect screen contains "g → +git (1)"
+# A level inside a group carries the keys typed so far.
+type g
+expect screen contains "┌ Ctrl+K g "
 key esc
 
 # A dead end names the same key rather than a leader that is not there.
 command whichkey.leader
 type ;
-expect screen contains "no leader mapping: Ctrl+K ;"
+expect screen contains "no Ctrl+K chord: Ctrl+K ;"
 expect screen lacks "no leader mapping: <leader>"
 
 # The vim profile keeps Neovim's spelling, header and toast alike.

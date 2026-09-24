@@ -167,9 +167,9 @@ fn revealActive(app: *App) CommandError!void {
 
 /// `view.keep_tab`: the active preview tab stops being one, so the
 /// next glance in this leaf opens beside it instead of taking it over
-/// — VS Code's "Keep Open" (`ctrl+k enter`), and `<leader>b k` in the
-/// vim profile, where the tree click that made a preview is the only
-/// way to get one at all.
+/// — VS Code's "Keep Open" (`ctrl+k enter`); in the vim profile, where
+/// the tree click that made a preview is the only way to get one at
+/// all, it is the palette's since `<leader>b` became NvChad's `:enew`.
 fn keepTab(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const id = app.active orelse return error.NoActivePane;

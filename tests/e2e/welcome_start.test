@@ -24,16 +24,19 @@ expect screen contains "RECENT FILES"
 expect screen contains "SHORTCUTS"
 expect screen contains "+ New Claude Code session here"
 expect screen contains "resume the refactor"
-expect screen contains "Ctrl+P        find a file"
+# (The chord column is as wide as `Ctrl+K Ctrl+S`, the cheatsheet's
+# VS Code chord.)
+expect screen contains "Ctrl+P         find a file"
 # The pointer: a hover on a row shows its info-view entry; a click acts
-# and hands the surface the keys. `  a.txt` is row 19 from column 36,
-# the transcript row 18 and `Ctrl+B  toggle the tree` row 24, both from
-# column 78 (the right column).
-hover 38 19
+# and hands the surface the keys. `  a.txt` is row 18 from column 36,
+# the transcript row 17 and `Ctrl+B  toggle the tree` row 23, both from
+# column 78 (the right column). (A row higher since the standard profile's
+# cheatsheet row, `Ctrl+K Ctrl+S`, joined SHORTCUTS: the block is centred.)
+hover 38 18
 expect screen contains "Recent file"
-hover 84 18
+hover 84 17
 expect screen contains "Session to resume"
-click 84 24
+click 84 23
 expect screen lacks "Add workspace"
 expect screen contains " START "
 # The keys: the click left the cursor in SHORTCUTS; Shift+Tab twice is

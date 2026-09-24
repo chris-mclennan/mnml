@@ -1,22 +1,21 @@
 # width: 120
-# Both profiles open the same popup at the same root, and the root the
-# STANDARD profile shows is the reference editor's: no `r → +lsp`
-# (NvChad's `<leader>ra`, which that popup does not carry) and no
-# `d → +debug`. The vim profile shows both, and `<BS>` climbs back out
-# of a group instead of dismissing the popup.
-# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
-# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
-# `whichkey.leader`, the palette's "Leader menu (which-key)".)
+# Each profile's which-key popup is its own: the standard profile's is
+# its `Ctrl+K` chords (VS Code's, where VS Code defines one), the vim
+# profile's the `<leader>` tree with NvChad's `r → +lsp` and nvim-dap's
+# `d → +debug`; `<BS>` climbs back out of a group instead of dismissing
+# the popup.
 write a.txt "hello\n"
 open a.txt
 
-# Standard: Ctrl+K is the leader, and the header says so.
+# Standard: Ctrl+K is the leader, the header says so, and the rows are
+# the Ctrl+K chords.
 command editor.use_standard
 command whichkey.leader
 expect screen contains "┌ Ctrl+K "
 expect screen lacks "┌ <leader> "
-expect screen contains "f → +find"
-expect screen contains "l → +lsp"
+expect screen contains "s → save all"
+expect screen contains "ctrl+s → cheatsheet (all chords)"
+expect screen lacks "f → +find"
 expect screen lacks "r → +lsp"
 expect screen lacks "d → +debug"
 expect screen contains "esc to cancel"

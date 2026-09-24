@@ -137,7 +137,7 @@ pub const rows = [_]Row{
     .{ .label = "Show right column", .entry = .{
         .title = "Show right column",
         .body = "Opens the right column on the section it showed last, else the first that lives on that side — the outline and the problems list start there. With nothing assigned to the right it toasts and points at a rail icon's *Move to right* row. The panes give up the width; the keys stay where they are.",
-        .keys = &.{ .{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }, .{ .command = .@"view.focus_right_panel", .label = "Focus it" } },
+        .keys = &.{.{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }},
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Show it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_visible"), .label = "Right column in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_width"), .label = "Its width" } } },
     } },
     .{ .label = "Hide right column", .entry = .{
@@ -149,7 +149,7 @@ pub const rows = [_]Row{
     .{ .label = "Focus right column", .entry = .{
         .title = "Focus right column",
         .body = "Puts the keyboard into the right column's section, opening the column first when it was closed. The section's own keys take over — j / k or the arrows walk its rows, Enter opens one — and Esc hands them back to the pane. With nothing living on the right it toasts instead.",
-        .keys = &.{ .{ .command = .@"view.focus_right_panel", .label = "Focus the right column" }, .{ .command = .@"view.toggle_right_panel", .label = "Toggle it" } },
+        .keys = &.{.{ .command = .@"view.toggle_right_panel", .label = "Toggle it" }},
         .links = &.{ .{ .command = .{ .id = .@"view.focus_right_panel", .label = "Focus it" } }, .{ .command = .{ .id = .@"view.right_panel_next_tab", .label = "The next section" } } },
     } },
     .{ .label = "Add Outline", .entry = .{
@@ -168,7 +168,6 @@ pub const rows = [_]Row{
     .{ .label = "Focus", .entry = .{
         .title = "Focus",
         .body = "Hands the keyboard to the section this strip is showing, without moving or closing anything. Its rows answer j / k and the arrows from there, and Esc gives the keys back to the pane that had them. A click anywhere inside the section does the same thing.",
-        .keys = &.{.{ .command = .@"view.focus_right_panel", .label = "Focus the right column" }},
         .links = &.{ .{ .command = .{ .id = .@"view.focus_right_panel", .label = "Focus it" } }, .{ .command = .{ .id = .@"view.right_panel_next_tab", .label = "The next section" } } },
     } },
     .{ .label = "Next section", .entry = .{

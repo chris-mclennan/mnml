@@ -832,7 +832,11 @@ width floor. The grep dump shows the other half of the rule: the window
 is centred on the hit line, not the file's head.
 
 `zig-whichkey-120x40.txt` is the leader popup the standard profile
-shows (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`.
+showed (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`.
+*Since 2026-09-24* the standard profile's popup is its own `Ctrl+K`
+chords (`docs/KEYMAP_PROFILES.md` rule 2), so the steps now paint those
+rows and the leader tree is the vim profile's; this dump predates that
+and is due a re-cut (`docs/PARITY.md`, the which-key row).
 The rows carry the same keys and labels in the same order — the root's
 `r → +lsp` became `vim_only` to make that true — but this is the **one
 place the which-key popup deliberately leaves the Rust screen**: on

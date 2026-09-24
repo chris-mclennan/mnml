@@ -2468,12 +2468,19 @@ fn drawChordMenu(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
     for (kids, 0..) |k, i| {
         var kb: std.Io.Writer.Allocating = .init(ui.arena);
         k.next.format(&kb.writer) catch return error.OutOfMemory;
+        // A leaf reads as the leader popup's rows do — the command's
+        // `short` name, its title when it has none — so the rows fit
+        // side by side; a group is the leader table's label for the
+        // same letter (`g` → `+git`) with its count.
         entries[i] = .{
             .key = kb.written(),
             .label = if (k.target) |tg| switch (tg) {
-                .static => |id| command.title(id),
+                .static => |id| command.shortTitle(id),
                 .named => |n| n,
-            } else ui.fmt("+{d} chord{s}", .{ k.longer, if (k.longer == 1) "" else "s" }),
+            } else if (chordGroupLabel(seq, k.next)) |g|
+                ui.fmt("{s} ({d})", .{ g, k.longer })
+            else
+                ui.fmt("+{d} chord{s}", .{ k.longer, if (k.longer == 1) "" else "s" }),
             .is_group = k.target == null,
         };
     }
@@ -2486,6 +2493,36 @@ fn drawChordMenu(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
         title.writer.writeAll(if (i == 0 and std.mem.eql(u8, one.written(), "ctrl+k")) whichkey.leaderLabel(false) else one.written()) catch return error.OutOfMemory;
     }
     which_key.draw(ui, screen, title.written(), entries);
+}
+
+/// The `Ctrl+K` group under `seq` + `next`, labelled by the leader
+/// table's row for the same keys (`whichkey.groups`: `g` → `+git`), so
+/// the two popups call a group one thing. Plain characters only.
+fn chordGroupLabel(seq: []const ChordT, next: ChordT) ?[]const u8 {
+    var path: [whichkey.max_depth]u8 = undefined;
+    if (seq.len > path.len) return null;
+    var n: usize = 0;
+    for (seq[1..]) |c| {
+        path[n] = plainChar(c) orelse return null;
+        n += 1;
+    }
+    path[n] = plainChar(next) orelse return null;
+    n += 1;
+    for (whichkey.groups) |g| if (std.mem.eql(u8, g.prefix, path[0..n])) return g.label;
+    return null;
+}
+
+const ChordT = @import("../core/key.zig").Chord;
+
+/// A chord that is one unmodified character (a shifted letter as its
+/// capital, as the leader table spells `space T`).
+fn plainChar(c: ChordT) ?u8 {
+    const ch = switch (c.code) {
+        .char => |v| v,
+        else => return null,
+    };
+    if (c.mods.ctrl or c.mods.alt or c.mods.super or ch >= 128) return null;
+    return if (c.mods.shift and ch >= 'a' and ch <= 'z') @intCast(ch - ('a' - 'A')) else @intCast(ch);
 }
 
 /// The prompt, the confirm, the picker and the which-key popup are

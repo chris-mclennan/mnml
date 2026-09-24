@@ -32,13 +32,28 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
    fallback at all: a pause after `Ctrl+K` (or `Ctrl+K g`) is the pause
    before the chord's next key, as in VS Code. The chain stays pending
    with no deadline and a popup lists the profile's own continuations —
-   `w → Close all other panes`, `g → +1 chord` — read off the keymap,
+   `w → close others`, `g → +git (1)` — read off the keymap,
    config overrides included (`Keymap.continuations`); the next key runs
    through the keymap exactly as it would have before the pause, Esc
    cancels, and a key no chord carries toasts `no Ctrl+K chord: …`. The
    leader tree used to open there, so `Ctrl+K ⏸ W` ran its `w →
-   write/save` instead of `view.close_others`. The tree itself is
-   `whichkey.leader` from the palette. `tests/e2e/standard_ctrl_k_pause_menu.test`.
+   write/save` instead of `view.close_others`. `tests/e2e/standard_ctrl_k_pause_menu.test`.
+   *Since 2026-09-24* that popup IS the standard profile's which-key
+   popup: `whichkey.leader` (the palette's "Leader menu (which-key)",
+   the welcome row) arms the same `Ctrl+K` chain rather than opening the
+   `<leader>` tree, which is the vim profile's alone. The tree's `s` was
+   `+split` there while `Ctrl+K S` ran another command; now a fast
+   `Ctrl+K <x>`, the pause and the palette's popup are one chord and one
+   command by construction — the rows are the keymap's continuations, a
+   leaf is labelled by the command's `short`, a group by the leader
+   table's row for the same letter (`g → +git`). The `ctrl+k …` chords
+   follow **VS Code's meaning wherever VS Code 1.138 defines one** and
+   mnml has the command (read out of the bundle's
+   `workbench.desktop.main.js`; the table below lists each). Pinned by
+   the `Ctrl+K chords` test in `src/app/cmd_app.zig` (the popup's rows
+   against the spec table, id for id) and
+   `tests/e2e/whichkey_standard_ctrl_k.test` (fast, paused and palette
+   `S` all Save All).
 3. **`ctrl+]` / `ctrl+[`** indent / outdent in `standard` (VS Code);
    `editor.bracket_match` keeps `ctrl+]` in `vim`.
 4. **`ctrl+l`** is select-line in standard and window-right in vim, so
@@ -60,15 +75,15 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `editor.goto_line` | `ctrl+g` | both | standard | vim reserves this ctrl chord for the editor (insert/normal meaning) |
 | `editor.bracket_match` | `ctrl+]` | both | vim | standard: ctrl+] / ctrl+[ indent / outdent (VS Code) |
 | `editor.add_cursor_at_next_word` | `ctrl+d` | both | standard | vim reserves this ctrl chord for the editor (insert/normal meaning) |
-| `view.focus_right_panel` | `ctrl+k r` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
+| `view.focus_right_panel` | `ctrl+k r` | both | standard → none (2026-09-24) | `ctrl+k r` is VS Code's Reveal Active File in the OS (`view.reveal_active`); palette-only until it gets another chord (`docs/KEYMAP_PARITY.md`) |
 | `file.new` | `ctrl+n` | both | standard | vim reserves this ctrl chord for the editor (insert/normal meaning) |
-| `keys.edit` | `ctrl+k ctrl+s` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
+| `keys.edit` | `ctrl+k ctrl+s` | both | standard → none (2026-09-24) | `ctrl+k ctrl+s` is VS Code's Keyboard Shortcuts, the list of every chord: `view.cheatsheet` now; editing the keys file is the palette's |
 | `picker.recent` | `ctrl+r` | both | standard | vim reserves this ctrl chord for the editor (insert/normal meaning) |
 | `buffer.close` | `ctrl+w` | both | standard | vim reserves this ctrl chord for the editor (insert/normal meaning) |
 | `tab.new` | `ctrl+k n` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `theme.toggle` | `ctrl+k t` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `view.switch_workspace` | `ctrl+k ctrl+o` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
-| `view.activity_sessions` | `ctrl+k s` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
+| `view.activity_sessions` | `ctrl+k s` → `ctrl+k a` | both | standard | `ctrl+k s` is VS Code's Save All (its Windows default; Linux and macOS have Save without Formatting there, which mnml does not have) — `file.save_all` now; `ctrl+k a` is free in VS Code |
 | `git.blame_toggle` | `ctrl+k b` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `git.commit` | `ctrl+k g c` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `lsp.hover` | `ctrl+k ctrl+i` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
@@ -81,6 +96,13 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.focus_up` | `ctrl+k ctrl+up` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `view.focus_down` | `ctrl+k ctrl+down` | both | standard | vim: ctrl+k is NvChad window-up; the ctrl+k menus are the standard profile's leader |
 | `editor.indent_line` | `ctrl+]` | (new) | standard | VS Code indent |
+| `file.save_all` / `view.cheatsheet` / `view.help` / `theme.pick` | `ctrl+k s` / `ctrl+k ctrl+s` / `ctrl+k ctrl+r` / `ctrl+k ctrl+t` | (new, 2026-09-24) | standard | VS Code 1.138: Save All (Windows), Keyboard Shortcuts, Keyboard Shortcuts Reference, Color Theme |
+| `lsp.format_selection` / `picker.buffers` / `messages.show` / `file.copy_path` / `view.reveal_active` | `ctrl+k ctrl+f` / `ctrl+k ctrl+p` / `ctrl+k ctrl+shift+n` / `ctrl+k p` / `ctrl+k r` | (new, 2026-09-24) | standard | VS Code 1.138: Format Selection, Show All Editors, Show Notifications, Copy Path of Active File, Reveal Active File in the OS |
+| `editor.toggle_fold` / `editor.unfold_all` / `lsp.fold_all` | `ctrl+k ctrl+l` / `ctrl+k ctrl+j` / `ctrl+k ctrl+0` | (new, 2026-09-24) | standard | VS Code 1.138: Toggle Fold, Unfold All, Fold All |
+| `buffer.prev` / `buffer.next` / `buffer.pin_toggle` | `ctrl+k ctrl+pageup` / `ctrl+k ctrl+pagedown` / `ctrl+k shift+enter` | (new, 2026-09-24) | standard | VS Code 1.138: Previous / Next Editor in Group, Pin / Unpin Editor |
+| `view.move_split_left` / `_right` / `_up` / `_down` / `view.split_down` / `view.split_goto_definition` | `ctrl+k left` / `right` / `up` / `down` / `ctrl+k ctrl+\` / `ctrl+k f12` | (new, 2026-09-24) | standard | VS Code 1.138: Move Editor Group Left / Right / Up / Down, Split Editor Orthogonal, Open Definition to the Side |
+| `lsp.goto_type_definition` / `term.scratch_toggle` / `buffer.prev` / `buffer.next` | `space D` / `alt+h` / `[ b` / `] b` (the last two `Keys.vim_handler`) | (new, 2026-09-24) | vim | NvChad's LSP `<leader>D`, NvChad `<A-h>` (toggleable horizontal term), Neovim's `[b` / `]b` — `docs/KEYMAP_PARITY.md` |
+| `editor.jump_prev_edit` / `lsp.next_diagnostic` / `lsp.prev_diagnostic` / `lsp.goto_implementation` / `lsp.incoming_calls` / `view.toggle_wrap` / `editor.select_all_occurrences` / `nav.back` / `view.toggle_right_panel` / `find.grep_replace` / `view.menu_bar_open` / `file.copy_path` / `lsp.peek_definition_overlay` | `ctrl+k ctrl+q` / `alt+f8` / `shift+alt+f8` / `ctrl+f12` / `shift+alt+h` / `alt+z` / `ctrl+f2` / `ctrl+alt+minus` / `ctrl+alt+b` / `ctrl+shift+h` / `alt+f10` / `ctrl+alt+c`, `ctrl+k ctrl+alt+c` / `ctrl+shift+f10` | (new, 2026-09-24) | standard | VS Code 1.138's Linux defaults for commands mnml had and chords it left free — `docs/KEYMAP_PARITY.md` lists them, and what was NOT applied |
 | `view.toggle_tree` | `ctrl+b` | both | standard | vim: `Ctrl-B` is page-back (the pair of `Ctrl-F`); it was toggling the sidebar |
 | `editor.outdent_line` | `ctrl+[` | (new) | standard | VS Code outdent |
 | `picker.files` | `space f f` | both | both | NvChad <leader>ff (already the Rust default) |
@@ -102,6 +124,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.format` | `space f m` | (new) | vim | NvChad <leader>fm |
 | `view.cheatsheet` | `space c h` | (new) | vim | NvChad <leader>ch |
 | `whichkey.leader` | `space w K` | (new) | vim | NvChad <leader>wK |
+| `scratch.new` | `space b` | (new, 2026-09-24) | vim | NvChad `<leader>b` "buffer new" (`<Cmd>enew<CR>`, nvchad-probe): a fresh empty unnamed buffer in the current window; `:w name` gives it a file. It replaced the `+buffer` group — `space b b` / `b d` / `b r` / `b n` / `b p` / `b k` — whose rows each had another chord (`space f b`, `space x` / `space q`, `ctrl+shift+t`, Tab / Shift-Tab) except `view.keep_tab`, which is palette-only under vim until it gets a home (`docs/KEYMAP_PARITY.md`; `space B` is `browser.open`) |
 | `lsp.rename` / `lsp.code_action` / `git.status_pane` / `git.graph` / `picker.recent` / `find.find` | `space r a` / `space c a` / `space g t` / `space c m` / `space f o` / `space f z` | (new) | vim | NvChad mappings.lua: `<leader>ra` LSP renamer, `<leader>ca` code action, `<leader>gt` git status, `<leader>cm` git commits, `<leader>fo` oldfiles, `<leader>fz` find in current buffer. `<leader>th` (themes) stays `theme.pick` under `space t t`: `t h` is the Rust popup's hidden-files toggle |
 | `view.toggle_relative_numbers` / `lsp.diagnostics` | `space r n` / `space d s` | (new) | vim | NvChad mappings.lua: `<leader>rn` toggle relative number, `<leader>ds` LSP diagnostic loclist (here the DIAGNOSTICS section); both rows sit in the vim-only `+lsp` / `+debug` groups of the which-key popup |
 | `view.focus_top` / `view.focus_bottom` / `view.focus_previous` | `ctrl+w t` / `ctrl+w b` / `ctrl+w p` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_t` / `CTRL-W_b` / `CTRL-W_p`; from the tree `Ctrl-W p` returns to the window that was left |
@@ -140,7 +163,7 @@ Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
 | `view.move_section_right` | `Ctrl-W L` in a section or the tree; `<leader>sL` | — (`:sidebar right`) |
 | `view.toggle_tree` (the left column) | `Ctrl-N`, `<leader>te` (`<leader>e` is `view.focus_tree`) | `Ctrl+B` |
 | `view.toggle_right_panel` (the right column) | `<leader>tr` | `Ctrl+Shift+B` (both) |
-| `view.focus_right_panel` | — | `Ctrl+K r` |
+| `view.focus_right_panel` | — | — (the palette; `Ctrl+K R` is VS Code's reveal-in-OS since 2026-09-24) |
 | `view.right_panel_next_tab` / `prev_tab` | `<leader>t]` / `<leader>t[` | — |
 | `view.right_panel_close_tab` | `<leader>tx` | `Ctrl+Alt+W` (both) |
 | `view.toggle_bottom_panel` (the dock) | `Ctrl+Shift+J` (both) | `Ctrl+Shift+J` (both) |

@@ -5,22 +5,23 @@
 # where it has one there, so the popup and the rail never drift — and a
 # leaf wears the face of the group it lives in, dimmer. The header of a
 # level inside a group is that group's own row.
-# (The standard profile's Ctrl+K PAUSE lists its own Ctrl+K chords (since
-# 2026-09-23 — `standard_ctrl_k_pause_menu.test`); the leader tree is
-# `whichkey.leader`, the palette's "Leader menu (which-key)".)
+# (The leader tree is the vim profile's popup; the standard profile's is
+# its own Ctrl+K chords since 2026-09-24 — `whichkey_standard_ctrl_k.test`.)
 write a.txt "hello\n"
 open a.txt
 
-command editor.use_standard
+command editor.use_vim
 command whichkey.leader
 # Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
-expect screen contains "󰍉 f → +find (4)"
-expect screen contains "󰊢 g → +git (17)"
+expect screen contains "󰍉 f → +find (8)"
+expect screen contains "󰊢 g → +git (22)"
 expect screen contains "󰐱 i → +integrations (5)"
-expect screen contains "󰎒 b → +buffer (5)"
-expect screen contains " L → +lang/run (19)"
+# NvChad's `<leader>b` is `:enew`, a root leaf: the neutral mark.
+expect screen contains "󰘵 b → new buffer"
+expect screen lacks "+buffer"
+expect screen contains " L → +lang/run (20)"
 expect screen contains "󰓂 P → +pr (2)"
-expect screen contains "󰚩 a → +ai/term (14)"
+expect screen contains "󰚩 a → +ai/term (16)"
 # A root leaf has no group of its own: the neutral mark.
 expect screen contains "󰘵 q → close buffer"
 expect screen contains "󰘵 p → command palette"
@@ -28,7 +29,7 @@ expect screen contains "󰘵 p → command palette"
 # Inside a group the header carries that group's row, and every leaf
 # there wears the group's face rather than the neutral one.
 type f
-expect screen contains "┌ Ctrl+K f  +find (4) "
+expect screen contains "┌ <leader>f  +find (8) "
 expect screen contains "󰍉 g → grep"
 expect screen contains "󰍉 f → files"
 expect screen lacks "󰘵 g → grep"
@@ -39,7 +40,7 @@ expect screen lacks "esc to cancel"
 # its own leaves; the parent's count is the sum.
 command whichkey.leader
 type L
-expect screen contains "┌ Ctrl+K L  +lang/run (19) "
+expect screen contains "┌ <leader>L  +lang/run (20) "
 expect screen contains " c → +cargo (5)"
 expect screen contains " n → +npm (7)"
 expect screen contains " p → +pytest (2)"
@@ -47,7 +48,6 @@ expect screen contains " g → +go (5)"
 key esc
 
 # The vim profile's own two groups carry a face and a count as well.
-command editor.use_vim
 key space
 wait 700
 expect screen contains " d → +debug (16)"

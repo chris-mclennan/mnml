@@ -65,7 +65,6 @@ pub const by_group = [_]Row{
     .{ .key = "+find", .glyph = railGlyph(.search), .fallback = "f" }, // the rail's SEARCH
     .{ .key = "+nvchad", .glyph = "\u{f11c}", .fallback = "k" }, //  fa-keyboard_o
     .{ .key = "+lsp", .glyph = "\u{f085}", .fallback = "l" }, //  fa-cogs, the menus' lsp domain
-    .{ .key = "+buffer", .glyph = railGlyph(.sessions), .fallback = "b" }, // the rail's SESSIONS
     .{ .key = "+split", .glyph = "\u{f0db}", .fallback = "|" }, //  fa-columns, the menus' split verb
     .{ .key = "+debug", .glyph = railGlyph(.debug), .fallback = "d" }, // the rail's DEBUG
     .{ .key = "+git", .glyph = railGlyph(.git), .fallback = "g" }, // the rail's GIT
@@ -101,13 +100,12 @@ pub fn forGroup(label: []const u8) Glyph {
 const t = std.testing;
 
 test "the rail's own faces, the devicons, and the neutral fallback" {
-    // Taken, not re-picked: the popup's find/git/debug/http/buffers
+    // Taken, not re-picked: the popup's find/git/debug/http
     // glyphs ARE the rail's, so the two never drift apart.
     try t.expectEqualStrings(rail.Section.search.meta().glyph, forGroup("+find").glyph);
     try t.expectEqualStrings(rail.Section.git.meta().glyph, forGroup("+git").glyph);
     try t.expectEqualStrings(rail.Section.debug.meta().glyph, forGroup("+debug").glyph);
     try t.expectEqualStrings(rail.Section.http.meta().glyph, forGroup("+http").glyph);
-    try t.expectEqualStrings(rail.Section.sessions.meta().glyph, forGroup("+buffer").glyph);
     try t.expectEqualStrings(rail.Section.integrations.meta().glyph, forGroup("+integrations").glyph);
     // The language runners wear their file type's devicon.
     try t.expectEqualStrings("\u{E68B}", forGroup("+cargo").glyph);

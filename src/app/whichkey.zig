@@ -58,7 +58,6 @@ pub const groups = [_]Group{
     .{ .prefix = "c", .label = "+nvchad" },
     // NvChad's `<leader>ra` (vim only: the leaf under it is).
     .{ .prefix = "r", .label = "+lsp" },
-    .{ .prefix = "b", .label = "+buffer" },
     .{ .prefix = "s", .label = "+split" },
     // nvim-dap's leader chords (`docs/KEYMAP_PROFILES.md` → Debugger).
     .{ .prefix = "d", .label = "+debug" },
@@ -426,8 +425,11 @@ test "leader tree: root groups, descend, leaves, dead ends" {
     const std_root = continuations(arena_state.allocator(), "", false);
     for (std_root) |e| try std.testing.expect(e.key != 'd' and e.key != 'r');
     // The vim profile's root adds `+debug`, `+lsp` on `r`, `+nvchad`,
-    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/`.
-    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 10, std_root.len);
+    // `+which-key` and NvChad's `x` / `h` / `v` / `e` / `E` / `/` / `b` / `D`.
+    try std.testing.expectEqual(continuations(arena_state.allocator(), "", true).len - 12, std_root.len);
+    // NvChad's `<leader>b` is `:enew`, a leaf — the `+buffer` group is gone.
+    try std.testing.expectEqual(CommandId.@"scratch.new", lookupIn("b", true).?.cmd.id);
+    try std.testing.expect(lookupIn("b", false) == null);
 }
 
 test "leader tree: the groups R T L P i I H, the digits, the root leaves ? B m p o, tr, iE and the t leaves" {
@@ -511,11 +513,14 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
                 }
             }
         }
-        try t.expect(seen >= 19);
+        // The standard profile's groups (vim adds `+debug`, `+lsp` on
+        // `r`, `+nvchad`, `+which-key`); `+buffer` went with NvChad's
+        // `<leader>b`.
+        try t.expect(seen >= 18);
     }
     // The count is a walk of the tree, not a literal: an iterative
     // sweep of every leaf beneath a node agrees with `chordCount`.
-    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "R", "i", "H", "I", "P", "b", "c", "r", "W", "w" }) |path| {
+    for ([_][]const u8{ "", "f", "s", "g", "L", "Lc", "t", "a", "l", "d", "T", "R", "i", "H", "I", "P", "c", "r", "W", "w" }) |path| {
         for ([_]bool{ true, false }) |vim| {
             const n = lookupIn(path, vim) orelse continue;
             try t.expectEqual(leavesUnder(n, vim), chordCount(n, vim));
@@ -537,7 +542,7 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     for (leaves) |l| {
         if (l.vim_only) vim_only += 1;
     }
-    try t.expectEqual(@as(u16, 43), vim_only);
+    try t.expectEqual(@as(u16, 44), vim_only);
     try t.expectEqual(chordCount(&root, false) + vim_only, chordCount(&root, true));
     // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
     try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);
@@ -650,6 +655,9 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
     defer app.deinit();
     _ = try app.openScratch();
+    // The tree is the vim profile's popup; the standard profile's is its
+    // `Ctrl+K` chords (the end of this test).
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try t.expect(app.overlay == .which_key);
     // Down into `+find`.
@@ -668,16 +676,19 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
     try app.handle(.{ .key = app_mod.Key.named(.backspace) });
     try t.expect(app.overlay == .none);
     // A key no row carries says so instead of vanishing silently — and
-    // names the key this profile actually opens the popup with. The app
-    // above is the default (standard) profile, so that is `Ctrl+K`.
+    // names the key this profile actually opens the popup with: vim's
+    // `<leader>`, and the standard profile's `Ctrl+K`, whose popup is its
+    // `Ctrl+K` chords.
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expect(app.overlay == .none);
-    try t.expectEqualStrings("no leader mapping: Ctrl+K \\", app.lastToast().?);
-    try command.run(&app, .{ .static = .@"editor.use_vim" });
-    try command.run(&app, .{ .static = .@"whichkey.leader" });
-    try app.handle(.{ .key = app_mod.Key.char('\\') });
     try t.expectEqualStrings("no leader mapping: <leader>\\", app.lastToast().?);
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    try command.run(&app, .{ .static = .@"whichkey.leader" });
+    try t.expect(app.overlay == .none and app.chord.menu);
+    try app.handle(.{ .key = app_mod.Key.char('\\') });
+    try t.expect(app.chord.len == 0);
+    try t.expectEqualStrings("no Ctrl+K chord: Ctrl+K \\", app.lastToast().?);
 }
 
 test "an installed integration's chord is a row under +integrations, and a built-in row still wins" {
@@ -735,6 +746,7 @@ test "an installed integration's chord is a row under +integrations, and a built
     try t.expectEqual(kids.len, (try kidsWith(arena, &app.dyn_commands, "i", true)).len);
 
     // And the popup walks to it: <leader> i b runs the command.
+    try command.run(&app, .{ .static = .@"editor.use_vim" });
     try command.run(&app, .{ .static = .@"whichkey.leader" });
     try app.handle(.{ .key = app_mod.Key.char('i') });
     try t.expectEqualStrings("i", app.overlay.which_key.slice());

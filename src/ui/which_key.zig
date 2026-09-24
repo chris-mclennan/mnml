@@ -74,10 +74,22 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
         // for it so the keys stay in one column.
         if (e.glyph.len > 0) glyph_w = @max(glyph_w, ui.width(e.glyph) + 1);
     }
-    const cell_w = @max(min_cell_w + glyph_w, glyph_w + key_w + arr_w + label_w + 2);
+    var cell_w = @max(min_cell_w + glyph_w, glyph_w + key_w + arr_w + label_w + 2);
+    const n = entries.len;
+    // More rows than the box can hold at the natural width: more,
+    // narrower columns with the labels clipped, never a row cut off the
+    // bottom unseen. The box keeps its frame, the hint and the rows it
+    // leaves clear of the statusline (`area.h - 5` rows of entries).
+    const max_rows: usize = @max(1, @as(usize, area.h -| 5));
+    const natural_cols: usize = @max(1, @max(area.w -| 4, cell_w) / cell_w);
+    if ((n + natural_cols - 1) / natural_cols > max_rows) {
+        const need_cols = (n + max_rows - 1) / max_rows;
+        const floor_w: u16 = glyph_w + key_w + arr_w + 6;
+        const fit: u16 = @intCast(@min(@as(usize, cell_w), (area.w -| 4) / need_cols));
+        cell_w = @max(floor_w, fit);
+    }
     const avail_w = @max(area.w -| 4, cell_w);
     const cols: usize = @max(1, avail_w / cell_w);
-    const n = entries.len;
     const rows_n: usize = @max(1, (n + cols - 1) / cols);
     const panel_h: u16 = @max(4, @min(@as(u16, @intCast(@min(rows_n, 1000))) + 3, area.h -| 2));
     const panel_w: u16 = @max(@min(area.w, 20), area.w -| 2);
@@ -253,6 +265,28 @@ test "the glyph column: a cell per row, the keys still in one column, and no col
 /// `glyph key → label`, the way a row reads on screen.
 fn cell(glyph: []const u8, key: []const u8, label: []const u8, buf: []u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "{s} {s} → {s}", .{ glyph, key, label });
+}
+
+test "more rows than the box holds: narrower columns with clipped labels, every key still painted" {
+    // The standard profile's Ctrl+K popup: thirty-odd chords with long
+    // labels on a short screen. At the natural width they took two
+    // columns of nineteen rows and the last keys fell off the bottom.
+    var f = try Fixture.init(120, 20);
+    defer f.deinit();
+    var keys: [38][2]u8 = undefined;
+    var many: [38]Entry = undefined;
+    for (&many, 0..) |*e, i| {
+        keys[i] = .{ 'a' + @as(u8, @intCast(i / 10)), '0' + @as(u8, @intCast(i % 10)) };
+        e.* = .{ .key = &keys[i], .label = "a label long enough to want a column of its own" };
+    }
+    draw(f.ui(), f.full(), "Ctrl+K", &many);
+    try f.expectContains("┌ Ctrl+K ");
+    try f.expectContains("a0 → ");
+    try f.expectContains("d7 → ");
+    try f.expectContains("esc to cancel");
+    // A list that fits keeps its natural width: the label is whole.
+    draw(f.ui(), f.full(), "Ctrl+K", many[0..4]);
+    try f.expectContains("a label long enough to want a column of its own");
 }
 
 test "keys of different widths line their arrows up" {
