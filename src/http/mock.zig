@@ -248,7 +248,14 @@ pub const Server = struct {
 
     fn loop(self: *Server, io: Io) void {
         while (!self.stopping.load(.acquire)) {
-            const stream = self.server.accept(io) catch break;
+            // A transient accept failure (a client that gave up first,
+            // a moment out of descriptors) is not the end of the mock:
+            // breaking stopped it for the rest of the file.
+            const stream = self.server.accept(io) catch {
+                if (self.stopping.load(.acquire)) break;
+                io.sleep(.fromMilliseconds(10), .awake) catch {};
+                continue;
+            };
             if (self.stopping.load(.acquire)) {
                 stream.close(io);
                 break;

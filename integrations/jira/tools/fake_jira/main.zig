@@ -1144,7 +1144,13 @@ const Reaper = struct {
 /// Serve until a client asks us to stop or the life runs out.
 fn serveUntil(gpa: Allocator, io: Io, store: *Store, server: *Io.net.Server, reaper: *Reaper) void {
     while (!reaper.done()) {
-        const stream = server.accept(io) catch break;
+        // A transient accept failure (a client that gave up first, a
+        // moment out of descriptors) is not the end of the fake.
+        const stream = server.accept(io) catch {
+            if (reaper.done()) break;
+            io.sleep(.fromMilliseconds(10), .awake) catch {};
+            continue;
+        };
         if (reaper.done()) {
             stream.close(io);
             break;

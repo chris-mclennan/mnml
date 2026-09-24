@@ -99,7 +99,16 @@ pub const Server = struct {
 
     fn loop(self: *Server) void {
         while (!self.stopping.load(.acquire)) {
-            const stream = self.listener.accept(self.io) catch break;
+            // A connection the client gave up on before it was taken
+            // (ECONNABORTED under load), a moment out of descriptors:
+            // the next accept may be fine. Breaking here stopped the
+            // whole fake for the rest of the file, and every later
+            // request of the pane under test failed.
+            const stream = self.listener.accept(self.io) catch {
+                if (self.stopping.load(.acquire)) break;
+                self.io.sleep(.fromMilliseconds(10), .awake) catch {};
+                continue;
+            };
             defer stream.close(self.io);
             if (self.stopping.load(.acquire)) break;
             self.serveOne(stream) catch {};
