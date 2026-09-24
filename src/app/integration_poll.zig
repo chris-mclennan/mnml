@@ -57,6 +57,7 @@
 //! run proves it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -761,6 +762,9 @@ test "a pane of an integration pauses its poll, and only its own" {
 }
 
 test "stopping the poller cancels the worker and reaps its child: nothing outlives the app" {
+    // The child is `/bin/sh` and the liveness probe is `kill(pid, 0)`;
+    // Windows has neither (`child_os.gone` answers true there).
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;

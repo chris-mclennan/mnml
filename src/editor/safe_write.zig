@@ -165,12 +165,15 @@ test "a save that fails part-way leaves the old file whole, and no temp file beh
     defer testing.allocator.free(back);
     try testing.expectEqualStrings(old, back);
     try testing.expectEqual(@as(usize, 1), try countEntries(&tmp));
-    // Without a fault the new bytes land, the mode survives.
-    try tmp.dir.setFilePermissions(testing.io, "big.txt", Io.File.Permissions.fromMode(0o640), .{});
+    // Without a fault the new bytes land, the mode survives. Windows
+    // has no mode bits (`Permissions` is attributes there), so the
+    // mode half is POSIX's; the bytes half runs everywhere.
+    const posix_modes = @import("builtin").os.tag != .windows;
+    if (posix_modes) try tmp.dir.setFilePermissions(testing.io, "big.txt", Io.File.Permissions.fromMode(0o640), .{});
     try testing.expectEqual(Outcome.replaced, try write(testing.io, path, new));
     const st = try tmp.dir.statFile(testing.io, "big.txt", .{});
     try testing.expectEqual(@as(usize, new.len), st.size);
-    try testing.expectEqual(@as(u32, 0o640), @as(u32, @intCast(st.permissions.toMode() & 0o777)));
+    if (posix_modes) try testing.expectEqual(@as(u32, 0o640), @as(u32, @intCast(st.permissions.toMode() & 0o777)));
     try testing.expectEqual(@as(usize, 1), try countEntries(&tmp));
 }
 
