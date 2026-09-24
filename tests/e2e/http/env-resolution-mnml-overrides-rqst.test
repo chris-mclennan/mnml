@@ -1,15 +1,21 @@
 # Env resolution: .mnml/env/<name>.env overrides the same key from
-# .rqst/env/<name>.env. The Request pane's expanded URL must show the
-# .mnml value, not the .rqst one.
-
+# .rqst/env/<name>.env. The request goes out with the .mnml value, not
+# the .rqst one.
+#
+# Against a local echo server, whose answer is the request as it
+# arrived: the file used to send to https://mnml.example.com and read the
+# host out of the connection error, which is on screen at once only
+# where DNS answers at once — with no network the error came after the
+# expectation had given up.
+serve 0 200 @echo
 write .rqst/config "default_env=dev"
-write .rqst/env/dev.env "BASE_URL=https://rqst.example.com"
-write .mnml/env/dev.env "BASE_URL=https://mnml.example.com"
+write .rqst/env/dev.env "BASE_URL=http://127.0.0.1:${SERVE_PORT}/rqst"
+write .mnml/env/dev.env "BASE_URL=http://127.0.0.1:${SERVE_PORT}/mnml"
 write api.curl "curl '{{BASE_URL}}/health'"
 
 open api.curl
 
 command http.send
 
-expect screen contains "mnml.example.com"
-expect screen lacks "rqst.example.com"
+expect screen contains "/mnml/health"
+expect screen lacks "/rqst/health"
