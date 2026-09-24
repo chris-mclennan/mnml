@@ -72,9 +72,10 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const ratelimit = @import("ratelimit.zig");
 
-/// Unix sockets are the whole transport. Windows gets the file bucket
-/// and no broker — `ratelimit.acquireVia` is written so that is a
-/// path, not a hole.
+/// Unix sockets are the whole transport — on Windows too (AF_UNIX since
+/// Windows 10 1803; `socketPath` falls back under `%TEMP%` there). A
+/// platform without them gets the file bucket and no broker —
+/// `ratelimit.acquireVia` is written so that is a path, not a hole.
 pub const supported = Io.net.has_unix_sockets;
 
 /// `MNML_BROKER`: `0` / `off` / `false` / `no` (any case) turns the
