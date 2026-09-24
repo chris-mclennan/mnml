@@ -1268,7 +1268,7 @@ test "format-on-save holds the write for the server's edits: one write with them
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
     defer rig.stop(&app) catch {};
-    const file = lsp.TestRig.file;
+    const file = lsp.TestRig.file();
     const e = try lsp.TestRig.openFile(&app, file, lsp.TestRig.text);
     defer Io.Dir.cwd().deleteFile(app.io, file) catch {};
     const pane = app.active.?;
@@ -1278,7 +1278,7 @@ test "format-on-save holds the write for the server's edits: one write with them
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file);
+            return s.ready and s.isOpen(lsp.TestRig.file());
         }
         fn released(a: *App) bool {
             return !held(a, a.active.?);
@@ -1291,7 +1291,7 @@ test "format-on-save holds the write for the server's edits: one write with them
     const ed = e.buf.editor;
     const disk = struct {
         fn read(a: *App) ![]u8 {
-            return Io.Dir.cwd().readFileAlloc(a.io, lsp.TestRig.file, a.gpa, .limited(4096));
+            return Io.Dir.cwd().readFileAlloc(a.io, lsp.TestRig.file(), a.gpa, .limited(4096));
         }
     };
 
@@ -1374,11 +1374,11 @@ test "a formatting reply for a buffer that changed since the request is dropped,
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
     defer rig.stop(&app) catch {};
-    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file(), lsp.TestRig.text);
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file);
+            return s.ready and s.isOpen(lsp.TestRig.file());
         }
         fn upper(a: *App) bool {
             return std.mem.startsWith(u8, a.activeEditor().?.buf.editor.bytes(), "LET");

@@ -521,16 +521,16 @@ test "a rename's edits reach the server for every buffer they touched, not only 
     var rig: lsp.TestRig = .{};
     try rig.start(&app);
     defer rig.stop(&app) catch {};
-    const other = lsp.TestRig.other;
+    const other = lsp.TestRig.other();
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = other, .data = "foo();\nfoo();\n" });
     defer Io.Dir.cwd().deleteFile(io, other) catch {};
     // `other` open in a pane of its own, behind the source file.
     const oe = try lsp.TestRig.openFile(&app, other, "foo();\nfoo();\n");
-    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file, lsp.TestRig.text);
+    const e = try lsp.TestRig.openFile(&app, lsp.TestRig.file(), lsp.TestRig.text);
     const Cond = struct {
         fn ready(a: *App) bool {
             const s = a.lsp.servers.items[0];
-            return s.ready and s.isOpen(lsp.TestRig.file) and s.isOpen(lsp.TestRig.other);
+            return s.ready and s.isOpen(lsp.TestRig.file()) and s.isOpen(lsp.TestRig.other());
         }
         fn preview(a: *App) bool {
             return a.lsp.rename.preview != null;
