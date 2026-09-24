@@ -1032,6 +1032,10 @@ fn runWalk(c: *Ctx, root: []const u8, p: *Pattern) WorkerError!void {
                 try loadIgnore(&ignores, io, gpa, sub, entry.path);
             },
             .file => {
+                // Hidden files are skipped as hidden directories are —
+                // rg's default — so `.env` is not read while `.github/`
+                // is passed over.
+                if (entry.basename.len > 0 and entry.basename[0] == '.') continue;
                 if (ignores.ignored(entry.path, false)) continue;
                 try io.checkCancel();
                 path_buf.clearRetainingCapacity();
@@ -1859,7 +1863,9 @@ test "a hit after non-ASCII text carries its byte column and its character colum
 test "walk backend: literal + smart case, .gitignore honoured, whole word, a regex and a vim pattern, a bad one" {
     var f = try Fixture.init();
     defer f.deinit();
-    // Literal, smart case off: 3 hits in src/a.zig, 1 in b.txt (Alpha), 1 in notes.md; build/out.log is ignored.
+    // Literal, smart case off: 3 hits in src/a.zig, 1 in b.txt (Alpha), 1 in notes.md; build/out.log is ignored,
+    // and a hidden file is skipped as rg skips it.
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = ".env", .data = "SECRET=alpha\n" });
     var r = try walkInto(&f, "alpha", .{});
     defer r.destroy(t.allocator);
     try t.expectEqual(@as(usize, 5), r.hits.items.len);

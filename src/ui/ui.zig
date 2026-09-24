@@ -61,4 +61,7 @@ pub const Toast = toast.Toast;
 test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("test_fixture.zig");
+    // Not re-exported (the app's render reaches it directly), so its
+    // tests are named here or they never run.
+    _ = @import("grep_view.zig");
 }
