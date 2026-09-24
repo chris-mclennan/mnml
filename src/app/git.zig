@@ -1513,6 +1513,13 @@ pub fn handle(app: *App, result: *client.Result) Allocator.Error!void {
             };
             app.hooks.emit(app, .{ .git_status = .{ .branch = s.status.branch orelse "", .dirty = s.status.changeCount() } });
             try runPendingJump(app);
+            // A line-blame answer is keyed on the HEAD it was asked at,
+            // and this snapshot is where HEAD comes from: one asked
+            // before the first snapshot landed (HEAD "") never matched
+            // again, so the blame never showed until the cursor moved.
+            // Ask for the cursor line now — a cache hit when the HEAD
+            // did not change.
+            if (app.active) |a| line_blame.request(app, a) catch {};
         },
         .diff => |d| {
             for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
@@ -6031,6 +6038,64 @@ test "line blame: the cursor's line gets its commit on the worker, nothing while
     try testing.expect(lb.pending == null);
     line_blame.dropStale(&f.app, pane);
     try testing.expectEqual(@as(usize, 0), lb.entries.items.len);
+}
+
+test "line blame: an answer given before the first status snapshot is asked again once HEAD is known" {
+    var f = try Fixture.init(100, 12);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q" });
+    try f.write("a.txt", "one\ntwo\n");
+    try f.sh(&.{ "add", "a.txt" });
+    try f.sh(&.{ "commit", "-q", "-m", "first two lines" });
+    f.app.tree.visible = false;
+    const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "a.txt" });
+    defer testing.allocator.free(abs);
+    const pane = try f.app.openPath(abs);
+    const lb = &f.app.git.line_blame;
+    // Whatever snapshot the open asked for lands first; then the state
+    // the race produces is made on purpose — no snapshot, and one "on
+    // its way" so nothing asks for another while the blame runs.
+    try f.settle(2000);
+    f.app.cfg.editor.line_blame = true;
+    f.app.git.status = null;
+    f.app.git.status_pending = true;
+    // The ask goes out before any snapshot: its HEAD is "".
+    try line_blame.request(&f.app, pane);
+    try testing.expect(lb.pending != null);
+    try testing.expectEqualStrings("", lb.pending.?.head);
+    var i: usize = 0;
+    while (lb.pending != null and i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(lb.pending == null);
+    try testing.expectEqualStrings("", lb.entries.items[lb.entries.items.len - 1].head);
+    // The cursor's rest has been announced (and asked, a cache hit): the
+    // idle tick will not ask again, so only the snapshot's landing can.
+    i = 0;
+    while (!f.app.idle.cursor_fired and i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    try testing.expect(f.app.idle.cursor_fired);
+    try testing.expect(lb.pending == null);
+    // The snapshot lands, naming HEAD; the cached answer is keyed on
+    // "" and no longer matches. The landing asks again.
+    f.app.git.status_pending = false;
+    try requestStatus(&f.app);
+    try f.settle(2000);
+    try testing.expect(f.app.git.status != null);
+    i = 0;
+    while (i < 2000) : (i += 1) {
+        try f.app.tick(App.nowMs(testing.io));
+        const txt = try f.screen();
+        defer testing.allocator.free(txt);
+        if (std.mem.indexOf(u8, txt, "one  tester · ") != null) break;
+        testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "one  tester · ") != null);
 }
 
 test "git.status_pane opens beside the graph — Rust's split to the right, the graph's tabs kept on the left — a second call reveals it there, a pane too narrow for two makes it a tab, and with nothing open it is the only leaf; git.diff_file from an editor splits the same way and the worktree diff stays a tab" {
