@@ -20,7 +20,7 @@ binds the chord to something else; **missing** — mnml binds nothing there
 | oracle | same | different | missing |
 |---|---|---|---|
 | NvChad / Neovim (vim profile) | 36 | 9 | 16 |
-| VS Code 1.138 (standard profile) | 118 | 27 | 38 |
+| VS Code 1.138 (standard profile) | 117 | 27 | 39 |
 
 mnml's own chords (bound in mnml, defined by neither oracle): **251** in the vim
 profile, **157** in the standard profile — section (c).
@@ -43,7 +43,6 @@ profile, **157** in the standard profile — section (c).
 | standard | `ctrl+alt+minus` | `nav.back` | Go Back (Linux) |
 | standard | `ctrl+alt+b` | `view.toggle_right_panel` | Toggle Secondary Side Bar |
 | standard | `ctrl+shift+h` | `find.grep_replace` | Replace in Files |
-| standard | `ctrl+e` | `picker.files` | Quick Open's second chord |
 | standard | `alt+f10` | `view.menu_bar_open` | Focus Application Menu |
 | standard | `ctrl+alt+c` / `ctrl+k ctrl+alt+c` | `file.copy_path` | Copy Path |
 | standard | `ctrl+shift+f10` | `lsp.peek_definition_overlay` | Peek Definition (Linux; `alt+f12` is Windows') |
@@ -78,6 +77,7 @@ Each is one line and a recommendation; none was changed on this branch.
 - **`Ctrl+Alt+Left/Right`, `Ctrl+Shift+PageUp/Down`, `Shift+Alt+1/9`, `Alt+0`**: move editor between groups / within a group / open by index — mnml has no editor-to-group moves, and `alt+N` are tab pages. *Recommend* no change.
 - **`Ctrl+N`**: VS Code opens an unnamed buffer; mnml's `file.new` asks for a path. *Recommend* `scratch.new` on `ctrl+n` (VS Code's meaning, and `:w name` names it) with `file.new` palette- and tree-only.
 - **`F1`**: VS Code's command palette; mnml's keymap reference. *Recommend* no change (`ctrl+shift+p` is the palette).
+- **`Ctrl+E`** (Quick Open's second chord) — `picker.files` exists and the keymap had nothing there, but a chord the keymap binds reaches it before a terminal pane's child, so it took readline's end-of-line (and a Jira pane's text field's: `integrations_jira_work_filter_jql.test` caught it). *Recommend* no chord, or a terminal-aware one.
 - **`Shift+Alt+.`** (auto fix) — `lsp.quick_fix` exists, but a terminal sends Shift+. as `>`, so the chord never arrives. *Recommend* no chord.
 - **`Ctrl+Shift+5` / `Ctrl+Shift+C` / `Ctrl+Shift+V`** — VS Code's terminal split / copy / paste, terminal-focus only; the keymap has no focus condition, so binding them would reach editors too. *Recommend* the terminal pane's key handler, as `term.search` reads the find chord.
 - **`Ctrl+Alt+R`** (reveal the explorer's file in the OS) — `view.reveal_active` reveals the active file, which `Ctrl+K R` now carries. *Recommend* the tree's own handler.
@@ -268,7 +268,7 @@ resolved by hand from the same file.
 | `alt+pageup` | `scrollPageUp` | missing | — | no mnml command |
 | `ctrl+alt+minus` | `workbench.action.navigateBack` | same | `nav.back` |  |
 | `ctrl+down` | `scrollLineDown` | different | editor: cursor down | mnml has `view.scroll_buffer_down` (no standard chord) |
-| `ctrl+e` | `workbench.action.quickOpen` | same | `picker.files` | kX.secondary = [2083] |
+| `ctrl+e` | `workbench.action.quickOpen` | missing | — | mnml has `picker.files` on `ctrl+o`, `ctrl+p`, `space f f`; kX.secondary = [2083] |
 | `ctrl+end` | `cursorBottom` | same | editor: buffer end |  |
 | `ctrl+f12` | `editor.action.goToImplementation` | same | `lsp.goto_implementation` |  |
 | `ctrl+g` | `workbench.action.gotoLine` | same | `editor.goto_line` |  |

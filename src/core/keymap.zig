@@ -666,8 +666,8 @@ test "the parity additions (docs/KEYMAP_PARITY.md): each oracle chord runs its c
     // VS Code 1.138's defaults (workbench.desktop.main.js, the Linux
     // chord): marker next / previous, go to implementation, call
     // hierarchy, word wrap, last edit location, change all occurrences,
-    // go back, the secondary side bar, replace in files, quick open's
-    // second chord, the application menu, copy path, peek definition.
+    // go back, the secondary side bar, replace in files, the application
+    // menu, copy path, peek definition.
     const std_cases = [_]Case{
         .{ .spec = "alt+f8", .id = .@"lsp.next_diagnostic" },
         .{ .spec = "shift+alt+f8", .id = .@"lsp.prev_diagnostic" },
@@ -679,7 +679,6 @@ test "the parity additions (docs/KEYMAP_PARITY.md): each oracle chord runs its c
         .{ .spec = "ctrl+alt+minus", .id = .@"nav.back" },
         .{ .spec = "ctrl+alt+b", .id = .@"view.toggle_right_panel" },
         .{ .spec = "ctrl+shift+h", .id = .@"find.grep_replace" },
-        .{ .spec = "ctrl+e", .id = .@"picker.files" },
         .{ .spec = "alt+f10", .id = .@"view.menu_bar_open" },
         .{ .spec = "ctrl+alt+c", .id = .@"file.copy_path" },
         .{ .spec = "ctrl+k ctrl+alt+c", .id = .@"file.copy_path" },
