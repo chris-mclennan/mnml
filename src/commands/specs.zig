@@ -294,7 +294,9 @@ pub const specs = [_]Spec{
     .{ .id = "markdown.cycle_engine", .title = "Markdown preview engine — cycle builtin / glow (external ANSI renderer)", .group = "markdown" },
     .{ .id = "view.commands_reference", .title = "Commands reference — every mnml command, grouped, in a scratch buffer", .group = "view" },
     .{ .id = "messages.show", .title = "Messages: recent toasts (searchable log)", .group = "view" },
-    .{ .id = "jobs.show", .title = "Jobs: the background jobs — running, and the last fifty finished (the statusline chip's click)", .group = "view" },
+    // No VS Code twin: "Show Running Tasks" has no default chord in 1.138,
+    // so the standard chord is the `Ctrl+K` popup's own row, typed through.
+    .{ .id = "jobs.show", .title = "Jobs: the background jobs — running, and the last fifty finished (the statusline chip's click)", .group = "view", .short = "background jobs", .keys = .{ .standard = &.{"ctrl+k j"}, .both = &.{"space j"} } },
     .{ .id = "files.open", .title = "Files: open a file-browser pane (workspace root)", .group = "view" },
     .{ .id = "files.open_split", .title = "Files: open a second file-browser pane beside this one", .group = "view" },
     .{ .id = "bookmarks.open", .title = "Bookmarks: open a site (env-grouped web bookmarks)", .group = "view" },

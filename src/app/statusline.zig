@@ -554,7 +554,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
             .busy => p.cyan,
             .failed, .idle => p.comment,
         };
-        try push(&right, arena, Seg.init(c.text, fg, p.bg2).withHit(SegId.jobs.raw()));
+        var seg = Seg.init(c.text, fg, p.bg2).withHit(SegId.jobs.raw());
+        seg.short = c.short;
+        try push(&right, arena, seg);
     }
     // The AI meters, each while its integration is on: the quota the
     // usage reader holds (`app/usage_pane.zig`, the same snapshots the

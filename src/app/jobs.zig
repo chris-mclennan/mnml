@@ -398,7 +398,9 @@ pub fn handleEvent(app: *App, ev: *Event) void {
 // ─── the chip ───────────────────────────────────────────────────────────
 
 pub const Tone = enum { busy, failed, idle };
-pub const Chip = struct { text: []const u8, tone: Tone };
+/// `short`: the chip's form when the statusline is out of room — the
+/// mark and the count or the kind (` ⠋ 2 `, ` ✗ tests `).
+pub const Chip = struct { text: []const u8, tone: Tone, short: ?[]const u8 = null };
 
 /// The widest a failure's words get on the chip.
 pub const chip_text_max: usize = 28;
@@ -418,22 +420,30 @@ fn clipText(arena: Allocator, s: []const u8, max: usize, ascii: bool) Allocator.
 
 /// The chip's text, already padded the way a `Seg` wants it, or null
 /// when this mode and this moment paint nothing.
-pub fn chip(arena: Allocator, reg: *Registry, now_ms: i64, ascii: bool, mode: ChipMode) Allocator.Error!?Chip {
+/// `owned_elsewhere`: the kind whose failure another chip already
+/// states in full (the tests chip, for a test run) — the jobs chip then
+/// names the kind and leaves the words to it, so one failure is not
+/// said three times on the bottom rows.
+pub fn chip(arena: Allocator, reg: *Registry, now_ms: i64, ascii: bool, mode: ChipMode, owned_elsewhere: ?Kind) Allocator.Error!?Chip {
     if (mode == .hidden) return null;
     const n = reg.running.items.len;
-    if (n > 0) return .{
-        .text = try std.fmt.allocPrint(arena, " {s} {d} {s} ", .{ list_panel.spinnerFrame(now_ms, ascii), n, if (n == 1) "job" else "jobs" }),
-        .tone = .busy,
-    };
+    if (n > 0) {
+        const spin = list_panel.spinnerFrame(now_ms, ascii);
+        return .{
+            .text = try std.fmt.allocPrint(arena, " {s} {d} {s} ", .{ spin, n, if (n == 1) "job" else "jobs" }),
+            .tone = .busy,
+            .short = try std.fmt.allocPrint(arena, " {s} {d} ", .{ spin, n }),
+        };
+    }
     if (reg.heldFailure(now_ms)) |j| {
         const words = j.detail orelse j.label;
+        const mark = if (ascii) jobs_view.failed_ascii else jobs_view.failed_glyph;
+        const short = try std.fmt.allocPrint(arena, " {s} {s} ", .{ mark, j.kind.word() });
+        if (owned_elsewhere != null and owned_elsewhere.? == j.kind) return .{ .text = short, .tone = .failed };
         return .{
-            .text = try std.fmt.allocPrint(arena, " {s} {s}: {s} ", .{
-                if (ascii) jobs_view.failed_ascii else jobs_view.failed_glyph,
-                j.kind.word(),
-                try clipText(arena, words, chip_text_max, ascii),
-            }),
+            .text = try std.fmt.allocPrint(arena, " {s} {s}: {s} ", .{ mark, j.kind.word(), try clipText(arena, words, chip_text_max, ascii) }),
             .tone = .failed,
+            .short = short,
         };
     }
     if (mode == .always) return .{ .text = " jobs ", .tone = .idle };
@@ -441,7 +451,10 @@ pub fn chip(arena: Allocator, reg: *Registry, now_ms: i64, ascii: bool, mode: Ch
 }
 
 pub fn chipFor(app: *App, arena: Allocator, ascii: bool) Allocator.Error!?Chip {
-    return chip(arena, &app.jobs.reg, app.now_ms, ascii, app.cfg.ui.jobs_chip);
+    // The tests chip states a test run's result in full while its pane
+    // is open.
+    const owned: ?Kind = if (@import("tests_pane.zig").find(app) != null) .test_run else null;
+    return chip(arena, &app.jobs.reg, app.now_ms, ascii, app.cfg.ui.jobs_chip, owned);
 }
 
 /// `2.3s`, `1m05s`, `2h03m` — one reading a person takes in at a glance.
@@ -763,25 +776,25 @@ test "chip: spinner and count while running, the failure dimmed after, nothing i
     const a = arena_state.allocator();
     var r: Registry = .{};
     defer r.deinit(gpa);
-    try testing.expect(try chip(a, &r, 0, false, .auto) == null);
-    try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 0, false, .always)).?.text);
+    try testing.expect(try chip(a, &r, 0, false, .auto, null) == null);
+    try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 0, false, .always, null)).?.text);
     const one = try r.begin(gpa, 0, .{ .kind = .lsp, .key = 1, .label = "fake" });
-    try testing.expectEqualStrings(" ⠋ 1 job ", (try chip(a, &r, 0, false, .auto)).?.text);
+    try testing.expectEqualStrings(" ⠋ 1 job ", (try chip(a, &r, 0, false, .auto, null)).?.text);
     const two = try r.begin(gpa, 0, .{ .kind = .git, .label = "fetch" });
-    const busy = (try chip(a, &r, 0, false, .auto)).?;
+    const busy = (try chip(a, &r, 0, false, .auto, null)).?;
     try testing.expectEqualStrings(" ⠋ 2 jobs ", busy.text);
     try testing.expectEqual(Tone.busy, busy.tone);
-    try testing.expectEqualStrings(" | 2 jobs ", (try chip(a, &r, 0, true, .auto)).?.text);
-    try testing.expect(try chip(a, &r, 0, false, .hidden) == null);
+    try testing.expectEqualStrings(" | 2 jobs ", (try chip(a, &r, 0, true, .auto, null)).?.text);
+    try testing.expect(try chip(a, &r, 0, false, .hidden, null) == null);
     try r.end(gpa, 100, one, .{});
     try r.end(gpa, 200, two, Outcome.fail("the remote hung up unexpectedly during the fetch"));
-    const failed = (try chip(a, &r, 300, false, .auto)).?;
+    const failed = (try chip(a, &r, 300, false, .auto, null)).?;
     try testing.expectEqual(Tone.failed, failed.tone);
     try testing.expectEqualStrings(" ✗ git: the remote hung up unexpecte… ", failed.text);
-    try testing.expectEqualStrings(" x git: the remote hung up unexpecte... ", (try chip(a, &r, 300, true, .auto)).?.text);
+    try testing.expectEqualStrings(" x git: the remote hung up unexpecte... ", (try chip(a, &r, 300, true, .auto, null)).?.text);
     // Past the hold the chip goes; `always` keeps its idle face.
-    try testing.expect(try chip(a, &r, 200 + fail_hold_ms, false, .auto) == null);
-    try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 200 + fail_hold_ms, false, .always)).?.text);
+    try testing.expect(try chip(a, &r, 200 + fail_hold_ms, false, .auto, null) == null);
+    try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 200 + fail_hold_ms, false, .always, null)).?.text);
 }
 
 test "rows: RUNNING with a Cancel row where there is a way to stop, then FINISHED newest first" {

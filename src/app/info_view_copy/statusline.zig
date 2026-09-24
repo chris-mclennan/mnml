@@ -246,7 +246,7 @@ fn jobsChip(app: *App, arena: Allocator) Allocator.Error!Entry {
     const tip = try @import("../jobs.zig").tip(app, arena);
     return .{
         .title = tip.title,
-        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed; nothing when idle. Either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
+        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed — only the kind (`✗ tests`) when another chip already states that failure, and on a row too narrow for the file name as well; nothing when idle. `space j` (vim) / `Ctrl+K J` (standard) or either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
         .links = &.{ .{ .command = .{ .id = .@"jobs.show", .label = "Open the jobs list" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.jobs_chip"), .label = "Jobs chip in Settings" } }, .{ .command = .{ .id = .@"messages.show", .label = "The messages log" } } },
     };
 }
