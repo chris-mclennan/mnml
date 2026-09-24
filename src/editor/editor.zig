@@ -96,6 +96,14 @@ pub const Editor = struct {
     goal_col: ?usize = null,
     /// The last selection that was closed — `gv` restores it.
     last_selection: ?[2]usize = null,
+    /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
+    /// The find state lives with the app; it seeds these before a key,
+    /// and `select_find_match` reads them when it is applied.
+    find_next: ?[2]usize = null,
+    find_prev: ?[2]usize = null,
+    /// The last bracket object chose whole lines (`select.bracketCount`);
+    /// `if_lines_object` reads it.
+    object_lines: bool = false,
     /// Visual-block anchor. Independent of `anchor`.
     block_anchor: ?usize = null,
     /// The block runs to each line's end (`$` in V-BLOCK).
@@ -116,6 +124,16 @@ pub const Editor = struct {
     /// A coalescing run of typed chars is open (and is this view's —
     /// `doc.insert_run_owner`).
     in_insert_run: bool = false,
+    /// Where the Insert session now open began (the buffer sets it when
+    /// a modal handler enters Insert, clears it when it leaves): vim's
+    /// Insert `Ctrl-W` / `Ctrl-U` stop there once (`:help i_CTRL-U`).
+    insert_start: ?usize = null,
+    /// vim's `U` (`:help U`): the line the latest run of changes was
+    /// made on and its text before them (owned). A change on another
+    /// line starts a new run; one that adds or removes lines, an undo or
+    /// a redo ends it.
+    uline_row: ?usize = null,
+    uline_text: std.ArrayListUnmanaged(u8) = .empty,
     /// Tree-sitter text objects, installed by the app; null = the ops
     /// that need one are no-ops.
     objects: ?ObjectProvider = null,
@@ -144,6 +162,7 @@ pub const Editor = struct {
         if (self.ghost_suggestion) |g| gpa.free(g);
         self.folds.deinit(gpa);
         self.line_shifts.deinit(gpa);
+        self.uline_text.deinit(gpa);
         self.doc.detachView(self);
         gpa.destroy(self);
     }
@@ -506,6 +525,13 @@ pub const Editor = struct {
         const is_undo_redo = op.isUndoOrRedo();
         if (!op.isInsertChar()) self.in_insert_run = false;
 
+        // `U`'s line: a change starting on a line the run is not on
+        // copies that line first, kept if the change stays on it.
+        const tracks_line = op.isMutation() and !is_undo_redo and op != .undo_line;
+        const row_before = self.currentLine();
+        const lines_before = self.lineCount();
+        const uline_candidate: ?[]u8 = if (tracks_line and self.uline_row != row_before) try arena.dupe(u8, self.lineSlice(row_before)) else null;
+
         var out: EditOutcome = .{};
         // A view the other side of a foreign splice can sit mid-char when
         // that splice joined a lone lead byte to the continuation bytes
@@ -525,6 +551,15 @@ pub const Editor = struct {
         }
         if (self.extra_cursors.items.len != 0) self.normalizeExtras();
         if (out.buffer_changed and !is_undo_redo) try self.recordChange(op.isInsertChar() and self.doc.text.items.len > before_len);
+        if (out.buffer_changed) {
+            if (is_undo_redo or (tracks_line and self.lineCount() != lines_before)) {
+                self.uline_row = null;
+            } else if (uline_candidate) |text| {
+                self.uline_text.clearRetainingCapacity();
+                try self.uline_text.appendSlice(self.gpa, text);
+                self.uline_row = row_before;
+            }
+        }
         if (!keep_goal) self.goal_col = null;
         // `$` sticks to the end: the `j` / `k` after it land on each
         // line's last character (`:help $`, curswant = MAXCOL).

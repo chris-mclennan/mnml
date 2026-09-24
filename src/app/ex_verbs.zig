@@ -244,7 +244,12 @@ pub fn normal(app: *App, range: ?Range, keys_spec: []const u8) CommandError!void
         if (row >= pane.buf.editor.lineCount()) break;
         pane.buf.editor.placeCursor(row, 0);
         pane.buf.editor.anchor = null;
-        for (keys) |k| try app.handle(.{ .key = k });
+        // A key that fails (`j` on the last line, a search with no
+        // match) ends this line's keys, as it ends a macro.
+        for (keys) |k| {
+            try app.handle(.{ .key = k });
+            if (app.key_failed) break;
+        }
         try app.handle(.{ .key = Key.named(.esc) });
         n += 1;
     }
@@ -587,7 +592,7 @@ pub fn read(app: *App, range: ?Range, args_in: []const u8) CommandError!void {
         body = res.stdout;
         what = try std.mem.concat(arena, u8, &.{ "!", app.last_shell_cmd.? });
     } else {
-        const abs = try app.absPath(args);
+        const abs = try app.absPath(try @import("ex.zig").fileArg(app, ":r", args));
         body = Io.Dir.cwd().readFileAlloc(app.io, abs, arena, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return app.diag.fail(arena, ":r — E484: can't open file {s} ({s})", .{ args, @errorName(err) }),

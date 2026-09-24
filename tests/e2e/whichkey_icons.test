@@ -49,10 +49,11 @@ key esc
 command editor.use_vim
 key space
 wait 700
-expect screen contains " d → +debug (15)"
-expect screen contains " r → +lsp (1)"
+expect screen contains " d → +debug (16)"
+expect screen contains " r → +lsp (2)"
 type r
-expect screen contains "┌ <leader>r  +lsp (1) "
+expect screen contains "┌ <leader>r  +lsp (2) "
 expect screen contains " a → rename symbol"
+expect screen contains " n → relative numbers"
 key esc
 expect screen lacks "esc to cancel"

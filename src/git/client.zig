@@ -745,6 +745,17 @@ const Out = struct {
     /// git's verdict line — the first `fatal:` / `error:` line with its
     /// tag off — else `reason`. A refusal's first line is often a
     /// `hint:` or the remote's URL, and the toast shows one line.
+    /// Why a commit did not happen: git's `fatal:` / `error:` line, else
+    /// the LAST line it printed — `nothing to commit, working tree
+    /// clean` / `no changes added to commit`, not the `On branch main`
+    /// that opens the report.
+    fn commitFailLine(o: Out) []const u8 {
+        if (std.mem.trim(u8, o.stderr, " \t\r\n").len > 0) return o.failLine();
+        const s = std.mem.trim(u8, o.stdout, " \t\r\n");
+        const nl = std.mem.lastIndexOfScalar(u8, s, '\n') orelse return s;
+        return std.mem.trim(u8, s[nl + 1 ..], " \t\r");
+    }
+
     fn failLine(o: Out) []const u8 {
         var it = std.mem.splitScalar(u8, o.stderr, '\n');
         while (it.next()) |raw| {
@@ -1163,7 +1174,10 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     try pushUndo(repo, io, arena, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
-            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
+            r.payload = .{ .op = if (out.ok)
+                .{ .desc = try std.fmt.allocPrint(arena, "amended: {s}", .{firstLine(msg)}), .ok = true, .msg = out.reason() }
+            else
+                .{ .desc = "amend failed", .ok = false, .msg = out.commitFailLine() } };
         },
         .stage => |p| try simple(repo, io, r, &.{ "add", "--", p }, try std.fmt.allocPrint(arena, "staged {s}", .{p})),
         .unstage => |p| {
@@ -1217,7 +1231,11 @@ fn runJob(repo: *Repo, events: *event.EventQueue, io: Io, job: Job) JobError!voi
                     try pushUndo(repo, io, arena, desc, .{ .reset_soft = pair[0] }, .{ .reset_soft = pair[1] });
                 }
             }
-            r.payload = .{ .op = .{ .desc = try std.fmt.allocPrint(arena, "committed: {s}", .{firstLine(msg)}), .ok = out.ok, .msg = out.reason() } };
+            // A refused commit says so first: "committed: …" read as done.
+            r.payload = .{ .op = if (out.ok)
+                .{ .desc = try std.fmt.allocPrint(arena, "committed: {s}", .{firstLine(msg)}), .ok = true, .msg = out.reason() }
+            else
+                .{ .desc = "commit failed", .ok = false, .msg = out.commitFailLine() } };
         },
         .checkout => |b| {
             const from = try git(repo, io, arena, &.{ "symbolic-ref", "--short", "-q", "HEAD" }, null);
@@ -1809,7 +1827,9 @@ fn simple(repo: *Repo, io: Io, r: *Result, args: []const []const u8, desc: []con
 fn simpleEnv(repo: *Repo, io: Io, r: *Result, args: []const []const u8, desc: []const u8, extra: []const EnvPair) JobError!void {
     const arena = r.arena.allocator();
     const out = try gitEnv(repo, io, arena, args, null, extra);
-    r.payload = .{ .op = .{ .desc = desc, .ok = out.ok, .msg = out.reason() } };
+    // A refusal leads with the word: "staged x: fatal: …" read as done.
+    const d = if (out.ok) desc else try std.fmt.allocPrint(arena, "failed — {s}", .{desc});
+    r.payload = .{ .op = .{ .desc = d, .ok = out.ok, .msg = out.reason() } };
 }
 
 /// No editor ever opens: git takes the message it has.

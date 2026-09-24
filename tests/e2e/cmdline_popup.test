@@ -4,9 +4,8 @@
 # `:`), growing upward: at 120x40 the `:` line is row 39, so the frame's
 # bottom border is row 38 and its rows climb from there. Down / Up walk
 # the list and write the selection into the line, Enter runs it; Esc
-# over the typed text puts the popup away first and the line second
-# (on a written candidate it closes the line, as vim's does); one
-# candidate is no popup, and Tab still completes it.
+# abandons the line, popup and all, as vim's does; one candidate is no
+# popup, and Tab still completes it.
 
 write data.txt "alpha"
 open data.txt
@@ -37,15 +36,16 @@ expect screen contains "New terminal"
 expect screen lacks "│ dock.add_preset"
 command view.dock_toggle
 
-# ── Esc closes the popup first, then the line ──
+# ── one Esc closes the popup and the line together ──
+# Neovim abandons the `:` line on Esc whatever its wildmenu / pum shows,
+# so the keys after it are Normal mode's (`:tabn<Tab><Esc>iX<Esc>` inserts
+# the X).
 key :
 type "do"
 expect screen contains "│ dock.add_preset"
 key esc
 expect screen lacks "│ dock.add_preset"
 expect screen lacks "more — Tab to cycle)"
-expect screen contains ":do▏"
-key esc
 expect screen lacks ":do▏"
 
 # ── one candidate: no popup, Tab still completes ──

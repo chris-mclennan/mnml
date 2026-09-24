@@ -18,6 +18,7 @@ const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const find_mod = @import("find.zig");
 const regex = @import("../regex/regex.zig");
+const jumplist = @import("jumplist.zig");
 
 pub const table = .{
     .@"find.find" = &open,
@@ -29,6 +30,8 @@ pub const table = .{
     .@"find.clear_and_deselect" = &clearAndDeselect,
     .@"find.word_forward" = &wordForward,
     .@"find.word_backward" = &wordBackward,
+    .@"find.word_forward_partial" = &wordForwardPartial,
+    .@"find.word_backward_partial" = &wordBackwardPartial,
     .@"find.selection_forward" = &selectionForward,
     .@"find.selection_backward" = &selectionBackward,
     .@"find.select_match_forward" = &selectMatchForward,
@@ -159,7 +162,7 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
         f.clear();
     } else {
         try f.setQuery(q, tg.text(), if (fb.state.match_case) true else app.search_case);
-        f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor());
+        f.current = if (fb.reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()));
         // A response follows the live match as it is typed.
         if (tg == .request) if (f.current) |c| tg.request.revealFind(f.matches.items[c].start);
     }
@@ -292,14 +295,25 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     if (f.matches.items.len == 0) {
         if (f.bad_pattern) |err| app.toast("{s}: \"{s}\"", .{ patternProblem(err), pattern }) else app.toast("no matches for \"{s}\"", .{pattern});
         app.closeFindBar(false);
+        // E486: a replaying macro stops here.
+        app.key_failed = true;
         return;
     }
-    const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(tg.cursor())) orelse 0;
+    const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()))) orelse 0;
     f.current = idx;
+    jumplist.noteJumpMotion(app);
     tg.setCursor(tg.landing(idx));
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.closeFindBar(false);
     if (chain and tg == .editor) try openReplacePrompt(app);
+}
+
+/// Where a forward search starts: vim's `/` one past the cursor, so a
+/// match under the cursor is the next one only after wrapping round
+/// (`:help search-commands`); the standard profile's find takes the
+/// match at the cursor.
+fn forwardFrom(app: *const App, cursor: usize) usize {
+    return if (app.input_style == .vim) cursor + 1 else cursor;
 }
 
 /// `find.next` / `find.prev` and the bar's ↓ / ↑.
@@ -309,10 +323,12 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     const f = tg.find();
     if (!f.isActive()) {
         app.toast("no active find — use / or Ctrl+F first", .{});
+        app.key_failed = true;
         return;
     }
     if (f.matches.items.len == 0) {
         app.toast("no matches for \"{s}\"", .{f.query.items});
+        app.key_failed = true;
         return;
     }
     // Without a current match (a cleared cursor jump), step from the cursor.
@@ -323,6 +339,7 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     }
     const idx = f.current.?;
     tg.setCursor(tg.landing(idx));
+    jumplist.noteJumpMotion(app);
     app.toast("match {d}/{d}", .{ idx + 1, f.matches.items.len });
     app.needs_render = true;
 }
@@ -484,8 +501,10 @@ fn toggleRegex(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
-/// `*` / `#`: the identifier under the cursor becomes the query.
-fn wordSearch(app: *App, forward: bool) CommandError!void {
+/// `*` / `#`: the identifier under the cursor, as a whole keyword
+/// (`\<word\>`, `:help star`), becomes the query; `g*` / `g#` take it
+/// as a substring too.
+fn wordSearch(app: *App, forward: bool, whole: bool) CommandError!void {
     const e = try app.requireEditor();
     const text = e.buf.editor.bytes();
     const r = find_mod.wordAt(text, e.buf.editor.cursor) orelse {
@@ -493,20 +512,29 @@ fn wordSearch(app: *App, forward: bool) CommandError!void {
         return;
     };
     const word = try app.frame.allocator().dupe(u8, text[r.start..r.end]);
-    try e.find.setQuery(word, text, app.search_case);
-    // `*` / `#` write the last search pattern too (`:help star`).
-    try app.noteSearchPattern(word);
+    if (whole) try e.find.setWordQuery(word, text, app.search_case) else try e.find.setQuery(word, text, app.search_case);
+    // `*` / `#` write the last search pattern too (`:help star`), so
+    // `:s//new/` renames that identifier and not its longer cousins.
+    try app.noteSearchPattern(if (whole) try std.fmt.allocPrint(app.frame.allocator(), "\\<{s}\\>", .{word}) else word);
     // Step off the word under the cursor so the jump is a real move.
     e.find.current = if (forward) e.find.indexAtOrAfter(r.end) else e.find.indexBefore(r.start);
     try stepFromCurrent(app, e);
 }
 
 fn wordForward(app: *App) CommandError!void {
-    return wordSearch(app, true);
+    return wordSearch(app, true, true);
 }
 
 fn wordBackward(app: *App) CommandError!void {
-    return wordSearch(app, false);
+    return wordSearch(app, false, true);
+}
+
+fn wordForwardPartial(app: *App) CommandError!void {
+    return wordSearch(app, true, false);
+}
+
+fn wordBackwardPartial(app: *App) CommandError!void {
+    return wordSearch(app, false, false);
 }
 
 fn selectionSearch(app: *App, forward: bool) CommandError!void {
@@ -532,10 +560,12 @@ fn selectionBackward(app: *App) CommandError!void {
 fn stepFromCurrent(app: *App, e: *EditorPane) Allocator.Error!void {
     const idx = e.find.current orelse {
         app.toast("no matches for \"{s}\"", .{e.find.query.items});
+        app.key_failed = true;
         return;
     };
     e.buf.editor.setCursor(e.find.matches.items[idx].start);
     e.buf.editor.goal_col = null;
+    jumplist.noteJumpMotion(app);
     app.toast("match {d}/{d}", .{ idx + 1, e.find.matches.items.len });
     app.needs_render = true;
 }
@@ -571,19 +601,26 @@ fn selectMatchBackward(app: *App) CommandError!void {
 
 /// The `gn` / `gN` ranges the vim handler reads through `EditCtx`: the
 /// match the cursor is on, else the next (previous) one, wrapping.
-pub fn seedCtxMatches(e: *EditorPane) void {
+/// Matches found before an edit are found again first: the text moved
+/// under them (`cgnQ<Esc>` then `.`).
+pub fn seedCtxMatches(e: *EditorPane) Allocator.Error!void {
+    const head = e.buf.editor.doc.edits.head();
+    if (e.find.isActive()) {
+        if (e.find.seen_edit) |seen| if (seen != head) try e.find.recompute(e.buf.editor.bytes());
+        e.find.seen_edit = head;
+    }
     const cur = e.buf.editor.cursor;
-    e.buf.find_next = null;
-    e.buf.find_prev = null;
+    e.buf.editor.find_next = null;
+    e.buf.editor.find_prev = null;
     const ms = e.find.matches.items;
     if (ms.len == 0) return;
     for (ms) |m| if (m.start <= cur and cur < m.end) {
-        e.buf.find_next = .{ m.start, m.end };
-        e.buf.find_prev = .{ m.start, m.end };
+        e.buf.editor.find_next = .{ m.start, m.end };
+        e.buf.editor.find_prev = .{ m.start, m.end };
         return;
     };
     const nxt = e.find.indexAtOrAfter(cur) orelse 0;
-    e.buf.find_next = .{ ms[nxt].start, ms[nxt].end };
+    e.buf.editor.find_next = .{ ms[nxt].start, ms[nxt].end };
     var last: usize = ms.len - 1;
     var i = ms.len;
     while (i > 0) {
@@ -593,7 +630,7 @@ pub fn seedCtxMatches(e: *EditorPane) void {
             break;
         }
     }
-    e.buf.find_prev = .{ ms[last].start, ms[last].end };
+    e.buf.editor.find_prev = .{ ms[last].start, ms[last].end };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────

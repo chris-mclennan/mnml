@@ -843,7 +843,7 @@ fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
         return .{ .repeat = .{ .count = @intCast(@max(count, 0)), .inner = inner } };
     }
     inline for (@typeInfo(EditOp).@"union".fields) |f| {
-        if (comptime !(std.mem.eql(u8, f.name, "atomic") or std.mem.eql(u8, f.name, "repeat"))) {
+        if (comptime !(std.mem.eql(u8, f.name, "atomic") or std.mem.eql(u8, f.name, "repeat") or std.mem.eql(u8, f.name, "if_lines_object"))) {
             if (std.mem.eql(u8, f.name, name)) {
                 return @unionInit(EditOp, f.name, try decodePayload(f.type, f.name, L, arena, at));
             }

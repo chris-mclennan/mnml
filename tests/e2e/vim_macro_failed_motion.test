@@ -1,0 +1,36 @@
+# A key that fails the way vim beeps — `j` on the last line — ends a
+# replaying macro and every pending repeat (`:help q`), so a recursive
+# macro and `5@a` stop when the work runs out. Neovim 0.12.5
+# (`nvim --clean`, feedkeys):
+#   qcq qcI-<Esc>j@cq @c on a1..a4   -> -a1 -a2 -a3 -a4
+#   qaA!<Esc>jq 5@a on a1 / a2        -> a1! / a2!
+command editor.use_vim
+write r.txt "a1\na2\na3\na4\n"
+open r.txt
+type qcq
+type qcI-
+key esc
+type j@cq
+type @c
+command file.save
+expect file r.txt contains "-a1\n-a2\n-a3\n-a4\n"
+
+write c.txt "a1\na2\n"
+open c.txt
+type qaA!
+key esc
+type jq
+type 5@a
+command file.save
+expect file c.txt contains "a1!\na2!\n"
+
+# The recursion is not capped at a few levels: thirty lines, all done.
+write long.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20\nl21\nl22\nl23\nl24\nl25\nl26\nl27\nl28\nl29\nl30\n"
+open long.txt
+type qdq
+type qdI-
+key esc
+type j@dq
+type @d
+command file.save
+expect file long.txt contains "-l1\n-l2\n-l3\n-l4\n-l5\n-l6\n-l7\n-l8\n-l9\n-l10\n-l11\n-l12\n-l13\n-l14\n-l15\n-l16\n-l17\n-l18\n-l19\n-l20\n-l21\n-l22\n-l23\n-l24\n-l25\n-l26\n-l27\n-l28\n-l29\n-l30\n"

@@ -35,6 +35,9 @@ const clipboard_os = @import("../core/clipboard_os.zig");
 pub const Entry = struct {
     text: []u8,
     linewise: bool,
+    /// A Visual-block yank or delete (`:help blockwise-register`): the
+    /// rows are `\n`-joined and a put lays them out as a column.
+    block: bool = false,
 };
 
 pub const Clipboard = struct {
@@ -45,6 +48,11 @@ pub const Clipboard = struct {
     /// Linewise-ness of the register the last `text()` read from — the
     /// paste ops consult it after reading.
     effective_linewise: bool = false,
+    /// Blockwise-ness of the same read.
+    effective_block: bool = false,
+    /// Set for the length of a `setYankBlock` / `pushDeleteBlock`: every
+    /// entry the write makes is blockwise.
+    writing_block: bool = false,
     /// The text of the last write, whichever register took it. Null after
     /// a blackhole write.
     last_written: ?[]const u8 = null,
@@ -111,6 +119,12 @@ pub const Clipboard = struct {
         return names.items;
     }
 
+    /// vim's read-only `".` register: what the last Insert typed
+    /// (`:help quote.`), written when an Insert session closes.
+    pub fn setLastInserted(self: *Clipboard, s: []const u8) Allocator.Error!void {
+        try self.putNamed('.', .{ .text = try self.gpa.dupe(u8, s), .linewise = false });
+    }
+
     pub fn setPendingRegister(self: *Clipboard, reg: ?u21) void {
         self.pending_register = reg;
     }
@@ -142,8 +156,24 @@ pub const Clipboard = struct {
                     try self.putNamed('0' + i + 1, kv.value);
                 }
             }
-            try self.putNamed('1', .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise });
+            try self.putNamed('1', .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise, .block = self.writing_block });
         }
+    }
+
+    /// A Visual-block yank (`:help blockwise-register`): `setYank`, the
+    /// entries it writes marked blockwise.
+    pub fn setYankBlock(self: *Clipboard, s: []const u8) Allocator.Error!void {
+        self.writing_block = true;
+        defer self.writing_block = false;
+        try self.setYank(s, false);
+    }
+
+    /// A Visual-block delete: `pushDelete`, blockwise. The one-row case
+    /// that lands in `"-` stays charwise there, as small deletes are.
+    pub fn pushDeleteBlock(self: *Clipboard, s: []const u8) Allocator.Error!void {
+        self.writing_block = true;
+        defer self.writing_block = false;
+        try self.pushDelete(s, false);
     }
 
     /// A yank: writes the target register AND (for the unnamed target)
@@ -152,7 +182,7 @@ pub const Clipboard = struct {
         const reg = self.pending_register;
         try self.set(s, linewise);
         if (goesToUnnamed(reg)) {
-            try self.putNamed('0', .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise });
+            try self.putNamed('0', .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise, .block = self.writing_block });
         }
     }
 
@@ -167,7 +197,7 @@ pub const Clipboard = struct {
                 return;
             }
             if (r >= 'a' and r <= 'z') {
-                const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise };
+                const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise, .block = self.writing_block };
                 try self.putNamed(@intCast(r), e);
                 self.last_written = e.text;
                 return;
@@ -178,19 +208,19 @@ pub const Clipboard = struct {
                     try std.mem.concat(self.gpa, u8, &.{ prev.text, s })
                 else
                     try self.gpa.dupe(u8, s);
-                const e: Entry = .{ .text = merged, .linewise = linewise };
+                const e: Entry = .{ .text = merged, .linewise = linewise, .block = self.writing_block };
                 try self.putNamed(slot, e);
                 self.last_written = e.text;
                 return;
             }
             if (r == '0') {
-                const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise };
+                const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise, .block = self.writing_block };
                 try self.putNamed('0', e);
                 self.last_written = e.text;
                 return;
             }
         }
-        const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise };
+        const e: Entry = .{ .text = try self.gpa.dupe(u8, s), .linewise = linewise, .block = self.writing_block };
         if (self.unnamed) |old| self.gpa.free(old.text);
         self.unnamed = e;
         self.last_written = e.text;
@@ -221,14 +251,17 @@ pub const Clipboard = struct {
         const reg = self.pending_register;
         self.pending_register = null;
         if (reg) |r| {
+            self.effective_block = false;
             if (r == '_') {
                 self.effective_linewise = false;
                 return "";
             }
-            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9') or r == '-') {
+            // `".` before any Insert is empty: nothing is put (E29).
+            if ((r >= 'a' and r <= 'z') or (r >= 'A' and r <= 'Z') or (r >= '0' and r <= '9') or r == '-' or r == '.') {
                 const slot: u8 = if (r >= 'A' and r <= 'Z') @intCast(r - 'A' + 'a') else @intCast(r);
                 if (self.named.get(slot)) |e| {
                     self.effective_linewise = e.linewise;
+                    self.effective_block = e.block;
                     return e.text;
                 }
                 self.effective_linewise = false;
@@ -242,14 +275,21 @@ pub const Clipboard = struct {
         }
         if (self.unnamed) |e| {
             self.effective_linewise = e.linewise;
+            self.effective_block = e.block;
             return e.text;
         }
         self.effective_linewise = false;
+        self.effective_block = false;
         return "";
     }
 
     pub fn isLinewise(self: *const Clipboard) bool {
         return self.effective_linewise;
+    }
+
+    /// The register the last `text()` read is blockwise.
+    pub fn isBlockwise(self: *const Clipboard) bool {
+        return self.effective_block;
     }
 
     /// The text of the most recent write, borrowed. Null after a blackhole.

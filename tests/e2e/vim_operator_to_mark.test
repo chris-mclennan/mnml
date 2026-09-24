@@ -20,10 +20,13 @@ type lmb
 type gg
 type y`b
 expect screen contains "NORMAL"
+# `gg` and `G` keep the column `l` left (`nostartofline`), so the yank
+# starts at 1:2 and the put goes after 6:2 — Neovim 0.12.5 (`nvim
+# --clean`, `3Glmbggy`bGp`) ends "l5 / l61 / l2 / l".
 type G
 type p
 command file.save
-expect file a.txt contains "l5\nll1\nl2\nl6\n"
+expect file a.txt contains "l5\nl61\nl2\nl\n"
 type u
 type G
 type mc

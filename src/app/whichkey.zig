@@ -94,6 +94,8 @@ pub const root: Node = .{
             // standard profile's Ctrl+K popup keeps the reference rows.
             groupVim('r', "+lsp", &.{
                 cmd('a', .@"lsp.rename", "rename symbol"),
+                // NvChad's `<leader>rn` ("toggle relative number").
+                cmd('n', .@"view.toggle_relative_numbers", "relative numbers"),
             }),
             group('b', "+buffer", &.{
                 cmd('n', .@"buffer.next", "next"),
@@ -140,6 +142,8 @@ pub const root: Node = .{
                 cmd('u', .@"dap.toggle_panel", "toggle DEBUG section"),
                 cmd('h', .@"dap.evaluate_hover", "evaluate word (hover)"),
                 cmd('e', .@"dap.exceptions", "exception breakpoints"),
+                // NvChad's `<leader>ds` ("LSP diagnostic loclist").
+                cmd('s', .@"lsp.diagnostics", "diagnostics list"),
             }),
             group('l', "+lsp", &.{
                 cmd('a', .@"lsp.code_action", "code actions"),
@@ -599,12 +603,16 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     try t.expectEqual(@as(u16, 14), chordCount(lookup("s").?, false));
     try t.expectEqual(@as(u16, 5), chordCount(lookup("Lc").?, true));
     try t.expectEqual(@as(u16, 19), chordCount(lookup("L").?, true));
-    try t.expectEqual(@as(u16, 15), chordCount(lookup("d").?, true));
+    try t.expectEqual(@as(u16, 16), chordCount(lookup("d").?, true));
     try t.expectEqual(@as(u16, 1), chordCount(lookup("Pp").?, true));
-    // The root: the vim profile carries `+debug`'s fifteen,
-    // `<leader>ra`'s one and `<leader>sn` / `sN` more than the standard
-    // one.
-    try t.expectEqual(chordCount(&root, false) + 18, chordCount(&root, true));
+    // The root: the vim profile carries `+debug`'s fifteen, `<leader>ra`,
+    // `<leader>sn` / `sN`, and `<leader>ds` / `<leader>rn` more than the
+    // standard one.
+    try t.expectEqual(chordCount(&root, false) + 20, chordCount(&root, true));
+    // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
+    try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);
+    try t.expectEqual(CommandId.@"view.toggle_relative_numbers", lookup("rn").?.cmd.id);
+    try t.expect(lookupIn("rn", false) == null);
 }
 
 /// An independent counter for the test: every leaf beneath `n`, found

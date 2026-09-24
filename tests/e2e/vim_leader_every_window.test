@@ -1,0 +1,50 @@
+# Vim profile: Space is the leader in every window, as NvChad's
+# `<leader>` maps are global (nvchad-probe, in the NvimTree buffer:
+# maparg("<Space>ff") = telescope find files; nvim-tree maps no <Space>).
+# From the tree `Space f f` opens the file picker; in the git status pane
+# `Space g c` goes to the which-key menu and never unstages the row —
+# the pane's toggle is fugitive's `-` there, and its hint row says so.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write seed.txt "seed\n"
+shell git add seed.txt
+shell git commit -q -m "initial"
+write seed.txt "seed\nmore\n"
+open seed.txt
+command editor.use_vim
+
+# The tree.
+key space
+key e
+expect screen contains "TREE"
+key space
+key f
+key f
+expect screen contains "Open file"
+key esc
+expect screen lacks "Open file"
+
+# The git status pane.
+command git.status_pane
+wait 800
+expect screen contains "- toggle"
+expect screen lacks "space toggle"
+key s
+wait 1500
+expect screen contains "0 unstaged · 1 staged"
+key space
+key g
+key c
+wait 1500
+shell test -n "$(git diff --cached --name-only)"
+expect screen lacks "nothing staged"
+key esc
+command git.status_pane
+wait 300
+key -
+wait 1500
+expect screen contains "1 unstaged · 0 staged"
+key -
+wait 1500
+expect screen contains "0 unstaged · 1 staged"

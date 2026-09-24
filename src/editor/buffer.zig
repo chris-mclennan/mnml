@@ -22,6 +22,7 @@ const Pos = editor_mod.Pos;
 pub const Clipboard = editor_mod.Clipboard;
 const edit_op = @import("edit_op.zig");
 const safe_write = @import("safe_write.zig");
+const register_mod = @import("register.zig");
 const EditOp = edit_op.EditOp;
 const input = @import("../input/mod.zig");
 pub const InputHandler = input.InputHandler;
@@ -54,10 +55,6 @@ pub const Buffer = struct {
     /// through a temp file (`safe_write.zig`) — a failure then may have
     /// left the file incomplete.
     save_in_place: bool = false,
-    /// The find matches nearest the cursor (`gn` / `gN`), byte ranges.
-    /// The find state lives with the app; it seeds these before a key.
-    find_next: ?[2]usize = null,
-    find_prev: ?[2]usize = null,
 
     /// Dot-repeat: the last change, gpa-owned ops.
     dot: ?[]EditOp = null,
@@ -81,11 +78,30 @@ pub const Buffer = struct {
     /// The macro being recorded; the finished keys go to the clipboard.
     recording: ?Recording = null,
     replay_depth: u8 = 0,
+    /// Keys `feedKey` has taken, ever. The app compares it across a key
+    /// to tell a key that went elsewhere (the find bar's `/foo⏎`) from
+    /// one the buffer recorded itself (`recordKey`).
+    keys_fed: u64 = 0,
+    /// The app replays macros through its own key dispatch, so a
+    /// register's `/foo<CR>` or `:s…<CR>` reaches the find bar or the
+    /// command line as it did when recorded; `@a` is then handed to it
+    /// (`.app = macro_replay_from`). A buffer alone replays into itself.
+    macros_by_app: bool = false,
+    /// The last key failed the way vim beeps: a motion that could not
+    /// move (`j` on the last line, `f` finding nothing) or an operator's
+    /// object that found nothing. A replaying macro stops on it.
+    key_failed: bool = false,
+    /// The last key was a vim jump motion (`:help jump-motions`) — `G`,
+    /// `{N}G`, `gg`, `{` `}`, `(` `)`, a mark: the app's jumplist records
+    /// it however near it went.
+    jumped: bool = false,
 
     /// vim's `".` register: what the last Insert session typed, derived
     /// from its ops when it closed (a backspace takes a char back).
     /// gpa-owned.
     last_inserted: ?[]u8 = null,
+    /// `last_inserted` changed since the clipboard's `".` was written.
+    last_inserted_unsynced: bool = false,
 
     pub const max_replay_depth = 8;
 
@@ -252,6 +268,18 @@ pub const Buffer = struct {
         return if (self.save_in_place) " — written in place (hard-linked or special file); the file on disk may be incomplete" else " — the file on disk is untouched";
     }
 
+    /// The bytes a `:w {file}` copy writes: the text with the file's line
+    /// breaks and, under `ensure_trailing_newline`, a final newline —
+    /// without touching the buffer or its saved state. gpa-owned.
+    pub fn copyForWrite(self: *const Buffer) Allocator.Error![]u8 {
+        const text = self.editor.bytes();
+        const add_nl = self.doc.ensure_trailing_newline and text.len > 0 and text[text.len - 1] != '\n';
+        if (!add_nl) return withEol(self.gpa, text, self.doc.eol);
+        const joined = try std.mem.concat(self.gpa, u8, &.{ text, "\n" });
+        defer self.gpa.free(joined);
+        return withEol(self.gpa, joined, self.doc.eol);
+    }
+
     /// Strip the spaces and tabs before every line end, as one undoable
     /// edit; the cursor keeps its place (or moves left with the text
     /// removed before it).
@@ -378,8 +406,8 @@ pub const Buffer = struct {
             .has_selection = ed.hasSelection(),
             .line_first_nonws_col = ed.colAtByte(ed.firstNonWs(line)),
             .cursor_col = ed.colAtByte(ed.cursor),
-            .next_find_match = self.find_next,
-            .prev_find_match = self.find_prev,
+            .next_find_match = ed.find_next,
+            .prev_find_match = ed.find_prev,
             .wrap_width = wrap_width,
             .register_empty = clip.text().len == 0,
         };
@@ -390,6 +418,7 @@ pub const Buffer = struct {
     /// `arena` is the frame arena.
     pub fn feedKey(self: *Buffer, key: Key, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         if (self.doc.read_only) return .{ .unhandled = key };
+        self.keys_fed +%= 1;
         if (self.recording) |*r| try r.keys.append(self.gpa, key);
         const ctx = self.makeCtx(wrap_width, clip);
         // What a visual operator would act on, before the key resolves —
@@ -400,9 +429,16 @@ pub const Buffer = struct {
         const undo_before = self.editor.doc.history.undoLen();
         const cursor_before = self.editor.cursor;
         self.syncInsertSession(undo_before);
+        self.key_failed = false;
+        self.jumped = false;
         const result = try self.input.handleKey(key, ctx, arena);
         const ev: BufferEvent = switch (result) {
-            .ops => |list| try self.applyHandlerOps(list, visual, clip, viewport_rows, arena),
+            .ops => |list| blk: {
+                if (isJumpMotion(list)) self.jumped = true;
+                const ev = try self.applyHandlerOps(list, visual, clip, viewport_rows, arena);
+                if (self.editor.cursor == cursor_before and failableMotion(list)) self.key_failed = true;
+                break :blk ev;
+            },
             .consumed => .redraw,
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
@@ -476,11 +512,51 @@ pub const Buffer = struct {
             // A text object that found nothing: the operator is dropped
             // whole — Normal again, nothing for `.` (`:help ci(`).
             self.ops_aborted = false;
+            self.key_failed = true;
             if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
             return if (changed) .edited else .redraw;
         }
         try self.trackDot(list, visual, arena);
+        // The Insert that just closed is what `".` puts now.
+        if (self.last_inserted_unsynced) {
+            self.last_inserted_unsynced = false;
+            try clip.setLastInserted(self.last_inserted orelse "");
+        }
         return if (changed) .edited else .redraw;
+    }
+
+    /// A list that only moves, and moves by a jump motion (`:help
+    /// jump-motions`): a line target, the buffer's ends, a paragraph or
+    /// a sentence. An operator's list (it changes text) is not a jump.
+    fn isJumpMotion(list: []const EditOp) bool {
+        var jump = false;
+        for (list) |o| {
+            if (o.isMutation()) return false;
+            const inner = if (o == .repeat) o.repeat.inner.* else o;
+            switch (inner) {
+                .move_to_line, .move_to_line_keep_col, .move_buffer_start, .move_buffer_end, .move_paragraph, .move_sentence => jump = true,
+                else => {},
+            }
+        }
+        return jump;
+    }
+
+    /// A list that is one motion vim fails when it cannot move (`:help
+    /// q`: the error ends a macro) — `j` / `k` / `h` / `l`, the word
+    /// motions, `+` / `-`, `f` / `t` — counted or not. `0`, `$`, `G`
+    /// and their kind never fail.
+    fn failableMotion(list: []const EditOp) bool {
+        const head: usize = if (list.len > 0 and list[0] == .set_register_hint) 1 else 0;
+        if (list.len != head + 1) return false;
+        var op = list[head];
+        if (op == .repeat) op = op.repeat.inner.*;
+        return switch (op) {
+            .move_up, .move_down, .move_left, .move_right, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_word_left, .move_word_right, .move_word_end, .move_word_end_back => true,
+            .move_big_word_left, .move_big_word_right, .move_big_word_end, .move_big_word_end_back => true,
+            .find_char_on_line, .move_to_unmatched => true,
+            else => false,
+        };
     }
 
     /// Open / anchor / close the Insert undo session against the mode
@@ -497,6 +573,7 @@ pub const Buffer = struct {
             if (!self.insert_session) {
                 self.insert_session = true;
                 self.insert_undo_target = null;
+                ed.insert_start = ed.cursor;
             }
             if (self.insert_undo_target == null and ed.doc.history.undoLen() > undo_before) self.insert_undo_target = undo_before + 1;
         } else if (self.insert_session) {
@@ -504,6 +581,7 @@ pub const Buffer = struct {
             if (self.insert_undo_target) |t| ed.doc.history.truncateUndo(t);
             self.insert_undo_target = null;
             ed.in_insert_run = false;
+            ed.insert_start = null;
         }
     }
 
@@ -818,6 +896,7 @@ pub const Buffer = struct {
         for (self.dot_pending.items) |o| try collectTyped(&typed, self.gpa, o);
         if (self.last_inserted) |s| self.gpa.free(s);
         self.last_inserted = try typed.toOwnedSlice(self.gpa);
+        self.last_inserted_unsynced = true;
     }
 
     fn collectTyped(typed: *std.ArrayList(u8), gpa: Allocator, op: EditOp) Allocator.Error!void {
@@ -863,6 +942,14 @@ pub const Buffer = struct {
                 d[idx].repeat.count = count -| 1;
             } else if (countedOp(d)) |n| n.* = count else times = count;
         }
+        // `.` after `"1p` puts `"2`, the next `"3`… (`:help redo-register`):
+        // the record's register steps on, so `"1pu.u.` fishes back
+        // through the delete history.
+        if (d.len > 0 and d[0] == .set_register_hint) {
+            if (d[0].set_register_hint) |r| if (r >= '1' and r <= '8' and putsFrom(d[1..])) {
+                d[0].set_register_hint = r + 1;
+            };
+        }
         const tok = try self.editor.beginAtomic();
         var changed = false;
         for (0..times) |_| {
@@ -874,6 +961,16 @@ pub const Buffer = struct {
         // there; the replay already typed the text, so drop back.
         if (self.input.mode() == .insert or self.input.mode() == .replace) self.input.onBlur();
         return if (changed) .edited else .redraw;
+    }
+
+    /// A recorded change that is a put — what `.` steps the numbered
+    /// register of.
+    fn putsFrom(list: []const EditOp) bool {
+        for (list) |o| {
+            const inner = if (o == .repeat) o.repeat.inner.* else o;
+            if (register_mod.isPut(inner)) return true;
+        }
+        return false;
     }
 
     /// The count in a recorded change: the first counted op's.
@@ -939,6 +1036,13 @@ pub const Buffer = struct {
         return self.recording != null;
     }
 
+    /// A key typed while recording that the buffer never saw — one the
+    /// find bar or an overlay took — joins the register all the same
+    /// (`:help q`: the typed characters, wherever they went).
+    pub fn recordKey(self: *Buffer, key: Key) Allocator.Error!void {
+        if (self.recording) |*r| try r.keys.append(self.gpa, key);
+    }
+
     // ─── app commands handled here ───
 
     /// An `AppCommand` from a runner rather than a key (the palette's
@@ -970,6 +1074,7 @@ pub const Buffer = struct {
             .jump_to_mark_line => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.doc.markPos(c) orelse return .noop;
+                self.jumped = true;
                 const row = @min(p.row, self.editor.lineCount() - 1);
                 self.editor.cursor = self.editor.firstNonWs(row);
                 self.editor.goal_col = null;
@@ -978,11 +1083,15 @@ pub const Buffer = struct {
             .jump_to_mark_exact => |c| {
                 if (c >= 'A' and c <= 'Z') return .{ .app = cmd };
                 const p = self.doc.markPos(c) orelse return .noop;
+                self.jumped = true;
                 self.editor.placeCursor(@min(p.row, self.editor.lineCount() - 1), p.col);
                 return .redraw;
             },
             .macro_record_into => |reg| return self.macroToggle(reg, clip, true),
-            .macro_replay_from => |m| return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena),
+            .macro_replay_from => |m| {
+                if (self.macros_by_app) return .{ .app = cmd };
+                return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena);
+            },
             .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
             else => return .{ .app = cmd },
         }
@@ -1651,9 +1760,11 @@ test "vim marks, macros and visual mode" {
     try vim("<c-v>jd", "|ab\ncd", "|b\nd");
     try vim("<c-v>jld", "a|bcd\nefgh\nij", "a|d\neh\nij");
     try vim("<c-v>jlx", "a|bcd\nefgh", "a|d\neh");
-    try vim("<c-v>jldp", "a|bcd\nefgh", "adbc\nf|g\neh"); // the block is in the register charwise (Rust parity)
-    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcdbc\nf|g\nefgh");
-    try vim("<c-v>jlyP", "a|bcd\nefgh", "abc\nfg|bcd\nefgh"); // `y` parks at the rectangle's top-left; `P` lands after the text
+    // A block register puts back as a block (`:help blockwise-register`;
+    // Neovim 0.12.5: `adbc` / `ehfg`, the cursor on the block's top-left).
+    try vim("<c-v>jldp", "a|bcd\nefgh", "ad|bc\nehfg");
+    try vim("<c-v>jly$p", "a|bcd\nefgh", "abcd|bc\nefghfg");
+    try vim("<c-v>jlyP", "a|bcd\nefgh", "a|bcbcd\nefgfgh"); // `y` parks at the rectangle's top-left; `P` puts the block there
     try vim("<c-v>jl<esc>x", "a|bcd\nefgh", "abcd\nef|h");
     try vim("<c-v>kd", "ab\n|cd", "|b\nd"); // the rectangle is anchor→cursor in either direction
     try vim("<c-v>jjld", "|abc\nx\nabc", "|c\n\nc"); // a short row contributes nothing
@@ -1920,6 +2031,10 @@ test "vim: cmdline, ZZ and :s reach the app as ex commands; gd runs a command" {
     try testing.expectEqual(input.CommandId.@"find.word_forward", h.last_app.?.run_command);
     try h.feed("#");
     try testing.expectEqual(input.CommandId.@"find.word_backward", h.last_app.?.run_command);
+    try h.feed("g*");
+    try testing.expectEqual(input.CommandId.@"find.word_forward_partial", h.last_app.?.run_command);
+    try h.feed("g#");
+    try testing.expectEqual(input.CommandId.@"find.word_backward_partial", h.last_app.?.run_command);
     try h.feed("N");
     try testing.expectEqual(input.CommandId.@"find.next", h.last_app.?.run_command);
     try h.feed("3o");

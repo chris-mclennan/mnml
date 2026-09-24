@@ -1,4 +1,6 @@
 # vim search chords: `/` opens find, `n` next, `N` prev.
+# Neovim 0.12.5 (`nvim --clean`) on this file from 1:1:
+#   /alpha<CR> -> 3:1, n -> 5:1, N -> 3:1
 
 write text.txt "alpha\nbravo\nalpha\ncharlie\nalpha"
 open text.txt
@@ -10,13 +12,14 @@ key /
 type "alpha"
 key enter
 
-# Cursor lands at first match — line 1, char 0.
-expect screen contains "Ln 1/5"
-
-# `n` advances to next match (line 3).
-key n
+# The search starts one past the cursor, so the `alpha` under it is
+# skipped: the cursor lands on line 3.
 expect screen contains "Ln 3/5"
 
-# `N` goes back to line 1.
+# `n` advances to next match (line 5).
+key n
+expect screen contains "Ln 5/5"
+
+# `N` goes back to line 3.
 key N
-expect screen contains "Ln 1/5"
+expect screen contains "Ln 3/5"

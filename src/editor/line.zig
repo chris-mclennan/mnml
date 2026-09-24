@@ -27,7 +27,10 @@ pub fn joinLines(ed: *Editor, keep_space: bool, out: *EditOutcome) Allocator.Err
     if (keep_space) {
         while (next_first < next_eol and (t[next_first] == ' ' or t[next_first] == '\t')) next_first += 1;
     }
-    const sep: []const u8 = if (!keep_space or trim_end == bol) "" else " ";
+    // No space when either side is empty or the next line opens with
+    // `)` (`:help J`): `3J` over an empty line leaves no trailing blank.
+    const next_empty = next_first == next_eol;
+    const sep: []const u8 = if (!keep_space or trim_end == bol or next_empty or t[next_first] == ')') "" else " ";
     try ed.splice(trim_end, next_first, sep);
     ed.cursor = trim_end;
     ed.anchor = null;
@@ -267,6 +270,46 @@ pub fn transformSelectionCase(ed: *Editor, kind: CaseTransform, out: *EditOutcom
     }
     ed.cursor = sel[0];
     ed.anchor = null;
+}
+
+/// `{n}r<CR>`: the `n` characters from the cursor become one line
+/// break, through `insert_newline` so the new line takes the indent.
+pub fn replaceCharsWithNewline(ed: *Editor, n: u32, out: *EditOutcome) Allocator.Error!void {
+    const eol = ed.lineEnd(ed.currentLine());
+    var end = ed.cursor;
+    for (0..@max(n, 1)) |_| {
+        if (end >= eol) return; // fewer than `n` left: vim fails the whole `r`
+        end = ed.nextBoundary(end);
+    }
+    // One undo step: the cut and the newline's own checkpoint.
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
+    try ed.splice(ed.cursor, end, "");
+    try @import("insert.zig").insertNewline(ed, out);
+    out.buffer_changed = true;
+}
+
+/// vim's `U`: the latest run's line back as it was before the run
+/// (`Editor.uline_row` / `uline_text`), and the text it had kept for the
+/// next `U`, which puts the changes back. The cursor goes to that line,
+/// in the column it was in.
+pub fn undoLine(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
+    const row = ed.uline_row orelse return;
+    if (row >= ed.lineCount()) {
+        ed.uline_row = null;
+        return;
+    }
+    const now = try ed.gpa.dupe(u8, ed.lineSlice(row));
+    defer ed.gpa.free(now);
+    if (std.mem.eql(u8, now, ed.uline_text.items)) return;
+    const col = ed.rowCol().col;
+    try ed.checkpoint();
+    try ed.splice(ed.lineStart(row), ed.lineEnd(row), ed.uline_text.items);
+    ed.uline_text.clearRetainingCapacity();
+    try ed.uline_text.appendSlice(ed.gpa, now);
+    ed.cursor = ed.byteAtCol(row, col);
+    ed.anchor = null;
+    out.buffer_changed = true;
 }
 
 /// vim `~`: toggle the ASCII letter under the cursor and advance.

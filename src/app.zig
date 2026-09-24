@@ -770,7 +770,7 @@ pub const FindBarState = struct {
 /// `eol`: `$A` — the typed run goes to every row's end, whatever its length.
 /// A visual-block `I` / `A` / `c` in flight. `col` is a display column:
 /// where `I` / `c` type, or the column after the block for `A`.
-pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false };
+pub const BlockInsert = struct { pane: PaneId, first_row: usize, last_row: usize, col: usize, start_byte: usize, len_before: usize, eol: bool = false, append: bool = false, left_col: usize = 0 };
 /// `<count>i` / `I` / `a` / `A` / `o` / `O` in flight: what was typed
 /// replicates on Esc — as whole new lines for `o` / `O`, in place for
 /// the other four (`:help count`).
@@ -1386,6 +1386,17 @@ pub const App = struct {
     /// When a plain Esc last armed the way out of full screen; a
     /// second within the chord timeout leaves (`zen.escKey`).
     zen_esc_ms: ?i64 = null,
+    /// The `@a` replay in progress (`app/macro_replay.zig`), if any.
+    macro_run: ?*@import("app/macro_replay.zig").Run = null,
+    /// How deeply `dispatch.keyUnrecorded` is nested: a replay feeds its
+    /// keys one level down from the key that started it.
+    key_depth: u16 = 0,
+    /// The key just dispatched failed the way vim beeps — a motion that
+    /// could not move, a search with no match — which ends a replay.
+    key_failed: bool = false,
+    /// `Ctrl-W` from a non-editor pane: the next key names the window
+    /// verb (`dispatch.paneCtrlWCommand`).
+    pane_ctrl_w_pending: bool = false,
     /// Nine pinned files (`harpoon.*`).
     harpoon: harpoon.State = .{},
     /// Render durations for the statusline stress meter.
@@ -2781,6 +2792,7 @@ pub const App = struct {
     /// the way into every key and op).
     pub fn attachSeams(self: *App, e: *EditorPane) void {
         e.buf.editor.objects = .{ .ctx = self, .lookup = &objectLookup };
+        e.buf.macros_by_app = true;
     }
 
     /// Which mnml this is — the installed one or the one being worked
@@ -3533,6 +3545,7 @@ test {
     _ = @import("app/glyph_audit.zig");
     _ = @import("app/marks_store.zig");
     _ = @import("app/ex_verbs.zig");
+    _ = @import("app/ex_fname.zig");
     _ = @import("app/loclist.zig");
     _ = @import("app/update.zig");
     _ = @import("app/session.zig");

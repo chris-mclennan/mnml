@@ -1,0 +1,195 @@
+# Visual-block keys that did nothing: `U` `u` `~` change the case
+# inside the block, `>` / `<` shift every row from the block's left
+# edge (`:help v_b_>`), `J` joins the rows it spans, `o` goes to the
+# other corner and `O` to the other end of the row. Every expectation
+# is Neovim 0.12.5's (`nvim --clean`, the keys fed as typed), on
+# abcd / efgh / ijkl / mnop, each file behind a `top` line. The shift
+# rows first `:set noet ts=8`, Neovim's defaults.
+command editor.use_vim
+write b0.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b0.txt
+type j
+type l
+key ctrl+v
+type jjU
+key esc
+command file.save
+expect file b0.txt contains "top\naBcd\neFgh\niJkl\nmnop\n"
+
+write b1.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b1.txt
+type j
+type l
+key ctrl+v
+type jj~
+key esc
+command file.save
+expect file b1.txt contains "top\naBcd\neFgh\niJkl\nmnop\n"
+
+write b2.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b2.txt
+type j
+type l
+key ctrl+v
+type jjlU
+key esc
+command file.save
+expect file b2.txt contains "top\naBCd\neFGh\niJKl\nmnop\n"
+
+write b3.txt "top\nABCD\nEFGH\nIJKL\nMNOP\n"
+open b3.txt
+type j
+type l
+key ctrl+v
+type jjlu
+key esc
+command file.save
+expect file b3.txt contains "top\nAbcD\nEfgH\nIjkL\nMNOP\n"
+
+write b4.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b4.txt
+key :
+type set noet ts=8
+key enter
+type j
+key ctrl+v
+type jj>
+key esc
+command file.save
+expect file b4.txt contains "top\n\tabcd\n\tefgh\n\tijkl\nmnop\n"
+
+write b5.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b5.txt
+key :
+type set noet ts=8
+key enter
+type j
+type l
+key ctrl+v
+type jj>
+key esc
+command file.save
+expect file b5.txt contains "top\na\t bcd\ne\t fgh\ni\t jkl\nmnop\n"
+
+write b6.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b6.txt
+key :
+type set noet ts=8
+key enter
+type j
+key ctrl+v
+type jj2>
+key esc
+command file.save
+expect file b6.txt contains "top\n\t\tabcd\n\t\tefgh\n\t\tijkl\nmnop\n"
+
+write b7.txt "top\na\t bcd\ne\t fgh\nijkl\nmnop\n"
+open b7.txt
+key :
+type set noet ts=8
+key enter
+type j
+type l
+key ctrl+v
+type j<
+key esc
+command file.save
+expect file b7.txt contains "top\nabcd\nefgh\nijkl\nmnop\n"
+
+write b7s.txt "top\na          bcd\ne   fgh\nijkl\n"
+open b7s.txt
+key :
+type set noet ts=8
+key enter
+type j
+type l
+key ctrl+v
+type j<
+key esc
+command file.save
+expect file b7s.txt contains "top\na  bcd\nefgh\nijkl\n"
+
+write b8.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b8.txt
+type j
+key ctrl+v
+type jjJ
+key esc
+command file.save
+expect file b8.txt contains "top\nabcd efgh ijkl\nmnop\n"
+
+write b9.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b9.txt
+type j
+key ctrl+v
+type jjJu
+key esc
+command file.save
+expect file b9.txt contains "top\nabcd\nefgh\nijkl\nmnop\n"
+
+write b10.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b10.txt
+type j
+type l
+key ctrl+v
+type jlohd
+key esc
+command file.save
+expect file b10.txt contains "top\nd\nh\nijkl\nmnop\n"
+
+write b11.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b11.txt
+type j
+type l
+key ctrl+v
+type jlOld
+key esc
+command file.save
+expect file b11.txt contains "top\nabd\nefh\nijkl\nmnop\n"
+
+write b12.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b12.txt
+type j
+type l
+key ctrl+v
+type jjlo
+key esc
+type x
+key esc
+command file.save
+expect file b12.txt contains "top\nacd\nefgh\nijkl\nmnop\n"
+
+write b13.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b13.txt
+type j
+type l
+key ctrl+v
+type jjlO
+key esc
+type x
+key esc
+command file.save
+expect file b13.txt contains "top\nabcd\nefgh\nikl\nmnop\n"
+
+write b14.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b14.txt
+type j
+type l
+key ctrl+v
+type jjU.
+key esc
+command file.save
+expect file b14.txt contains "top\naBcd\neFgh\niJkl\nmnop\n"
+
+write b15.txt "top\nabcd\nefgh\nijkl\nmnop\n"
+open b15.txt
+key :
+type set noet ts=8
+key enter
+type j
+type l
+key ctrl+v
+type jj>j.
+key esc
+command file.save
+expect file b15.txt contains "top\na\t bcd\ne\t\t fgh\ni\t\t jkl\nm\t nop\n"

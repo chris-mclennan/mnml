@@ -692,7 +692,15 @@ pub const Tree = struct {
                     self.cursor = n -| 1;
                     try self.previewCursor(app);
                 },
-                'l', ' ' => try self.expandOrOpen(app),
+                'l' => try self.expandOrOpen(app),
+                // Space is the vim profile's leader in the tree as in
+                // every window (NvChad: nvim-tree maps no `<Space>`, so
+                // `Space f f` from the tree is Telescope's): the chord
+                // chain arms it. The standard profile opens the row.
+                ' ' => {
+                    if (app.input_style == .vim) return false;
+                    try self.expandOrOpen(app);
+                },
                 'h' => try self.collapseOrParent(app),
                 'o' => try self.activate(app, self.cursor),
                 // nvim-tree's verbs under vim (its default `on_attach`:

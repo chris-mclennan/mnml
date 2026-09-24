@@ -1,0 +1,64 @@
+# `[(` `[{` go back to the unmatched opener, `])` `]}` on to the
+# unmatched closer (`:help [(`), with a count, and as an operator's
+# exclusive target. Neovim 0.12.5 (`nvim --clean`) on the body below:
+#   3G[{iX   -> "    if (x) X{"          3G]}iX  -> "    X}"
+#   3Gf1[(iX -> "        yX(1, 2);"      3Gf1])iX -> "        y(1, 2X);"
+#   3Gf1d])  -> "        y();"           3Gf2c[(Q -> "        yQ2);"
+#   4G2[{iX  -> "fn a() void X{"         3Gd]}   -> "    if (x) {" / "}" / "}"
+command editor.use_vim
+write t1.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t1.txt
+type 3G[{iX
+key esc
+command file.save
+expect file t1.txt contains "    if (x) X{\n"
+
+write t2.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t2.txt
+type 3G]}iX
+key esc
+command file.save
+expect file t2.txt contains "    X}\n"
+
+write t3.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t3.txt
+type 3Gf1[(iX
+key esc
+command file.save
+expect file t3.txt contains "        yX(1, 2);\n"
+
+write t4.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t4.txt
+type 3Gf1])iX
+key esc
+command file.save
+expect file t4.txt contains "        y(1, 2X);\n"
+
+write t5.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t5.txt
+type 3Gf1d])
+key esc
+command file.save
+expect file t5.txt contains "        y();\n"
+
+write t6.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t6.txt
+type 3Gf2c[(Q
+key esc
+command file.save
+expect file t6.txt contains "        yQ2);\n"
+
+write t7.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t7.txt
+type 4G2[{iX
+key esc
+command file.save
+expect file t7.txt contains "fn a() void X{\n"
+
+write t8.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open t8.txt
+type 3Gd]}
+key esc
+command file.save
+expect file t8.txt contains "    if (x) {\n}\n}\n"
+

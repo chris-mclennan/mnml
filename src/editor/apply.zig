@@ -30,6 +30,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             // `count` puts (`:help p`); the op stays a `repeat` so
             // `{count}.` can still replace the count.
             if (register.isPut(r.inner.*)) return register.putRepeated(ed, r.inner.*, r.count, clip, out);
+            // `2di{`: the count-th enclosing pair, not the object twice.
+            switch (r.inner.*) {
+                .select_inner_bracket => |b| return select.bracketCount(ed, b, false, r.count),
+                .select_around_bracket => |b| return select.bracketCount(ed, b, true, r.count),
+                else => {},
+            }
             // `{count}dd` past the end takes what is there (`:help dd`),
             // never a line above the one it started on.
             const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
@@ -109,6 +115,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_up_first_non_ws => motion.upFirstNonWs(ed),
         .move_line_last_non_ws => motion.lineLastNonWs(ed),
         .move_paragraph => |p| motion.paragraph(ed, p.forward),
+        .move_to_unmatched => |u| motion.toUnmatched(ed, u.open, u.forward),
         .move_sentence => |p| motion.sentence(ed, p.forward),
         .move_line_end => {
             motion.lineEnd(ed);
@@ -122,6 +129,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_buffer_start => motion.bufferStart(ed),
         .move_buffer_end => motion.bufferEnd(ed),
         .move_to_line => |n| motion.toLine(ed, n),
+        .move_to_line_keep_col => |n| motion.toLineKeepCol(ed, n),
         .move_to_col => |n| motion.toCol(ed, n),
         .set_cursor_byte => |b| motion.setCursorByte(ed, b),
         .find_char_on_line => |f| motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat),
@@ -168,6 +176,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .abort_unless_selection => if (ed.anchor == null) {
             out.aborted = true;
         },
+        .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
+        .if_lines_object => |c| for (if (ed.object_lines) c.lines else c.chars) |o| try applyOne(ed, o, vp, clip, out),
 
         // ── multi-cursor / block ──
         .add_cursor_below => try mc.addCursorBelow(ed),
@@ -192,6 +202,14 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .backspace => try delete.backspace(ed, out),
         .delete_forward => try delete.deleteForward(ed, out),
         .delete_word_left => try delete.deleteWordLeft(ed, out),
+        .delete_word_left_in_insert => try delete.deleteBackInInsert(ed, .word, out),
+        .block_case => |k| try block.transformCase(ed, k, out),
+        .block_shift => |s| try block.shift(ed, s.left, s.count, out),
+        .block_join => |j| try block.join(ed, j.keep_space, out),
+        .block_other_end_of_row => block.otherEndOfRow(ed),
+        .replace_chars_with_newline => |n| try line.replaceCharsWithNewline(ed, n, out),
+        .undo_line => try line.undoLine(ed, out),
+        .delete_to_line_start_in_insert => try delete.deleteBackInInsert(ed, .line, out),
         .delete_word_right => try delete.deleteWordRight(ed, out),
         .delete_to_line_start => try delete.deleteToLineStart(ed, out),
         .delete_to_line_end => try delete.deleteToLineEnd(ed, out),
@@ -366,7 +384,10 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .block_select_start,                                                    .block_select_clear,                                    .yank_block,                                                                                                     .delete_block,
         .{ .surround_selection = .{ .open = '(', .close = ')', .pad = true } }, .{ .delete_surround = '"' },                            .{ .change_surround = .{ .from = '(', .to = '[' } },                                                             .{ .delete_surround = 't' },
         .toggle_line_comment,                                                   .{ .change_number_at_cursor = .{ .delta = 3 } },        .{ .reflow_paragraph = .{ .width = 12 } },                                                                       .{ .align_selection = .{ .on_char = '(' } },
-        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },
+        .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
+        .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
+        .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
+        .undo_line,
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

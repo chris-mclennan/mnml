@@ -1,0 +1,62 @@
+# `i{` over a body whose `{` ends its line and whose `}` has only indent
+# before it is whole lines (`:help i{`): `di{` / `vi{d` keep the braces
+# on their own lines, `ci{` leaves one indented line to type on, `>i{`
+# shifts only the body, a count takes the enclosing block, and `V` after
+# `va{` is every line the block touches. Neovim 0.12.5 (`nvim --clean`,
+# `set sw=4 et`) on the file below:
+#   3Gdi{       -> fn a() void { / if (x) { / } / }  (the if's body gone)
+#   3Gci{X<Esc> -> …if (x) { / "        X" / "    }" …
+#   3G2di{      -> fn a() void { / }
+#   3G>i{       -> only y(1, 2); and z(); shifted
+#   3Gva{Vd     -> fn a() void { / }
+#   3Gyi{Gp     -> the two body lines pasted below the last line
+command editor.use_vim
+write a.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open a.txt
+type 3Gdi{
+command file.save
+expect file a.txt contains "fn a() void {\n    if (x) {\n    }\n}\n"
+
+write b.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open b.txt
+type 3Gci{X
+key esc
+command file.save
+expect file b.txt contains "fn a() void {\n    if (x) {\n        X\n    }\n}\n"
+
+write c.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open c.txt
+type 3G2di{
+command file.save
+expect file c.txt contains "fn a() void {\n}\n"
+
+write d.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open d.txt
+type 3G>i{
+command file.save
+expect file d.txt contains "fn a() void {\n    if (x) {\n            y(1, 2);\n            z();\n    }\n}\n"
+
+write e.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open e.txt
+type 3Gva{Vd
+command file.save
+expect file e.txt contains "fn a() void {\n}\n"
+
+write f.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open f.txt
+type 3Gvi{d
+command file.save
+expect file f.txt contains "fn a() void {\n    if (x) {\n    }\n}\n"
+
+write g.txt "fn a() void {\n    if (x) {\n        y(1, 2);\n        z();\n    }\n}\n"
+open g.txt
+type 3Gyi{Gp
+command file.save
+expect file g.txt contains "    }\n}\n        y(1, 2);\n        z();\n"
+
+# `.` picks the shape again at the new cursor.
+write h.txt "a {\n    one\n}\nb {\n    two\n}\n"
+open h.txt
+type 2Gdi{4G.
+command file.save
+expect file h.txt contains "a {\n}\nb {\n}\n"

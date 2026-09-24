@@ -29,7 +29,10 @@ key k
 expect screen contains "Ln 12/13 Col 6"
 key j
 expect screen contains "Ln 13/13 Col 22"
+# `6G` keeps the `$` column the cursor wants (`nostartofline`), so the
+# Ctrl-F onto the last line lands on its last char again — Neovim
+# 0.12.5 (`nvim --clean`): 13:22.
 key 6
 key G
 key ctrl+f
-expect screen contains "Ln 13/13 Col 1"
+expect screen contains "Ln 13/13 Col 22"

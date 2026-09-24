@@ -4300,7 +4300,8 @@ test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one 
     // that panicked (`text[comp.start..cursor]`, cursor < start) paints.
     try app.handle(.{ .key = Key.char('g') });
     try app.handle(.{ .key = Key.char('g') });
-    try testing.expectEqual(@as(usize, 0), ed.cursor);
+    // Line 1, in the column the cursor wanted (`nostartofline`).
+    try testing.expectEqual(@as(usize, 0), ed.currentLine());
     try app.render();
     try testing.expect(app.lsp.completion == null);
 

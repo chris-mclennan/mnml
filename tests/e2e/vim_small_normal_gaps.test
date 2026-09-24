@@ -1,0 +1,86 @@
+# Three small Normal-mode gaps: `r<CR>` splits the line (`{n}r<CR>`
+# replaces n characters with ONE line break), `J` adds no space before
+# an empty line or a `)`, and `U` puts back the line the latest changes
+# were made on — itself undoable, and `U` again redoes them.
+# Every expectation is Neovim 0.12.5's (`nvim --clean`, the keys fed as
+# typed), on "one two-three four / five six / (empty) / seven", each
+# file behind a `top` line.
+command editor.use_vim
+write a.txt "top\none two-three four\nfive six\n\nseven\n"
+open a.txt
+type jw
+type r
+key enter
+command file.save
+expect file a.txt contains "top\none \nwo-three four\nfive six\n"
+expect screen contains "Ln 3/6 Col 1"
+
+write b.txt "top\none two-three four\nfive six\n\nseven\n"
+open b.txt
+type jw2r
+key enter
+command file.save
+expect file b.txt contains "top\none \no-three four\n"
+
+# Fewer characters left than the count: nothing changes.
+write c.txt "top\nab\n"
+open c.txt
+type jl5r
+key enter
+command file.save
+expect file c.txt contains "top\nab\n"
+
+write d.txt "top\none two-three four\nfive six\n\nseven\n"
+open d.txt
+type j3J
+command file.save
+expect file d.txt contains "top\none two-three four five six\nseven\n"
+
+write e.txt "top\none two-three four\nfive six\n\nseven\n"
+open e.txt
+type j4J
+command file.save
+expect file e.txt contains "top\none two-three four five six seven\n"
+
+write f.txt "top\nab\n)cd\n"
+open f.txt
+type jJ
+command file.save
+expect file f.txt contains "top\nab)cd\n"
+
+write g.txt "top\none two-three four\nfive six\n\nseven\n"
+open g.txt
+type jxxxU
+command file.save
+expect file g.txt contains "top\none two-three four\nfive six\n"
+
+write h.txt "top\none two-three four\nfive six\n\nseven\n"
+open h.txt
+type jxxxUU
+command file.save
+expect file h.txt contains "top\n two-three four\nfive six\n"
+
+# `U` goes to the line it restores.
+write i.txt "top\none two-three four\nfive six\n\nseven\n"
+open i.txt
+type jxjxkU
+command file.save
+expect file i.txt contains "top\nne two-three four\nfive six\n"
+expect screen contains "Ln 3/5 Col 1"
+
+# And `u` takes the `U` back.
+write k.txt "top\none two-three four\nfive six\n\nseven\n"
+open k.txt
+type jxxxUu
+command file.save
+expect file k.txt contains "top\n two-three four\nfive six\n"
+
+# `r<CR>` is one change: one `u` takes it back.
+write m.txt "top\none two-three four\nfive six\n"
+open m.txt
+type jw
+type r
+key enter
+type u
+command file.save
+expect file m.txt contains "top\none two-three four\nfive six\n"

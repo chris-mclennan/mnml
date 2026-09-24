@@ -135,6 +135,46 @@ pub fn deleteWordLeft(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     out.buffer_changed = true;
 }
 
+/// vim's Insert `Ctrl-W` (`.word`) / `Ctrl-U` (`.line`), with
+/// 'backspace' at Neovim's `indent,eol,start`: at a line start the line
+/// break goes; otherwise `Ctrl-W` takes the word before the cursor on
+/// its line and `Ctrl-U` goes back to the indent, or from inside the
+/// indent to the line start. Either stops once at the Insert start —
+/// what this Insert typed goes first, and the next press carries on
+/// into the text that was there (`:help i_CTRL-U`).
+pub fn deleteBackInInsert(ed: *Editor, what: enum { word, line }, out: *EditOutcome) Allocator.Error!void {
+    if (try deleteSelectionIfAny(ed, out)) return;
+    // Several cursors: each deletes back as the plain ops do (no Insert
+    // start is kept per cursor).
+    switch (what) {
+        .word => if (try deleteRangeAllIfMulti(ed, wordLeftRange, out)) return,
+        .line => if (try deleteRangeAllIfMulti(ed, toLineStartRange, out)) return,
+    }
+    const cur = ed.cursor;
+    if (cur == 0) return;
+    const line = ed.currentLine();
+    const bol = ed.lineStart(line);
+    var target: usize = if (cur == bol) ed.prevBoundary(cur) else switch (what) {
+        .word => @max(motion.wordLeftFrom(ed, cur), bol),
+        .line => blk: {
+            const indent_end = ed.firstNonWs(line);
+            break :blk if (cur > indent_end) indent_end else bol;
+        },
+    };
+    if (ed.insert_start) |s| if (cur > s and target < s) {
+        target = s;
+    };
+    if (target >= cur) return;
+    try ed.checkpoint();
+    try ed.splice(target, cur, "");
+    ed.cursor = target;
+    // Past the start: the text before it is this Insert's to take now.
+    if (ed.insert_start) |s| if (s > target) {
+        ed.insert_start = target;
+    };
+    out.buffer_changed = true;
+}
+
 pub fn deleteWordRight(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (try deleteSelectionIfAny(ed, out)) return;
     if (try deleteRangeAllIfMulti(ed, wordRightRange, out)) return;
@@ -170,6 +210,9 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
     const line = ed.currentLine();
     const start = ed.lineStart(line);
     const end = ed.lineEnd(line);
+    // The column the cursor wants, read once: a counted `3dd` lands on
+    // it too, not on where a short line in between clamped it.
+    const gc = ed.goalCol();
     const yanked = try std.mem.concat(ed.gpa, u8, &.{ ed.doc.text.items[start..end], "\n" });
     defer ed.gpa.free(yanked);
     try clip.pushDelete(yanked, true);
@@ -189,6 +232,10 @@ pub fn deleteLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
         try ed.splice(0, ed.len(), "");
         ed.cursor = 0;
     }
+    // The line that takes its place keeps that column, clamped to it —
+    // vim's `nostartofline` (Neovim's default, `:help 'sol'`) and VS
+    // Code's Ctrl+Shift+K alike.
+    ed.cursor = ed.byteAtVcol(ed.currentLine(), gc);
     out.buffer_changed = true;
 }
 

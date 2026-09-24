@@ -1,0 +1,67 @@
+# `:[range]j[oin][!] [count]` joins lines as `J` does (`!` as `gJ`); a
+# single line joins with the next, a count joins that many from the
+# range's last line (`:help :join`). Neovim 0.12.5 (`nvim --clean -c`)
+# on one two / three four / five six / seven:
+#   :j      -> one two three four / five six / seven
+#   :2,3j   -> one two / three four five six / seven   (:2,3join the same)
+#   :j3     -> one two three four five six / seven
+#   :2j!    -> one two / three fourfive six / seven
+#   :%j     -> one two three four five six seven
+#   :2,4j!  -> one two / three fourfive sixseven
+command editor.use_vim
+write j1.txt "one two\nthree four\nfive six\nseven\n"
+open j1.txt
+key :
+type j
+key enter
+command file.save
+expect file j1.txt contains "one two three four\nfive six\nseven\n"
+
+write j2.txt "one two\nthree four\nfive six\nseven\n"
+open j2.txt
+key :
+type 2,3j
+key enter
+command file.save
+expect file j2.txt contains "one two\nthree four five six\nseven\n"
+
+write j3.txt "one two\nthree four\nfive six\nseven\n"
+open j3.txt
+key :
+type 2,3join
+key enter
+command file.save
+expect file j3.txt contains "one two\nthree four five six\nseven\n"
+
+write j4.txt "one two\nthree four\nfive six\nseven\n"
+open j4.txt
+key :
+type j3
+key enter
+command file.save
+expect file j4.txt contains "one two three four five six\nseven\n"
+
+write j5.txt "one two\nthree four\nfive six\nseven\n"
+open j5.txt
+key :
+type 2j!
+key enter
+command file.save
+expect file j5.txt contains "one two\nthree fourfive six\nseven\n"
+
+write j6.txt "one two\nthree four\nfive six\nseven\n"
+open j6.txt
+key :
+type %j
+key enter
+command file.save
+expect file j6.txt contains "one two three four five six seven\n"
+
+write j7.txt "one two\nthree four\nfive six\nseven\n"
+open j7.txt
+key :
+type 2,4j!
+key enter
+command file.save
+expect file j7.txt contains "one two\nthree fourfive sixseven\n"
+

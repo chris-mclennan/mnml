@@ -48,6 +48,9 @@ pub const EditOp = union(enum) {
     move_up_first_non_ws,
     move_line_last_non_ws,
     move_paragraph: struct { forward: bool },
+    /// `[(` `[{` back to the enclosing unmatched opener, `])` `]}` on to
+    /// the unmatched closer (`:help [(`); `open` names the pair.
+    move_to_unmatched: struct { open: u21, forward: bool },
     move_sentence: struct { forward: bool },
     move_line_end,
     move_line_last_char,
@@ -60,6 +63,10 @@ pub const EditOp = union(enum) {
     move_buffer_end,
     /// 1-based line (`3G`); 0 and 1 both mean the first line.
     move_to_line: usize,
+    /// vim's `G` / `gg` / `{count}G` under `nostartofline` (Neovim's and
+    /// NvChad's default, `:help 'sol'`): the line, at the column the
+    /// cursor wants (the goal column, kept). 1-based; 0 = the last line.
+    move_to_line_keep_col: usize,
     /// 1-based column in chars (`5|`).
     move_to_col: usize,
     set_cursor_byte: usize,
@@ -122,6 +129,21 @@ pub const EditOp = union(enum) {
     /// `ci(` stays in Normal and records nothing for `.`.
     abort_unless_selection,
     find_char_on_line: struct { ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool },
+    /// vim `gn` / `gN`: select the find match the cursor is on, else the
+    /// next (previous) one — resolved when the op is APPLIED, so `.`
+    /// after `cgn` reaches the match after the one it changed rather
+    /// than the bytes the first one sat at. It reads the matches the app
+    /// seeded (`Editor.find_next` / `find_prev`); none found abandons
+    /// the rest of the list, as `abort_unless_selection` does.
+    /// `inclusive`: the cursor ends ON the match's last char (Visual);
+    /// `extend`: the selection's anchor stays where it is (`v…gn`).
+    select_find_match: struct { forward: bool, inclusive: bool = false, extend: bool = false },
+    /// After a bracket object: `lines` when it chose whole lines
+    /// (`Editor.object_lines` — `i{` over a body whose `{` ends its line
+    /// and whose `}` has only indent before it, `:help i{`), else `chars`.
+    /// The operator's two shapes, picked when the op is applied so `.`
+    /// picks again. Slices point into the frame arena like `atomic`'s.
+    if_lines_object: struct { lines: []const EditOp, chars: []const EditOp },
 
     // ── multi-cursor / block ──
     add_cursor_below,
@@ -151,6 +173,14 @@ pub const EditOp = union(enum) {
     delete_word_right,
     delete_to_line_start,
     delete_to_line_end,
+    /// vim's Insert `Ctrl-W`: the word before the cursor, on its line
+    /// (at a line start, the line break), stopping once at the Insert
+    /// start (`Editor.insert_start`, `:help i_CTRL-W`).
+    delete_word_left_in_insert,
+    /// vim's Insert `Ctrl-U`: back to the indent, or from within the
+    /// indent to the line start (at a line start, the line break),
+    /// stopping once at the Insert start (`:help i_CTRL-U`).
+    delete_to_line_start_in_insert,
     delete_line,
     delete_selection,
     replace_selection: []const u8,
@@ -177,6 +207,23 @@ pub const EditOp = union(enum) {
     duplicate_line,
     join_lines: struct { keep_space: bool },
     transform_selection_case: CaseTransform,
+    /// Visual block `U` / `u` / `~`: the case inside the rectangle.
+    block_case: CaseTransform,
+    /// Visual block `>` / `<`: shift every row from the block's left
+    /// edge by `count` shift widths.
+    block_shift: struct { left: bool, count: u32 },
+    /// Visual block `J` / `gJ`: join the rows the block spans.
+    block_join: struct { keep_space: bool },
+    /// Visual block `O`: the cursor to the other end of its row.
+    block_other_end_of_row,
+    /// vim's `{n}r<CR>`: the `n` characters from the cursor become one
+    /// line break (the new line takes the indent); fewer than `n` left
+    /// on the line and nothing changes.
+    replace_chars_with_newline: u32,
+    /// vim's `U` (`:help U`): the line the latest changes were made on
+    /// back as it was before them — itself a change, so `U` again puts
+    /// them back.
+    undo_line,
     toggle_case_char,
     change_number_at_cursor: struct { delta: i64 },
     /// `v_CTRL-A` / `v_CTRL-X`: the first number on every selected line;
@@ -209,7 +256,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 146);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 158);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -219,11 +266,12 @@ pub const EditOp = union(enum) {
             .atomic => |ops| for (ops) |o| {
                 if (o.isMutation()) break true;
             } else false,
+            .if_lines_object => |c| anyOf(c.lines, isMutation) or anyOf(c.chars, isMutation),
             // motions
-            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
+            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_line_keep_col, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
-            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .find_char_on_line => false,
-            .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .block_eol, .yank_block => false,
+            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .find_char_on_line, .select_find_match => false,
+            .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .block_select_start, .block_select_clear, .block_eol, .yank_block, .block_other_end_of_row => false,
             .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .undo, .redo, .replace_session_begin => false,
             else => true,
         };
@@ -232,7 +280,7 @@ pub const EditOp = union(enum) {
     /// Vertical motions keep the goal column; everything else resets it.
     pub fn preservesGoalCol(op: EditOp) bool {
         return switch (op) {
-            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws, .move_to_line_keep_col => true,
             .repeat => |r| r.inner.preservesGoalCol(),
             .atomic => |ops| for (ops) |o| {
                 if (!o.preservesGoalCol()) break false;
@@ -259,8 +307,33 @@ pub const EditOp = union(enum) {
             .atomic => |ops| for (ops) |o| {
                 if (o.touchesClipboard()) break true;
             } else false,
+            .if_lines_object => |c| anyOf(c.lines, touchesClipboard) or anyOf(c.chars, touchesClipboard),
             else => false,
         };
+    }
+
+    fn anyOf(list: []const EditOp, comptime pred: fn (EditOp) bool) bool {
+        for (list) |o| if (pred(o)) return true;
+        return false;
+    }
+
+    fn dupeList(list: []const EditOp, gpa: Allocator) Allocator.Error![]const EditOp {
+        const copy = try gpa.alloc(EditOp, list.len);
+        var n: usize = 0;
+        errdefer {
+            for (copy[0..n]) |o| o.free(gpa);
+            gpa.free(copy);
+        }
+        for (list) |o| {
+            copy[n] = try o.dupe(gpa);
+            n += 1;
+        }
+        return copy;
+    }
+
+    fn freeList(list: []const EditOp, gpa: Allocator) void {
+        for (list) |o| o.free(gpa);
+        gpa.free(list);
     }
 
     /// The count a `{count}.` replaces: a `repeat`'s, or a counted
@@ -307,6 +380,11 @@ pub const EditOp = union(enum) {
                 }
                 break :blk .{ .atomic = copy };
             },
+            .if_lines_object => |c| blk: {
+                const lines = try dupeList(c.lines, gpa);
+                errdefer freeList(lines, gpa);
+                break :blk .{ .if_lines_object = .{ .lines = lines, .chars = try dupeList(c.chars, gpa) } };
+            },
             else => op,
         };
     }
@@ -324,6 +402,10 @@ pub const EditOp = union(enum) {
             .atomic => |ops| {
                 for (ops) |o| o.free(gpa);
                 gpa.free(ops);
+            },
+            .if_lines_object => |c| {
+                freeList(c.lines, gpa);
+                freeList(c.chars, gpa);
             },
             else => {},
         }

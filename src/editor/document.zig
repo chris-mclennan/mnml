@@ -378,6 +378,12 @@ pub const Document = struct {
 
     /// Mark `letter`'s (row, char col), or null when it is not set.
     pub fn markPos(self: *const Document, letter: u8) ?Pos {
+        // `'.` / `` `. ``: where the last change was made (`:help '.`) —
+        // the newest entry of the change list `g;` walks.
+        if (letter == '.') {
+            const items = self.change_list.items;
+            return if (items.len == 0) null else items[items.len - 1];
+        }
         const b = self.marks.get(letter) orelse return null;
         return self.rowColAt(@min(b, self.text.items.len));
     }

@@ -46,6 +46,7 @@ const cmd_find = @import("cmd_find.zig");
 const cmd_file = @import("cmd_file.zig");
 const cmd_tab = @import("cmd_tab.zig");
 const macros_store = @import("macros_store.zig");
+const macro_replay = @import("macro_replay.zig");
 const marks_store = @import("marks_store.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const icon_picker = @import("icon_picker.zig");
@@ -149,6 +150,23 @@ const flash = @import("flash.zig");
 /// One key. The cursor is snapshotted around it so a big jump lands on
 /// the jumplist (`jumplist.afterKey`).
 pub fn key(app: *App, k: Key) Allocator.Error!void {
+    // A recording takes every typed key, wherever it goes: the buffer
+    // records the ones it is fed; one the find bar, the `:` line or an
+    // overlay took is added here. The `q` that stops a recording and
+    // the `q<reg>` that starts one are nobody's.
+    app.key_failed = false;
+    const rec: ?PaneId = if (app.active) |id| (if (app.panes.editor(id)) |e| (if (e.buf.isRecording()) id else null) else null) else null;
+    const fed_before: u64 = if (rec) |id| app.panes.editor(id).?.buf.keys_fed else 0;
+    try keyUnrecorded(app, k);
+    if (rec) |id| if (app.panes.editor(id)) |e| {
+        if (e.buf.isRecording() and e.buf.keys_fed == fed_before) try e.buf.recordKey(k);
+    };
+}
+
+/// One key, as typed, minus the macro recording — what a replay feeds.
+pub fn keyUnrecorded(app: *App, k: Key) Allocator.Error!void {
+    app.key_depth += 1;
+    defer app.key_depth -= 1;
     const before = try jumplist.snapshot(app);
     try keyInner(app, k);
     try jumplist.afterKey(app, before);
@@ -271,7 +289,7 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
             .jobs => false,
         };
         if (took) return;
-        _ = try chordChain(app, k);
+        try unclaimedKey(app, k);
         return;
     }
 
@@ -288,137 +306,145 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     if (app.focus == .welcome) app.focus = if (app.active) |a| .{ .pane = a } else .tree;
 
     const pane_id = app.active;
+    // A non-editor pane is a window to vim's `Ctrl-W` family: the key
+    // after an unclaimed `Ctrl-W` (`unclaimedKey`) names the verb, ahead
+    // of the pane's own use of it (`h` is not the pane's here).
+    if (app.pane_ctrl_w_pending) {
+        app.pane_ctrl_w_pending = false;
+        if (paneCtrlWCommand(k)) |id| try runCmd(app, id);
+        return;
+    }
     // The non-editor panes take their own keys first.
     if (pane_id) |id| if (app.panes.get(id)) |p| switch (p.*) {
         .pty => |*term| return ptyKey(app, id, term, k),
         .outline => {
             if (try outline.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .md_preview => {
             if (try md_preview.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .zon => {
             if (try zon_pane.handleKey(app, id, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .cheatsheet => |*c| {
             if (try cheatsheet.handleKey(app, c, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .script => |*s| {
             if (try script_pane.handleKey(app, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .list => |*l| {
             if (try listPaneKey(app, id, l, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .git_status => |*s| {
             if (try git_app.statusPaneKey(app, id, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .diff => |*d| {
             if (try git_app.diffKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .git_graph => |*g| {
             if (try git_app.graphKey(app, id, g, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai => |*a| {
             if (try ai_app.paneKey(app, id, a, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .sessions_table => |*tp| {
             if (try sessions_table.handleKey(app, id, tp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .spend_report => |*s| {
             if (try spend.handleKey(app, id, s, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai_usage => |*u| {
             if (try usage_pane.handleKey(app, id, u, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .grep => |*g| {
             if (try grep.handleKey(app, id, g, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .debug => |*d| {
             if (try dap.debugKey(app, id, d, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .request => |*rp| {
             if (try request_pane.handleKey(app, id, rp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .websocket => |*w| {
             if (try ws_pane.handleKey(app, id, w, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .browser => |*b| {
             if (try browser_pane.handleKey(app, id, b, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .mount => |*mp| {
             if (try mount_pane.handleKey(app, id, mp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .integrations => |*ip| {
             if (try integrations.paneKey(app, id, ip, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .ai_apply => |*ap| {
             if (try ai_apply.handleKey(app, id, ap, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .tests => |*tp| {
             if (try tests_pane.handleKey(app, id, tp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .flaky => |*fp| {
             if (try flaky.handleKey(app, id, fp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .requests => |*rp| {
             if (try requests_pane.handleKey(app, id, rp, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .files => |*f| {
             if (try files_pane.handleKey(app, id, f, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .image => |*im| {
             if (try image_pane.handleKey(app, id, im, k)) return;
-            _ = try chordChain(app, k);
+            try unclaimedKey(app, k);
             return;
         },
         .editor => {},
@@ -469,7 +495,12 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // The vim `:` line's completion popup owns the arrows and Esc while
     // it shows (`app/cmdline_popup.zig`); Tab reaches it through the
     // handler's own seams.
-    if (cmdline_open and try cmdline_popup.interceptKey(app, k)) return;
+    // Esc is the exception: it abandons the vim line whatever the popup
+    // shows (`:help c_<Esc>`; Neovim's wildmenu / pum never holds the
+    // line open), so the next keys are Normal mode's, not the line's.
+    if (cmdline_open and k.code == .esc) {
+        cmdline_popup.dismiss(app);
+    } else if (cmdline_open and try cmdline_popup.interceptKey(app, k)) return;
     if (try snippets.interceptKey(app, pane_id.?, e, k)) return;
     const consumed = try feedEditor(app, pane_id.?, e, k);
     if (!consumed and editor_first) _ = try chordChain(app, k);
@@ -477,6 +508,64 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
     // follows it. `e` is stale after an app command; ask afresh.
     const now_open = if (app.activeEditor()) |still| still.buf.input.isCmdlineOpen() else false;
     if (cmdline_open or now_open) try cmdline_popup.refresh(app);
+}
+
+/// A key the focused pane or panel did not take. To a vim user every
+/// window is a window: a plain `:` nobody claimed opens the app's
+/// command line (`:help :`) — terminal-normal, the git status pane, the
+/// graph, the cheatsheet, a sidebar section — so the letters typed after
+/// it are the command's and never the pane's single-key verbs (`c` of
+/// `:e` opening the commit box). A pane that types text (a filter, a
+/// prompt field) has already taken its `:`. Anything else is a chord.
+fn unclaimedKey(app: *App, k: Key) Allocator.Error!void {
+    const bare = !k.mods.ctrl and !k.mods.alt and !k.mods.super;
+    if (app.input_style == .vim and bare and k.typed() == ':') {
+        app.chord.clear(app.gpa);
+        cmdline_mod.open(app);
+        return;
+    }
+    // `Ctrl-W` nobody took arms the window chord; the next key is its.
+    if (side.isCtrlW(app, k) and app.focus == .pane) {
+        app.pane_ctrl_w_pending = true;
+        return;
+    }
+    _ = try chordChain(app, k);
+}
+
+/// The second key of `Ctrl-W` from a non-editor pane: the window verbs
+/// the editor's `Ctrl-W` has (`:help CTRL-W`).
+fn paneCtrlWCommand(k: Key) ?command.CommandId {
+    const c: u21 = switch (k.code) {
+        .char => |ch| if (k.mods.ctrl and ch < 0x80) std.ascii.toLower(@intCast(ch)) else ch,
+        .left => 'h',
+        .right => 'l',
+        .down => 'j',
+        .up => 'k',
+        else => return null,
+    };
+    return switch (c) {
+        'w' => .@"view.focus_next_split",
+        'W' => .@"view.focus_prev_split",
+        'p' => .@"view.focus_previous",
+        't' => .@"view.focus_top",
+        'b' => .@"view.focus_bottom",
+        'h' => .@"view.focus_left",
+        'j' => .@"view.focus_down",
+        'k' => .@"view.focus_up",
+        'l' => .@"view.focus_right",
+        'D' => .@"view.focus_dock",
+        'q', 'c' => .@"view.close_split",
+        'o' => .@"view.only",
+        's' => .@"view.split_down",
+        'v' => .@"view.split_right",
+        'H' => .@"view.move_split_left",
+        'J' => .@"view.move_split_down",
+        'K' => .@"view.move_split_up",
+        'L' => .@"view.move_split_right",
+        '=' => .@"view.equalize_splits",
+        'r' => .@"view.rotate_splits",
+        else => null,
+    };
 }
 
 /// The list panes: j/k move, enter acts, esc closes the pane.
@@ -588,7 +677,7 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
         // `/`, `n`, `N`: the scrollback search (`pty_search.zig`).
         if (try pty_search.termNormalKey(app, id, p, k)) return;
         if (try pty_pane.termNormalKey(app, p, k)) return;
-        _ = try chordChain(app, k);
+        try unclaimedKey(app, k);
         return;
     }
     if (pty_pane.escapeKey(app, p, k)) return;
@@ -610,9 +699,13 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const had_mark: bool = if (mark != null and mark_key != null) e.buf.doc.marks.contains(mark_key.?) else false;
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
-    const wrap_width = beforeBufferInput(app, e);
+    const wrap_width = try beforeBufferInput(app, e);
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
+    if (e.buf.jumped) jumplist.noteJumpMotion(app);
+    // A motion that could not move, a text object that found nothing:
+    // a replaying macro stops here (`:help q`).
+    if (e.buf.key_failed) app.key_failed = true;
     switch (ev) {
         .unhandled => {
             try afterBufferEvent(app, pane_id, e, ev, was_recording);
@@ -657,8 +750,8 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
 /// What the buffer needs from the app before a key or a runner's app
 /// command reaches it: the `gn` matches, the text-object seam, and the
 /// wrap width for page motions.
-fn beforeBufferInput(app: *App, e: *EditorPane) ?usize {
-    cmd_find.seedCtxMatches(e);
+fn beforeBufferInput(app: *App, e: *EditorPane) Allocator.Error!?usize {
+    try cmd_find.seedCtxMatches(e);
     app.attachSeams(e);
     return if (e.wrap orelse app.cfg.ui.wrap) app.pane_cols else null;
 }
@@ -693,7 +786,7 @@ fn afterBufferEvent(app: *App, pane_id: PaneId, e: *EditorPane, ev: input.Buffer
 /// chip): the same road a key's `.app` result takes, without a key.
 pub fn runBufferApp(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.AppCommand) Allocator.Error!void {
     const was_recording = e.buf.isRecording();
-    const wrap_width = beforeBufferInput(app, e);
+    const wrap_width = try beforeBufferInput(app, e);
     const ev = try e.buf.runApp(cmd, &app.clipboard, app.pane_rows, wrap_width, app.frame.allocator());
     try afterBufferEvent(app, pane_id, e, ev, was_recording);
     if (app.panes.editor(pane_id)) |still| still.buf.input.setMacroRecording(still.buf.isRecording());
@@ -3622,7 +3715,8 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
         .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .macro_record_into, .macro_replay_from, .operator_to_mark => {},
+        .dot_repeat, .macro_record_into, .operator_to_mark => {},
+        .macro_replay_from => |m| try macro_replay.run(app, pane_id, m.reg, m.count, m.recorded),
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
         .block_replace_with => |r| try blockReplace(app, e, r.ch),
@@ -3772,7 +3866,7 @@ fn beginBlockInsert(app: *App, pane_id: PaneId, e: *EditorPane, append: bool, ch
     ed.in_insert_run = true;
     ed.doc.insert_run_owner = ed;
     e.buf.input.requestInsertMode();
-    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append };
+    app.block_insert = .{ .pane = pane_id, .first_row = rect.r0, .last_row = rect.r1, .col = col, .start_byte = start, .len_before = ed.len(), .eol = ragged, .append = as_append, .left_col = rect.c0 };
 }
 
 /// `r<ch>` on a visual block: every character in the rectangle becomes
@@ -3854,7 +3948,11 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
             const at = try blockInsertAt(ed, row, b.col, b.append, b.eol) orelse continue;
             try ed.splice(at, at, typed);
         }
-        ed.setCursor(b.start_byte);
+        // The cursor ends on the block's top-left, and wants that column
+        // from here on (Neovim 0.12.5: `l<C-v>2jlA;<Esc>` → 1:2, and
+        // `gg` / `j` after it stay in column 2).
+        ed.setCursor(ed.byteAtVcol(b.first_row, b.left_col));
+        ed.goal_col = null;
         e.buf.doc.recomputeDirty();
         e.syntax.dirty = true;
         app.needs_render = true;

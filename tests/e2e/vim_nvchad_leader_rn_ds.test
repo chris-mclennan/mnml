@@ -1,0 +1,28 @@
+# NvChad's default `<leader>rn` ("toggle relative number") and
+# `<leader>ds` ("LSP diagnostic loclist") — nvchad-probe:
+#   maparg("<Space>rn").desc = "toggle relative number"
+#   maparg("<Space>ds").desc = "LSP diagnostic loclist"
+# Both were swallowed; each now runs its command in the vim profile.
+write a.txt "alpha\nbravo\ncharlie\n"
+open a.txt
+command editor.use_vim
+type j
+expect screen contains "  3 charlie"
+key space
+key r
+key n
+wait 300
+expect screen contains "  1 charlie"
+key space
+key r
+key n
+wait 300
+expect screen contains "  3 charlie"
+expect screen lacks "DIAGNOSTICS"
+key space
+key d
+key s
+wait 300
+expect screen contains "DIAGNOSTICS"
+expect screen lacks " INSERT "
+expect dirty false

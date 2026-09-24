@@ -321,6 +321,39 @@ pub fn upFirstNonWs(ed: *Editor) void {
 
 // ─── paragraph / sentence ───────────────────────────────────────────────
 
+/// `[(` / `[{` (`forward` false): the nearest `open` before the cursor
+/// that no `close` between matches; `])` / `]}`: the nearest unmatched
+/// `close` after it (`:help [(`). None: the cursor stays (vim beeps).
+/// The char under the cursor is never its own answer.
+pub fn toUnmatched(ed: *Editor, open: u21, forward: bool) void {
+    const close = @import("select.zig").matchCloseFor(open);
+    var depth: usize = 0;
+    var i = ed.cursor;
+    var steps: usize = 0;
+    while (steps < 200_000) : (steps += 1) {
+        if (forward) {
+            if (i >= ed.len()) return;
+            i = ed.nextBoundary(i);
+            if (i >= ed.len()) return;
+        } else {
+            if (i == 0) return;
+            i = ed.prevBoundary(i);
+        }
+        const c = ed.charAt(i) orelse return;
+        const deeper = if (forward) open else close;
+        const target = if (forward) close else open;
+        if (c == deeper) {
+            depth += 1;
+        } else if (c == target) {
+            if (depth == 0) {
+                ed.cursor = i;
+                return;
+            }
+            depth -= 1;
+        }
+    }
+}
+
 /// `}` / `{` (`:help }`): the next / previous EMPTY line — a line of
 /// only blanks is not a paragraph boundary (vim's `startPS`; `vim -es`:
 /// with line 3 = `"  "`, `2G}` → 6) — after at least one non-empty line
@@ -418,6 +451,15 @@ pub fn bufferEnd(ed: *Editor) void {
 pub fn toLine(ed: *Editor, n: usize) void {
     const line = @min(n -| 1, ed.lineCount() - 1);
     ed.cursor = ed.lineStart(line);
+}
+
+/// `G` / `gg` / `{n}G` with `nostartofline`: line `n` (1-based; 0 = the
+/// last), at the goal column — the one `j` / `k` would keep.
+pub fn toLineKeepCol(ed: *Editor, n: usize) void {
+    const last = ed.lineCount() - 1;
+    const line = if (n == 0) last else @min(n - 1, last);
+    const gc = ed.goalCol();
+    ed.cursor = ed.byteAtVcol(line, gc);
 }
 
 /// 1-based column.
