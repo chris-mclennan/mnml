@@ -17,8 +17,14 @@ command view.focus_pane
 wait 900
 expect screen contains "BITBUCKET — setup"
 # The first run writes the scaffold and says where, so there is a file
-# to edit rather than an error to decode.
-expect screen contains "never-written.zon"
+# to edit rather than an error to decode. Where: the absolute path, which
+# is as long as the runner's TMPDIR makes it and is clipped at the pane's
+# edge — so the screen is asked for the part every TMPDIR keeps (the
+# workspace's own directory) and the file for the rest. The file name at
+# the path's END was the assertion once, and a TMPDIR inside a checkout
+# clipped it off.
+expect screen contains "/mnml-e2e-"
+expect file never-written.zon contains "mnml-bitbucket — your Bitbucket Cloud workspace"
 expect screen contains "edit config.zon"
 expect screen contains "BITBUCKET_API_TOKEN"
 expect screen contains "mnml-bitbucket --check"

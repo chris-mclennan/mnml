@@ -30,10 +30,16 @@ key enter
 wait 400
 expect screen contains "delete branch feat?"
 expect screen contains "1 uncommitted file"
-# Remove alone refuses a dirty tree and names the way through.
+# Remove alone refuses a dirty tree and names the way through. The
+# refusal leads with the tree's absolute path, so where its words wrap
+# depends on how long the runner's TMPDIR is: each is asked for alone
+# (`pick Force` split across two rows under a deep TMPDIR). The confirm
+# is gone, so its own Force button is not what is found.
 key r
 wait 600
-expect screen contains "pick Force"
+expect screen lacks "delete branch feat?"
+expect screen contains "uncommitted"
+expect screen contains "Force"
 shell test -d wt
 shell git rev-parse --verify -q refs/heads/feat
 # Force takes it: the tree and its branch both go.
