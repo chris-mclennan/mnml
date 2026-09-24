@@ -176,7 +176,7 @@ otherwise. Copy what you need; leave the rest out.
             .diagnostics = null, // null = the dock; `.right` is the pre-dock placement
             .outline = null,
         },
-        .auto_hide_narrow_width = 0, // a WIDTH rule: below this many columns both side columns are dropped for the frame (0 = never; a non-zero value is clamped to 40..300). Nothing is mutated — widening brings back what was open
+        .auto_hide_narrow_width = 0, // RENAMED: the old name of `.sidebar_auto_below` below. A non-zero value is read as that key (with a note at startup saying so) — one rule for a narrow terminal's columns, not two. Rename it in your config
         .sidebar = .always, // .always (docked) | .auto (hidden; the pointer at the column's screen edge reveals it as an overlay OVER the editor — no relayout, no pty resize) | .hidden (never on hover; a keyboard command still gives a one-shot overlay)
         .sidebar_auto_below = 100, // a narrow terminal's columns: below this many columns a `.always` column behaves as `.auto` (hidden; the screen edge or a section command brings it in over the editor) and it docks again once the terminal is this wide. An explicit `.auto` / `.hidden` is untouched (0 = never; a non-zero value is clamped to 40..300)
         .sidebar_reveal_ms = 250, // how long the pointer rests in the edge zone before the overlay slides in (0..5000)

@@ -368,29 +368,18 @@ pub const Chrome = struct {
     dock_placement: Config.DockPlacement = .inner,
 };
 
-/// `ui.auto_hide_narrow_width`: below that many columns both side
-/// columns are dropped for THIS FRAME (Rust `App::side_panels_auto_hidden`,
-/// task #891). Nothing is mutated — `tree.visible` and each column's
-/// section stay as they were, so widening the terminal brings back
-/// whatever was open.
-/// // changed (sidebar-autohide): the Zig side had the key in the
-/// schema and no reader; this is it.
-pub fn narrowAutoHidden(app: *const App, width: u16) bool {
-    const threshold = app.cfg.ui.auto_hide_narrow_width;
-    return threshold > 0 and width < threshold;
-}
-
 /// The frame's `Chrome` for this app, this frame.
 pub fn chrome(app: *const App) Chrome {
-    const narrow = narrowAutoHidden(app, app.screen.width);
     // // changed (sidebar-autohide): a column the overlay is carrying,
     // or one `ui.sidebar` is hiding, is NOT carved here — which is the
     // whole point. `drawSidebarOverlay` paints it later, over the
     // editor, and every pane keeps the rect (and every pty the size) it
     // had; `frameRects` never learns the panel exists.
     return .{
-        .sidebar = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) app.tree.width else null,
-        .right = if (!app.zen and !narrow and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
+        // A narrow terminal (`ui.sidebar_auto_below`) is in the auto-hide
+        // regime too, through `sidebar_auto.mode`: one rule.
+        .sidebar = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) app.tree.width else null,
+        .right = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
         // // changed (side-band): the dock's BAND is carved, which on a
@@ -3016,33 +3005,6 @@ test "frameRects: the rail and its border come off the sidebar's own 30 columns 
     const none = frameRects(Rect.init(0, 0, 12, 10), .{ .sidebar = 30 });
     try t.expect(none.sidebar.isEmpty() and none.rail.isEmpty());
     try t.expect(none.body.eql(none.upper));
-}
-
-test "ui.auto_hide_narrow_width: both columns go below the threshold and come back above it, with nothing mutated" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
-    defer app.deinit();
-    side_mod.place(&app, .explorer, false);
-    try side_mod.open(&app, .outline, false);
-    try t.expect(chrome(&app).sidebar != null);
-    try t.expect(chrome(&app).right != null);
-    // 0 is off: a 120-column screen is not narrow, and neither is a 1-column one.
-    try t.expect(!narrowAutoHidden(&app, 1));
-    app.cfg.ui.auto_hide_narrow_width = 100;
-    try t.expect(narrowAutoHidden(&app, 99));
-    try t.expect(!narrowAutoHidden(&app, 100));
-    // At 120 the threshold does not bite.
-    try t.expect(chrome(&app).sidebar != null);
-    try app.resize(80, 24);
-    const narrow = chrome(&app);
-    try t.expect(narrow.sidebar == null);
-    try t.expect(narrow.right == null);
-    // Per-frame only: the sections are still open, so widening restores them.
-    try t.expect(app.tree.visible);
-    try t.expectEqual(side_mod.Section.explorer, side_mod.shown(&app, .left).?);
-    try t.expectEqual(side_mod.Section.outline, side_mod.shown(&app, .right).?);
-    try app.resize(120, 40);
-    try t.expect(chrome(&app).sidebar != null);
-    try t.expect(chrome(&app).right != null);
 }
 
 test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane hit under the text" {
