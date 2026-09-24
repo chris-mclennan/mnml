@@ -126,7 +126,7 @@ pub fn main(init: std.process.Init) !u8 {
                 .click => |c| select(c.row),
                 .scroll, .hover, .paste => {},
             },
-            .focus, .hello => {},
+            .focus, .hello, .session_state, .focus_item => {},
             .goodbye => break,
         }
         paint(&frame);
@@ -161,8 +161,9 @@ the main loop paints.
 
 ## Keys and clicks
 
-`key.spec` is mnml's grammar: `a`, `A`, `enter`, `esc`, `up`, `ctrl+p`,
-`shift+f5`, `alt+left`, `space`. Click / scroll / hover coordinates are
+`key.spec` is mnml's grammar: `a`, `shift+a` (an uppercase letter
+always arrives as `shift+` and the lowercase), `enter`, `esc`, `up`,
+`ctrl+p`, `shift+f5`, `alt+left`, `space`. Click / scroll / hover coordinates are
 pane-relative cells; row 0 is your first row (the tab strip is not
 yours). The host folds a wheel burst into one `scroll` with `dy` the
 notch count (positive = up).
@@ -251,6 +252,7 @@ the next backfill has to come back for.
 | The tree keys: `→`/`←` expand / collapse, `Enter`/`Space` toggle, `E`/`C` every node open / shut | (the convention; both first-party panes bind it) |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
+| One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
 
 The gutter runs the WHOLE height of the pane, whatever shape the body
 is. A pane with a column-shaped body (a board of boxed columns) starts
@@ -259,7 +261,6 @@ the only column that says which application this is, and a pane that
 loses it halfway down reads as two panes stacked. The bad-scope error
 screen wears it too — a pane that cannot show anything is still this
 pane.
-| One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
 
 Keys and chrome that are not the toolkit's but ARE the family's: `r`
 refreshes and `R` refreshes past every cache; `?` opens the key sheet;
@@ -567,12 +568,13 @@ What mnml does with each field:
 |---|---|
 | `id`, `label`, `description`, `version`, `category` | the INTEGRATIONS section's row (`label` over the first command's id) and the detail pane |
 | `binary`, `args`, `mode` | what a command opens: `mode = .mount` (default) hosts it over the socket; `.pty` opens it as a terminal pane. Leave `binary` out and the manifest is a **launcher** — no program of its own; every command then needs a `run` line (`validate` refuses one without) |
-| `chip` | a button on the palette bar: `glyph` (Nerd Font) — or `glyph_codepoint` (`F1D00`, painted verbatim when `glyph` is empty, for a mark in mnml's own font block), `fallback` (plain, always), `color` (a theme name — `red orange yellow green blue cyan teal purple pink comment fg` — or `#rrggbb`), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / show or hide on the bar / add to the activity bar / manifest / remove |
+| `chip` | a button on the palette bar: `glyph` (Nerd Font) — or `glyph_codepoint` (`F1D00`, painted verbatim when `glyph` is empty, for a mark in mnml's own font block), `fallback` (plain, always), `color` (a theme name — `red orange yellow green blue cyan teal purple pink magenta comment grey fg white`, `magenta` the same colour as `pink` and `white` as `fg` — or `#rrggbb`; anything else paints in the accent), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / show or hide on the bar / add to the activity bar / manifest / remove |
 | `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `run` (or `ex`, the same field) names an ex line to run instead — `term mnml-hello --pty`, `:term code --goto {{current_file_abs}}:{{cursor_line}}:{{cursor_col}}`; mnml expands `{{workspace}}` `{{workspace_name}}` `{{current_file}}` `{{current_file_abs}}` `{{current_file_dir}}` `{{cursor_line}}` `{{cursor_col}}` `{{selection}}` when it fires and leaves an unknown token as written (`launchers/README.md`). The first one is what the chip, Enter and a pinned activity-bar icon do |
 | `settings[]` | a row in mnml's settings overlay under *Integrations* (discrete choices); the chosen value reaches the binary as `MNML_SETTING_<KEY>` |
 | `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest. The live run replaces it over Tier 2, where it may also carry `items` (below) |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
-| `context_menu[]`, `menu_bar[]`, `auth[]`, `values_sources[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
+| `values_sources[]` | the statusline poller (`src/app/integration_poll.zig`): each entry's `command` runs as `<binary> --values --workspace <ws>` every `poll_interval_secs` (300 by default), one worker per source, staggered, backed off on a failure, and quiet while a pane of the integration is open; `prefetch = true` also runs the whole-pane warm |
+| `context_menu[]`, `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
 
 `binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
 path. `<data root>/bin/<binary>` is tried before PATH — that is where an
@@ -821,12 +823,14 @@ things it ran into are worth knowing before you write one:
   takes one event at a time. A pane that fetches inline freezes for as
   long as the network takes — minutes, under a shared rate bucket.
 * **There is no host→sibling command.** `HostMessage` is hello / resize /
-  input / focus / session_state / goodbye: mnml can start your binary
-  for a command, but it cannot send one into a mount that is already
-  running. A command that has to act on a *live* pane needs a key, or a
-  second headless invocation that writes to the Tier-2 channel.
-  `session_state` is the one thing the host volunteers, and only about
-  a session the pane asked it to watch.
+  input / focus / session_state / focus_item / goodbye: mnml can start
+  your binary for a command, but it cannot send one into a mount that
+  is already running. A command that has to act on a *live* pane needs
+  a key (`integrations.retry_refresh` sends `r`), or a second headless
+  invocation that writes to the Tier-2 channel. `session_state` (only
+  about a session the pane asked it to watch) and `focus_item` (a key
+  the pane already lists, see `--focus` above) are the two things the
+  host volunteers.
 * **A `pty` child does not inherit `MNML_IPC_DIR`.** A mount child does
   (`src/bridge/host.zig`'s `envFor`); a `:term` one gets the app's own
   environment. If a headless `run` line has to publish a segment or a
@@ -972,7 +976,7 @@ per service, four classes:
 | --- | --- |
 | `interactive` | the pane on screen: `pane_open`, `detail`, `user`, `dispatch`, `readiness` |
 | `refresh` | wanted soon, nobody watching: `refresh`, `poll`, `builds`, `revalidate` |
-| `warm` | speculative: `warm`, `delta`, `prefetch` |
+| `warm` | speculative: `warm`, `delta`, `prefetch` (and `cache_hit`, which never asks) |
 | `batch` | a shell script, a capture tool — nothing a pane does reaches it |
 
 **The rule, written down.** Waiters are served by *effective class*,
@@ -1038,7 +1042,8 @@ Where the socket is, in the order the state file resolves:
 `<SERVICE>_BROKER_SOCKET`, else `<service>-broker.sock` beside the
 state file, else — when that DERIVED path is longer than
 `broker.max_path_len` (100 bytes, the same number on every platform so
-both ends pick the same branch) — `/tmp/mnml-broker-<service>-<hash>.sock`,
+both ends pick the same branch) — `/tmp/mnml-broker-<service>-<hash>.sock`
+(`%TEMP%\mnml-broker-<service>-<hash>.sock` on Windows),
 where `<hash>` is the first six bytes of the SHA-256 of the long path in
 hex, so both ends derive the same name and two buckets in two
 directories never share a broker (`broker.fallbackPath`).
@@ -1094,9 +1099,11 @@ decides whether to send anyway.
 connect, one line each way, and a clean `False` on anything at all so
 the caller falls through to its existing file-bucket loop. Its
 docstring shows the two-line change `bb_ratelimit.py` would make.
-Unix sockets are the whole transport, so Windows has no broker and
-every client is on the file bucket there, which is a path rather than
-a hole.
+Unix sockets are the whole transport (`broker.supported`, which is
+`Io.net.has_unix_sockets`: true on Windows 10 1803 and later too, where
+the long-path fallback above lands in `%TEMP%` rather than `/tmp`);
+where they are missing every client is on the file bucket, which is a
+path rather than a hole.
 
 ## Who is spending the budget — the draws file
 
@@ -1288,6 +1295,8 @@ sdk/mnml-sdk/src/
                  service, delta windows, intervals, the budget floor
   base_url.zig   the `$<SERVICE>_BASE_URL` override — a URL or `@<file>`;
                  a file that never arrives is an error, never a fallback
+  platform.zig   the platform's URL opener — `open`, `xdg-open`, or
+                 `rundll32 url.dll,FileProtocolHandler` (never `cmd`)
   testing.zig    test allocators a suite borrows — Scribble, which
                  poisons what it frees so a slice into a let-go arena
                  reads as 0xAA rather than as luck
@@ -1305,7 +1314,9 @@ sdk/mnml-sdk/src/
   pane/consistency_test.zig  the toolkit painted from both panes' vocabularies, cell for cell
   pane/columns.zig how a table gives way when narrow: shrink to floors,
                    then drop whole by rank; the key column never clips
-sdk/clients/ratelimit_broker.py   the broker's twenty-line Python client
+  pane/help.zig    hover help: the toolkit chrome's one entry each, `key`
+  pane/keysheet.zig  the `?` key sheet's keys and the family's chord spelling
+sdk/clients/ratelimit_broker.py   the broker's Python client, stdlib only
 sdk/examples/hello/   the small list the host's mount test spawns (`zig build sdk-example`)
 integrations/sample/  the official sample (`zig build sample-integration`, or its own build.zig)
 ```
