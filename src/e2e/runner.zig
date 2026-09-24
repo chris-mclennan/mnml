@@ -1042,13 +1042,30 @@ fn runIn(gpa: Allocator, io: Io, options: std.process.RunOptions, pgid: ?std.pos
 /// one was 45 cells of every 120-column row, and with the now-playing
 /// cluster beside it the row overflowed and clipped the mode chip
 /// (`vim_gv_mode.test` read `V-LI…`) where Rust's runner never does.
+///
+/// Made with an EXCLUSIVE create, retried on a name that is taken. Six
+/// hex digits are sixteen million names, and `TMPDIR` is shared by
+/// every run on the machine — ten corpus runs at once, and the dirs of
+/// any file a timeout abandoned — so a name that already exists is
+/// somebody else's workspace, never one to move into.
 pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
-    var bytes: [3]u8 = undefined;
-    io.random(&bytes);
-    const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ std.mem.trimEnd(u8, tmp_root, "/"), &std.fmt.bytesToHex(bytes, .lower) });
-    errdefer gpa.free(name);
-    try Io.Dir.cwd().createDirPath(io, name);
-    return name;
+    const root = std.mem.trimEnd(u8, tmp_root, "/");
+    Io.Dir.cwd().createDirPath(io, root) catch {};
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        var bytes: [3]u8 = undefined;
+        io.random(&bytes);
+        const name = try std.fmt.allocPrint(gpa, "{s}/mnml-e2e-{s}", .{ root, &std.fmt.bytesToHex(bytes, .lower) });
+        if (createFresh(io, name)) |_| return name else |err| {
+            gpa.free(name);
+            if (err != error.PathAlreadyExists or tries >= 64) return err;
+        }
+    }
+}
+
+/// `mkdir`, failing when the directory is already there.
+fn createFresh(io: Io, path: []const u8) !void {
+    try Io.Dir.cwd().createDir(io, path, .default_dir);
 }
 
 /// `<run_root>/<stem>-<random>`, created. One file's private
@@ -1056,12 +1073,17 @@ pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
 /// creates and removes exactly one tree, and the name says which file
 /// owns it when a run is inspected after the fact.
 fn makeDataRoot(gpa: Allocator, io: Io, run_root: []const u8, stem: []const u8) ![]u8 {
-    var bytes: [4]u8 = undefined;
-    io.random(&bytes);
-    const name = try std.fmt.allocPrint(gpa, "{s}/{s}-{s}", .{ std.mem.trimEnd(u8, run_root, "/"), stem, &std.fmt.bytesToHex(bytes, .lower) });
-    errdefer gpa.free(name);
-    try Io.Dir.cwd().createDirPath(io, name);
-    return name;
+    Io.Dir.cwd().createDirPath(io, run_root) catch {};
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        var bytes: [4]u8 = undefined;
+        io.random(&bytes);
+        const name = try std.fmt.allocPrint(gpa, "{s}/{s}-{s}", .{ std.mem.trimEnd(u8, run_root, "/"), stem, &std.fmt.bytesToHex(bytes, .lower) });
+        if (createFresh(io, name)) |_| return name else |err| {
+            gpa.free(name);
+            if (err != error.PathAlreadyExists or tries >= 64) return err;
+        }
+    }
 }
 
 /// Rust `{:?}` for a string: quoted, with `" \ \n \r \t` escaped and other
@@ -2347,4 +2369,15 @@ test "a process a shell step leaves behind is in the file's own group, and dies 
     }
     if (alive) std.posix.kill(pid, .KILL) catch {};
     try t.expect(!alive);
+}
+
+test "temp dirs are created exclusively: a name that exists is somebody else's" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const a = try makeTempDir(t.allocator, t.io, env.root);
+    defer t.allocator.free(a);
+    const b = try makeTempDir(t.allocator, t.io, env.root);
+    defer t.allocator.free(b);
+    try t.expect(!std.mem.eql(u8, a, b));
+    try t.expectError(error.PathAlreadyExists, createFresh(t.io, a));
 }
