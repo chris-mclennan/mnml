@@ -72,9 +72,12 @@ pub const Backoff = struct {
     jitter_pct: u32 = 20,
     max_retry_after_secs: u32 = 3600,
     /// A pause longer than this is not waited out inside a request:
-    /// the request is refused (nothing goes out) and the pane says
-    /// until when. Shorter ones are waited — visibly, cancellably.
-    wait_in_request_secs: u32 = 120,
+    /// the 429 goes back to the pane, which says until when, and a
+    /// request made before it is up is refused (nothing goes out).
+    /// Shorter ones are waited — visibly, cancellably — and the read
+    /// asked again. Thirty seconds: the longest the forge pane ever
+    /// slept through before, so no pane waits longer than it did.
+    wait_in_request_secs: u32 = 30,
 
     /// Seconds to pause after attempt `attempt` (from 1) met a 429.
     pub fn delaySecs(b: Backoff, attempt: u32, retry_after: ?u32, rng: std.Random) u32 {
