@@ -203,9 +203,17 @@ pub const Command = union(enum) {
     unknown: []const u8,
 };
 
-/// Parse one line. Every slice in the result lives in `arena`.
+/// Parse one line. Every slice in the result lives in `arena` — copied,
+/// never a view into `line`. `std.json`'s default (`alloc_if_needed`)
+/// hands back a string with no escapes as a slice of the input, and the
+/// terminal loop reads `line` into a poll arena it resets every 50 ms
+/// while the parsed event waits in the queue: a `run-command` id then
+/// read as whatever the next poll wrote there. Seen on the real-screen
+/// tour as `run-command: no such command `ow": 0, "button": "lef`` —
+/// `view.activity_explorer`'s 22 bytes overwritten by the next line's —
+/// and the reset that command belonged to silently skipped.
 pub fn parse(arena: Allocator, line: []const u8) Allocator.Error!Command {
-    const raw = std.json.parseFromSliceLeaky(Raw, arena, line, .{ .ignore_unknown_fields = true }) catch |e| switch (e) {
+    const raw = std.json.parseFromSliceLeaky(Raw, arena, line, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .unknown = try arena.dupe(u8, line) },
     };
@@ -422,6 +430,27 @@ const t = std.testing;
 
 fn parseT(arena: Allocator, line: []const u8) !Command {
     return parse(arena, line);
+}
+
+test "parse copies every string: the command outlives the buffer its line was read into" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The terminal loop's poll buffer, reused for the next line before
+    // the event is handled.
+    var buf: [128]u8 = undefined;
+    const run = "{\"cmd\":\"run-command\",\"id\":\"view.activity_explorer\"}";
+    @memcpy(buf[0..run.len], run);
+    const cmd = try parse(a, buf[0..run.len]);
+    const typed_src = "{\"cmd\":\"type\",\"text\":\"ls src\"}";
+    @memcpy(buf[run.len..][0..typed_src.len], typed_src);
+    const typed = try parse(a, buf[run.len..][0..typed_src.len]);
+    const next = "{\"cmd\": \"click\", \"col\": 11, \"row\": 0, \"button\": \"left\"}";
+    @memset(&buf, ' ');
+    @memcpy(buf[0..next.len], next);
+    @memcpy(buf[next.len..][0..next.len], next);
+    try t.expectEqualStrings("view.activity_explorer", cmd.run_command);
+    try t.expectEqualStrings("ls src", typed.type);
 }
 
 test "the command table: every cmd resolves to its variant" {
