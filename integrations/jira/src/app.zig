@@ -300,6 +300,12 @@ pub const App = struct {
     /// whichever thread made the request. `noteWait` turns it into the
     /// one line that keeps `loading…` from being silent.
     wait_notice: ratelimit.Notice = .{},
+    /// The API budget (`mnml_sdk.budget`) — the Bitbucket pane's same
+    /// object: the client writes it on every request, the header's
+    /// budget chip and its hover read it. `main` configures it and
+    /// points the client at it; unconfigured (a test) it paints `0/h`
+    /// and never pauses.
+    budget: sdk.Budget = .{},
     /// `$MNML_IPC_DIR`: the channel of the mnml this pane runs inside —
     /// where a dispatched `term` line has to go. Borrowed from the
     /// environment, empty outside a host.
@@ -658,6 +664,26 @@ pub const App = struct {
         if (action.url.len > a.toast_act_buf.len) return;
         @memcpy(a.toast_act_buf[0..action.url.len], action.url);
         a.toast_action = .{ .label = action.label, .url = a.toast_act_buf[0..action.url.len] };
+    }
+
+    /// `Ctrl+X`, or a click on the budget chip: stop waiting out a
+    /// 429's pause. With no pause running the click says the budget's
+    /// figures on the hint row instead, so it is never a dead click.
+    pub fn cancelWait(a: *App) void {
+        if (a.budget.cancelWait()) {
+            a.say("stopped waiting out the rate limit — the next request goes when you ask", .{});
+            return;
+        }
+        const s = a.budget.snapshot(a.nowSecs());
+        var buf: [48]u8 = undefined;
+        a.setStatus("API budget {s} · today {d} · yesterday {d} · 7 days {d}", .{ s.chipWords(&buf), s.today, s.yesterday, s.week });
+    }
+
+    /// `Shift+N`: dry run on / off for this session.
+    pub fn toggleDryRun(a: *App) void {
+        if (a.budget.toggleDry()) {
+            a.say("dry run on — nothing is sent; the pane shows what it already holds", .{});
+        } else a.say("dry run off — requests go out again", .{});
     }
 
     pub fn nowMs(a: *App) i64 {
@@ -1078,7 +1104,12 @@ pub const App = struct {
             if (st.prs(iss.key) != null) continue;
             if (a.pr_store) |store| {
                 if (store.fresh(iss.key, iss.updated)) |body| {
-                    if (a.applyPrBody(st, iss.key, body)) continue else |err| if (err == error.OutOfMemory) return err;
+                    // A read the store answered: a hit on the budget's
+                    // ratio, the way a 304 is on the forge pane's.
+                    if (a.applyPrBody(st, iss.key, body)) {
+                        a.budget.noteHit();
+                        continue;
+                    } else |err| if (err == error.OutOfMemory) return err;
                 }
             }
             try a.pr_queue.append(a.gpa, try a.keep(iss.key));
@@ -2160,7 +2191,7 @@ pub const App = struct {
             .confirm_body => .{ .title = "Merge confirm", .body = "The pull request, its source and target, and the strategy. Enter merges through Claude Code; Esc cancels." },
             .action => .{ .title = "Ticket action", .body = "Dispatches a Claude Code session for this ticket — implement, fix, triage or review. The button turns while it runs and becomes `view` when it ends." },
             .tab => H.common(.tab),
-            .chip => |c| chipHelp(c),
+            .chip => |c| if (c == .budget) H.budget(buf, a.budget.snapshot(a.nowSecs())) else chipHelp(c),
             .avatar => .{ .title = "Assignee", .body = "One person on the board. Click shows only their cards; click again to show everyone's." },
             .filter => H.common(.filter),
             .column => .{ .title = "Board column", .body = "A status column of the board. The wheel scrolls it." },
@@ -2207,6 +2238,9 @@ pub const App = struct {
             .unassigned => .{ .title = "Unassigned", .body = "Shows only the cards nobody is assigned to." },
             .overflow => .{ .title = "More chips", .body = "The chips that did not fit the toolbar at this width." },
             .settings => .{ .title = "Settings", .body = "This integration's settings." },
+            // `helpAt` answers the budget chip itself: its body is the
+            // live budget, which this table has no app to read.
+            .budget => .{ .title = "API budget" },
         };
     }
 
@@ -3647,6 +3681,8 @@ pub const App = struct {
     pub fn act(a: *App, action: keymap.Action, spec: []const u8) Allocator.Error!void {
         switch (action) {
             .quit => a.quit = true,
+            .cancel_wait => a.cancelWait(),
+            .toggle_dry_run => a.toggleDryRun(),
             .escape => {
                 if (a.selection.count() > 0) {
                     a.clearSelection();
@@ -4012,6 +4048,7 @@ pub const App = struct {
     pub fn clickChip(a: *App, c: hit.Chip) Allocator.Error!void {
         switch (c) {
             .refresh => try a.act(.refresh, "r"),
+            .budget => a.cancelWait(),
             .help => try a.act(.help, "?"),
             .basic => {
                 a.tab().show_jql = false;
@@ -5466,12 +5503,19 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
         defer cache.deinit();
         try testing.expectEqual(@as(usize, 3), cache.entries.items.len);
         h.app.setPrStore(&cache);
+        h.app.budget.configure(testing.io, .{ .label = "Jira", .service = "jira" });
+        h.client.budget = &h.app.budget;
         const before = h.store.requests;
         try h.app.ensureLoaded();
         // /myself and the search. Nothing else.
         try testing.expectEqual(@as(usize, 2), h.store.requests - before);
         try testing.expectEqual(@as(usize, 0), h.app.pr_queue.items.len);
         try testing.expectEqual(@as(u32, 3), cache.hits);
+        // And the budget's ratio says so: three reads the store answered,
+        // two that carried a body (/myself and the search).
+        const snap = h.app.budget.snapshot(h.app.nowSecs());
+        try testing.expectEqual(@as(u32, 3), snap.hits);
+        try testing.expectEqual(@as(u32, 2), snap.misses);
         // The rows are the same rows, painted off the cache.
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -5624,4 +5668,27 @@ test "a delta window survives a restart, and the chain of them is bounded" {
         try testing.expect(h.app.tab().deltas.items.len <= max_delta_generations);
         try testing.expectEqual(all, h.app.tab().issues.len);
     }
+}
+
+test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a rate-limit pause" {
+    const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+    defer h.stop();
+    h.app.budget.configure(testing.io, .{ .label = "Jira", .service = "jira" });
+    h.client.budget = &h.app.budget;
+    try h.app.ensureLoaded();
+    _ = try h.app.onKey("shift+n");
+    try testing.expect(h.app.budget.isDry());
+    try testing.expect(std.mem.indexOf(u8, h.app.status.items, "dry run on") != null);
+    const before = h.store.requests;
+    _ = try h.app.onKey("r");
+    try h.app.ensureLoaded();
+    try testing.expectEqual(before, h.store.requests);
+    _ = try h.app.onKey("shift+n");
+    try testing.expect(!h.app.budget.isDry());
+
+    _ = h.app.budget.throttled(1, 60);
+    try testing.expect(h.app.budget.snapshot(h.app.nowSecs()).paused_until > 0);
+    _ = try h.app.onKey("ctrl+x");
+    try testing.expectEqual(@as(i64, 0), h.app.budget.snapshot(h.app.nowSecs()).paused_until);
+    try testing.expect(std.mem.indexOf(u8, h.app.status.items, "stopped waiting") != null);
 }

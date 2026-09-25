@@ -62,6 +62,10 @@ pub const Action = enum {
     detail_modal,
     card_expand,
     help,
+    /// Stop waiting out a 429's pause (the budget chip's click, too).
+    cancel_wait,
+    /// Dry run on / off: nothing is sent while it is on.
+    toggle_dry_run,
 };
 
 /// Where a binding applies. A tab is a tree (Work / Fix Versions), a
@@ -153,6 +157,8 @@ pub const bindings = [_]Binding{
     .{ .keys = &.{"r"}, .action = .refresh, .label = "refresh", .section = .view, .hint = 9 },
     .{ .keys = &.{"shift+r"}, .action = .refresh_full, .label = "full refresh", .section = .view },
     .{ .keys = &.{ "?", "f1" }, .action = .help, .label = "keys", .section = .view, .hint = 10 },
+    .{ .keys = &.{"ctrl+x"}, .action = .cancel_wait, .label = "stop waiting out a rate-limit pause", .section = .view },
+    .{ .keys = &.{"shift+n"}, .action = .toggle_dry_run, .label = "dry run on / off (nothing is sent)", .section = .view },
     .{ .keys = &.{"esc"}, .action = .escape, .label = "clear the selection · the filter · close the detail", .section = .view },
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .label = "quit", .section = .view },
 };
@@ -262,6 +268,9 @@ const kanban_ctx: Context = .{ .shape = .kanban, .fix_versions = false, .detail_
 const flat_ctx: Context = .{ .shape = .flat, .fix_versions = false, .detail_open = false };
 
 test "the reference's chords resolve per context: f / F / V / T / space / > / c" {
+    // The budget's two keys, the forge pane's too, in every context.
+    try testing.expectEqual(Action.cancel_wait, resolve("ctrl+x", tree_ctx).?);
+    try testing.expectEqual(Action.toggle_dry_run, resolve("shift+n", kanban_ctx).?);
     try testing.expectEqual(Action.fix_version, resolve("f", tree_ctx).?);
     try testing.expectEqual(Action.tab_fix_version, resolve("f", fixv_ctx).?);
     try testing.expectEqual(Action.fix_version, resolve("shift+f", fixv_ctx).?);

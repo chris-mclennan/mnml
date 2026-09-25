@@ -35,6 +35,9 @@ pub const Chip = enum {
     unassigned,
     overflow,
     settings,
+    /// The header's API budget chip (`sdk.budget`): a click stops
+    /// waiting out a 429's pause; the hover is the budget in full.
+    budget,
 };
 
 pub const PrButton = enum { review, merge, open };

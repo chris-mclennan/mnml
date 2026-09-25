@@ -70,11 +70,27 @@ pub const Raw = struct {
     retry_after_secs: ?f64,
 };
 
-/// How a 429 is retried: the SDK's policy. A 429 with no
-/// `Retry-After` parks the bucket for Jira's cooldown (45 s), longer
-/// than any request should sleep — so only a site that says how long
-/// is waited out and asked again.
-pub const retry_policy: sdk.ratelimit.Retry = .{ .default_backoff_secs = 45 };
+/// How a 429 is answered when the pane has handed the client no budget
+/// (a one-shot `--values` run): the SDK's backoff, started at Jira's
+/// cooldown (45 s) and capped at the bucket's longest block. The pane
+/// configures its own off `config.rate` (`backoffFor`).
+pub const default_backoff: sdk.budget.Backoff = .{ .base_secs = 45, .cap_secs = 120 };
+
+/// The pane's backoff, off the config's `rate` block: the first pause
+/// is the bucket's cooldown, the ceiling its longest block.
+pub fn backoffFor(rate: config.Rate) sdk.budget.Backoff {
+    return .{ .base_secs = rate.cooldown_secs, .cap_secs = @max(rate.max_block_secs, rate.cooldown_secs) };
+}
+
+/// A read, as the budget counts it and as a 429 may retry it: a GET,
+/// or the search that Jira Cloud takes as a POST.
+pub fn isRead(method: std.http.Method, url: []const u8) bool {
+    if (method == .GET) return true;
+    if (method != .POST) return false;
+    const path_end = std.mem.indexOfScalar(u8, url, '?') orelse url.len;
+    const path = url[0..path_end];
+    return std.mem.endsWith(u8, path, "/search/jql") or std.mem.endsWith(u8, path, "/search");
+}
 
 pub const Client = struct {
     gpa: Allocator,
@@ -99,6 +115,11 @@ pub const Client = struct {
     /// (a job takes one by value). Null leaves requests unpaced, which
     /// is what a test that counts requests wants.
     gate: ?*sdk.warm.Gate = null,
+    /// The pane's API budget (`mnml_sdk.budget`): the headers, the 429
+    /// pause, the hit ratio, the tally, dry run — the Bitbucket pane's
+    /// same object. Null (a one-shot run) gets one of its own per
+    /// request, so a 429 is answered the same way.
+    budget: ?*sdk.Budget = null,
     user_agent: []const u8 = "mnml-jira",
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
@@ -124,24 +145,54 @@ pub const Client = struct {
     /// where it is the difference between "the tab asked for forty
     /// things" and "the poller did".
     pub fn request(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
+        var own_budget: sdk.Budget = .{};
+        const budget = c.budget orelse blk: {
+            own_budget.configure(c.io, .{ .label = "Jira", .service = ratelimit.service, .backoff = default_backoff });
+            break :blk &own_budget;
+        };
+        const read = isRead(method, url);
+        // A dry run sends nothing: the line says what would have gone
+        // out, and the pane keeps the rows it already shows.
+        if (budget.isDry()) {
+            c.note(arena, method, url, null, 0, Io.Timestamp.now(c.io, .real), .{ .ok = true }, reason, .{}, true);
+            return synthetic(arena, 0, "dry run — nothing sent; the pane keeps what it already shows");
+        }
         // A 429 is answered the SDK's way, the way the Bitbucket pane
-        // answers it: the bucket parks for what the site asked, the
-        // request waits that long and asks again, a bounded number of
-        // times; a park longer than the policy's ceiling goes back to
-        // the caller rather than being slept through.
+        // answers it: the budget pauses for what the site asked (else
+        // the backoff) and the header chip says until when; the bucket
+        // parks every process for as long; a READ asks again once the
+        // pause is up — `waitOut` is the wait — and a write never does.
         var attempt: u32 = 0;
         while (true) {
             attempt += 1;
-            const raw = try c.once(arena, method, url, body, reason);
+            switch (budget.waitOut()) {
+                .go => {},
+                .paused => {
+                    const snap = budget.snapshot(Io.Timestamp.now(c.io, .real).toSeconds());
+                    var clock: [8]u8 = undefined;
+                    return synthetic(arena, 429, try std.fmt.allocPrint(arena, "rate limited — paused until {s}", .{sdk.budget.clockText(&clock, snap.paused_until, snap.offset_secs)}));
+                },
+                .cancelled => return synthetic(arena, 429, "stopped waiting out the rate limit"),
+            }
+            const raw = try c.once(arena, method, url, body, reason, budget, read);
             if (raw.status != 429) return raw;
             const ra: ?u32 = if (raw.retry_after_secs) |x| @intFromFloat(x) else null;
-            const wait = retry_policy.next(attempt, ra) orelse return raw;
-            c.io.sleep(.fromMilliseconds(@as(i64, wait) * 1000), .awake) catch return raw;
+            const delay = budget.throttled(attempt, ra);
+            if (!budget.backoff.retries(attempt, read)) return raw;
+            if (delay > budget.backoff.wait_in_request_secs) return raw;
         }
     }
 
+    /// An answer that never came off the wire — a dry run, a pause —
+    /// in Jira's own error shape, so `failureOf` reads its sentence.
+    fn synthetic(arena: Allocator, status: u16, message: []const u8) Allocator.Error!Raw {
+        var out: Io.Writer.Allocating = .init(arena);
+        out.writer.print("{{\"errorMessages\":[{f}],\"errors\":{{}}}}", .{std.json.fmt(message, .{})}) catch return error.OutOfMemory;
+        return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = null };
+    }
+
     /// One try: the gate, the bucket, the wire.
-    fn once(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason) CallError!Raw {
+    fn once(c: *Client, arena: Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8, reason: Reason, budget: *sdk.Budget, read: bool) CallError!Raw {
         // The bucket is shared, so this waits on every other process
         // too — and fails open rather than leaving the pane hung.
         // The bucket's own draw line carries the reason too, so the
@@ -177,7 +228,7 @@ pub const Client = struct {
         var client: std.http.Client = .{ .allocator = c.gpa, .io = c.io };
         defer client.deinit();
         const uri = std.Uri.parse(url) catch {
-            c.note(arena, method, url, null, 0, started, gate, reason);
+            c.note(arena, method, url, null, 0, started, gate, reason, .{}, false);
             return error.Transport;
         };
         var extra: [5]std.http.Header = .{
@@ -193,8 +244,9 @@ pub const Client = struct {
                 // A request that never reached a status is still a line
                 // in the log: a wedged socket and a throttled bucket
                 // look the same on screen and must not look the same
-                // here.
-                cl.note(ar, m, u, null, 0, st, g, r);
+                // here. It is still a call on the budget's count.
+                cl.note(ar, m, u, null, 0, st, g, r, .{}, false);
+                if (cl.budget) |b| b.record(.{ .now_secs = st.toSeconds() });
                 return error.Transport;
             }
         }.fail;
@@ -221,11 +273,14 @@ pub const Client = struct {
         // `Retry-After`, read off the head before the body so a body
         // that fails to read cannot swallow the hint.
         var retry_after: ?f64 = null;
+        var rate_limit: request_log.RateLimit = .{};
         var hit = response.head.iterateHeaders();
         while (hit.next()) |h| {
             if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
                 if (sdk.ratelimit.parseRetryAfter(h.value)) |secs| retry_after = @floatFromInt(secs);
             }
+            // The budget headers, by name — an allow-list, numbers only.
+            request_log.rateLimitHeader(&rate_limit, h.name, h.value);
         }
         var out: Io.Writer.Allocating = .init(arena);
         var transfer: [4096]u8 = undefined;
@@ -240,7 +295,10 @@ pub const Client = struct {
         if (ratelimit.shouldPenalise(status)) {
             if (c.limiter) |l| l.penalize(retry_after);
         }
-        c.note(arena, method, url, status, out.written().len, started, gate, reason);
+        c.note(arena, method, url, status, out.written().len, started, gate, reason, rate_limit, false);
+        // A read that carried its body back is a miss; the pane's own
+        // stores count their hits (`App.seedPrs`). A write is neither.
+        budget.record(.{ .now_secs = Io.Timestamp.now(c.io, .real).toSeconds(), .rate_limit = rate_limit, .cache = if (read and status >= 200 and status < 300) .miss else .none });
         return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = retry_after };
     }
 
@@ -256,6 +314,9 @@ pub const Client = struct {
         started: Io.Timestamp,
         gate: ratelimit.Acquired,
         reason: Reason,
+        rate_limit: request_log.RateLimit,
+        /// The line is what a dry run did NOT send.
+        dry: bool,
     ) void {
         const log = c.log orelse return;
         const split = request_log.splitUrl(arena, url) catch return;
@@ -274,6 +335,8 @@ pub const Client = struct {
             .waited_for = gate.waited_for,
             .tokens_after = gate.tokens_after,
             .via = gate.via,
+            .rate_limit = rate_limit,
+            .dry = dry,
         });
     }
 };
@@ -1375,6 +1438,116 @@ test "a 429 with Retry-After parks the bucket for what the site asked, then the 
     try testing.expect(st.cooldown_remaining_secs < 2.0);
     try lb.finish(&c, arena);
     try group.await(io);
+}
+
+/// A client on the loopback fake with the pane's budget, for the
+/// budget tests below.
+const BudgetRig = struct {
+    store: fake.Store,
+    server: Io.net.Server,
+    lb: Loopback,
+    group: Io.Group = .init,
+    budget: sdk.Budget = .{},
+    c: Client,
+
+    fn start(r: *BudgetRig, arena: Allocator) !void {
+        const io = testing.io;
+        r.store = try fake.Store.init(testing.allocator);
+        r.store.require_auth = false;
+        var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+        r.server = try addr.listen(io, .{ .reuse_address = true });
+        r.lb = .{ .store = &r.store, .server = &r.server };
+        r.group = .init;
+        try r.group.concurrent(io, Loopback.serve, .{ io, &r.lb });
+        const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{r.server.socket.address.getPort()});
+        r.c = Client.init(testing.allocator, io, base, "Basic bm9wZQ==", .v3);
+        r.budget = .{};
+        r.budget.configure(io, .{ .label = "Jira", .service = "jira" });
+        r.c.budget = &r.budget;
+    }
+
+    fn stop(r: *BudgetRig, arena: Allocator) void {
+        r.c.budget = null;
+        r.lb.finish(&r.c, arena) catch {};
+        r.group.await(testing.io) catch {};
+        r.server.deinit(testing.io);
+        r.store.deinit();
+    }
+};
+
+test "a 429 on a write pauses the budget and goes back to the pane: a transition is never asked twice" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var r: BudgetRig = undefined;
+    try r.start(arena);
+    defer r.stop(arena);
+    r.store.rate_limit_next = 1;
+    r.store.rate_limit_retry_after = 2;
+    const before = r.store.requests;
+    switch (try doTransition(&r.c, arena, "ENG-2", "31")) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |f| try testing.expectEqual(@as(u16, 429), f.status),
+    }
+    try testing.expectEqual(@as(usize, 1), r.store.requests - before);
+    try testing.expect(r.budget.snapshot(Io.Timestamp.now(testing.io, .real).toSeconds()).paused_until > 0);
+}
+
+test "the budget reads Jira's rate-limit headers — the ISO reset too — and a read that carried a body is a miss" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var r: BudgetRig = undefined;
+    try r.start(arena);
+    defer r.stop(arena);
+    r.store.budget_limit = 500;
+    r.store.budget_remaining = 51;
+    r.store.budget_reset = "2026-09-25T14:10:00.000Z";
+    switch (try search(&r.c, arena, "project = ENG", &.{}, .refresh)) {
+        .ok => {},
+        .failed => return error.TestUnexpectedResult,
+    }
+    const s = r.budget.snapshot(Io.Timestamp.now(testing.io, .real).toSeconds());
+    try testing.expectEqual(@as(?i64, 500), s.limit);
+    try testing.expectEqual(@as(?i64, 50), s.remaining);
+    try testing.expectEqual(@as(?i64, 1_790_345_400), s.reset);
+    try testing.expectEqual(@as(u32, 1), s.misses);
+    try testing.expectEqual(@as(u32, 1), s.hour_calls);
+    try testing.expectEqual(sdk.budget.Tier.alarm, s.tier());
+}
+
+test "dry run sends nothing: the pane gets Jira's own shape of a refusal, and the log says what would have gone out" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var log = try sdk.RequestLog.openAt(testing.allocator, testing.io, dir, "jira", "mnml-jira");
+    defer log.deinit();
+    var r: BudgetRig = undefined;
+    try r.start(arena);
+    defer r.stop(arena);
+    r.c.log = &log;
+    _ = r.budget.toggleDry();
+    const before = r.store.requests;
+    switch (try search(&r.c, arena, "project = ENG", &.{}, .refresh)) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |f| try testing.expect(std.mem.indexOf(u8, f.message, "dry run") != null),
+    }
+    switch (try doTransition(&r.c, arena, "ENG-2", "31")) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => {},
+    }
+    try testing.expectEqual(before, r.store.requests);
+    const p = try log.path(testing.allocator);
+    defer testing.allocator.free(p);
+    const lines = try Io.Dir.cwd().readFileAlloc(testing.io, p, testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(lines);
+    try testing.expect(std.mem.indexOf(u8, lines, "\"dry\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, lines, "\"route\":\"/rest/api/3/issue/{key}/transitions\"") != null);
+    _ = r.budget.toggleDry();
 }
 
 test "a delta window wraps the where and keeps the ORDER BY, and an empty window is the whole listing" {
