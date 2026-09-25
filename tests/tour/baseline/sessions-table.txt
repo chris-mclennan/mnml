@@ -1,5 +1,5 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Us…        │ 󰎒 Sessions 󰅖   󰐕                                                                󱸀  󲀀      
+   │  ● /pr…        │ 󰎒 Sessions 󰅖   󰐕                                                                󱸀  󲀀      
   │▌    docs         │▌ SESSIONS (0)                             ended: hidden   ⏸ pause   ? help   sort: state    
    │     󱼅  notes.md   │▌  󰍉 / filter
  󰍉 │     src          │▌
@@ -36,5 +36,5 @@
    │ opens the         ││▌  no session under the cursor                                ┌─────────────────────────── × ┐
   │ selection.        ││▌                                                             │ info panel: pinned — Sidebar │
    │                    │▌                                                             └──────────────────────────────┘
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  15:30  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:13  ws   —
 info panel: pinned — Sidebar                               ⋯
