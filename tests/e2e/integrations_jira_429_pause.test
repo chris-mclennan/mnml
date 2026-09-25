@@ -1,0 +1,34 @@
+# width: 120
+# height: 40
+# A 429 with `Retry-After` pauses the Jira pane: the budget chip says
+# `paused until hh:mm:ss`, nothing more goes out until the pause is up
+# (the fake's own log is the count), and then the read asks again and
+# the tickets land — the Bitbucket pane's behaviour, from the same SDK.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+# The fake answers its first Jira request 429 with `Retry-After: 12`;
+# it starts only now, so the install above cost it nothing.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid --rate-limit-first 1 --retry-after 12 >/dev/null 2>&1 &
+expect within 30000 screen contains "paused until "
+shell test "$(grep -c . jira.log)" -eq 1 && grep -q '"status":429' jira.log
+wait 3000
+shell test "$(grep -c . jira.log)" -eq 1
+expect within 40000 screen contains "JIRA WORK (3)"
+expect file jira.log contains "\"status\":200"
+expect screen lacks "paused until "
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

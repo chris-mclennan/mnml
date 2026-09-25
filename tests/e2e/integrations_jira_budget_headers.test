@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# The Jira pane's API budget chip reads the numbers Jira Cloud sends —
+# the same chip, in the same place, as the Bitbucket pane's — and every
+# Jira call it makes lands on the day's tally under the data root.
+#
+# The fake's budget dial sends `X-RateLimit-Limit: 1000`, a
+# `-Remaining` from 900 dropping one per request, and an ISO reset.
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid --rate-limit-limit 1000 --rate-limit-remaining 900 --rate-limit-reset 2026-09-25T14:10:00.000Z >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+expect within 30000 screen contains "JIRA WORK (3)"
+expect within 10000 screen contains "/1000 "
+expect screen lacks "900/1000"
+# Every Jira call on the wire is one on today's tally.
+wait 1500
+shell n=$(grep -c '"path":"/rest' jira.log); t=$(head -1 "$MNML_DATA_ROOT/budget/jira.tally" | cut -d' ' -f2); echo "wire=$n tally=$t"; test "$n" -gt 0 && test "$n" -eq "$t"
+shell grep -c '"path":"/rest' jira.log > before.txt
+key r
+wait 3000
+shell n=$(grep -c '"path":"/rest' jira.log); b=$(cat before.txt); t=$(head -1 "$MNML_DATA_ROOT/budget/jira.tally" | cut -d' ' -f2); echo "wire=$n before=$b tally=$t"; test "$n" -gt "$b" && test "$n" -eq "$t"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

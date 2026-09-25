@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# `.dry_run = true`: the Bitbucket pane sends nothing — the fake's log
+# stays empty — and its budget chip says DRY. The host's
+# `integrations.toggle_dry_run` turns it off, and the next refresh goes
+# out.
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .dry_run = true, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 30000 screen contains "BITBUCKET PRS"
+expect within 10000 screen contains " DRY "
+key r
+wait 3000
+# Nothing reached the wire.
+shell test -f wire.jsonl && test ! -s wire.jsonl
+# Off, from the host's command; the refresh goes out.
+command integrations.toggle_dry_run
+expect within 10000 screen lacks " DRY "
+key r
+expect within 30000 file wire.jsonl contains "pullrequests"
+expect within 30000 screen contains "(2 repos · 3 PRs)"
+key q
+wait 500
