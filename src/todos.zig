@@ -522,6 +522,15 @@ pub fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
     return false;
 }
 
+/// The user chose `sort` — the chip's click or a row of its
+/// right-click menu, the one path for both: the list re-sorts and
+/// `ui.todos_sort` is persisted, so the panel opens in that order next time.
+pub fn pickSort(app: *App, sort: ListSort) Allocator.Error!void {
+    try setSort(app, sort);
+    app.cfg.ui.todos_sort = app.todos.sort.toConfig();
+    _ = try settings.persist(app, .workspace, &.{ "ui", "todos_sort" }, app.cfg.ui.todos_sort);
+}
+
 pub fn setSort(app: *App, sort: ListSort) Allocator.Error!void {
     const st = &app.todos;
     st.sort = sort;
@@ -539,9 +548,7 @@ fn refreshCmd(app: *App) CommandError!void {
 /// The chip's click: the next mode, persisted as `ui.todos_sort` so it
 /// is the order the panel opens with next time.
 fn sortCmd(app: *App) CommandError!void {
-    try setSort(app, app.todos.sort.next());
-    app.cfg.ui.todos_sort = app.todos.sort.toConfig();
-    _ = try settings.persist(app, .workspace, &.{ "ui", "todos_sort" }, app.cfg.ui.todos_sort);
+    try pickSort(app, app.todos.sort.next());
     app.toast("sort: {s}", .{app.todos.sort.label()});
 }
 

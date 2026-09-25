@@ -1354,9 +1354,9 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             else => {},
         },
         .set_panel_sort => |s| switch (s.panel) {
-            .todos => try todos.setSort(app, s.sort),
-            .notes => try notes.setSort(app, s.sort),
-            .findings => try findings.setSort(app, s.sort),
+            .todos => try todos.pickSort(app, s.sort),
+            .notes => try notes.pickSort(app, s.sort),
+            .findings => try findings.pickSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
             .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search, .script, .jobs => {},
         },
