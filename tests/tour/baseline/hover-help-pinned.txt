@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Us…        │ 󰐕                                                                                  󱸀  󲀀    
+▌ │▌    docs         │
+   │     󱼅  notes.md   │
+ 󰍉 │     src          │
+   │     󱼄  main.zig   │
+ 󰊢 │     󱼅  util.zig M │                                                               _
+   │      .gitignore   │                               _ __ ___    _ __    _ __ ___   | |
+  │      CHANGELOG.m? │                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │     󰂺 README.md    │                              | | | | | | | | | | | | | | | | | |
+ 󰐱 │                    │                              |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │   󰐙 Add workspace  │
+ 󰎒 │                    │                           workspace · ws  on main · 1 changed file
+   │                    │
+  │                    │   WORKSPACES                                     SESSIONS
+   │                    │    ws                                   open
+  │                    │                                                   + New Claude Code session here
+   │                    │   RECENT FILES
+  │                    │    main.zig                              src      No session to resume
+   │                    │
+ 󱘣 │                    │                                                  SHORTCUTS
+   │                    │                                                   Ctrl+P         find a file
+ 󰢱 │                    │                                                   Ctrl+R         recent files
+   │                    │                                                   Ctrl+Shift+E   the file tree
+   │                    │                                                   Ctrl+B         toggle the tree
+   │                    │                                                   Ctrl+Shift+P   command palette
+   │                    │                                                   Ctrl+K         which-key menu
+   │                    │                                                   Ctrl+K Ctrl+S  cheatsheet
+   │                    │                                                   Ctrl+,         settings
+   │                    │                                                   Ctrl+N         new file
+   │────────────────────│                                                   Ctrl+Q         quit
+   │ Sidebar        󰐃 ⋮ │
+   │                   ┃│                                mnml 0.3.0-dev+g7a151699-dirty
+   │ Arrows or j/k     ┃│
+   │ walk rows. Enter  ┃│
+   │ opens the         ││                                                              ┌─────────────────────────── × ┐
+  │ selection.        ││                                                              │ info panel: pinned — Sidebar │
+   │                    │                                                              └──────────────────────────────┘
+ HELP  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  15:30  ws   —
+info panel: pinned — Sidebar                               ⋯

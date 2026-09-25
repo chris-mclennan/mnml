@@ -58,6 +58,7 @@ const kCGWindowListOptionIncludingWindow: u32 = 1 << 3;
 
 extern "c" fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) CFTypeRef;
 extern "c" fn CGWindowListCreateImage(rect: CGRect, option: u32, window_id: u32, image_option: u32) CFTypeRef;
+const kCGWindowImageBoundsIgnoreFraming: u32 = 1 << 0;
 extern "c" fn CGImageGetWidth(img: CFTypeRef) usize;
 extern "c" fn CGImageGetHeight(img: CFTypeRef) usize;
 extern "c" fn CGImageGetBytesPerRow(img: CFTypeRef) usize;
@@ -131,6 +132,25 @@ pub const flag_command: u64 = 1 << 20;
 /// than asked for, and every cell→pixel sum after that is wrong.
 pub fn mainDisplayBounds() CGRect {
     return CGDisplayBounds(CGMainDisplayID());
+}
+
+extern "c" fn CGGetActiveDisplayList(max: u32, displays: [*]u32, count: *u32) i32;
+
+/// The bounds of the active display that wholly holds `r` (a point of
+/// slack on each edge), or null when it straddles a bezel or hangs off
+/// every display. ghostty opens a window on the display that has the
+/// keyboard, which on a two-display desk is often not the main one.
+pub fn displayContaining(r: CGRect) ?CGRect {
+    var ids: [16]u32 = undefined;
+    var n: u32 = 0;
+    if (CGGetActiveDisplayList(ids.len, &ids, &n) != 0) return null;
+    for (ids[0..n]) |d| {
+        const b = CGDisplayBounds(d);
+        if (r.origin.x >= b.origin.x - 1 and r.origin.y >= b.origin.y - 1 and
+            r.origin.x + r.size.width <= b.origin.x + b.size.width + 1 and
+            r.origin.y + r.size.height <= b.origin.y + b.size.height + 1) return b;
+    }
+    return null;
 }
 
 /// Move one of OUR windows to a point on screen. `pid` must be a process
@@ -291,10 +311,12 @@ pub fn frontWindowPid() ?i32 {
     return null;
 }
 
-/// Make OUR OWN process the active application. Called only by the
-/// explicit `focus` verb, never on the way to something else: taking the
-/// keyboard is the one thing this tool does that the person at the
-/// machine will notice, so it is never a side effect.
+/// Make a process the active application. Called by the explicit
+/// `focus` verb for OUR process, and by `launch` for exactly one other:
+/// the app that was frontmost before the harness opened, to give the
+/// keyboard back that ghostty's own activation took. Taking the keyboard
+/// is the one thing this tool does that the person at the machine will
+/// notice, so it is never a side effect.
 pub fn activate(pid: i32) bool {
     const app = AXUIElementCreateApplication(pid) orelse return false;
     defer CFRelease(app);
@@ -584,7 +606,14 @@ pub const Image = struct {
 /// Screen Recording was revoked between the check and the call.
 pub fn captureWindow(id: u32) ?Image {
     const null_rect: CGRect = .{ .origin = .{ .x = std.math.inf(f64), .y = std.math.inf(f64) }, .size = .{ .width = 0, .height = 0 } };
-    const img = CGWindowListCreateImage(null_rect, kCGWindowListOptionIncludingWindow, id, 0) orelse return null;
+    // `kCGWindowImageBoundsIgnoreFraming`: the window's own bounds, not
+    // the shadow around them. Without it the capture is the window plus
+    // a transparent margin, so every cell → pixel sum was offset by the
+    // margin and scaled by the wrong width: a cell at the frame's edge
+    // sampled the shadow (#000000) and one in the middle landed a few
+    // pixels off its cell. `screencapture -o` (the `shot` verb) already
+    // left the shadow out, which is why the two disagreed.
+    const img = CGWindowListCreateImage(null_rect, kCGWindowListOptionIncludingWindow, id, kCGWindowImageBoundsIgnoreFraming) orelse return null;
     const provider = CGImageGetDataProvider(img) orelse {
         CFRelease(img);
         return null;

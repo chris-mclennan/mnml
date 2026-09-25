@@ -1,0 +1,39 @@
+// Masks for the tour's pixel diff (tools/tour.sh diff). A mask is a
+// rectangle of CELLS (col, row, w, h at 120x40) blanked in both the
+// baseline and the fresh shot before they are compared.
+//
+// `patterns` are regexes run over the shot's screen.txt (saved beside
+// every PNG): each match becomes a one-row mask, one cell wider on each
+// side. That is how the moving text is masked wherever it lands — the
+// statusline clock, the version hash on the start surface — without a
+// rectangle that goes stale the day a chip moves.
+.{
+    // A shot is CHANGED when more than this percent of its pixels moved
+    // (0.02% of a 1920x1360 capture is ~520 pixels: one cell's glyph).
+    .threshold_pct = 0.02,
+    // A pixel moved when any channel changed by more than this.
+    .tolerance = 24,
+    .default = .{
+        .patterns = .{
+            // The statusline clock.
+            "\\b\\d{1,2}:\\d{2}\\b",
+            // The build's version and hash (start surface, About).
+            "\\d+\\.\\d+\\.\\d+-dev\\+g[0-9a-f]+(-dirty)?",
+            // An integration pane's freshness ("as of 2s ago").
+            "as of \\S+ ago",
+        },
+        .rects = .{},
+    },
+    .shots = .{
+        // The offline Bitbucket dates its PRs "today": the UPDATED
+        // column moves every day the tour runs.
+        // …and once an integration is installed its rail row alternates
+        // between the INTEGRATIONS icon and the badge count it publishes
+        // (seen: `󰐱` in one run, `2` in the next, same state).
+        .@"bitbucket-prs" = .{
+            .patterns = .{"\\d{4}-\\d{2}-\\d{2}"},
+            .rects = .{.{ .col = 0, .row = 10, .w = 3, .h = 1 }},
+        },
+        .@"jira-work" = .{ .rects = .{.{ .col = 0, .row = 10, .w = 3, .h = 1 }} },
+    },
+}

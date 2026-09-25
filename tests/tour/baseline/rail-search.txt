@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ SEARCH       Aa \b .*   │ 󰐕                                                                            󱸀  󲀀    
+  │  󰍉 total                 │
+   │                          │
+▌󰍉 │ 8 hits (git grep)        │
+   │                          │
+ 󰊢 │ src/main.zig             │                                                            _
+   │▌  4:54  …int the total.  │                            _ __ ___    _ __    _ __ ___   | |
+  │   8:11  const total = ut…│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │   9:22  ….print("total: …│                           | | | | | | | | | | | | | | | | | |
+ 󰐱 │   9:39  …}\n", .{total});│                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │   11:9  if (total == 0) …│
+ 󰎒 │ src/util.zig             │                        workspace · ws  on main · 1 changed file
+   │   5:9  var total: i64 = …│
+  │   6:18  …xs) |x| total +…│   WORKSPACES                                  SESSIONS
+   │   7:12  return total;    │    ws                                open
+  │                          │                                                + New Claude Code session here
+   │                          │   RECENT FILES
+  │                          │    main.zig                           src      No session to resume
+   │                          │
+ 󱘣 │                          │                                               SHORTCUTS
+   │                          │                                                Ctrl+P         find a file
+ 󰢱 │                          │                                                Ctrl+R         recent files
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │──────────────────────────│                                                Ctrl+Q         quit
+   │ Search               󰐃 ⋮ │
+   │                          │                             mnml 0.3.0-dev+g7a151699-dirty
+   │ Workspace search. `/`    │
+   │ filters. Enter jumps to  │
+   │ the match.               │
+  │                          │
+   │                          │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                 󱸀 95% 52%  󱼀 󰐎  LSP?    15:29  ws   —
+                                                           ⋯

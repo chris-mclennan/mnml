@@ -225,3 +225,33 @@ our runs' scans are scoped (its replacement survived both of ours in the
 `2cc39cef` attempt), and nothing else of ours signals a `claude
 --resume`, so the likely killer is an unfixed run's machine-wide scan —
 the bug this file is about, seen from the outside. Inferred, not traced.
+
+## The real-screen layer
+
+Everything above is about the headless App: it sees the cell grid and
+its attributes, never the pixels. The real-screen layer puts the same
+app in a real ghostty window (`mnml-drive`, `docs/DRIVE.md`) and keeps
+the same hermetic rules: one window at a time, a private `HOME` and data
+root under the checkout's `.verify/`, the app `env -i`-launched through a
+wrapper (ghostty's `login(1)` would otherwise hand it the real `HOME`), a
+clean `PATH`, a refusing proxy, the offline Jira and Bitbucket, a usage
+fixture instead of the keychain, the now-playing chip idle, and the
+window driven only through the file channel (`ipc.allow_input`) — it
+never takes the keyboard. Three tools, three cadences:
+
+| | what | when | judged by |
+|---|---|---|---|
+| `tools/look.sh` | one window on the workspace an agent is already driving headless | while fixing anything visual | the agent reading its PNG (`docs/LOOK.md`) |
+| `tools/tour.sh` | the curated tour: 29 states at 120x40, pixel asserts (`tests/tour/asserts.zon`), masked diff against `tests/tour/baseline/` | **after every green chain** (~2 min) | the diff's `ok` / `CHANGED n%`, the asserts, and a person or agent reading the flagged shots with `tools/tour-review.md` |
+| `tools/tour.sh sweep` | every `tests/e2e/**/*.test` through the real window, the last frame shot | **overnight** (~7 s a file, ~2 h for the corpus) | the diff only, against `tests/tour/sweep-baseline/` (machine-local, never committed); the `soft misses` in `sweep.jsonl` are where a file's `expect` never held on the real screen |
+
+A tour `CHANGED` is not a failure by itself: read the shot, then either
+fix the app or `tools/tour.sh accept <name>`. The baselines are this
+machine's (the user's ghostty font, the display profile); a new machine
+starts with `accept --all` and a careful read of every shot.
+
+The sweep is resumable (a file with a shot is skipped unless `--all`)
+and tolerant (a file that errors is logged in `sweep.jsonl` and the
+sweep goes on). To start a baseline set: run it once, read what looks
+wrong, then copy `.verify/sweep/sweep/*.png` (and the `.txt` beside
+each) into `tests/tour/sweep-baseline/`.

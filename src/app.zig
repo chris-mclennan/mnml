@@ -1289,6 +1289,10 @@ pub const App = struct {
     /// as Rust's every wheel event routes against its last frame's
     /// rects. Any other event clears it.
     last_was_wheel: bool = false,
+    /// A host's `mouse_down` over the channel is held until its
+    /// `mouse_up`, so a `mouse_move` between them is a drag
+    /// (`ipc.effects.applyInput`).
+    ipc_button_held: bool = false,
     /// The split tree's area at the last render — what a divider drag
     /// and the focus motions measure against.
     panes_area: Rect = .{},
@@ -3249,8 +3253,17 @@ pub const App = struct {
                     // Everything else goes through the one dispatcher
                     // the headless driver uses, so a segment an
                     // integration publishes lands the same either way.
-                    else => if (!try ipc.effects.applyTier2(self, &e.cmd)) {
-                        self.toast("ipc {s}: not in this build", .{@tagName(e.cmd)});
+                    // Input only arrives here when `ipc.allow_input` let
+                    // the loop post it (`tui/loop.zig`); it becomes the
+                    // key and mouse events a person's hands would.
+                    else => {
+                        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+                        defer arena_state.deinit();
+                        if (!try ipc.effects.applyInput(self, arena_state.allocator(), &e.cmd) and
+                            !try ipc.effects.applyTier2(self, &e.cmd))
+                        {
+                            self.toast("ipc {s}: not in this build", .{@tagName(e.cmd)});
+                        }
                     },
                 }
             },

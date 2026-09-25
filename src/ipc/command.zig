@@ -194,6 +194,9 @@ pub const Command = union(enum) {
     focus_session: struct { id: ?[]const u8, cwd: ?[]const u8, prompt_line: ?[]const u8 },
     dump_rects,
     ghost: []const u8,
+    /// `ex`: an ex command line, as `:` would run it (`bd!`) — the
+    /// `.test` step of the same name, for a host driving a live window.
+    ex: []const u8,
     quit,
     restart,
     /// The raw line, for the `unknown` ack.
@@ -240,6 +243,7 @@ fn fromRaw(arena: Allocator, raw: Raw) Allocator.Error!?Command {
         @"focus-session",
         @"dump-rects",
         ghost,
+        ex,
         quit,
         restart,
     };
@@ -328,6 +332,7 @@ fn fromRaw(arena: Allocator, raw: Raw) Allocator.Error!?Command {
         .@"dump-rects" => .dump_rects,
         // An empty ghost would be a silent no-op — easy to miss in a script.
         .ghost => if (raw.text) |s| (if (s.len == 0) null else .{ .ghost = s }) else null,
+        .ex => if (raw.text) |s| (if (s.len == 0) null else .{ .ex = s }) else null,
         .quit => .quit,
         .restart => .restart,
     };

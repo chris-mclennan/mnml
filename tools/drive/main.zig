@@ -38,14 +38,14 @@ const usage_text =
     \\
     \\  launch --workspace DIR --data-root DIR [--size small|corpus|full]
     \\         [--cols N] [--rows N] [--font-size PT] [--exe PATH] [--ghostty PATH]
-    \\         [--timeout MS]
+    \\         [--timeout MS] [--take-focus] [--allow-input] [--no-mouse]
     \\  key <spec>              one chord or a chain: ctrl+p, "space f f", enter
     \\  type <text>             literal text, any codepoint
     \\  click|rightclick|doubleclick|hover X Y      cell coordinates
     \\  drag FX FY TX TY
     \\  scroll X Y up|down [--notches N]
     \\  shot PATH.png           the harness window only
-    \\  pixel X Y [--expect #RRGGBB] [--tolerance N]
+    \\  pixel X Y [--expect #RRGGBB] [--tolerance N] [--fx F] [--fy F]
     \\  screen | status | rects                     the live IPC dumps
     \\  wait-frame [--timeout MS]                   block until screen.txt moves
     \\  info                    the recorded window, re-verified
@@ -353,6 +353,13 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     const ghostty = flagValue(args, "--ghostty") orelse "/Applications/Ghostty.app/Contents/MacOS/ghostty";
     const exe = flagValue(args, "--exe") orelse "zig-out/bin/mnml-zig";
 
+    // Whoever has the keyboard now. A ghostty started from a shell
+    // activates itself as it opens, which took the keyboard from the
+    // person at the machine mid-sentence on every launch; once the
+    // window is up it is handed back (unless `--take-focus`).
+    const front_before = mac.frontWindowPid();
+    const take_focus = hasFlag(args, "--take-focus");
+
     try Io.Dir.cwd().createDirPath(io, data_root);
     // mnml's own config, in the isolated data root (harness.mnml_config
     // says why each key is there).
@@ -368,7 +375,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     // (`harness.copied_keys` — two appearance keys, and nothing that
     // names a token, a path or an integration).
     const own_cfg = readUserMnmlConfig(gpa, io, init_env) orelse "";
-    const mnml_cfg = try harness.mnmlConfigFrom(gpa, own_cfg);
+    const mnml_cfg = try harness.mnmlConfigWith(gpa, own_cfg, .{ .allow_input = hasFlag(args, "--allow-input") });
     for ([_][]const u8{ data_root, try std.fmt.allocPrint(gpa, "{s}-dev", .{data_root}) }) |root| {
         try Io.Dir.cwd().createDirPath(io, root);
         const cfg_path = try std.fs.path.join(gpa, &.{ root, "config.zon" });
@@ -401,6 +408,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             // A user font-size that does not fit is not a preference the
             // harness can honour; from the second attempt on, ours wins.
             .force_font_size = attempt > 0,
+            .mouse_reporting = !hasFlag(args, "--no-mouse"),
         });
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = conf_path, .data = conf });
         // A previous attempt's dumps would answer for this one.
@@ -486,9 +494,18 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
                 settled = mac.windowOwnedBy(pid, found.id) orelse placed;
             }
         }
-        const settled_fits = settled.x >= screen.origin.x - 1 and settled.y >= screen.origin.y - 1 and
-            settled.x + settled.w <= screen.origin.x + screen.size.width + 1 and
-            settled.y + settled.h <= screen.origin.y + screen.size.height + 1;
+        // Fully on ONE display is what the shot and pixel math need: a
+        // window that straddles a bezel photographs in two halves. The
+        // main display is where the move above aims, but ghostty opens
+        // on the display that has the keyboard, and the move is refused
+        // outright on some setups (its one AX element answers
+        // `kAXErrorAttributeUnsupported` for AXPosition, measured on a
+        // two-display desk) — a window wholly on the other display is
+        // still a window the harness can shoot and read.
+        const settled_fits = mac.displayContaining(.{
+            .origin = .{ .x = settled.x, .y = settled.y },
+            .size = .{ .width = settled.w, .height = settled.h },
+        }) != null;
 
         // `full` has no number until now: measure a cell on THIS machine,
         // at the user's own font, and work out how many of them the
@@ -528,6 +545,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             };
             const rec_path = try std.fs.path.join(gpa, &.{ data_root, "drive.json" });
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = rec_path, .data = try harness.writeRecord(gpa, rec) });
+            if (!take_focus) giveFocusBack(io, pid, front_before);
             try w.print("{s}\n", .{rec_path});
             return 0;
         }
@@ -541,7 +559,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             // window simply landed somewhere off this display.
             try e.print(
                 "mnml-drive launch: the window came up {d}x{d} as asked, but at {d:.0},{d:.0} {d:.0}x{d:.0} pt\n" ++
-                    "  it is not fully on the main display ({d:.0},{d:.0} {d:.0}x{d:.0} pt). Refusing: a window\n" ++
+                    "  it is not wholly on any one display (main: {d:.0},{d:.0} {d:.0}x{d:.0} pt). Refusing: a window\n" ++
                     "  partly off screen photographs as a window partly off screen.\n",
                 .{ got.cols, got.rows, settled.x, settled.y, settled.w, settled.h, screen.origin.x, screen.origin.y, screen.size.width, screen.size.height },
             );
@@ -562,6 +580,29 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     }
     try e.writeAll("mnml-drive launch: gave up after four attempts to fit the grid on screen\n");
     return exit_refused;
+}
+
+/// Hand the keyboard back to the application that had it before the
+/// launch, if the harness took it. Ghostty activates as it opens, and a
+/// script that launches a window per file (the corpus sweep) would
+/// otherwise take the keyboard from the person at the machine once a
+/// file. The app it hands back to is the one that was frontmost a
+/// moment ago — nothing is raised that was not already in front.
+fn giveFocusBack(io: Io, pid: i32, before: ?i32) void {
+    const prev = before orelse return;
+    if (prev == pid) return;
+    var waited: u64 = 0;
+    // The activation can land after the window is listed; watch for it
+    // briefly rather than checking once too early.
+    while (waited < 1500) : (waited += 50) {
+        if (mac.frontWindowPid()) |front| {
+            if (front == pid) {
+                _ = mac.activate(prev);
+                return;
+            }
+        }
+        sleepMs(io, 50);
+    }
 }
 
 /// The font size that WOULD fit, from the one measurement that exists:
@@ -884,9 +925,15 @@ fn pixel(s: *Session, args: []const [:0]const u8, cx: u16, cy: u16, w: *Io.Write
     // from the capture rather than assuming 2 keeps a non-Retina display
     // honest.
     const scale: f64 = if (s.rec.w > 0) @as(f64, @floatFromInt(img.width)) / s.rec.w else 1;
-    const c = s.rec.cellCentre(cx, cy);
-    const px: usize = @intFromFloat(@max((c.x - s.rec.x) * scale, 0));
-    const py: usize = @intFromFloat(@max((c.y - s.rec.y) * scale, 0));
+    // Where in the cell: the centre unless `--fx` / `--fy` (0..1 across
+    // the cell) say otherwise. A half-block glyph — the pane rail's `▌`
+    // — fills only the left half, and its centre sample is background.
+    const fx = std.math.clamp(flagFloat(args, "--fx") orelse 0.5, 0.0, 0.999);
+    const fy = std.math.clamp(flagFloat(args, "--fy") orelse 0.5, 0.0, 0.999);
+    const cx_pt = s.rec.x + (@as(f64, @floatFromInt(cx)) + fx) * s.rec.cellW();
+    const cy_pt = s.rec.y + (@as(f64, @floatFromInt(cy)) + fy) * s.rec.cellH();
+    const px: usize = @intFromFloat(@max((cx_pt - s.rec.x) * scale, 0));
+    const py: usize = @intFromFloat(@max((cy_pt - s.rec.y) * scale, 0));
     const got = img.rgb(px, py) orelse {
         try e.print("mnml-drive pixel: {d},{d} is outside the {d}x{d} capture\n", .{ px, py, img.width, img.height });
         return exit_refused;
@@ -987,6 +1034,16 @@ fn flagValue(args: []const [:0]const u8, name: []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+fn flagFloat(args: []const [:0]const u8, name: []const u8) ?f64 {
+    const v = flagValue(args, name) orelse return null;
+    return std.fmt.parseFloat(f64, v) catch null;
+}
+
+fn hasFlag(args: []const [:0]const u8, name: []const u8) bool {
+    for (args) |a| if (std.mem.eql(u8, a, name)) return true;
+    return false;
 }
 
 fn flagInt(comptime T: type, args: []const [:0]const u8, name: []const u8) ?T {

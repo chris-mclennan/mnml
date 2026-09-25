@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Us…        │ 󰐕                                                                                  󱸀  󲀀    
+▌ │▌    docs         │
+   │     󱼅  notes.md   │
+ 󰍉 │     src          │
+   │     󱼄  main.zig   │
+ 󰊢 │     󱼅  util.zig M │                                                               _
+   │      .gitignore   ╭ Settings · → .mnml/config.zon ───────────────────────────────────────╮
+  │      CHANGELOG.m? │ UI · Editor · AI · Integrations · Reset                              │
+   │     󰂺 README.md    │ ── UI ──                                                            █│
+ 󰐱 │                    │ ▸ Line numbers:                      off / [on]                     █│
+   │   󰐙 Add workspace  │   Relative line numbers:             [off] / on                     █│
+ 󰎒 │                    │   Highlight cursor line:             [off] / on                     █│
+   │                    │   Soft wrap:                         [off] / on                     █│
+  │                    │   Scrollbar:                         off / [on]                     █│
+   │                    │   Show whitespace:                   [off] / on                     █│
+  │                    │   Highlight trailing whitespace:     [off] / on                     █│ssion here
+   │                    │   Rainbow brackets:                  [off] / on                     █│
+  │                    │   Syntax highlighting:               off / [on]                     █│
+   │                    │   Tree previews on arrow:            off / [on]                     █│
+ 󱘣 │                    │   Preview tabs:                      off / [on]                     █│
+   │                    │   TODOS sort:                        [newest] / oldest / name ›     █│a file
+ 󰢱 │                    │   Theme:                             [onedark] ‹ 62/94 ›            █│t files
+   │                    │   ASCII icons:                       [off] / on                     █│ile tree
+   │                    │   Clock in statusline:               off / [on]                     █│e the tree
+   │                    │   Menu bar:                          [always] / auto / hidden       █│nd palette
+   │                    │   Activity bar:                      [always] / auto / hidden       █│-key menu
+   │                    │   Side columns:                      [always] / auto / hidden       █│sheet
+   │                    │   Launcher dock:                     always / [auto_hide] / hidden  █│ngs
+   │                    │   Launcher dock edge:                [bottom] / left / right        █│ile
+   │────────────────────│   Launcher dock placement:           [above statusline] ›           █│
+   │ Sidebar        󰐃 ⋮ │ 22/121  ←→ adjust · ↑↓ move · ctrl+r reset · Enter save · Esc cancel │
+   │                   ┃╰──────────────────────────────────────────────────────────────────────╯
+   │ Arrows or j/k     ┃│
+   │ walk rows. Enter  ┃│
+   │ opens the         ││
+  │ selection.        ││
+   │                    │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  15:29  ws   —
+                                                           ⋯
