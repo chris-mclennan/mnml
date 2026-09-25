@@ -20,3 +20,8 @@ __pycache__/
 
 # tools/linux-verify.sh: the Zig tarball cache and the Linux run logs.
 .verify/
+
+# tools/tour.sh: the corpus sweep's baselines are machine-local (fonts,
+# display profile) and ~1000 PNGs — never committed. The curated tour's
+# baselines under tests/tour/baseline/ are.
+tests/tour/sweep-baseline/
