@@ -12,7 +12,6 @@
    │                          │
  󰎒 │                          │                                     workspace · ws
    │                          │
-  │                          │   WORKSPACES                                  SESSIONS
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │            a → sessions                       ctrl+shift+n → messages (toast log)                                  │
  │            b → blame toggle                         ctrl+t → theme…                                                │
@@ -37,4 +36,5 @@
  │       ctrl+s → cheatsheet (all chords)                   z → full screen (Esc Esc leaves)                          │
  │  esc to cancel                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ TREE  [no file]                                                                            󱼀 󰐎    16:26  ws   —
                                                            ⋯

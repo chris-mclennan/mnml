@@ -723,14 +723,14 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         toast_area.h -|= 1;
     }
     const wizard_up = app.overlay == .wizard;
-    if (wizard_up) try drawOverlay(app, ui, panes_area);
+    if (wizard_up) try drawOverlay(app, ui, fr);
     toast_mod.draw(ui, toast_area, try app.visibleToasts(arena));
     // The `:` line's completion popup: above the line, over the toasts
     // (it is what the user is typing into), under the overlays. Its
     // ceiling is the row under the tab bar — the panes' first row is
     // the bufferline's.
     try cmdline_popup_app.draw(app, ui, fr.cmdline, panes_area.y + 1);
-    if (!wizard_up) try drawOverlay(app, ui, panes_area);
+    if (!wizard_up) try drawOverlay(app, ui, fr);
     try lsp.drawPopups(app, ui, panes_area);
     // A context menu is the topmost layer — over the toasts too, whose
     // own menu it is — and it stays above the statusline and the `:`
@@ -2503,7 +2503,7 @@ pub fn inflightNames(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
 /// keymap's own continuations of the pending chain — `w → Close other
 /// tabs`, `g → +2` — drawn by the which-key component. Never the vim
 /// leader tree: these rows are what the next key will run.
-fn drawChordMenu(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
+fn drawChordMenu(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const seq = app.chord.seq[0..app.chord.len];
     const kids = try app.keymap.continuations(ui.arena, seq);
     const entries = try ui.arena.alloc(which_key.Entry, kids.len);
@@ -2534,7 +2534,7 @@ fn drawChordMenu(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
         // The profile's own spelling for its leader chord.
         title.writer.writeAll(if (i == 0 and std.mem.eql(u8, one.written(), "ctrl+k")) whichkey.leaderLabel(false) else one.written()) catch return error.OutOfMemory;
     }
-    which_key.draw(ui, screen, title.written(), entries);
+    which_key.draw(ui, area, title.written(), entries);
 }
 
 /// The `Ctrl+K` group under `seq` + `next`, labelled by the leader
@@ -2567,12 +2567,24 @@ fn plainChar(c: ChordT) ?u8 {
     return if (c.mods.shift and ch >= 'a' and ch <= 'z') @intCast(ch - ('a' - 'A')) else @intCast(ch);
 }
 
-/// The prompt, the confirm, the picker and the which-key popup are
-/// placed on the whole screen, as Rust places them (`frame.area()`);
-/// `body` is the pane area the rest anchor to.
-fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
-    _ = body;
+/// The rect the which-key popup is placed in: the screen down to and
+/// including the statusline's row — its `.above_bottom` anchor sits the
+/// box just above that last row — so the statusline and the `:` line
+/// under it stay in view whatever the popup holds. Without a statusline
+/// (zen, a screen too short for one) the `:` line is the row it keeps;
+/// without either, the whole screen.
+pub fn whichKeyArea(full: Rect, fr: FrameRects) Rect {
+    const keep: Rect = if (!fr.status.isEmpty()) fr.status else fr.cmdline;
+    if (keep.isEmpty() or keep.y < full.y or keep.y >= full.bottom()) return full;
+    return Rect.init(full.x, full.y, full.w, keep.y + 1 - full.y);
+}
+
+/// The prompt, the confirm and the picker are placed on the whole
+/// screen, as Rust places them (`frame.area()`); the which-key popup on
+/// the rows above the statusline (`whichKeyArea`).
+fn drawOverlay(app: *App, ui: Ui, fr: FrameRects) Allocator.Error!void {
     const screen = ui.canvas.full();
+    const wk_area = whichKeyArea(screen, fr);
     switch (app.overlay) {
         // No overlay, but a vim operator is pending: the same popup
         // lists what `g` / `z` / `ctrl+w` continue with, as the
@@ -2584,8 +2596,8 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                 const n = std.unicode.utf8Encode(it.key, &buf) catch 1;
                 entries[i] = .{ .key = try ui.arena.dupe(u8, buf[0..n]), .label = it.label, .is_group = it.group };
             }
-            which_key.draw(ui, screen, ui.fmt("Vim: {s}", .{hint.prefix}), entries);
-        } else if (app.chord.menu) try drawChordMenu(app, ui, screen),
+            which_key.draw(ui, wk_area, ui.fmt("Vim: {s}", .{hint.prefix}), entries);
+        } else if (app.chord.menu) try drawChordMenu(app, ui, wk_area),
         .prompt => |*p| if (prompt_mod.draw(ui, screen, &p.state)) |c| {
             app.cursor_pos = .{ .x = c.x, .y = c.y };
         },
@@ -2650,7 +2662,7 @@ fn drawOverlay(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
                     .id = @intCast(i),
                 };
             }
-            which_key.draw(ui, screen, title, entries);
+            which_key.draw(ui, wk_area, title, entries);
         },
         // A menu paints last of all, after the toasts (`render`).
         .menu => {},
@@ -3784,4 +3796,57 @@ test "paneFocused: the pane the keys go to, whatever its kind and whatever pane 
     app.focus = .{ .pane = mount };
     app.active = null;
     for (all) |id| try t.expect(!paneFocused(&app, id));
+}
+
+test "the which-key popup stops above the statusline: at 120x40 and 80x24, standard Ctrl+K and the vim leader alike, its bottom edge is the row over the statusline and the statusline and the `:` line paint whole under it" {
+    // The rect itself: the screen down to the statusline's row, which
+    // `.above_bottom` keeps clear; zen keeps the `:` line.
+    try t.expect(whichKeyArea(Rect.init(0, 0, 120, 40), frameRects(Rect.init(0, 0, 120, 40), .{})).eql(Rect.init(0, 0, 120, 39)));
+    try t.expect(whichKeyArea(Rect.init(0, 0, 80, 24), frameRects(Rect.init(0, 0, 80, 24), .{})).eql(Rect.init(0, 0, 80, 23)));
+    try t.expect(whichKeyArea(Rect.init(0, 0, 80, 24), zenRects(Rect.init(0, 0, 80, 24))).eql(Rect.init(0, 0, 80, 24)));
+    try t.expect(whichKeyArea(Rect.init(0, 0, 80, 1), zenRects(Rect.init(0, 0, 80, 1))).eql(Rect.init(0, 0, 80, 1)));
+    const Size = struct { cols: u16, rows: u16 };
+    for ([_]Size{ .{ .cols = 120, .rows = 40 }, .{ .cols = 80, .rows = 24 } }) |sz| {
+        for ([_]bool{ false, true }) |vim| {
+            var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = sz.cols, .rows = sz.rows });
+            defer app.deinit();
+            if (vim) try command.run(&app, .{ .static = .@"editor.use_vim" });
+            // The statusline and the `:` line as they paint with no popup.
+            const before = try screenText(&app);
+            defer t.allocator.free(before);
+            try command.run(&app, .{ .static = .@"whichkey.leader" });
+            const after = try screenText(&app);
+            defer t.allocator.free(after);
+            const fr = frameRects(Rect.init(0, 0, sz.cols, sz.rows), chrome(&app));
+            try t.expect(fr.status.y + 1 == fr.cmdline.y and fr.cmdline.y + 1 == sz.rows);
+            var lines_before = std.mem.splitScalar(u8, before, '\n');
+            var lines_after = std.mem.splitScalar(u8, after, '\n');
+            var y: u16 = 0;
+            var top: ?u16 = null;
+            var bottom: ?u16 = null;
+            while (lines_after.next()) |row| : (y += 1) {
+                const was = lines_before.next().?;
+                if (std.mem.indexOf(u8, row, if (vim) "┌ <leader> " else "┌ Ctrl+K ") != null) top = y;
+                if (std.mem.startsWith(u8, row, " └")) bottom = y;
+                // No box glyph on the statusline or the `:` line.
+                if (y >= fr.status.y) {
+                    try t.expect(std.mem.indexOf(u8, row, "│") == null or std.mem.indexOf(u8, was, "│") != null);
+                    try t.expect(std.mem.indexOf(u8, row, "└") == null);
+                    try t.expect(std.mem.indexOf(u8, row, "esc to cancel") == null);
+                }
+            }
+            // The box: its top under row 0, its bottom the row just above
+            // the statusline, the hint inside it.
+            try t.expect(top != null and top.? >= 1);
+            try t.expectEqual(fr.status.y - 1, bottom.?);
+            try t.expect(std.mem.indexOf(u8, after, "esc to cancel") != null);
+            // The statusline's own text is still there, not the box's.
+            var it = std.mem.splitScalar(u8, after, '\n');
+            var i: u16 = 0;
+            const status_row = while (it.next()) |row| : (i += 1) {
+                if (i == fr.status.y) break row;
+            } else unreachable;
+            try t.expect(std.mem.indexOf(u8, status_row, "[no file]") != null);
+        }
+    }
 }
