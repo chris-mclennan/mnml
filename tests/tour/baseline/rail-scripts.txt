@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ SCRIPTS          │ 󰐕                                                                                  󱸀  󲀀    
+  │ Inst (1) Mkt (5)   │
+   │  󰍉 / filter        │
+ 󰍉 │                    │
+   │▌ + create init.lua │
+ 󰊢 │▌   the workspace h…│                                                               _
+   │                    │                               _ __ ___    _ __    _ __ ___   | |
+  │  init.lua  api 1  i│                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │    0 command(s), 0…│                              | | | | | | | | | | | | | | | | | |
+ 󰐱 │                    │                              |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                    │
+ 󰎒 │                    │                           workspace · ws  on main · 1 changed file
+   │                    │
+  │                    │   WORKSPACES                                     SESSIONS
+   │                    │    ws                                   open
+  │                    │                                                   + New Claude Code session here
+   │                    │   RECENT FILES
+  │                    │    main.zig                              src      No session to resume
+   │                    │
+ 󱘣 │                    │                                                  SHORTCUTS
+   │                    │                                                   Ctrl+P         find a file
+▌󰢱 │                    │                                                   Ctrl+R         recent files
+   │                    │                                                   Ctrl+Shift+E   the file tree
+   │                    │                                                   Ctrl+B         toggle the tree
+   │                    │                                                   Ctrl+Shift+P   command palette
+   │                    │                                                   Ctrl+K         which-key menu
+   │                    │                                                   Ctrl+K Ctrl+S  cheatsheet
+   │                    │                                                   Ctrl+,         settings
+   │                    │                                                   Ctrl+N         new file
+   │────────────────────│                                                   Ctrl+Q         quit
+   │ Scripts        󰐃 ⋮ │
+   │                    │                                mnml 0.3.0-dev+g7a151699-dirty
+   │ Arrows walk rows.  │
+   │ Enter jumps to the │
+   │ source. F6 cycles  │
+  │ focus.             │
+   │                    │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  15:29  ws   —
+                                                           ⋯

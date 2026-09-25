@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ GIT               │ 󰊢 ws 󰅖   󰐕                                                                      󱸀  󲀀      
+  │  󰍉 / filter        │▌    󰕌 Undo   󰑎 Redo    Pull    Push    Fetch    Branch    Commit    Stash   󰋚 Reflog
+   │                    │▌     G… │ COMMIT MESSAGE         │ DATE / TIME   │     SHA    │─ WIP @ main · 2 change(s) · 1
+ 󰍉 │  ws 󰅀        󰅁  󰅂  │▌ ▶       │ 2 change(s) · 1 new   │               │            │
+   │ Viewing 3          │▌     ●   │ HEAD main Add a docs… │   09/05 16:00 │ fb444d013  │  ▾ Unstaged Files (2)  Stage A
+▌󰊢 │                    │▌     ●─╮ │ Merge feature/numbers │   09/04 08:45 │ bb9425899  │    ? CHANGELOG.md         [+]
+   │▌ 󰌢 LOCAL        2 │▌     │ ● │ +1         Sum five … │   09/03 14:15 │ 44a1f4fb8  │    M src/util.zig         [+]
+  │  󰘬 feature/numbers │▌     ●─╯ │ Add util.sum with a … │   09/02 10:30 │ 9125fbd19  │
+   │  󱓏 main            │▌     ●   │ Start the tour proje… │   09/01 09:00 │ be864d80d  │  ▾ Staged Files (0)  Unstage A
+ 󰐱 │                    │▌                                                              │
+   │  󰅟 REMOTE       0 │▌                                                              │
+ 󰎒 │                    │▌                                                              │
+   │  󰐅 WORKTREES    1 │▌                                                              │
+  │  󰋜 main (ws)     ● │▌                                                              │
+   │                    │▌                                                              │
+  │  󰏗 STASHES      0 │▌                                                              │
+   │                    │▌                                                              │
+  │  󰓻 TAGS         0 │▌                                                              │
+   │                    │▌                                                              │
+ 󱘣 │                    │▌                                                              │
+   │                    │▌                                                              │
+ 󰢱 │                    │▌                                                              │
+   │                    │▌                                                              │
+   │                    │▌                                                              │
+   │                    │▌                                                              │
+   │                    │▌                                                              │
+   │                    │▌                                                              │
+   │                    │▌                                                              │  ▾ Commit  · (nothing staged)
+   │                    │▌                                                              │   click here · then type a …
+   │────────────────────│▌                                                              │
+   │ Sidebar        󰐃 ⋮ │▌                                                              │
+   │                   ┃│▌                                                              │
+   │ Arrows or j/k     ┃│▌                                                              │
+   │ walk rows. Enter  ┃│▌                                                              │
+   │ opens the         ││▌                                                              │
+  │ selection.        ││▌                                                              │   Commit    AI Message    Clea
+   │                    │▌                                                              │  Click textarea to type · c c…
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                 󱸀 95% 52%  󱼀 󰐎  LSP?    15:29  ws   —
+                                                           ⋯

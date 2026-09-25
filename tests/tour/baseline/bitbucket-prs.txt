@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ INTEGRATIONS      │ 󰂨 Bitbucket PRs 󰅖   󰐕                                                           󱸀  󲀀      
+  │ Inst Mkt  (1)     │▌BITBUCKET PRS  (2 repos · 3 PRs)  as of 2s ago                                            ?
+   │  󰍉 / filter        │▌ 1 Open + Draft (3)   2 Merged (2)
+ 󰍉 │                    │▌ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   │▌ 󰂨  [installed] Bi…│▌ status: Open + Draft   author: all   target: any   show: all
+ 󰊢 │▌   Bitbucket: open…│▌ 󰍉 / filter
+   │                    │▌ REPO / #PR                   STATE      AUTHOR             UPDATED      TITLE
+  │                    │▌  api                        2 PRs      Chris M            2026-09-25   #1234 · Fix the logi
+   │                    │▌    #1234                    OPEN       Chris M            2026-09-25   Fix the login red 󰏌 󰘭
+▌󰐱 │                    │▌  web                        1 PR       Chris M            2026-09-25   #820 · Redesign the
+   │                    │▌    #820                     OPEN       Chris M            2026-09-25   Redesign the empt 󰏌 󰘭
+ 󰎒 │                    │▌                                                                         ⋯  Show more (1)
+   │                    │▌
+  │                    │▌
+   │                    │▌
+  │                    │▌
+   │                    │▌
+  │                    │▌
+   │                    │▌
+ 󱘣 │                    │▌
+   │                    │▌
+ 󰢱 │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │────────────────────│▌
+   │ Sidebar        󰐃 ⋮ │▌
+   │                   ┃│▌
+   │ Arrows or j/k     ┃│▌
+   │ walk rows. Enter  ┃│▌
+   │ opens the         ││▌
+  │ selection.        ││▌
+   │                    │ Open + Draft · 2 repos, 3 PRs           d detail · m open↔merged · r refresh · ? keys · q quit
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]         󰌃 3  󰂨 2(1)   1  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  15:30  ws   —
+                                                           ⋯

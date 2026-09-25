@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Us…        │ 󰐕                                                                                  󱸀  󲀀    
+▌ │▌    docs         │
+   │     󱼅  notes.md   │
+ 󰍉 │     src          │
+   │     󱼄  main.zig   │
+ 󰊢 │     󱼅  util.zig M │                                                               _
+   │      .gitignore   │                               _ __ ___    _ __    _ __ ___   | |
+  │      CHANGELOG.m? │                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │     󰂺 README.md    │                              | | | | | | | | | | | | | | | | | |
+ 󰐱 │                    │                              |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │   󰐙 Add workspace  │
+ 󰎒 │                    │                           workspace · ws  on main · 1 changed file
+   │                    │
+  │                    │   WORKSPACES                                     SESSIONS
+ ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │            a → sessions                       ctrl+shift+n → messages (toast log)                                  │
+ │            b → blame toggle                         ctrl+t → theme…                                                │
+ │       ctrl+0 → fold all                            ctrl+up → focus up                                              │
+ │       ctrl+\ → split down                             down → move split down                                       │
+ │   ctrl+alt+c → copy path                             enter → keep preview tab                                      │
+ │       ctrl+b → pin/unpin the sidebar                   f12 → definition to the side                                │
+ │    ctrl+down → focus down                                g → +git (1)                                              │
+ │       ctrl+f → format selection                          i → +integrations (1)                                     │
+ │       ctrl+i → hover docs                                j → background jobs                                       │
+ │       ctrl+j → unfold all                             left → move split left                                       │
+ │       ctrl+l → toggle fold                               n → new tab page                                          │
+ │    ctrl+left → focus left                                p → copy path                                             │
+ │       ctrl+m → zoom the split / restore                  r → reveal in Finder / Explorer                           │
+ │       ctrl+o → switch workspace                      right → move split right                                      │
+ │       ctrl+p → buffers                                   s → save all                                              │
+ │ctrl+pagedown → next buffer                     shift+enter → pin / unpin tab                                       │
+ │  ctrl+pageup → previous buffer                     shift+h → pin hover help                                        │
+ │       ctrl+q → last edit location                        t → theme light ↔ dark                                    │
+ │       ctrl+r → keybindings reference                    up → move split up                                         │
+ │   ctrl+right → focus right                               w → close others                                          │
+ │       ctrl+s → cheatsheet (all chords)                   z → full screen (Esc Esc leaves)                          │
+ │  esc to cancel                                                                                                     │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                           ⋯

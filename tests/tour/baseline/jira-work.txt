@@ -1,0 +1,40 @@
+ ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
+   │ INTEGRATIONS      │ 󲀀 jira_work: install 󰅖   󰌃 Jira Work 󰅖   󰐕                                󰅁  󰅂  󱸀  󲀀      
+  │ Inst Mkt  (1)     │▌JIRA WORK (3)  as of 2s ago                                                               ?
+   │  󰍉 / filter        │▌ 1 Assigned   2 Recently Done
+ 󰍉 │                    │▌ ▀▀▀▀▀▀▀▀▀▀▀▀
+   │▌ [dev] Jira Work  0│▌ basic   jql   󰍉 / filter   assignee: All   type: —   status: All
+ 󰊢 │▌   integrations/ji…│▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
+   │                    │▌ In PR Review (1)
+  │                    │▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form valida…  [ Review]
+   │                    │▌        MERGED                                                  Validate the card …  [󰏌 Open]
+▌󰐱 │                    │▌        OPEN                                                    Follow-up: trim the w…  󰏌  󰘭
+   │                    │▌ In Progress (1)
+ 󰎒 │                    │▌     ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
+   │                    │▌ To Do (1)
+  │                    │▌     ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with…   
+   │                    │▌
+  │                    │▌
+   │                    │▌
+  │                    │▌
+   │                    │▌
+ 󱘣 │                    │▌
+   │                    │▌
+ 󰢱 │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │                    │▌
+   │────────────────────│▌
+   │ Sidebar        󰐃 ⋮ │▌
+   │                   ┃│▌
+   │ Arrows or j/k     ┃│▌
+   │ walk rows. Enter  ┃│▌
+   │ opens the         ││▌
+  │ selection.        ││▌
+   │                    │ Assigned · 3 issues       f fix version · d detail · . actions · / filter · r refresh · ? keys
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  15:30  ws   —
+                                                           ⋯
