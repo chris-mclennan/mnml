@@ -1429,11 +1429,12 @@ pub fn transcriptPath(app: *App, session_id: []const u8) CommandError![]const u8
     return std.fs.path.join(arena, &.{ home, ".claude", "projects", enc, name });
 }
 
-/// Claude Code's directory name for a workspace: every `/` (and `.`)
-/// becomes `-`.
+/// Claude Code's directory name for a workspace: every byte that is not
+/// an ASCII letter or digit becomes `-` — `/` and `.`, and `_`, spaces,
+/// `+`, `@` and the rest too (`/a/my_app v2` → `-a-my-app-v2`).
 pub fn encodeWorkspace(arena: Allocator, ws: []const u8) Allocator.Error![]u8 {
     const out = try arena.dupe(u8, ws);
-    for (out) |*c| if (c.* == '/' or c.* == '.') {
+    for (out) |*c| if (!std.ascii.isAlphanumeric(c.*)) {
         c.* = '-';
     };
     return out;
@@ -2303,6 +2304,17 @@ test "safeRel keeps paths inside the workspace" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     try t.expectEqualStrings("-Users-me-Projects-mnml-zig", try encodeWorkspace(arena.allocator(), "/Users/me/Projects/mnml.zig"));
+}
+
+test "encodeWorkspace: every byte that is not ASCII alphanumeric becomes '-', as Claude Code names the directory" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("-Users-x-Projects-my-app-v2-0", try encodeWorkspace(a, "/Users/x/Projects/my_app v2.0"));
+    try t.expectEqualStrings("-Users-x-a-b-c-d", try encodeWorkspace(a, "/Users/x/a+b@c~d"));
+    // The plain case is unchanged.
+    try t.expectEqualStrings("-Users-me-Projects-mnml", try encodeWorkspace(a, "/Users/me/Projects/mnml"));
+    try t.expectEqualStrings("-Users-me-Projects-mnml-zig", try encodeWorkspace(a, "/Users/me/Projects/mnml.zig"));
 }
 
 test "a ghost is Insert's: in vim Normal a Tab drops it and edits nothing; with the : line open too; in Insert it lands" {

@@ -6,9 +6,9 @@
 # moved, its branch and its short id — never the bare UUID and raw epoch
 # seconds.
 # Enter on the live one shows its pane rather than a second resume.
-write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '%s\\n' "$sid" >> argv.log\nd="$HOME/.claude/projects/$(pwd | tr '/.' '--')"; mkdir -p "$d"\nprintf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"live work in progress"}}\\n' "$(pwd)" > "$d/$sid.jsonl"\nprintf 'fake session up\\n'\nexec sleep 600
+write bin/claude #!/bin/bash\nsid=""\nwhile [ $# -gt 0 ]; do case "$1" in --session-id|--resume) sid=$2; shift 2;; *) shift;; esac; done\nprintf '%s\\n' "$sid" >> argv.log\nd="$HOME/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$d"\nprintf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"live work in progress"}}\\n' "$(pwd)" > "$d/$sid.jsonl"\nprintf 'fake session up\\n'\nexec sleep 600
 shell chmod +x bin/claude
-shell d="home/.claude/projects/$(pwd | tr '/.' '--')"; mkdir -p "$d"; f="$d/e2e0000a-0000-4000-8000-0000000000b1.jsonl"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"task 16: tidy module 16"}}' > "$f"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"and the docs too"}}' >> "$f"; touch -t "$(date -v-2H +%Y%m%d%H%M.%S 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M.%S)" "$f"
+shell d="home/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$d"; f="$d/e2e0000a-0000-4000-8000-0000000000b1.jsonl"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"task 16: tidy module 16"}}' > "$f"; echo '{"type":"user","cwd":"'"$(pwd)"'","gitBranch":"feat-x","message":{"role":"user","content":"and the docs too"}}' >> "$f"; touch -t "$(date -v-2H +%Y%m%d%H%M.%S 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M.%S)" "$f"
 write a.txt "alpha\n"
 open a.txt
 command ai.claude_code_new

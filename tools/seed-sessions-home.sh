@@ -47,7 +47,7 @@ if [ "${1:-}" = stop ]; then
   exit 0
 fi
 H=$1; WS=$2
-ENC=$(printf '%s' "$WS" | tr / -)
+ENC=$(printf '%s' "$WS" | sed 's/[^A-Za-z0-9]/-/g')
 P="$H/.claude/projects/$ENC"
 mkdir -p "$P" "$H/bin" "$H/.fake-claude"
 S1=5e551011-0000-4000-8000-000000000001

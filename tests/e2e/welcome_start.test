@@ -12,7 +12,7 @@ write a.txt "alpha text\n"
 write b.txt "beta text\n"
 write bin/claude #!/bin/bash\nprintf 'fake claude %s\\n' "$*"\nexec sleep 30
 shell chmod +x bin/claude
-shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[\/.]/-/g') && mkdir -p "home/.claude/projects/$ENC" && printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"resume the refactor"}}\n' "$MNML_E2E_WORKSPACE" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl" && touch -t "$(date -v-1H +%Y%m%d%H%M 2>/dev/null || date -d '1 hour ago' +%Y%m%d%H%M)" "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl"
+shell ENC=$(printf '%s' "$MNML_E2E_WORKSPACE" | sed 's/[^A-Za-z0-9]/-/g') && mkdir -p "home/.claude/projects/$ENC" && printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"resume the refactor"}}\n' "$MNML_E2E_WORKSPACE" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl" && touch -t "$(date -v-1H +%Y%m%d%H%M 2>/dev/null || date -d '1 hour ago' +%Y%m%d%H%M)" "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-000000000021.jsonl"
 open a.txt
 command buffer.close
 open b.txt
