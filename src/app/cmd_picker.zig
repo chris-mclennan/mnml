@@ -1051,7 +1051,7 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expectEqual(@as(i64, 0), app.overlay.picker.score_bonus[0]);
     try t.expectEqual(@as(i64, 20), app.overlay.picker.score_bonus[@intFromEnum(command.CommandId.@"editor.undo")]);
     for ("view.toggle_wrap") |c| try app.handle(.{ .key = Key.char(c) });
-    try t.expectEqualStrings("view  ·  Toggle line wrapping (vim :set wrap)  ·  view.toggle_wrap", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try t.expectEqualStrings("view  ·  Toggle word wrap (vim :set wrap)  ·  view.toggle_wrap", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(true, app.activeEditor().?.wrap.?);

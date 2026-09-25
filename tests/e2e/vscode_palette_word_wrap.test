@@ -1,0 +1,8 @@
+# VS Code calls it "Toggle Word Wrap": the palette's `word wrap` finds
+# the wrap toggle first (round-7 hunt: its title said "line wrapping",
+# so the top hit was an AI command and Enter ran that).
+write a.txt "alpha\n"
+open a.txt
+key ctrl+shift+p
+type word wrap
+expect screen contains "▌view  ·  Toggle word wrap (vim :set wrap)  ·  view.toggle_wrap"

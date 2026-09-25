@@ -102,7 +102,7 @@ pub const specs = [_]Spec{
     .{ .id = "view.toggle_highlight_trailing_ws", .title = "Toggle trailing-whitespace highlight (red bg on trailing space/tab)", .group = "view" },
     .{ .id = "view.toggle_highlight_word", .title = "Toggle 'highlight other occurrences of word under cursor'", .group = "view" },
     .{ .id = "view.toggle_color_column", .title = "Toggle line-length color column (vim :set cc=80)", .group = "view" },
-    .{ .id = "view.toggle_wrap", .title = "Toggle line wrapping (vim :set wrap)", .group = "view", .short = "wrap", .keys = .{ .standard = &.{"alt+z"}, .both = &.{"space t w"} } },
+    .{ .id = "view.toggle_wrap", .title = "Toggle word wrap (vim :set wrap)", .group = "view", .short = "wrap", .keys = .{ .standard = &.{"alt+z"}, .both = &.{"space t w"} } },
     .{ .id = "view.menu_bar_cycle", .title = "Cycle menu bar visibility (always → auto-hide → hidden)", .group = "view" },
     .{ .id = "view.activity_bar_cycle", .title = "Cycle activity bar visibility (always → auto-hide → hidden)", .group = "view" },
     // // changed (railmove): the activity bar's membership — the bar is
