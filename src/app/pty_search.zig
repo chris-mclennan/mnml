@@ -833,6 +833,22 @@ fn typeText(app: *App, s: []const u8) !void {
     for (s) |c| try app.handle(.{ .key = Key.char(c) });
 }
 
+/// Wait, without ticking, until the pane's reader has ringed at least
+/// `n` bytes of the child's output — state, not a clock: the next tick
+/// then feeds the terminal the batch in ONE pump, the way a burst that
+/// is all there when the UI gets to it arrives. Waiting on the screen
+/// instead lets a tick land between two of the reader's chunks, and a
+/// search that follows output then picks its current match off a half
+/// batch. The deadline only ever fails.
+fn waitRinged(p: *PtyPane, n: usize) !void {
+    const session = p.session orelse return error.TestUnexpectedResult;
+    const deadline = App.nowMs(t.io) + 30_000;
+    while (session.shared.ring.len() < n) {
+        if (App.nowMs(t.io) > deadline) return error.TestUnexpectedResult;
+        t.io.sleep(.fromMilliseconds(2), .awake) catch {};
+    }
+}
+
 /// Tick until the pane's scan is done.
 fn settleScan(app: *App, p: *PtyPane) !void {
     var n: usize = 0;
@@ -1045,8 +1061,11 @@ test "scrollback search survives output: the oldest rows dropping shifts the mat
     const before_line = try lineOf(p, cur.y0);
     defer t.allocator.free(before_line);
     try t.expectEqualStrings("2999", before_line);
-    // The second batch drops the oldest page; line 2999 stays.
+    // The second batch drops the oldest page; line 2999 stays. The
+    // batch is 1000 lines of `NNNN\r\n`; the echo of the `\r` comes
+    // ahead of it.
     p.write("\r");
+    try waitRinged(p, 1000 * 6);
     try t.expect(try pty_pane.tickUntilScreen(&app, "4000", 5000));
     try settleScan(&app, p);
     const first2 = try expectAll99(p, 4000);
@@ -1056,8 +1075,15 @@ test "scrollback search survives output: the oldest rows dropping shifts the mat
     defer t.allocator.free(kept_line);
     try t.expectEqualStrings("2999", kept_line);
     // The third drops line 2999 too: the match nearest the bottom of
-    // the view is current again, as for a fresh query.
+    // the view is current again, as for a fresh query. The pick is
+    // made on the tick line 2999 drops in, off what the terminal holds
+    // then — so the whole batch (2500 lines of `NNNN\r\n`) is ringed
+    // before any tick: fed in two, the pick lands on a line of the
+    // first half and is kept. (At most the `\r\n` after `4000` can
+    // still be in flight ahead of the echo; the count then stops short
+    // only of `6500`'s own line end, and `6499` is in by then.)
     p.write("\r");
+    try waitRinged(p, 2500 * 6);
     try t.expect(try pty_pane.tickUntilScreen(&app, "6500", 5000));
     try settleScan(&app, p);
     try t.expect(try expectAll99(p, 6500) > 2999);

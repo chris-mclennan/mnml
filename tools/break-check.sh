@@ -64,12 +64,14 @@ trap restore EXIT
 # `▶ n/M <module>.test.<name>` line per test it runs; unnamed blocks
 # print as `<module>.test_N`.
 run_tests() {
-    MNML_TEST_FILTER="$name" "$zig" build unit -Dtest-trace > "$1" 2>&1
+    # MNML_TEST_STRICT: a break has to fail the first time — the trace
+    # runner would otherwise rerun it and call a pass on the retry FLAKY.
+    MNML_TEST_STRICT=1 MNML_TEST_FILTER="$name" "$zig" build unit -Dtest-trace > "$1" 2>&1
 }
 sum() { awk '{ s += $1 } END { print s + 0 }'; }
 matched() { grep -E '^filter .*: [0-9]+ of [0-9]+ tests matched$' "$1" | sed -E 's/.*: ([0-9]+) of .*/\1/' | sum; }
 named_ran() { grep -E '^▶ [0-9]+/[0-9]+ ' "$1" | grep -vcE '\.test_[0-9]+$'; }
-failed() { grep -E '^[0-9]+ passed; [0-9]+ skipped; [0-9]+ failed\.$' "$1" | sed -E 's/.* ([0-9]+) failed\./\1/' | sum; }
+failed() { grep -E '^[0-9]+ passed; [0-9]+ skipped; [0-9]+ failed(; [0-9]+ FLAKY)?\.$' "$1" | sed -E 's/^[0-9]+ passed; [0-9]+ skipped; ([0-9]+) failed.*/\1/' | sum; }
 vacuous() {
     echo "break-check: FAIL — filter matched no test — vacuous: no named test contains '$name' ($1 run)"
     grep -E '^filter ' "$2" | head -3

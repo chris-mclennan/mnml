@@ -44,7 +44,11 @@ outside the run's temp root.
   that name live state (`build.zig`, `hermeticUnitEnv`).
 - **Time**: wait for a condition, not a clock. `expect within <ms> …`
   polls; a `wait` is for letting a clock-driven thing happen, never for
-  "long enough for the machine to catch up".
+  "long enough for the machine to catch up". The unit tests that drive a
+  real pty child hold to the same: they wait on the child saying it is
+  ready, the reader's ring holding the bytes the child was told to
+  write, a mode the child set, or the screen showing the final state —
+  with a deadline that only ever fails.
 - **Git**: the run's own cwd is its temp root, `GIT_CEILING_DIRECTORIES`
   is the temp root in the process environment and every file's, and the
   App's repository and root-marker walks honour it. A `git` shim first on
@@ -57,7 +61,9 @@ outside the run's temp root.
   file once and names a pass on the retry as `FLAKY` — as it happens and
   in the trailer (`N/M passed (…), K FLAKY (passed only on a retry)` then
   one `FLAKY <file> — first run: <why>` line each). `--strict` retries
-  nothing.
+  nothing. The unit suite's trace runner does the same for a unit test
+  (`FLAKY <test> — first run: <error>`, the summary's `K FLAKY`;
+  `MNML_TEST_STRICT=1` retries nothing) — `tools/test_retry.zig`.
 
 ## The sites
 

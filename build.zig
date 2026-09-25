@@ -207,6 +207,12 @@ pub fn build(b: *std.Build) void {
     // `MNML_TEST_FILTER=<substring>` filters at run time on the built binary.
     const test_trace = b.option(bool, "test-trace", "Print each unit test's name as it runs; MNML_TEST_FILTER filters at run time") orelse false;
     const test_runner: ?std.Build.Step.Compile.TestRunner = if (test_trace) .{ .path = b.path("tools/test_runner.zig"), .mode = .simple } else null;
+    // `-Dtest-trace-live`: the trace streams to the terminal as it is
+    // written — one binary at a time, as a run that inherits the terminal
+    // holds the build runner's stderr lock — for watching a hang name its
+    // test. Without it the binaries run in parallel and `tools/trace_report.zig`
+    // prints each one's trace when all are done (`traceReport`, below).
+    const test_trace_live = b.option(bool, "test-trace-live", "With -Dtest-trace: stream each binary's trace live, one binary at a time") orelse false;
     // `zig build unit-debug`: `unit` in Debug whatever `-Doptimize` this
     // invocation carries — a nested build, as `check` runs its two modes.
     // Debug is where the testing allocator's stack capture and the
@@ -216,9 +222,17 @@ pub fn build(b: *std.Build) void {
     const unit_debug = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "unit", "-Doptimize=Debug" });
     unit_debug.setName("zig build unit -Doptimize=Debug");
     if (test_trace) unit_debug.addArg("-Dtest-trace=true");
+    if (test_trace_live) unit_debug.addArg("-Dtest-trace-live=true");
     unit_debug.has_side_effects = true;
     const unit_debug_step = b.step("unit-debug", "Run the unit tests in Debug, whatever -Doptimize says (a nested `zig build unit -Doptimize=Debug`)");
     unit_debug_step.dependOn(&unit_debug.step);
+    // The trace runner's retry-and-report logic (`tools/test_retry.zig`):
+    // the runner is the root of every test binary and has no tests of
+    // its own, so what it decides is tested here — under the default
+    // runner: the trace runner imports this file, and a file cannot be
+    // both the tested root and a runner's import.
+    const test_retry_mod = b.createModule(.{ .root_source_file = b.path("tools/test_retry.zig"), .target = target, .optimize = optimize });
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .name = "test-retry-tests", .root_module = test_retry_mod, .filters = test_filters })).step);
     const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters, .test_runner = test_runner });
     const tests_run = b.addRunArtifact(tests);
     unit_step.dependOn(&tests_run.step);
@@ -1039,6 +1053,42 @@ pub fn build(b: *std.Build) void {
     // Last, so it reaches every unit-test binary `unit` runs, however it
     // was added above.
     hermeticUnitEnv(b, unit_step);
+    if (test_trace and !test_trace_live) traceReport(b, unit_step);
+}
+
+/// Under the trace runner, run the unit-test binaries in parallel, their
+/// output captured, and print it all at the end. A run that inherits the
+/// terminal takes the build runner's stderr lock for its whole run, so
+/// the binaries ran one after another: the ReleaseSafe suite took ~190 s
+/// against the default runner's ~125 s (the main binary's ~2 min plus the
+/// highlight tests' ~1 min, back to back). A failing binary's trace is
+/// printed by the build runner itself; `tools/trace_report.zig` prints
+/// the green ones'.
+fn traceReport(b: *std.Build, unit_step: *std.Build.Step) void {
+    const report_exe = b.addExecutable(.{ .name = "trace-report", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/trace_report.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    }) });
+    const report = b.addRunArtifact(report_exe);
+    report.setName("unit-test traces");
+    report.has_side_effects = true;
+    var runs: std.ArrayList(*std.Build.Step.Run) = .empty;
+    for (unit_step.dependencies.items) |dep| {
+        const run = dep.cast(std.Build.Step.Run) orelse continue;
+        const producer = run.producer orelse continue;
+        if (producer.kind != .@"test" or producer.test_runner == null or run.stdio != .infer_from_args) continue;
+        runs.append(b.allocator, run) catch @panic("OOM");
+    }
+    for (runs.items) |run| {
+        // Always run (a captured output would otherwise make the step
+        // cacheable), with nothing inherited: no lock, so in parallel.
+        run.has_side_effects = true;
+        report.addFileArg(run.captureStdErr(.{}));
+        report.addFileArg(run.captureStdOut(.{}));
+        report.step.dependOn(&run.step);
+    }
+    unit_step.dependOn(&report.step);
 }
 
 /// The shipped targets, Zig query on the left, the Rust triple the asset
@@ -1072,6 +1122,17 @@ fn rustTriple(b: *std.Build, t: std.Target) []const u8 {
     };
 }
 
+/// The two gits every `zig build` runs for the version string. Both only
+/// read, and both say `--no-optional-locks`: a plain `git status`
+/// refreshes the index's stat data and writes it back under
+/// `.git/index.lock`, so two builds that overlap in one checkout (a
+/// verification chain beside an editor's build) race for the lock, and a
+/// build killed at the wrong moment leaves it behind — a stale lock that
+/// then fails the user's next commit. `tools/run-sh-check.sh` holds
+/// every read-only git the build and the tooling run to this.
+const version_git_head = [_][]const u8{ "git", "--no-optional-locks", "rev-parse", "--short", "HEAD" };
+const version_git_status = [_][]const u8{ "git", "--no-optional-locks", "status", "--porcelain", "--untracked-files=no" };
+
 /// `<zon version>+g<short sha>[-dirty]` — what a build without `-Dversion=`
 /// prints. The zon file is read as text (a dev build should not fail because
 /// the manifest grew a field); git is optional (a tarball checkout has none).
@@ -1083,10 +1144,10 @@ fn deriveVersion(b: *std.Build) []const u8 {
     const base = zon[start..end];
 
     var code: u8 = undefined;
-    const sha_raw = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .ignore) catch return base;
+    const sha_raw = b.runAllowFail(&version_git_head, &code, .ignore) catch return base;
     const sha = std.mem.trim(u8, sha_raw, " \t\r\n");
     if (sha.len == 0) return base;
-    const status = b.runAllowFail(&.{ "git", "status", "--porcelain", "--untracked-files=no" }, &code, .ignore) catch "";
+    const status = b.runAllowFail(&version_git_status, &code, .ignore) catch "";
     const dirty = std.mem.trim(u8, status, " \t\r\n").len != 0;
     return b.fmt("{s}+g{s}{s}", .{ base, sha, if (dirty) "-dirty" else "" });
 }

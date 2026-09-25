@@ -889,11 +889,13 @@ test "resize reaches the child as a new window size" {
         .cols = 40,
         .rows = 10,
         .env = &env,
-        // Wait for the resize to land, then report what the tty says.
-        .argv = &.{ "/bin/sh", "-c", "sleep 0.3; stty size" },
+        // Report what the tty says once told to — after the resize,
+        // however long the resize took to come.
+        .argv = &.{ "/bin/sh", "-c", "read x; stty size" },
     });
     defer s.deinit();
     try s.resize(100, 25);
+    s.write("\n");
     try testing.expectEqual(@as(u16, 100), s.terminal().cols);
     try testing.expectEqual(@as(u16, 25), s.terminal().rows);
     _ = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
@@ -1017,7 +1019,12 @@ test "1 MiB written to a child that never reads returns at once; the child lives
     const took = nowMs(testing.io) - t0;
     // A blocking write would sit here until `sleep` exits, 30 s from now.
     try testing.expect(took < 500);
-    sleepMs(200);
+    // The reader hands the tty what it will take — state, not a beat.
+    var waited: u32 = 0;
+    while (s.pendingInput() >= payload.len) : (waited += 5) {
+        if (waited > 30_000) return error.TestUnexpectedResult;
+        sleepMs(5);
+    }
     _ = s.pump();
     try testing.expectEqual(@as(?Exit, null), s.exited());
     // The tty took its kilobyte; the rest waits in the outbox.
@@ -1044,7 +1051,9 @@ test "type-ahead a child reads later arrives whole and in order" {
     defer s.deinit();
     // Raw input first, or the tty's canonical line limit eats the bytes.
     var waited: u32 = 0;
-    while (waited < 5000) : (waited += 10) {
+    while (true) : (waited += 10) {
+        // Past the deadline is a failure, never a go-ahead.
+        if (waited > 30_000) return error.TestUnexpectedResult;
         _ = s.pump();
         const t = try s.terminal().plainString(testing.allocator);
         defer testing.allocator.free(t);

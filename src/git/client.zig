@@ -840,6 +840,24 @@ fn gitEnv(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin
 /// Run `git --no-pager -c color.ui=never <args>` in the repo. Output
 /// lands on `arena`. A spawn failure (no `git` on PATH) is `ok = false`
 /// with the error name in `stderr`.
+/// The command line for `git <args>`: no pager, no colour, and for a
+/// `status` — a read the pane runs on every refresh — no optional locks.
+/// A plain `git status` writes the refreshed index back under
+/// `.git/index.lock`, which fails a commit the user makes in a shell at
+/// that moment ("Unable to create index.lock: File exists") and, if the
+/// child dies holding it, leaves it for them to delete. The flag goes in
+/// the prefix, and the command log leaves it out (`postLogLine`): a line
+/// reads `git --no-pager -c color.ui=never status --porcelain=v2 -b`.
+fn argvFor(arena: Allocator, args: []const []const u8) Allocator.Error![]const []const u8 {
+    const base = [_][]const u8{ "git", "--no-pager", "-c", "color.ui=never" };
+    const read_only = args.len > 0 and std.mem.eql(u8, args[0], "status");
+    const prefix: []const []const u8 = if (read_only) &(base ++ [_][]const u8{"--no-optional-locks"}) else &base;
+    const argv = try arena.alloc([]const u8, prefix.len + args.len);
+    @memcpy(argv[0..prefix.len], prefix);
+    @memcpy(argv[prefix.len..], args);
+    return argv;
+}
+
 fn git(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8) JobError!Out {
     return gitIn(repo, io, arena, args, stdin_text, if (repo.env) |*e| e else null);
 }
@@ -847,10 +865,7 @@ fn git(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_te
 /// `git` with an explicit environment (the line verbs point
 /// `GIT_INDEX_FILE` at a temporary index).
 fn gitIn(repo: *Repo, io: Io, arena: Allocator, args: []const []const u8, stdin_text: ?[]const u8, env: ?*const std.process.Environ.Map) JobError!Out {
-    const prefix = [_][]const u8{ "git", "--no-pager", "-c", "color.ui=never" };
-    const argv = try arena.alloc([]const u8, prefix.len + args.len);
-    @memcpy(argv[0..prefix.len], &prefix);
-    @memcpy(argv[prefix.len..], args);
+    const argv = try argvFor(arena, args);
     const started = nowMs(io);
     if (stdin_text) |text| {
         const out = try gitWithStdin(repo, io, arena, argv, text, env);
@@ -905,8 +920,12 @@ fn postLogLine(repo: *Repo, io: Io, argv: []const []const u8, args: []const []co
     errdefer r.destroy(gpa);
     const arena = r.arena.allocator();
     var line: std.ArrayListUnmanaged(u8) = .empty;
+    const prefix_len = argv.len - args.len;
     for (argv, 0..) |a, i| {
-        if (i > 0) try line.append(arena, ' ');
+        // `argvFor`'s lock flag is plumbing, not the command: the line
+        // reads as the user would type it, and keeps its width.
+        if (i < prefix_len and std.mem.eql(u8, a, "--no-optional-locks")) continue;
+        if (line.items.len > 0) try line.append(arena, ' ');
         try line.appendSlice(arena, a);
     }
     const copy = try arena.alloc([]const u8, args.len);
@@ -2399,6 +2418,52 @@ fn shIn(dir: []const u8, argv: []const []const u8) !void {
         std.debug.print("{s} failed: {s}\n", .{ argv[0], res.stderr });
         return error.CommandFailed;
     }
+}
+
+test "the pane's status never writes the index: a tree whose stat data is stale keeps its index file, where a plain `git status` replaces it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(io, &buf);
+    const root = buf[0..n];
+    const g = [_][]const u8{ "git", "-c", "user.email=t@mnml.dev", "-c", "user.name=t", "-c", "commit.gpgsign=false" };
+    try shIn(root, &.{ "git", "init", "-q", "-b", "main" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "f.txt", .data = "same\n" });
+    try shIn(root, &.{ "git", "add", "-A" });
+    try shIn(root, &(g ++ [_][]const u8{ "commit", "-q", "-m", "first" }));
+    // The content is what the index says, the stat data is not: what a
+    // checkout, a `touch` or a build that rewrites a file unchanged leaves.
+    const stale = [_][]const u8{ "touch", "-t", "202001010000", "f.txt" };
+    try shIn(root, &stale);
+
+    // The control: a plain `git status` refreshes the index and writes it
+    // back (a new file, renamed over the old one under `index.lock`).
+    const before_plain = try tmp.dir.statFile(io, ".git/index", .{});
+    try shIn(root, &.{ "git", "status", "--porcelain=v2", "-b" });
+    const after_plain = try tmp.dir.statFile(io, ".git/index", .{});
+    try testing.expect(before_plain.inode != after_plain.inode);
+
+    // The pane's status, through the client, on the same staleness.
+    try shIn(root, &.{ "touch", "-t", "202101010000", "f.txt" });
+    const repo = try Repo.create(gpa, root, "fake", 1, true);
+    defer repo.destroy(io);
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const before = try tmp.dir.statFile(io, ".git/index", .{});
+    const st = try git(repo, io, arena, &.{ "status", "--porcelain=v2", "-b" }, null);
+    try testing.expect(st.ok);
+    // Clean: the refresh happened, in memory.
+    try testing.expect(std.mem.indexOf(u8, st.stdout, "f.txt") == null);
+    const after = try tmp.dir.statFile(io, ".git/index", .{});
+    try testing.expectEqual(before.inode, after.inode);
+    try testing.expectEqual(before.mtime, after.mtime);
+    // A verb that writes keeps git's own locking.
+    const commit_argv = try argvFor(arena, &.{ "commit", "-m", "x" });
+    for (commit_argv) |a| try testing.expect(!std.mem.eql(u8, a, "--no-optional-locks"));
 }
 
 test "what a session changed, over a fake repo: a file touched after the start is in, one dirty before it is out, a commit since it is in, a second session's overlap is marked" {

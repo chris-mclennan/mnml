@@ -17,6 +17,13 @@
 //! the one test name in the repo that contains the word FAIL. Three
 //! separate investigations blamed that innocent test.
 //!
+//! A test that fails is run once more, afresh (`tools/test_retry.zig`):
+//! a pass then prints `FLAKY <test> — first run: <error>` and counts in
+//! the summary's last field (`N passed; S skipped; F failed; K FLAKY.`)
+//! instead of failing the run — a timing flake is named, not a red
+//! chain. `MNML_TEST_STRICT=1` retries nothing. A test that panics takes
+//! the process down and is not retried.
+//!
 //! Per test it does what `lib/compiler/test_runner.zig` does: a fresh
 //! `testing.allocator_instance` (a leak is a failure) and a fresh
 //! `testing.io_instance` (`Io.Threaded`, its worker pool joined in
@@ -27,6 +34,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
+const retry = @import("test_retry.zig");
 
 pub const std_options: std.Options = .{ .logFn = log };
 
@@ -65,54 +73,135 @@ pub fn main(init: std.process.Init.Minimal) void {
     if (testing.random_seed != 0) std.debug.print("seed 0x{x}\n", .{testing.random_seed});
 
     const test_fns = builtin.test_functions;
-    var ok_count: usize = 0;
-    var skip_count: usize = 0;
-    var fail_count: usize = 0;
+    const strict = if (builtin.os.tag == .windows) false else retry.strictFrom(init.environ.getPosix("MNML_TEST_STRICT"));
+    var counts: retry.Counts = .{};
     var leaks: usize = 0;
     var ran: usize = 0;
+    // The flakes, named again under the summary; a fixed table, as the
+    // runner allocates from nothing that outlives a test.
+    var flaky_idx: [64]usize = undefined;
+    var flaky_err: [64]anyerror = undefined;
     for (test_fns, 0..) |test_fn, i| {
         if (filter) |f| if (std.mem.indexOf(u8, test_fn.name, f) == null) continue;
         ran += 1;
-        testing.allocator_instance = .{};
-        testing.io_instance = .init(testing.allocator, .{
-            .argv0 = .init(init.args),
-            .environ = init.environ,
-        });
-        defer {
-            testing.io_instance.deinit();
-            if (testing.allocator_instance.deinit() == .leak) {
-                leaks += 1;
-                std.debug.print("  LEAK {s}\n", .{test_fn.name});
-            }
-        }
-        testing.log_level = .warn;
-        testing.environ = init.environ;
-
         std.debug.print("▶ {d}/{d} {s}\n", .{ i + 1, test_fns.len, test_fn.name });
-        const t0 = Io.Clock.awake.now(testing.io);
-        const result = test_fn.func();
-        const ms = @divTrunc(Io.Clock.awake.now(testing.io).nanoseconds - t0.nanoseconds, std.time.ns_per_ms);
-        if (result) |_| {
-            ok_count += 1;
-            std.debug.print("  ok   {d} ms\n", .{ms});
-        } else |err| switch (err) {
-            error.SkipZigTest => {
-                skip_count += 1;
+        var one: One = .{ .init = init, .test_fn = test_fn, .leaks = &leaks };
+        const errors_before = log_err_count;
+        const verdict = retry.run(&one, strict);
+        switch (verdict) {
+            .ok => {
+                counts.ok += 1;
+                std.debug.print("  ok   {d} ms\n", .{one.ms});
+            },
+            .skip => {
+                counts.skip += 1;
                 std.debug.print("  SKIP {s}\n", .{test_fn.name});
             },
-            else => {
-                fail_count += 1;
-                std.debug.print("  FAIL {s} ({t}) {d} ms\n", .{ test_fn.name, err, ms });
-                if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
+            .fail => |err| {
+                counts.fail += 1;
+                std.debug.print("  FAIL {s} ({t}) {d} ms\n", .{ test_fn.name, err, one.ms });
+                if (one.trace()) |trace| std.debug.dumpErrorReturnTrace(&trace);
+            },
+            .flaky => |err| {
+                // Errors the failed run logged were part of its failure;
+                // the retry's own still count.
+                log_err_count = errors_before + one.errors_on_retry;
+                if (counts.flaky < flaky_idx.len) {
+                    flaky_idx[counts.flaky] = i;
+                    flaky_err[counts.flaky] = err;
+                }
+                counts.flaky += 1;
+                std.debug.print("  ok   {d} ms (retry)\n  ", .{one.ms});
+                reportFlaky(test_fn.name, err);
             },
         }
     }
     if (filter) |f| std.debug.print("filter {s}: {d} of {d} tests matched\n", .{ f, ran, test_fns.len });
-    std.debug.print("{d} passed; {d} skipped; {d} failed.\n", .{ ok_count, skip_count, fail_count });
+    {
+        var buf: [256]u8 = undefined;
+        const stderr = std.debug.lockStderr(&buf);
+        defer std.debug.unlockStderr();
+        const w = &stderr.file_writer.interface;
+        retry.writeSummary(w, counts) catch {};
+        for (0..@min(counts.flaky, flaky_idx.len)) |k| retry.writeFlaky(w, test_fns[flaky_idx[k]].name, flaky_err[k]) catch {};
+        w.flush() catch {};
+    }
     if (log_err_count != 0) std.debug.print("{d} errors were logged.\n", .{log_err_count});
     if (leaks != 0) std.debug.print("{d} tests leaked memory.\n", .{leaks});
-    if (leaks != 0 or log_err_count != 0 or fail_count != 0) std.process.exit(1);
+    if (leaks != 0 or log_err_count != 0 or counts.fail != 0) std.process.exit(1);
 }
+
+fn reportFlaky(name: []const u8, err: anyerror) void {
+    var buf: [256]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buf);
+    defer std.debug.unlockStderr();
+    const w = &stderr.file_writer.interface;
+    retry.writeFlaky(w, name, err) catch {};
+    w.flush() catch {};
+}
+
+/// One test, invoked afresh per `attempt`: what `lib/compiler/test_runner.zig`
+/// sets up per test — a fresh `testing.allocator_instance` (a leak is a
+/// failure) and a fresh `testing.io_instance` (`Io.Threaded`, its worker
+/// pool joined in `deinit`) — so a retry starts from what the first run
+/// started from.
+const One = struct {
+    init: std.process.Init.Minimal,
+    test_fn: std.builtin.TestFn,
+    leaks: *usize,
+    runs: usize = 0,
+    ms: i64 = 0,
+    errors_on_retry: usize = 0,
+    /// The last failed run's error return trace, copied while it still
+    /// holds the test's frames (the retry logic handles the error, and
+    /// the trace is gone by the time the verdict is printed).
+    trace_addrs: [32]usize = undefined,
+    trace_len: usize = 0,
+    trace_index: usize = 0,
+
+    fn trace(o: *One) ?std.builtin.StackTrace {
+        if (o.trace_len == 0) return null;
+        return .{ .index = o.trace_index, .instruction_addresses = o.trace_addrs[0..o.trace_len] };
+    }
+
+    pub fn attempt(o: *One) anyerror!void {
+        o.runs += 1;
+        const errors_before = log_err_count;
+        testing.allocator_instance = .{};
+        testing.io_instance = .init(testing.allocator, .{
+            .argv0 = .init(o.init.args),
+            .environ = o.init.environ,
+        });
+        defer {
+            testing.io_instance.deinit();
+            if (testing.allocator_instance.deinit() == .leak) {
+                o.leaks.* += 1;
+                std.debug.print("  LEAK {s}\n", .{o.test_fn.name});
+            }
+            if (o.runs > 1) o.errors_on_retry = log_err_count - errors_before;
+        }
+        testing.log_level = .warn;
+        testing.environ = o.init.environ;
+        const t0 = Io.Clock.awake.now(testing.io);
+        defer o.ms = @intCast(@divTrunc(Io.Clock.awake.now(testing.io).nanoseconds - t0.nanoseconds, std.time.ns_per_ms));
+        o.test_fn.func() catch |err| {
+            o.trace_len = 0;
+            if (@errorReturnTrace()) |t| {
+                const n = @min(t.instruction_addresses.len, o.trace_addrs.len);
+                @memcpy(o.trace_addrs[0..n], t.instruction_addresses[0..n]);
+                o.trace_len = n;
+                o.trace_index = t.index;
+            }
+            return err;
+        };
+    }
+
+    /// Between the runs: the first one's failure, by name. (Its error
+    /// return trace is gone by here — the retry logic handled the error.)
+    pub fn retrying(o: *One, err: anyerror) void {
+        std.debug.print("  ↻    {s} — failed ({t}) in {d} ms; retrying once\n", .{ o.test_fn.name, err, o.ms });
+    }
+};
 
 pub fn log(
     comptime message_level: std.log.Level,

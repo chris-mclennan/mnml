@@ -236,9 +236,14 @@ pub const Out = struct {
 /// `git <args>` in `cwd`, the output on `arena`, the child logged as
 /// the worker logs its own (`git.LogRing`).
 pub fn run(app: *App, arena: Allocator, cwd: []const u8, args: []const []const u8) CommandError!Out {
-    const prefix = [_][]const u8{ "git", "--no-pager", "-c", "color.ui=never" };
+    // A `status` only reads: `--no-optional-locks` keeps it from writing
+    // the refreshed index back under `.git/index.lock`, the lock a
+    // commit in the same tree needs (`git.client`'s `argvFor`).
+    const base = [_][]const u8{ "git", "--no-pager", "-c", "color.ui=never" };
+    const read_only = args.len > 0 and std.mem.eql(u8, args[0], "status");
+    const prefix: []const []const u8 = if (read_only) &(base ++ [_][]const u8{"--no-optional-locks"}) else &base;
     const argv = try arena.alloc([]const u8, prefix.len + args.len);
-    @memcpy(argv[0..prefix.len], &prefix);
+    @memcpy(argv[0..prefix.len], prefix);
     @memcpy(argv[prefix.len..], args);
     const started = App.nowMs(app.io);
     const res = std.process.run(app.gpa, app.io, .{

@@ -528,7 +528,9 @@ pub fn dirtyScan(io: Io, gpa: Allocator, arena: Allocator, rows: []Item, now: i6
         const gop = try seen.getOrPut(gpa, cwd);
         if (!gop.found_existing) {
             gop.value_ptr.* = null;
-            const result = std.process.run(gpa, io, .{ .argv = &.{ "git", "-C", cwd, "status", "--porcelain" }, .stdout_limit = .limited(4 * 1024 * 1024) }) catch |err| switch (err) {
+            // `--no-optional-locks`: a background look at someone else's
+            // tree never writes its index back under `index.lock`.
+            const result = std.process.run(gpa, io, .{ .argv = &.{ "git", "--no-optional-locks", "-C", cwd, "status", "--porcelain" }, .stdout_limit = .limited(4 * 1024 * 1024) }) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Canceled => return error.Canceled,
                 else => continue,
