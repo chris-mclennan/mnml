@@ -266,6 +266,8 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.cursor_shape", .label = "Cursor shape", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
+    // Read when a shell pane starts (`app/shell_integration.zig`).
+    .{ .path = "terminal.shell_integration", .label = "Shell integration (zsh)", .section = .ui, .scope = .home },
     .{ .path = "ui.pane_rail", .label = "Pane colour rail", .section = .ui, .scope = .home },
     .{ .path = "ui.welcome", .label = "Welcome screen", .section = .ui, .scope = .home },
     // How the focused pane and section are marked (`ui/focus_cue.zig`).

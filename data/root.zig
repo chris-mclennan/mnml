@@ -29,3 +29,11 @@ pub const claude_svg = @embedFile("glyphs/claude-code.svg");
 pub const claude_spark_svg = @embedFile("glyphs/claude-spark.svg");
 pub const codex_svg = @embedFile("glyphs/codex.svg");
 pub const ghostty_svg = @embedFile("glyphs/ghostty.svg");
+
+/// The shell integration a shell pane's shell loads
+/// (`src/app/shell_integration.zig`): the files mnml writes into its
+/// data root, per shell, by the name each is installed under.
+pub const zsh_integration = .{
+    .zshenv = @embedFile("shell-integration/zsh/zshenv"),
+    .script = @embedFile("shell-integration/zsh/mnml-integration.zsh"),
+};

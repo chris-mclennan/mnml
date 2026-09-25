@@ -830,6 +830,15 @@ pub const Terminal = struct {
     /// osc52 provider, tmux, helix, anything over ssh): the text lands in
     /// the unnamed register and the OS clipboard. Reads are never served.
     osc52: bool = true,
+    /// A shell pane's shell loads mnml's shell integration, which marks
+    /// each prompt, command line and command output (OSC 133) and
+    /// reports the directory (OSC 7) — so a prompt of several lines
+    /// (starship, powerlevel10k) is redrawn in place when the pane is
+    /// resized, and `term.prev_prompt` / `term.next_prompt` work with
+    /// any prompt. zsh only, loaded through `ZDOTDIR` without touching
+    /// the user's dotfiles (`app/shell_integration.zig`). Off: the shell
+    /// starts exactly as it would in any terminal.
+    shell_integration: bool = true,
 };
 pub const Ipc = struct {
     write_screen: bool = false,
