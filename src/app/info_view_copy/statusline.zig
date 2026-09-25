@@ -175,6 +175,15 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
             .body = "This is a build run from a source tree (`./run.sh`), not the installed mnml: its config, session and IPC live under a separate data root so a development build cannot rewrite the daily driver's settings. Click toasts where that root is. `mnml profile seed` copies the stable profile into it when you want the same settings on both.",
             .links = &.{ .{ .command = .{ .id = .@"app.choose_data_layout", .label = "Choose the data layout" } }, .{ .command = .{ .id = .@"app.restart", .label = "Rebuild and relaunch" } } },
         },
+        .sandbox => if (app.sandboxState() == .unsafe) .{
+            .title = "sandbox? — NOT isolated",
+            .body = "`MNML_SANDBOX` says this is a sandbox, but `HOME` is not a throwaway directory or the data root lies outside it, so this session CAN read and write your real config and state. Quit, and launch with `mnml --sandbox` from a normal shell: it makes a fresh temp home and re-runs itself inside it. Click toasts the HOME and data root in play.",
+            .links = &.{ comptime copy.docsSection("Sandbox"), ask },
+        } else .{
+            .title = "sandbox",
+            .body = "A `--sandbox` run: `HOME`, `XDG_CONFIG_HOME` and the data root are a fresh `mnml-sandbox-*` directory under the temp root, so this is what a brand-new user sees and nothing here reaches your real config, sessions or credentials — nor does anything a shell pane or an integration started from here does. The session is neither restored nor autosaved, and the running-instance marker is left to your real mnml. The directory is removed when this mnml exits (`--sandbox-keep` keeps it). Click toasts where it is.",
+            .links = &.{ comptime copy.docsSection("Sandbox"), ask },
+        },
         _ => null,
     };
 }

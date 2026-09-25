@@ -118,10 +118,14 @@ pub const SegId = enum(u32) {
     /// mnml (`MNML_PROFILE=dev`, `src/config/profile.zig`). The stable
     /// profile paints nothing: you are meant to forget it is a choice.
     dev_profile,
+    /// ` sandbox ` — a `--sandbox` run: HOME, the config and the state
+    /// are a throwaway directory (`src/config/sandbox.zig`). ` sandbox? `
+    /// on red when `MNML_SANDBOX` is set but they are not.
+    sandbox,
     _,
 
     pub fn of(id: u32) ?SegId {
-        if (id < sl.seg_app_base or id > @intFromEnum(SegId.dev_profile)) return null;
+        if (id < sl.seg_app_base or id > @intFromEnum(SegId.sandbox)) return null;
         return @enumFromInt(id);
     }
 
@@ -481,6 +485,16 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{profile_mod.tag(app.profile())}), p.bg_darker, p.orange).strong().withHit(SegId.dev_profile.raw()));
     }
 
+    // ── the sandbox ──
+    // Beside the profile: this is not your real setup. Red, with a `?`,
+    // when the variable says sandbox and the home or data root says
+    // otherwise — the chip never promises a safety it cannot see.
+    switch (app.sandboxState()) {
+        .off => {},
+        .on => try push(&left, arena, Seg.init(" sandbox ", p.bg_darker, p.yellow).strong().withHit(SegId.sandbox.raw())),
+        .unsafe => try push(&left, arena, Seg.init(" sandbox? ", p.bg_darker, p.red).strong().withHit(SegId.sandbox.raw())),
+    }
+
     // ── host segments, left lane ──
     const budget = dynamicLaneBudget(area.w);
     // A segment with no text yet (a count the poller has not filled in) paints nothing — an empty chevron is noise.
@@ -818,10 +832,49 @@ test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
     try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
     try testing.expectEqual(SegId.dev_profile, SegId.of(SegId.dev_profile.raw()).?);
+    try testing.expectEqual(SegId.sandbox, SegId.of(SegId.sandbox.raw()).?);
     try testing.expect(SegId.of(sl.seg_mode) == null);
-    // `dev_profile` is the last one; one past it is nobody's.
-    try testing.expect(SegId.of(SegId.dev_profile.raw() + 1) == null);
+    // `sandbox` is the last one; one past it is nobody's.
+    try testing.expect(SegId.of(SegId.sandbox.raw() + 1) == null);
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
+}
+
+test "a --sandbox run paints ` sandbox ` beside the mode, a `?` on red when the home or data root is not throwaway; the click names them; the session is not autosaved" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    // No MNML_SANDBOX: no chip, and the session autosaves as ever.
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), "sandbox") == null);
+    @import("session.zig").onStartup(&b.app, .{ .startup = {} });
+    try testing.expect(b.app.session.autosave);
+
+    // The sandbox the re-exec builds: HOME under the temp root, the data
+    // root (the Bench's `root`) inside HOME.
+    const home = std.fs.path.dirname(b.root).?;
+    try b.app.env.put("TMPDIR", std.fs.path.dirname(home).?);
+    try b.app.env.put("HOME", home);
+    try b.app.env.put("MNML_SANDBOX", home);
+    try testing.expectEqual(@import("../config/sandbox.zig").State.on, b.app.sandboxState());
+    const row = try b.row(38);
+    const at = std.mem.indexOf(u8, row, " sandbox ") orelse return error.NoChip;
+    // Beside the mode chip, left of the branch.
+    try testing.expect(at < 20);
+    try testing.expect(std.mem.indexOf(u8, row, "sandbox?") == null);
+    try testing.expect(b.colOf(38, SegId.sandbox.raw()) != null);
+    try testing.expect((try discovery.describe(&b.app, b.app.frame.allocator(), .{ .statusline_seg = SegId.sandbox.raw() })) != null);
+    try b.click(38, SegId.sandbox.raw(), .left);
+    try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "sandbox — HOME "));
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, b.root) != null);
+    // A sandbox neither restores nor autosaves the workspace's session.
+    @import("session.zig").onStartup(&b.app, .{ .startup = {} });
+    try testing.expect(!b.app.session.autosave);
+
+    // The variable without the isolation: the chip warns instead.
+    try b.app.env.put("HOME", "/Users/dev");
+    try testing.expectEqual(@import("../config/sandbox.zig").State.unsafe, b.app.sandboxState());
+    const warn = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, warn, " sandbox? ") != null);
+    try b.click(38, SegId.sandbox.raw(), .left);
+    try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "NOT isolated") != null);
 }
 
 // ─── the row against the spec ────────────────────────────────────────────

@@ -3010,6 +3010,13 @@ pub const App = struct {
         return config.profile.of(&self.env);
     }
 
+    /// Whether this is a `--sandbox` run (`config/sandbox.zig`): `.on`
+    /// when `MNML_SANDBOX` is set and the home and data root really are
+    /// throwaway, `.unsafe` when the variable is set but they are not.
+    pub fn sandboxState(self: *const App) config.sandbox.State {
+        return config.sandbox.state(&self.env, self.data_root);
+    }
+
     /// Workspace-relative when inside it, else the path itself.
     pub fn relPath(self: *const App, path: []const u8) []const u8 {
         if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and path[self.workspace.len] == '/') {

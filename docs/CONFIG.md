@@ -1667,6 +1667,57 @@ of the data root in `sdk/mnml-sdk/src/ratelimit.zig`). It is one
 budget per machine: two profiles each spending a full budget against
 the same API is the bug, not the feature.
 
+## Sandbox
+
+`mnml --sandbox` runs mnml against a throwaway home — what a brand-new
+user sees, with nothing you do reaching your real config, state or
+credentials. POSIX only (it re-executes itself; Windows refuses the
+flag with a message).
+
+```sh
+mnml --sandbox                 # the sandbox's own empty workspace
+mnml --sandbox ~/some/proj     # your workspace, with a throwaway home
+mnml --sandbox-keep            # the same, and the directory survives the exit
+```
+
+Before any config is read, mnml makes `mnml-sandbox-XXXXXXXX` under the
+temp root (`$TMPDIR`, else `/tmp`) and re-executes itself — the same
+pid — with these set on top of the environment it was started with
+(everything else passes through):
+
+| variable | value |
+| --- | --- |
+| `HOME` | `<root>` |
+| `XDG_CONFIG_HOME` | `<root>/xdg` |
+| `MNML_DATA_ROOT` | `<root>/xdg/mnml` (the dev profile adds `-dev`) |
+| `MNML_SANDBOX` | `<root>` — what paints the chip |
+| `MNML_SANDBOX_PID` | the pid, which is the process that removes `<root>` |
+
+A shell pane, an integration and any `mnml` subcommand run from inside
+inherit all of it. Without a workspace argument the sandbox opens
+`<root>/workspace`, not the directory you ran it from.
+
+- **You can see it.** A yellow ` sandbox ` chip beside the mode, `mnml
+  [sandbox] — ws` as the window title, and a first-frame toast naming
+  the directory. If `MNML_SANDBOX` is set but `HOME` is not a throwaway
+  directory, or the data root is outside it, the chip turns red and
+  reads ` sandbox? `, with a warning that stays until dismissed.
+- **Your workspace is left alone.** Its session is neither restored
+  nor autosaved (`session.save` by hand still writes), and the
+  running-instance marker is not written, so `run.sh restart` / `stop`
+  still mean your real instance. The workspace's IPC mailbox
+  (`.mnml/ipc…`) is still used.
+- **An already-throwaway home is used as it is.** When `HOME` is
+  already under the temp root (or named `mnml-sandbox-*`) and neither
+  `XDG_CONFIG_HOME` nor `MNML_DATA_ROOT` points outside it, a bare
+  `--sandbox` does not re-execute; it only sets `MNML_SANDBOX`.
+- **On exit** the process that made the directory removes it; a nested
+  mnml in a shell pane never does, and a directory mnml did not make is
+  never touched. `--sandbox-keep` keeps it and prints its path. A crash
+  leaves it for the OS's temp cleanup.
+- Only the app takes the flag — the terminal UI and `--headless`. A
+  one-shot subcommand (`mnml run FILE`, `mnml test`, …) ignores it.
+
 ## Writes
 
 Settings screens and toggles write back with `persistScalar`: the file is

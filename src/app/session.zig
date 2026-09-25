@@ -299,9 +299,14 @@ pub const State = struct {
 };
 
 pub fn onStartup(app: *App, _: hooks.HookArgs) void {
-    app.session.autosave = true;
+    // A `--sandbox` run on a real workspace neither restores that
+    // workspace's session nor writes over it: a throwaway session must
+    // not be the one the next real launch reopens. `session.save` by
+    // hand still writes.
+    const sandboxed = app.sandboxState() != .off;
+    app.session.autosave = !sandboxed;
     app.session.last_save_ms = app.now_ms;
-    if (!app.cfg.session.restore) return;
+    if (sandboxed or !app.cfg.session.restore) return;
     restore(app) catch |err| app.toast("session: {s}", .{@errorName(err)});
 }
 
