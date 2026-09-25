@@ -87,11 +87,32 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
     } else |_| return 2;
+    // `--sandbox`: the app — terminal or headless, never a one-shot
+    // subcommand above — re-executes itself with HOME, XDG_CONFIG_HOME
+    // and MNML_DATA_ROOT inside a fresh temp dir, before anything reads
+    // them (`src/config/sandbox.zig`). The process that made the dir
+    // removes it on the way out.
+    var err_buf: [1024]u8 = undefined;
+    var err_out: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
+    const err_w = &err_out.interface;
+    const plain = try arena_state.allocator().alloc([]const u8, args.len);
+    for (args, 0..) |a, k| plain[k] = a;
+    if (try config.sandbox.enter(arena_state.allocator(), io, env, plain, err_w, &takesValue)) |code| {
+        err_w.flush() catch {};
+        return code;
+    }
+    if (env.get(config.sandbox.env_var)) |root| if (config.sandbox.wanted(plain[1..]) and env.get(config.sandbox.owner_env) == null) {
+        // A bare flag in a home that already was throwaway: no re-exec
+        // happened, so a child spawned without our environment map
+        // still has to see the variable.
+        if (@import("builtin").os.tag != .windows) try setenvOwned(gpa, config.sandbox.env_var, root);
+    };
+    defer config.sandbox.finish(io, env, plain[1..], err_w);
     for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) return headlessSubcommand(gpa, io, env, args[1..], w);
     return terminalMain(gpa, io, env, args[1..], w);
 }

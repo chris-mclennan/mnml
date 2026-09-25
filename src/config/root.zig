@@ -22,6 +22,7 @@ pub const TrustPrompt = load.TrustPrompt;
 pub const data_root = @import("data_root.zig");
 pub const profile = @import("profile.zig");
 pub const seed = @import("seed.zig");
+pub const sandbox = @import("sandbox.zig");
 pub const Profile = profile.Profile;
 pub const persist = @import("persist.zig");
 pub const zon_tree = @import("zon_tree.zig");
@@ -40,6 +41,7 @@ test {
     _ = @import("data_root.zig");
     _ = @import("profile.zig");
     _ = @import("seed.zig");
+    _ = @import("sandbox.zig");
     _ = @import("persist.zig");
     _ = @import("zon_tree.zig");
     _ = @import("zon_schema.zig");
