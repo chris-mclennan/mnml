@@ -4,11 +4,11 @@
    │  󰍉 / filter              │
  󰍉 │                          │
    │▌ eslint  1.0.0  ✓ Officia│
- 󰊢 │▌   Runs eslint on save a…│
-   │                          │
-  │  git-blame-line  1.0.0  ✓│                                _ __    _ _    _ __    _
-   │    Who last touched the …│                               | '  \  | ' \  | '  \  | |
- 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰊢 │▌   Runs eslint on save a…│                                                            _
+   │                          │                            _ __ ___    _ __    _ __ ___   | |
+  │  git-blame-line  1.0.0  ✓│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │    Who last touched the …│                           | | | | | | | | | | | | | | | | | |
+ 󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │  recent-commands  1.0.0  │
  󰎒 │    A live picker over ev…│                                     workspace · ws
    │                          │
@@ -19,22 +19,22 @@
   │    A rail-style list pan…│    No recent files yet                         No session to resume
    │                          │
  󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P        find a file
-▌󰢱 │                          │                                                Ctrl+R        recent files
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
-   │                          │                                                Ctrl+K        which-key menu
-   │                          │                                                Ctrl+,        settings
-   │                          │                                                Ctrl+N        new file
-   │                          │                                                Ctrl+Q        quit
-   │──────────────────────────│
-   │ Scripts                ⋮ │                                mnml 0.3.0-dev+gf3dacda1
-   │                          │
+   │                          │                                                Ctrl+P         find a file
+▌󰢱 │                          │                                                Ctrl+R         recent files
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │──────────────────────────│                                                Ctrl+Q         quit
+   │ Scripts                ⋮ │
+   │                          │                                mnml 0.3.0-dev+g69cf5c14
    │ Arrows walk rows. Enter  │
    │ jumps to the source. F6  │
    │ cycles focus.            │
   │                          │
    │                          │
- TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:55  ws   —
+ TREE  [no file]                                                              F 58% ▼0.8  󱼀 󰐎    02:27  ws   —
                                                            ⋯

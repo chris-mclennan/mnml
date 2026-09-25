@@ -593,13 +593,24 @@ test "welcome: the start surface lays out at 80x24, 120x40 and 200x60 inside the
         try t.expect(std.mem.indexOf(u8, txt, "RECENT FILES") != null);
         try t.expect(std.mem.indexOf(u8, txt, "SESSIONS") != null);
         try t.expect(std.mem.indexOf(u8, txt, ui_welcome.new_session_label) != null);
-        // The mark needs rows 80x24 does not have. SHORTCUTS needs width:
-        // at 80 columns the tree auto-hides (`ui.sidebar_auto_below`), so
-        // the surface has the whole width and the list fits at every size.
+        // The head art needs rows 80x24 does not have; from 120x40 the
+        // editor area has the rows for the five-row logo, and the
+        // three-row mark does not paint. SHORTCUTS needs width: at 80
+        // columns the tree auto-hides (`ui.sidebar_auto_below`), so the
+        // surface has the whole width and the list fits at every size.
         const small = size[1] == 24;
-        try t.expectEqual(!small, std.mem.indexOf(u8, txt, ui_welcome.mark[1]) != null);
+        try t.expectEqual(!small, std.mem.indexOf(u8, txt, ui_welcome.logo[2]) != null);
+        try t.expect(std.mem.indexOf(u8, txt, ui_welcome.mark[1]) == null);
         try t.expect(std.mem.indexOf(u8, txt, "SHORTCUTS") != null);
     }
+    // 100x35 leaves the editor area thirty-one rows: room for the mark,
+    // two short of the logo.
+    try app.resize(100, 35);
+    const txt = try screenText(&app);
+    defer t.allocator.free(txt);
+    try expectHitsSound(&app);
+    try t.expect(std.mem.indexOf(u8, txt, ui_welcome.mark[1]) != null);
+    try t.expect(std.mem.indexOf(u8, txt, ui_welcome.logo[2]) == null);
 }
 
 test "welcome: SHORTCUTS reads each profile's chords off the spec table — Space f f under vim, Ctrl+P under standard" {
