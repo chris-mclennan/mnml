@@ -510,7 +510,7 @@ pub const Session = struct {
         // After the child exited the pseudoconsole is closed or closing;
         // only the grid is left to size.
         self.shared.resizePty(coord(cols, rows));
-        try self.stream.handler.resize(.{ .cols = cols, .rows = rows });
+        try common.resizeGrid(&self.stream.handler, cols, rows);
         self.cols = cols;
         self.rows = rows;
     }
