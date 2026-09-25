@@ -4573,6 +4573,14 @@ fn buildPlan(app: *App, g: *GraphPane, sel: []const usize) CommandError!Plan {
         at = indexOfSha(g, c.parents[0]) orelse break;
     }
     if (remaining != 0) return app.diag.fail(arena, "rebase: a selected commit is not on the current branch's first-parent line from HEAD", .{});
+    // A merge on the line would be replayed flat — `rebase -i` without
+    // `--rebase-merges` lists no merge, so the plan could not be laid on
+    // git's todo, and the attempt would already have autostashed and
+    // checked out. Refused here, before anything touches the tree.
+    for (chain.items) |ci| {
+        const c = g.commits[ci];
+        if (c.parents.len > 1) return app.diag.fail(arena, "rebase: {s} is a merge — rewriting history through a merge is not supported; choose commits above it", .{c.short()});
+    }
     var plan: Plan = .{};
     errdefer plan.deinit(gpa);
     const oldest = g.commits[chain.items[chain.items.len - 1]];
