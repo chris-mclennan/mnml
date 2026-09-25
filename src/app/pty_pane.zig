@@ -15,6 +15,7 @@
 //! ConPTY on Windows); this file never names either.
 
 const sessions = @import("../sessions.zig");
+const ai = @import("ai.zig");
 const std = @import("std");
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
@@ -778,9 +779,9 @@ pub fn relaunchOf(app: *App, argv: []const []const u8, cwd: ?[]const u8) Relaunc
 /// encoded>/<id>.jsonl`, the file `claude --resume` looks for. The home
 /// is the SESSIONS scan's (`sessions.homeFor`); the cwd is tried
 /// resolved first — Claude names the directory for the cwd the OS
-/// reports — then as given, and each under the app's encoding
-/// (`ai.encodeWorkspace`, `/` and `.`) and Claude's own wider one
-/// (every character that is not a letter or a digit).
+/// reports — then as given, each spelled the one way Claude Code spells
+/// it (`ai.encodeWorkspace`: every byte that is not an ASCII letter or
+/// digit becomes `-`).
 pub fn claudeTranscriptExists(app: *App, id: []const u8, cwd: ?[]const u8) bool {
     if (id.len == 0) return false;
     // The scan already found it.
@@ -794,15 +795,9 @@ pub fn claudeTranscriptExists(app: *App, id: []const u8, cwd: ?[]const u8) bool 
     const resolved: []const u8 = if (Io.Dir.cwd().realPathFile(app.io, dir, &buf)) |n| buf[0..n] else |_| dir;
     const name = std.fmt.allocPrint(arena, "{s}.jsonl", .{id}) catch return false;
     for ([_][]const u8{ resolved, dir }) |spelling| {
-        for ([_]bool{ false, true }) |wide| {
-            const enc = arena.dupe(u8, spelling) catch return false;
-            for (enc) |*c| {
-                const other = if (wide) !std.ascii.isAlphanumeric(c.*) else (c.* == '/' or c.* == '.');
-                if (other or c.* == '\\') c.* = '-';
-            }
-            const path = std.fs.path.join(arena, &.{ home, ".claude", "projects", enc, name }) catch return false;
-            if (Io.Dir.cwd().statFile(app.io, path, .{})) |_| return true else |_| {}
-        }
+        const enc = ai.encodeWorkspace(arena, spelling) catch return false;
+        const path = std.fs.path.join(arena, &.{ home, ".claude", "projects", enc, name }) catch return false;
+        if (Io.Dir.cwd().statFile(app.io, path, .{})) |_| return true else |_| {}
     }
     return false;
 }
@@ -1622,6 +1617,45 @@ test "mouse reports: SGR press/release/drag/wheel, modes gate motion, x10 bytes"
     const x10: Encoding = .{ .mouse = .normal };
     try t.expectEqualStrings("\x1b[M\x20\x21\x21", encodeMouse(.{ .x = 0, .y = 0, .kind = .press, .button = .left }, 0, 0, x10, &buf));
     try t.expectEqualStrings("\x1b[M\x23\x21\x21", encodeMouse(.{ .x = 0, .y = 0, .kind = .release, .button = .left }, 0, 0, x10, &buf));
+}
+
+test "claudeTranscriptExists: the cwd is spelled as Claude Code names the directory — every byte not a letter or digit is `-`, `_` and spaces too" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(t.io, "my_app v2.0");
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    const cwd = try std.fs.path.join(t.allocator, &.{ root, "my_app v2.0" });
+    defer t.allocator.free(cwd);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.sessions.home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    // The fixture spells the directory by Claude Code's rule on its own,
+    // so a narrower encoder in the code cannot agree with it by symmetry.
+    const wide = try t.allocator.dupe(u8, cwd);
+    defer t.allocator.free(wide);
+    for (wide) |*c| if (!std.ascii.isAlphanumeric(c.*)) {
+        c.* = '-';
+    };
+    // Only `/` and `.` rewritten: the old spelling, which Claude never writes.
+    const narrow = try t.allocator.dupe(u8, cwd);
+    defer t.allocator.free(narrow);
+    for (narrow) |*c| if (c.* == '/' or c.* == '.') {
+        c.* = '-';
+    };
+    for ([_][2][]const u8{ .{ wide, "sid-wide" }, .{ narrow, "sid-narrow" } }) |pair| {
+        const dir = try std.fs.path.join(t.allocator, &.{ "home", ".claude", "projects", pair[0] });
+        defer t.allocator.free(dir);
+        try tmp.dir.createDirPath(t.io, dir);
+        const file = try std.fmt.allocPrint(t.allocator, "{s}/{s}.jsonl", .{ dir, pair[1] });
+        defer t.allocator.free(file);
+        try tmp.dir.writeFile(t.io, .{ .sub_path = file, .data = "{\"type\":\"user\"}\n" });
+    }
+    try t.expect(claudeTranscriptExists(&app, "sid-wide", cwd));
+    try t.expect(!claudeTranscriptExists(&app, "sid-narrow", cwd));
+    try t.expect(!claudeTranscriptExists(&app, "sid-none", cwd));
 }
 
 test "sessionIdOfArgv reads --session-id and --resume; resumeArgv spells the first as the second; relaunchInPlace sets either; freshInPlace undoes a resume" {

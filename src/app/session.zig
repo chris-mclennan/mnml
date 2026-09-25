@@ -1968,9 +1968,11 @@ test "session: a Claude pane's id rides in the file; the restored line resumes i
         try t.expectEqualStrings("sid-9", p.argv[2]);
     }
     // Claude wrote one (the first message): the restore resumes it.
+    // Claude Code's directory name for the cwd — every byte that is not
+    // an ASCII letter or digit becomes `-` (the temp root's `_` too).
     const enc = try t.allocator.dupe(u8, f.root);
     defer t.allocator.free(enc);
-    for (enc) |*c| if (c.* == '/' or c.* == '.') {
+    for (enc) |*c| if (!std.ascii.isAlphanumeric(c.*)) {
         c.* = '-';
     };
     const dir = try std.fs.path.join(t.allocator, &.{ "home", ".claude", "projects", enc });
