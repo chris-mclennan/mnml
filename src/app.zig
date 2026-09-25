@@ -861,6 +861,8 @@ pub const Drag = union(enum) {
     right_divider,
     /// // changed (bottom-dock): the row above the dock.
     bottom_divider,
+    /// The rule above the info view: its height (`info_view.dragTo`).
+    info_divider,
     /// A tab off a leaf's strip. `moved` once the pointer has left
     /// the cell it pressed on — a press-and-release is a click.
     tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },

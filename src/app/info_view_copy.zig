@@ -116,7 +116,7 @@ pub fn lookup(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?E
         .tab => |tb| try chrome.tab(app, arena, tb),
         .tab_close => chrome.tabClose(),
         .breadcrumb => |bc| try chrome.breadcrumb(app, arena, bc.pane, bc.idx),
-        .divider => chrome.divider(),
+        .divider => |id| chrome.divider(id),
         .scrollbar => |s| chrome.scrollbar(s),
         .hover_popup => chrome.hoverPopup(),
         .pane => |id| try chrome.pane(app, arena, id),

@@ -505,7 +505,7 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     };
     try normalize(f.arena(), &cfg, &f.diags, "/home/u");
     try t.expectEqual(@as(u16, 80), cfg.ui.tree_width);
-    try t.expectEqual(@as(u16, 3), cfg.ui.hover_help_height);
+    try t.expectEqual(@as(u16, 4), cfg.ui.hover_help_height);
     try t.expectEqual(@as(u16, 100), cfg.editor.chord_timeout_ms);
     // Ghost text's clocks: a typo of `1` would spin a request per
     // keystroke and give it no time to answer.

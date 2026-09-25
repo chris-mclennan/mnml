@@ -100,6 +100,18 @@ pub const Props = struct {
     /// link rows; painted on the selection ground and scrolled into
     /// view. Null paints no cursor.
     cursor: ?usize = null,
+    /// The top rule as a drag handle: its hit (registered over the
+    /// whole row, after the box's, so it wins), and whether it is lit
+    /// — under the pointer or being dragged, as a divider lights.
+    rule: ?Rule = null,
+};
+
+pub const Rule = struct {
+    hit: hit.HitTarget,
+    /// Being dragged: lit whatever the pointer is over.
+    lit: bool = false,
+    /// A divider's lit style (the theme's accent).
+    lit_style: Style,
 };
 
 pub const Layout = struct {
@@ -138,10 +150,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const title_bg = pal.bg2;
     ui.fill(area, Theme.onBg(t.fg, body_bg));
     ui.hit(area, .{ .info_view = .body });
-    // Row 0: the rule.
+    // Row 0: the rule — and, handed a hit, the handle that drags the
+    // box's height, lit like a divider under the pointer.
     var sep = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
     sep.dim = true;
+    const rule_row = Rect.init(area.x, area.y, area.w, 1);
+    if (p.rule) |r| if (r.lit or ui.hovered(rule_row)) {
+        sep = Theme.onBg(Theme.withFg(t.fg, r.lit_style.fg), body_bg);
+    };
     ui.hrule(area.x, area.y, area.w, sep);
+    if (p.rule) |r| ui.hit(rule_row, r.hit);
     if (area.h <= 1) return out;
     // Row 1: the title band, from the second cell (the first keeps the
     // panel's ground so the band never touches the activity bar), the
@@ -486,4 +504,32 @@ test "the keyboard's box: the title lights as a focused section's header, the cu
     const tall = draw(g.ui(), g.full(), .{ .copy = copy, .focused = true, .cursor = 0, .scroll = 3 });
     try testing.expect(tall.scroll <= 4);
     try g.expectContains("[Enter] Open");
+}
+
+test "the rule as a handle: its hit over the whole top row wins over the box's, and it lights under the pointer or while dragged" {
+    var f = try Fixture.init(26, 11);
+    defer f.deinit();
+    const accent = f.theme.accent;
+    const rule: Rule = .{ .hit = .{ .divider = 7 }, .lit_style = accent };
+    _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .rule = rule });
+    try testing.expectEqual(@as(u32, 7), f.hits.at(0, 0).?.divider);
+    try testing.expectEqual(@as(u32, 7), f.hits.at(25, 0).?.divider);
+    try testing.expect(f.hits.at(5, 1).? == .info_view);
+    try testing.expect(f.style(3, 0).dim);
+    try testing.expect(!vaxis.Color.eql(f.style(3, 0).fg, accent.fg));
+    // Being dragged: lit, not dim.
+    _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .rule = .{ .hit = rule.hit, .lit = true, .lit_style = accent } });
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).fg, accent.fg));
+    try testing.expect(!f.style(3, 0).dim);
+    // Under the pointer: lit the same way.
+    var g = try Fixture.init(26, 11);
+    defer g.deinit();
+    g.hover = .{ .x = 12, .y = 0 };
+    _ = draw(g.ui(), g.full(), .{ .copy = sidebar_copy, .rule = rule });
+    try testing.expect(vaxis.Color.eql(g.style(3, 0).fg, accent.fg));
+    // No handle: the rule is the box's, as before.
+    var h = try Fixture.init(26, 11);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), .{ .copy = sidebar_copy });
+    try testing.expect(h.hits.at(0, 0).?.info_view == .body);
 }

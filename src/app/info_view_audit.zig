@@ -283,6 +283,7 @@ fn walkButtons(w: *Walk) Allocator.Error!void {
 fn walkPanes(w: *Walk) Allocator.Error!void {
     inline for (comptime std.enums.values(std.meta.Tag(app_mod.Pane))) |k| try w.probeEntry("pane:" ++ @tagName(k), copy.chrome.paneKind(k));
     try w.probe("divider", .{ .divider = 0 });
+    try w.probe("divider:info_view", .{ .divider = render.info_divider_id });
     try w.probe("scrollbar:pane", .{ .scrollbar = .{ .owner = .{ .pane = 0 }, .axis = .v } });
     try w.probe("scrollbar:panel", .{ .scrollbar = .{ .owner = .{ .panel = .todos }, .axis = .v } });
     try w.probe("scrollbar:tree", .{ .scrollbar = .{ .owner = .tree, .axis = .v } });

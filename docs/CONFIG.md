@@ -309,7 +309,9 @@ otherwise. Copy what you need; leave the rest out.
         // A pane under about twelve rows spends no row on it and
         // underlines the active label instead.
         .tab_indicator = .block, // .block (half-block) | .rule (heavy + track) | .line (thin) | .quarter (quarter-height, flush under the label) | .quarter_track (the same bar across the whole strip, the active tab in colour)
-        .hover_help_height = 8, // clamped to 3..20
+        // Dragging the rule above the info view sets this (and writes it here); a double-click
+        // on the rule puts back 8. The box keeps at least 4 rows and leaves the section above it 6.
+        .hover_help_height = 8, // clamped to 4..60
         // How long the info view keeps an entry while the pointer travels from its target to the
         // box, crossing other targets on the way: held while the pointer keeps closing on the box
         // inside the column (or the triangle toward its near edge); a step outside switches at once.

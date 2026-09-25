@@ -479,8 +479,14 @@ pub const bottom_panel_height_max: u16 = 60;
 /// // changed (sidebar-autohide): the reveal / hide dwells, clamped on
 /// load. 0 is allowed — an instant reveal.
 pub const sidebar_dwell_ms_max: u16 = 5000;
-pub const hover_help_height_min: u16 = 3;
-pub const hover_help_height_max: u16 = 20;
+/// The info view's rows: at least a rule, a title and two lines of
+/// copy; at most what a tall column spares. The drag clamps further, to
+/// what the column can give while its section keeps
+/// `hover_help_section_min` rows.
+pub const hover_help_height_min: u16 = 4;
+pub const hover_help_height_max: u16 = 60;
+/// The rows the section above the info view keeps, whatever the box asks.
+pub const hover_help_section_min: u16 = 6;
 /// The info view's grace window's ceiling, clamped on load.
 pub const hover_help_grace_ms_max: u16 = 5000;
 /// The focus-follows-mouse dwell's ceiling, clamped on load.

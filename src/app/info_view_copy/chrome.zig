@@ -394,7 +394,13 @@ pub fn breadcrumb(app: *App, arena: Allocator, pane_id: PaneId, idx: u16) Alloca
     };
 }
 
-pub fn divider() Entry {
+pub fn divider(id: u32) Entry {
+    if (id == @import("../render.zig").info_divider_id) return .{
+        .title = "Info panel's top edge",
+        .body = "Drag it up or down to give this box more rows or fewer — the height is written to your home config (`ui.hover_help_height`), as the Settings row writes it. The box keeps at least four rows and leaves the section above it six. Double-click puts back the default eight.",
+        .keys = &.{ .{ .chord = "Drag", .label = "Resize" }, .{ .chord = "Double-click", .label = "Default height" } },
+        .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_height"), .label = "Hover help rows" } }},
+    };
     return .{
         .title = "Divider",
         .body = "The line between two panes, or between a column and the editor area. Drag it to resize; the column widths are per workspace (`ui.tree_width`, `ui.right_panel_width`) and the split ratios live in the session. The keyboard resizes too: grow and shrink width or height from the Window menu, or equalize every split at once.",

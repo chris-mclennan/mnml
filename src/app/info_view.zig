@@ -105,6 +105,9 @@ pub const State = struct {
     /// Where the box was painted last frame (null while it is not):
     /// what the corridor heads for.
     rect: ?Rect = null,
+    /// The left column the box sits at the foot of, last frame: what
+    /// dragging its rule measures against.
+    column: ?Rect = null,
     /// The pointer at the previous snapshot — the corridor asks whether
     /// the pointer is still closing on the box.
     last_ptr: ?Pt = null,
@@ -178,6 +181,40 @@ pub const Pinned = struct {
         p.arena.deinit();
     }
 };
+
+// ─── the height: the rule is a drag handle ──────────────────────────────
+
+/// The rows the box gets in a column `column_h` tall when the config
+/// asks for `want`: clamped to `hover_help_height_min` and to what
+/// leaves the section above `hover_help_section_min`; null when the
+/// column cannot give both.
+pub fn boxRows(column_h: u16, want: u16) ?u16 {
+    const C = app_mod.Config;
+    if (column_h < C.hover_help_height_min + C.hover_help_section_min) return null;
+    return std.math.clamp(want, C.hover_help_height_min, @min(column_h - C.hover_help_section_min, C.hover_help_height_max));
+}
+
+/// A drag on the rule: the pointer's row is the rule's, so the box is
+/// every row from it to the column's foot, clamped (`boxRows`).
+pub fn dragTo(app: *App, y: u16) void {
+    const col = app.info_view.column orelse return;
+    const want: u16 = col.bottom() -| y;
+    app.cfg.ui.hover_help_height = boxRows(col.h, want) orelse return;
+    app.needs_render = true;
+}
+
+/// The drag let go: the height is written to the home config, as the
+/// Settings row writes it.
+pub fn dragEnd(app: *App) Allocator.Error!void {
+    _ = try settings_app.persist(app, .home, &.{ "ui", "hover_help_height" }, app.cfg.ui.hover_help_height);
+}
+
+/// A double-click on the rule: the default height, written.
+pub fn resetHeight(app: *App) Allocator.Error!void {
+    app.cfg.ui.hover_help_height = (app_mod.Config{}).ui.hover_help_height;
+    app.needs_render = true;
+    _ = try settings_app.persist(app, .home, &.{ "ui", "hover_help_height" }, app.cfg.ui.hover_help_height);
+}
 
 /// Pinned or not — what the title row's chip shows.
 pub fn isPinned(app: *const App) bool {
@@ -1341,4 +1378,64 @@ test "help.focus: the box takes the keys, Tab / Shift+Tab walk and wrap, Enter r
     st.cursor = 1;
     try t.expect(try handleKey(&app, Key.named(.enter)));
     try t.expect(app.focus != .info_view);
+}
+
+test "boxRows: at least four rows, six left for the section, no box in a column that cannot give both" {
+    try t.expectEqual(@as(?u16, 18), boxRows(37, 18));
+    try t.expectEqual(@as(?u16, 31), boxRows(37, 60));
+    try t.expectEqual(@as(?u16, 4), boxRows(37, 1));
+    try t.expectEqual(@as(?u16, 8), boxRows(37, 8));
+    try t.expectEqual(@as(?u16, 4), boxRows(10, 8));
+    try t.expectEqual(@as(?u16, null), boxRows(9, 8));
+}
+
+test "the rule drags the height: rows follow the pointer, clamped; the release writes the home config; a double-click puts back the default" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws");
+    try tmp.dir.createDirPath(t.io, "data");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.focus = .tree;
+    try app.render();
+    const rule = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .divider and h.divider == @import("render.zig").info_divider_id;
+        }
+    }.f).?;
+    const col = app.info_view.column.?;
+    try t.expectEqual(col.bottom() - 8, rule.y);
+    // Press, drag, release through the app's own mouse dispatch.
+    const dispatch = @import("dispatch.zig");
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y, .kind = .press, .button = .left }, 1);
+    try t.expect(app.drag.? == .info_divider);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y - 10, .kind = .drag, .button = .left }, 1);
+    try t.expectEqual(@as(u16, 18), app.cfg.ui.hover_help_height);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = 0, .kind = .drag, .button = .left }, 1);
+    try t.expectEqual(col.h - 6, app.cfg.ui.hover_help_height);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y - 10, .kind = .release, .button = .left }, 1);
+    try t.expect(app.drag == null);
+    try app.render();
+    try t.expectEqual(col.bottom() - (col.h - 6), app.info_view.rect.?.y);
+    // The release wrote it where the Settings row writes it.
+    const path = try std.fs.path.join(t.allocator, &.{ data, @import("../config/root.zig").data_root.config_file });
+    defer t.allocator.free(path);
+    var buf: [16 * 1024]u8 = undefined;
+    const text = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
+    try t.expect(std.mem.indexOf(u8, text, "hover_help_height = 31") != null);
+    // A double-click on the rule: back to eight, written too.
+    const y = app.info_view.rect.?.y;
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .press, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .release, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .press, .button = .left }, 1);
+    try t.expectEqual(@as(u16, 8), app.cfg.ui.hover_help_height);
+    try t.expect(app.drag == null);
+    const text2 = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
+    try t.expect(std.mem.indexOf(u8, text2, "hover_help_height = 8") != null);
 }
