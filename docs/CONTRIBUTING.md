@@ -479,7 +479,7 @@ relaunches it on exit 75 — the restart handshake the `app.restart`
 command and `./run.sh restart` both use. Any other exit ends the loop.
 
 ```sh
-./run.sh [WS] [--input vim|standard] [--ascii] [--config PATH]
+./run.sh [WS] [--input vim|standard] [--ascii] [--config PATH] [--sandbox]
 ./run.sh restart | stop | status       # the running instance, through its marker + IPC
 ./run.sh fresh [WS]                    # --no-session: skip the session restore
 ./run.sh headless [WS]                 # the loop with --headless
@@ -489,7 +489,8 @@ command and `./run.sh restart` both use. Any other exit ends the loop.
 
 The app writes `${TMPDIR:-/tmp}/mnml-zig-running-$USER.workspace` when the
 terminal loop starts (the workspace's real path, no trailing newline) and
-removes it on a clean exit — not on a restart. `restart` and `stop` drop
+removes it on a clean exit — not on a restart. A `--sandbox` launch writes
+no marker (docs/CONFIG.md, *Sandbox*), so these verbs never reach it. `restart` and `stop` drop
 `{"cmd":"restart"}` / `{"cmd":"quit"}` in `<ws>/.mnml/ipc-zig/command`;
 the terminal loop tails that file for those two lines only (the headless
 loop takes the whole command set). `MNML_BIN`, `MNML_IPC_SUBDIR`,

@@ -92,6 +92,7 @@ relaunches on exit 75 (the restart handshake):
 ./run.sh stop               # quit it ({"cmd":"quit"})
 ./run.sh status             # its workspace, IPC dir, whether the process is alive
 ./run.sh fresh              # launch without restoring the session (--no-session)
+./run.sh WS --sandbox       # a throwaway HOME + data root: what a new user sees; removed on exit
 ./run.sh headless [WS]      # the same loop with --headless (virtual screen + file IPC)
 ./run.sh shot [OUT.png]     # screenshot the real ghostty window (macOS; scripts/shot.sh)
 ./run.sh check              # the verification sequence below, in one line
