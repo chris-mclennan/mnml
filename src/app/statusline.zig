@@ -268,6 +268,8 @@ pub fn modeOf(app: *App) Mode {
         .panel => |p| if (side.sideOf(app, side.sectionOfPanel(p)) == .left) .{ .label = "TREE", .kind = .tree, .vim = false } else .{ .label = "PANEL", .kind = .panel, .vim = false },
         // The start surface (`app/welcome.zig`) has the keys.
         .welcome => .{ .label = "START", .kind = .panel, .vim = false },
+        // The info view has the keys (`help.focus`).
+        .info_view => .{ .label = "HELP", .kind = .panel, .vim = false },
         .pane, .overlay => if (editor) |e|
             (if (e.buf.doc.read_only) Mode{ .label = "VIEW", .kind = .view, .vim = false } else Mode{ .label = "EDIT", .kind = .edit, .vim = false })
         else

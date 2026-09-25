@@ -618,8 +618,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         if (help_copy) |copy| if (side.h >= app.cfg.ui.hover_help_height + 8) {
             const parts = side.splitBottom(app.cfg.ui.hover_help_height);
             side = parts.top;
-            const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll, .pinned = info_view_app.isPinned(app) });
+            const focused = app.focus == .info_view;
+            const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll, .pinned = info_view_app.isPinned(app), .focused = focused, .cursor = if (focused) app.info_view.cursor else null });
             app.info_view.max_scroll = l.max_scroll;
+            // The keyboard's row pulled the view along.
+            app.info_view.scroll = l.scroll;
             // Where the box is, for the next frame's corridor.
             app.info_view.rect = parts.rest;
         };

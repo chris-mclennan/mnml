@@ -163,10 +163,16 @@ pub const LinkAction = union(enum) {
 };
 
 pub const max_links = 3;
+/// The shortcut rows whose command the keyboard can run (`help.focus`'s
+/// Enter); a row past these is shown and walked but runs nothing.
+pub const max_keys = 8;
 
 pub const Materialized = struct {
     copy: view.Copy,
     actions: [max_links]?LinkAction,
+    /// The command behind each `[chord] label` row, by position; null
+    /// for a gesture row (`Wheel`, `Drag`) that names no command.
+    keys: [max_keys]?CommandId = @splat(null),
 };
 
 /// The painter's `Copy` for `entry` under the active profile: every
@@ -181,6 +187,7 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
     for (entry.keys) |k| {
         if (k.command) |id| {
             const chord = (try chordOf(app, arena, id)) orelse continue;
+            if (shortcuts.items.len < max_keys) out.keys[shortcuts.items.len] = id;
             try shortcuts.append(arena, .{ .chord = chord, .label = k.label });
         } else if (k.chord.len > 0) {
             try shortcuts.append(arena, .{ .chord = k.chord, .label = k.label });

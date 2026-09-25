@@ -244,6 +244,15 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
+    // The info view with the keys (`help.focus`): its rows walk; what
+    // it does not take goes on to the chords, the palette's included.
+    if (app.focus == .info_view) {
+        if (app.info_view.rect == null) info_view_app.leave(app) else {
+            if (try info_view_app.handleKey(app, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        }
+    }
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
         _ = try chordChain(app, k);

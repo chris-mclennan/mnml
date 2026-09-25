@@ -18,6 +18,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
 const pin_chip = @import("pin_chip.zig");
+const focus_cue = @import("focus_cue.zig");
 
 const Style = vaxis.Style;
 
@@ -92,6 +93,13 @@ pub const Props = struct {
     scroll: u16 = 0,
     /// The entry is pinned: the title row's pin chip is lit.
     pinned: bool = false,
+    /// The box has the keys (`help.focus`): its title lights as a
+    /// section's header does (`focus_cue.label`).
+    focused: bool = false,
+    /// The keyboard's row, counted over the shortcut rows then the
+    /// link rows; painted on the selection ground and scrolled into
+    /// view. Null paints no cursor.
+    cursor: ?usize = null,
 };
 
 pub const Layout = struct {
@@ -100,6 +108,9 @@ pub const Layout = struct {
     kebab: ?Rect = null,
     /// The pin chip's cells, when the title row had room for it.
     pin: ?Rect = null,
+    /// The first line shown — `Props.scroll` clamped, and moved so the
+    /// keyboard's row is on screen.
+    scroll: u16 = 0,
 };
 
 /// The title row keeps at least this many cells for the title before
@@ -114,6 +125,8 @@ const Line = struct {
     segs: []const vaxis.Segment,
     /// A `→ label` row: its index in `copy.try_it`.
     link: ?u8 = null,
+    /// A row the keyboard walks: shortcuts first, then links.
+    row: ?usize = null,
 };
 
 pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
@@ -139,7 +152,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // it; a narrower box has the kebab alone.
     const with_pin = area.w >= kebab_cells + pin_chip.width + 1 + pin_min_title;
     const title_avail = area.w -| kebab_cells -| 1 -| (if (with_pin) pin_chip.width else 0);
-    var title_style = Theme.onBg(t.fg, title_bg);
+    var title_style = focus_cue.label(t, ui.focus_cue, p.focused, Theme.onBg(t.fg, title_bg));
     title_style.bold = true;
     ui.fill(Rect.init(area.x + 1, ty, title_avail, 1), title_style);
     // A long title is cut, not ellipsised (Rust), a cell short of the
@@ -173,12 +186,20 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const total = lines.items.len;
     const overflow = total > cap;
     out.max_scroll = @intCast(total -| cap);
-    const scroll: usize = @min(p.scroll, out.max_scroll);
+    var scroll: usize = @min(p.scroll, out.max_scroll);
+    // The keyboard's row stays on screen.
+    if (p.cursor) |c| for (lines.items, 0..) |line, li| if (line.row != null and line.row.? == c) {
+        if (li < scroll) scroll = li else if (li >= scroll + cap) scroll = li + 1 - cap;
+        break;
+    };
+    out.scroll = @intCast(scroll);
     const text_w = body.w -| @as(u16, if (overflow) 2 else 0);
     for (lines.items[scroll..@min(total, scroll + cap)], 0..) |line, i| {
         const y: u16 = body.y + @as(u16, @intCast(i));
+        const on_cursor = p.cursor != null and line.row != null and line.row.? == p.cursor.?;
+        if (on_cursor) ui.fill(Rect.init(body.x, y, text_w, 1), Theme.onBg(t.fg, t.selection.bg));
         var lx = body.x + 1;
-        for (line.segs) |s| lx += ui.putStr(lx, y, (body.x + text_w) -| lx, s.text, s.style);
+        for (line.segs) |s| lx += ui.putStr(lx, y, (body.x + text_w) -| lx, s.text, if (on_cursor) Theme.onBg(s.style, t.selection.bg) else s.style);
         if (line.link) |li| ui.hit(Rect.init(body.x, y, text_w, 1), .{ .info_view = .{ .try_it = li } });
     }
     if (overflow) {
@@ -222,17 +243,17 @@ fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
     if (!p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     if (p.copy.shortcuts.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
-        for (p.copy.shortcuts) |s| {
+        for (p.copy.shortcuts, 0..) |s, i| {
             const segs = arena.alloc(vaxis.Segment, 2) catch return null;
             segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
             segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
-            lines.append(arena, .{ .segs = segs }) catch return null;
+            lines.append(arena, .{ .segs = segs, .row = i }) catch return null;
         }
     }
     if (p.copy.try_it.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
         for (p.copy.try_it, 0..) |l, i| {
-            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
+            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i), .row = p.copy.shortcuts.len + i }) catch return null;
         }
     }
     return lines;
@@ -429,4 +450,40 @@ test "wrapWords: greedy on whitespace, a long word broken, empty is one line" {
     // Too narrow for the pin and a title beside it: the kebab alone.
     try f.expectRow(1, " Sideba ⋮");
     _ = draw(f.ui(), Rect.empty, .{ .copy = sidebar_copy });
+}
+
+test "the keyboard's box: the title lights as a focused section's header, the cursor's row sits on the selection ground and is scrolled into view" {
+    var f = try Fixture.init(30, 10);
+    defer f.deinit();
+    const copy: Copy = .{
+        .title = "T",
+        .body = "Body.",
+        .aside = "An aside.",
+        .shortcuts = &.{ .{ .chord = "Enter", .label = "Open" }, .{ .chord = "→ / ←", .label = "Expand / collapse" } },
+        .try_it = &.{.{ .label = "Run it" }},
+    };
+    // Unfocused: the title keeps its own colour; no cursor painted.
+    _ = draw(f.ui(), f.full(), .{ .copy = copy });
+    const cold = f.style(1, 1);
+    try testing.expect(!vaxis.Color.eql(cold.fg, f.theme.accent.fg));
+    // Focused (the default `both` cue lights): the accent.
+    var l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 0 });
+    try testing.expect(vaxis.Color.eql(f.style(1, 1).fg, f.theme.accent.fg));
+    // Cursor 0 is the first shortcut row (row 6): the selection ground.
+    try testing.expect(f.bgEql(3, 6, .{ .bg = f.theme.selection.bg }));
+    try testing.expect(!f.bgEql(3, 7, .{ .bg = f.theme.selection.bg }));
+    try testing.expectEqual(@as(u16, 0), l.scroll);
+    // Cursor 2 is the link, below the fold at scroll 0: the view follows.
+    l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 2 });
+    try testing.expectEqual(@as(u16, 1), l.scroll);
+    try f.expectRow(8, " → Run it                    ┃");
+    try testing.expect(f.bgEql(3, 8, .{ .bg = f.theme.selection.bg }));
+    // Back up to row 0 from a scrolled view: it follows up again.
+    l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 0, .scroll = 1 });
+    try testing.expectEqual(@as(u16, 1), l.scroll);
+    var g = try Fixture.init(30, 6);
+    defer g.deinit();
+    const tall = draw(g.ui(), g.full(), .{ .copy = copy, .focused = true, .cursor = 0, .scroll = 3 });
+    try testing.expect(tall.scroll <= 4);
+    try g.expectContains("[Enter] Open");
 }

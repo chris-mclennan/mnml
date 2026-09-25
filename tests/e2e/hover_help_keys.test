@@ -1,0 +1,60 @@
+# width: 120
+# height: 40
+# The info view takes the keys: `help.focus` (Shift+F1 in the standard
+# profile, Space K in vim). The rail's Explorer icon (1,2) gives the box
+# an entry with one `[Ctrl+P] Fuzzy-open a file` row and three links;
+# with the keys in the box the statusline's chip reads HELP, the entry
+# holds wherever the pointer goes, Tab / Shift+Tab walk the four rows
+# (the cursor's row on the selection ground, onedark #3e4451), Enter
+# runs the row, Esc gives the keys back.
+write a.txt "alpha\n"
+hover 1 2
+expect screen contains "Explorer — the file"
+key shift+f1
+expect screen contains "HELP"
+hover 60 20
+expect screen contains "Explorer — the file"
+# Tab: from the shortcut row to the first link, `→ Show the tree`
+# (row 36 once the view has followed the cursor down).
+key tab
+expect screen contains "→ Show the tree"
+expect color 10 36 bg #3e4451
+expect color 10 34 bg not #3e4451
+# Shift+Tab: back to `[Ctrl+P] Fuzzy-open a file` (row 34); Enter runs
+# its command — the files picker — and the keys leave the box.
+key shift+tab
+expect color 10 34 bg #3e4451
+expect color 10 36 bg not #3e4451
+key enter
+expect screen contains "Open file"
+expect screen lacks "HELP"
+key esc
+# Back to the rail icon; the keys again, three Tabs to the third link,
+# `⚙ Default sidebar side`: Enter opens Settings on that row.
+hover 1 2
+key shift+f1
+expect screen contains "HELP"
+key tab
+key tab
+key tab
+key enter
+expect screen contains "▸ Default sidebar side:"
+key esc
+# Esc in the box gives the keys back — to the tree they came from —
+# and lets a pin go.
+hover 1 2
+command help.pin_toggle
+expect color 26 31 fg #e7c787
+key shift+f1
+expect screen contains "HELP"
+key esc
+expect screen contains "TREE"
+expect screen lacks "HELP"
+expect color 26 31 fg not #e7c787
+# The vim profile's chord, Space K.
+ex set input=vim
+key space
+key K
+expect screen contains "HELP"
+key esc
+expect screen lacks "HELP"

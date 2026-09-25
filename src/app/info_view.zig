@@ -37,6 +37,13 @@
 //! the entry is held until the pointer leaves it, whatever the event —
 //! a wheel notch or a press included.
 //!
+//! **The keys can have it too.** `help.focus` hands the box the keys
+//! (`FocusId.info_view`): the entry holds as it does under the pointer,
+//! Tab / Shift+Tab walk its `[chord] label` and link rows, Enter runs
+//! the one under the cursor, Esc gives the keys back to where they came
+//! from (and lets a pin go). The title lights as a focused section's
+//! header does.
+//!
 //! **A pin holds it outright.** The pin chip on the title row (and
 //! `help.pin_toggle`) freezes the entry the box shows — its words and
 //! what its links do, copied onto the gpa (`Pinned`), since the frame
@@ -49,6 +56,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
+const Key = app_mod.Key;
 const Mouse = @import("../core/key.zig").Mouse;
 const command = @import("../core/command.zig");
 const CommandId = command.CommandId;
@@ -70,6 +78,7 @@ pub const Part = view.Part;
 pub const Entry = copy.Entry;
 
 pub const max_links = copy.max_links;
+pub const max_keys = copy.max_keys;
 
 /// The aside a fallback carries — the on-screen mark of a control
 /// without an entry.
@@ -109,6 +118,15 @@ pub const State = struct {
     shown: ?HitTarget = null,
     /// The pinned entry: while set, it is what the box says.
     pinned: ?Pinned = null,
+    /// What the `[chord] label` rows run, by position (Enter in the box).
+    keys: [max_keys]?CommandId = @splat(null),
+    /// The copy's walkable rows: its shortcuts, then its links.
+    n_shortcuts: usize = 0,
+    n_links: usize = 0,
+    /// The keyboard's row while the box has the keys (`help.focus`).
+    cursor: usize = 0,
+    /// Where the keys go back to on Esc.
+    return_focus: ?app_mod.FocusId = null,
 
     pub fn deinit(st: *State) void {
         if (st.pinned) |*p| p.deinit();
@@ -123,9 +141,10 @@ pub const Pinned = struct {
     arena: std.heap.ArenaAllocator,
     copy: Copy,
     links: [max_links]?copy.LinkAction,
+    keys: [max_keys]?CommandId,
     target: ?HitTarget,
 
-    pub fn init(gpa: Allocator, c: Copy, links: [max_links]?copy.LinkAction, target: ?HitTarget) Allocator.Error!Pinned {
+    pub fn init(gpa: Allocator, c: Copy, links: [max_links]?copy.LinkAction, keys: [max_keys]?CommandId, target: ?HitTarget) Allocator.Error!Pinned {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         errdefer arena.deinit();
         const a = arena.allocator();
@@ -149,6 +168,7 @@ pub const Pinned = struct {
                 .try_it = try_it,
             },
             .links = owned,
+            .keys = keys,
             .target = if (target) |tg| (if (tg == .link) null else tg) else null,
             .arena = arena,
         };
@@ -176,7 +196,7 @@ pub fn togglePin(app: *App) Allocator.Error!void {
         return;
     }
     const c = try pickCopy(app, app.frame.allocator());
-    st.pinned = try Pinned.init(app.gpa, c, st.links, st.shown);
+    st.pinned = try Pinned.init(app.gpa, c, st.links, st.keys, st.shown);
     app.toast("info panel: pinned \u{2014} {s}", .{st.pinned.?.copy.title});
 }
 
@@ -194,7 +214,86 @@ pub fn unpin(app: *App) bool {
 
 pub const table = .{
     .@"help.pin_toggle" = &pinCommand,
+    .@"help.focus" = &focusCommand,
 };
+
+fn focusCommand(app: *App) command.CommandError!void {
+    try focusBox(app);
+}
+
+/// Where the keys go back to from the box: where they came from, else
+/// the active pane, else the tree.
+fn backFocus(app: *const App) app_mod.FocusId {
+    if (app.info_view.return_focus) |f| if (f != .info_view and f != .overlay) return f;
+    return if (app.active) |a| .{ .pane = a } else .tree;
+}
+
+/// `help.focus`: the box takes the keys, its cursor on the first row.
+pub fn focusBox(app: *App) Allocator.Error!void {
+    const st = &app.info_view;
+    if (st.rect == null) {
+        app.toast("info panel is not showing \u{2014} Settings \u{2192} UI \u{2192} Hover help, and the left column", .{});
+        return;
+    }
+    if (app.focus == .info_view) return;
+    st.return_focus = focusUnder(app);
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .info_view;
+    st.cursor = 0;
+    app.needs_render = true;
+}
+
+/// The keys go back to where they came from.
+pub fn leave(app: *App) void {
+    if (app.focus != .info_view) return;
+    app.focus = backFocus(app);
+    app.info_view.return_focus = null;
+    app.needs_render = true;
+}
+
+/// The box's keys while it has them: Tab / Shift+Tab walk the rows,
+/// Enter runs the one under the cursor, Esc leaves (and unpins).
+/// Anything else is not the box's.
+pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
+    const st = &app.info_view;
+    const rows = st.n_shortcuts + st.n_links;
+    switch (k.code) {
+        .esc => {
+            _ = unpin(app);
+            leave(app);
+            return true;
+        },
+        .tab, .backtab => {
+            if (rows == 0) return true;
+            const back = k.code == .backtab or k.mods.shift;
+            st.cursor = if (back) (if (st.cursor == 0) rows - 1 else st.cursor - 1) else (st.cursor + 1) % rows;
+            app.needs_render = true;
+            return true;
+        },
+        .enter => {
+            if (rows == 0) return true;
+            const at = @min(st.cursor, rows - 1);
+            if (at < st.n_shortcuts) {
+                const id = (if (at < max_keys) st.keys[at] else null) orelse {
+                    app.toast("a gesture, not a command \u{2014} nothing to run", .{});
+                    return true;
+                };
+                leave(app);
+                command.run(app, .{ .static = id }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                };
+                return true;
+            }
+            const li = at - st.n_shortcuts;
+            const action = (if (li < max_links) st.links[li] else null) orelse return true;
+            leave(app);
+            try runLink(app, action);
+            return true;
+        },
+        else => return false,
+    }
+}
 
 fn pinCommand(app: *App) command.CommandError!void {
     try togglePin(app);
@@ -297,6 +396,13 @@ pub fn snapshotHover(app: *App) void {
         return;
     };
     const ptr: Pt = .{ .x = h.x, .y = h.y };
+    // The keys are in the box: the entry holds wherever the pointer is.
+    if (app.focus == .info_view) {
+        st.last_ptr = ptr;
+        st.grace = null;
+        st.hover_target = st.sticky;
+        return;
+    }
     const prev = st.last_ptr;
     const was_on_box = st.was_on_box;
     st.last_ptr = ptr;
@@ -386,10 +492,15 @@ fn sameTarget(a: HitTarget, b: HitTarget) bool {
 pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
     const c = try pickCopy(app, arena);
     const st = &app.info_view;
+    st.n_shortcuts = c.shortcuts.len;
+    st.n_links = c.try_it.len;
+    const rows = st.n_shortcuts + st.n_links;
+    st.cursor = if (rows == 0) 0 else @min(st.cursor, rows - 1);
     const topic = std.hash.Wyhash.hash(0, c.title);
     if (topic != st.topic) {
         st.topic = topic;
         st.scroll = 0;
+        st.cursor = 0;
     }
     return c;
 }
@@ -397,9 +508,11 @@ pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
 fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
     const st = &app.info_view;
     st.links = @splat(null);
+    st.keys = @splat(null);
     st.shown = null;
     if (st.pinned) |*p| {
         st.links = p.links;
+        st.keys = p.keys;
         st.shown = p.target;
         return p.copy;
     }
@@ -420,6 +533,7 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
     if (try copy.lookup(app, arena, target)) |entry| {
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
+        app.info_view.keys = m.keys;
         return m.copy;
     }
     // A menu row without an entry: the command's title and chord,
@@ -455,6 +569,8 @@ fn focusUnder(app: *const App) app_mod.FocusId {
             .menu => |m| m.return_focus,
             else => fallback,
         },
+        // The box with the keys says what it said before it had them.
+        .info_view => backFocus(app),
         else => app.focus,
     };
 }
@@ -613,6 +729,8 @@ fn emptyCopy(app: *App) Copy {
             .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
         // The start surface (`app/welcome.zig`).
         .welcome => .{ .title = "Start", .body = "j/k walk a list, Tab moves to the next. Enter acts on the row. ? opens the cheatsheet; Esc gives the keys back to the tree." },
+        // A menu opened from the box with the keys goes back to it.
+        .info_view => .{ .title = "Info panel", .body = "Tab walks the rows, Enter runs one, Esc gives the keys back." },
         // `focusUnder` never says so: an overlay names its surface.
         .overlay => unreachable,
     };
@@ -629,6 +747,7 @@ pub fn treeRowCopy(arena: Allocator, label: []const u8, is_dir: bool) Allocator.
 pub fn chipCopy(app: *App, c: tree_view.Chip) Allocator.Error!Copy {
     const m = try copy.materialize(app, app.frame.allocator(), copy.tree.chip(c));
     app.info_view.links = m.actions;
+    app.info_view.keys = m.keys;
     return m.copy;
 }
 
@@ -705,7 +824,6 @@ pub fn openKebabMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
-const Key = app_mod.Key;
 
 fn realRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1162,4 +1280,65 @@ test "pin: the entry and its links outlive the frame and every hover until unpin
     try t.expect(unpin(&app));
     try t.expect(!unpin(&app));
     try togglePin(&app);
+}
+
+test "help.focus: the box takes the keys, Tab / Shift+Tab walk and wrap, Enter runs a shortcut's command or says a gesture runs nothing, Esc goes back and unpins" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.focus = .tree;
+    // No box painted yet: the command says why instead of moving.
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try t.expect(app.focus == .tree);
+    try app.render();
+    // The rail's Explorer icon: one command row, three links.
+    const ex = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .rail and h.rail == .section and h.rail.section == .explorer;
+        }
+    }.f) orelse hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .rail;
+        }
+    }.f).?;
+    try hoverAt(&app, ex);
+    try hoverAt(&app, ex);
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try t.expect(app.focus == .info_view);
+    try app.render();
+    const st = &app.info_view;
+    try t.expectEqual(@as(usize, 1), st.n_shortcuts);
+    try t.expectEqual(@as(usize, 3), st.n_links);
+    try t.expectEqual(command.CommandId.@"picker.files", st.keys[0].?);
+    // The pointer wanders; the entry holds while the box has the keys.
+    const title = try app.gpa.dupe(u8, (try pick(&app, app.frame.allocator())).title);
+    defer app.gpa.free(title);
+    try hoverAt(&app, .{ .x = 80, .y = 20 });
+    try t.expectEqualStrings(title, (try pick(&app, app.frame.allocator())).title);
+    // Tab walks and wraps; Shift+Tab (backtab) walks back and wraps.
+    try t.expect(try handleKey(&app, Key.named(.tab)));
+    try t.expectEqual(@as(usize, 1), st.cursor);
+    for (0..3) |_| _ = try handleKey(&app, Key.named(.tab));
+    try t.expectEqual(@as(usize, 0), st.cursor);
+    _ = try handleKey(&app, Key.named(.backtab));
+    try t.expectEqual(@as(usize, 3), st.cursor);
+    // A key the box does not use is not taken.
+    try t.expect(!try handleKey(&app, Key.char('x')));
+    // A gesture row (no command) runs nothing and keeps the keys.
+    st.keys[0] = null;
+    st.cursor = 0;
+    try t.expect(try handleKey(&app, Key.named(.enter)));
+    try t.expect(app.focus == .info_view);
+    // Esc: the keys back to the tree, and a pin let go.
+    try togglePin(&app);
+    try t.expect(isPinned(&app));
+    try t.expect(try handleKey(&app, Key.named(.esc)));
+    try t.expect(app.focus == .tree);
+    try t.expect(!isPinned(&app));
+    // Enter on a link row leaves first, then runs it: `→ Show the tree`.
+    try app.render();
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try app.render();
+    st.cursor = 1;
+    try t.expect(try handleKey(&app, Key.named(.enter)));
+    try t.expect(app.focus != .info_view);
 }

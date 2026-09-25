@@ -996,6 +996,8 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
             try openTabMenu(app, id, r.x, r.y);
         },
         .welcome => try @import("welcome.zig").menuAtFocus(app),
+        // The info view's one menu, the kebab's, under its title row.
+        .info_view => if (app.info_view.rect) |r| try @import("info_view.zig").openKebabMenu(app, r.right() -| 2, r.y + 2),
         .overlay => {},
     }
 }
