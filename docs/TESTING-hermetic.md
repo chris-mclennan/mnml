@@ -61,7 +61,9 @@ outside the run's temp root.
   file once and names a pass on the retry as `FLAKY` — as it happens and
   in the trailer (`N/M passed (…), K FLAKY (passed only on a retry)` then
   one `FLAKY <file> — first run: <why>` line each). `--strict` retries
-  nothing.
+  nothing. The unit suite's trace runner does the same for a unit test
+  (`FLAKY <test> — first run: <error>`, the summary's `K FLAKY`;
+  `MNML_TEST_STRICT=1` retries nothing) — `tools/test_retry.zig`.
 
 ## The sites
 

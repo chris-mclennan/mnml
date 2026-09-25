@@ -527,7 +527,9 @@ case "${1:-start}" in
     # gate — together what `zig build test -Doptimize=Debug` ran.
     step "tools/debug-suite-check.sh (the unit suite in Debug)" env MNML_ZIG="$ZIG" bash tools/debug-suite-check.sh
     step "zig build e2e -Doptimize=Debug -- --gate"       "$ZIG" build e2e -Doptimize=Debug -- --gate
-    step "zig build test -Doptimize=ReleaseSafe"          "$ZIG" build test -Doptimize=ReleaseSafe
+    # The trace runner, as the Debug suite has: names each test as it
+    # runs and reports a pass on a retry as FLAKY rather than failing.
+    step "zig build test -Doptimize=ReleaseSafe -Dtest-trace=true" "$ZIG" build test -Doptimize=ReleaseSafe -Dtest-trace=true
     step "zig build -Doptimize=ReleaseSafe"               "$ZIG" build -Doptimize=ReleaseSafe
     step "mnml-zig test --gate --sizes 80x24,120x40,200x60" ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
     step "mnml-zig test (the corpus, MNML_E2E_ALLOW_SHELL=$MNML_E2E_ALLOW_SHELL)" ./zig-out/bin/mnml-zig test

@@ -118,11 +118,16 @@ check "check: the sequence runs the hover-help audit" 'grep -q "\"\$ZIG\" build 
 check "check: the sequence cross-compiles every shipped target" 'grep -q "\"\$ZIG\" build gate-targets" "$ROOT/run.sh"'
 check "check: the sequence runs the Debug unit suite" 'grep -q "bash tools/debug-suite-check.sh" "$ROOT/run.sh"'
 check "check: the sequence still runs the ReleaseSafe suite" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe" "$ROOT/run.sh"'
+check "check: the ReleaseSafe suite runs under the trace runner (FLAKY reported, as in Debug)" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe -Dtest-trace=true" "$ROOT/run.sh"'
 # tools/debug-suite-check.sh builds `unit-debug` and ends on a verdict a
 # chain can read: the fake zig (logs, exits 0) and one that exits 1.
 out=$(MNML_ZIG="$MNML_ZIG" bash "$ROOT/tools/debug-suite-check.sh" 2>&1); rc=$?
 check "debug-suite-check: a green build says ok (exit 0)" '[ $rc -eq 0 ] && echo "$out" | tail -1 | grep -q "^unit debug: ok"' "$out"
 check "debug-suite-check: it builds unit-debug" 'grep -q "^build unit-debug" "$ZIG_LOG"' "$(cat "$ZIG_LOG" 2>/dev/null)"
+check "debug-suite-check: under the trace runner (FLAKY reported)" 'grep -q "^build unit-debug -Dtest-trace=true" "$ZIG_LOG"' "$(cat "$ZIG_LOG" 2>/dev/null)"
+: > "$ZIG_LOG"
+MNML_ZIG="$MNML_ZIG" bash "$ROOT/tools/debug-suite-check.sh" -Dtest-trace=false > /dev/null 2>&1
+check "debug-suite-check: an explicit -Dtest-trace is passed alone, never twice" '[ "$(grep -c -- "-Dtest-trace" "$ZIG_LOG")" -eq 1 ] && grep -q -- "-Dtest-trace=false" "$ZIG_LOG"' "$(cat "$ZIG_LOG" 2>/dev/null)"
 printf '#!/bin/sh\nexit 1\n' > "$TMP/failzig"; chmod +x "$TMP/failzig"
 out=$(MNML_ZIG="$TMP/failzig" bash "$ROOT/tools/debug-suite-check.sh" 2>&1); rc=$?
 check "debug-suite-check: a red build says UNIT DEBUG FAILED and keeps the exit" '[ $rc -eq 1 ] && echo "$out" | tail -1 | grep -q "^UNIT DEBUG FAILED"' "$out"

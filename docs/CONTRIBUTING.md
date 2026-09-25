@@ -424,6 +424,26 @@ apart in the real output. Exactly one test name contains the word FAIL
 the name every such grep window kept pairing with somebody else's
 failure.
 
+A test that fails is run once more, afresh (its own testing allocator
+and `Io` again): a pass on the retry prints `FLAKY <test> — first run:
+<error>` where it happens and again under the summary, which ends
+`N passed; S skipped; F failed; K FLAKY.` — a flake is counted and
+named, never folded into `passed`, and does not fail the run. It is
+still a bug to go and find. `MNML_TEST_STRICT=1` retries nothing
+(`tools/break-check.sh` runs under it: a break has to fail the first
+time); a test that panics takes the process down and is not retried.
+`tools/debug-suite-check.sh` and `./run.sh check`'s ReleaseSafe step
+both run the suite under this runner, so both modes report alike.
+
+Under `zig build`, the trace binaries run in parallel with their output
+captured, and a last step (`tools/trace_report.zig`) prints each one's
+trace when all are done; a failing binary's trace is printed by the
+build runner as it fails. (A run that inherits the terminal holds the
+build runner's stderr lock for its whole run: streamed live, the
+binaries ran one after another and the ReleaseSafe suite took half as
+long again.) To watch a hang name its test as it happens, add
+`-Dtest-trace-live`: the old live stream, one binary at a time.
+
 Do not reach for `-Dtest-filter=<substring>` to run one test. It is
 the compiler's own filter and it is applied while files are scanned,
 and the compiler only scans a file something references: with no
