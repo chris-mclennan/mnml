@@ -454,6 +454,9 @@ def collect(paths):
 
 
 def run(args):
+    if not args.exe:
+        import stamp
+        stamp.warn_app("tour.sh sweep")
     out_root = os.path.abspath(args.out)
     out = os.path.join(out_root, "sweep")
     tmp_root = os.path.join(out_root, "runs")

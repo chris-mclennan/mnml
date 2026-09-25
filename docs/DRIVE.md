@@ -13,6 +13,16 @@ zig build -Ddrive          # builds zig-out/bin/mnml-drive
 zig build drive            # the same, on its own
 ```
 
+`mnml-drive version` prints `source <hash>`: a hash of the sources the
+binary was built from (every `tools/drive/*.zig` and `src/core/key.zig`,
+build.zig `driveSourceHash`). `tools/tour.sh` and `tools/look.sh launch`
+hash the checkout the same way (`tools/tour/stamp.py`) and rebuild a
+driver that disagrees — or, under `MNML_DRIVE_NO_REBUILD=1`, stop with a
+one-line reason — so a driver built before the driver last changed is
+never trusted: the first tour from main ran one whose `launch` never
+wrote `allow_input`, and every state failed with "the channel refused
+input".
+
 `-Ddrive` on anything but macOS fails the build on purpose. It is macOS
 + ghostty only and always will be — one terminal, deliberately, so the
 harness can know exactly what it is looking at.

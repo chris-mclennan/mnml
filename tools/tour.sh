@@ -24,14 +24,26 @@
 #       (never committed). Default out: .verify/sweep. Meant to run
 #       overnight.
 #
+# A stale mnml-drive (built before tools/drive/ last changed) is rebuilt
+# first; MNML_DRIVE_NO_REBUILD=1 refuses instead. Without --exe, a
+# zig-out/bin/mnml-zig older than src/ is a warning, not a stop. Exit 1
+# only on a CHANGED shot or a failed assert.
+#
 # Needs: macOS, ghostty, `zig build -Ddrive`, python3 (stdlib only),
 # Accessibility + Screen Recording for the terminal that runs it
 # (`zig-out/bin/mnml-drive doctor`). See docs/LOOK.md and docs/DRIVE.md.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -x "$ROOT/zig-out/bin/mnml-drive" ] || { echo "tour.sh: build the driver first: zig build -Ddrive" >&2; exit 64; }
+# A driver older than tools/drive/ is rebuilt (or, under
+# MNML_DRIVE_NO_REBUILD=1, refused) before anything launches; `diff` and
+# `accept` never launch, so they skip it (tools/tour/stamp.py).
+case "${1:-}" in
+  diff|accept|-h|--help|help) ;;
+  *) MNML_STAMP_WHO=tour.sh python3 "$ROOT/tools/tour/stamp.py" drive || exit $? ;;
+esac
 case "${1:-}" in
   run|diff|accept|sweep) exec python3 "$ROOT/tools/tour/tour.py" "$@" ;;
-  -h|--help|help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) exec python3 "$ROOT/tools/tour/tour.py" run "$@" ;;
 esac

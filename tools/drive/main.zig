@@ -32,6 +32,7 @@ const Allocator = std.mem.Allocator;
 const mac = @import("mac.zig");
 const keys = @import("keys.zig");
 const harness = @import("harness.zig");
+const drive_build = @import("drive_build");
 
 const usage_text =
     \\mnml-drive — drive a real mnml in a real ghostty window (dev-only, macOS + ghostty)
@@ -50,10 +51,11 @@ const usage_text =
     \\  wait-frame [--timeout MS]                   block until screen.txt moves
     \\  info                    the recorded window, re-verified
     \\  doctor                  permissions, and what to do about them
+    \\  version                 `source <hash>`: the sources this binary was built from
     \\  focus                   take the keyboard (explicit: keys need it)
     \\  quit
     \\
-    \\Every verb but `launch`, `doctor` and the usage text reads
+    \\Every verb but `launch`, `doctor`, `version` and the usage text reads
     \\--data-root DIR (or $MNML_DRIVE_DATA_ROOT) to find drive.json.
     \\
     \\Exit: 0 ok · 2 usage · 3 refused (not our window / no permission) · 4 timeout
@@ -92,6 +94,13 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, verb, "doctor")) return doctor(w);
+    // The stamp `tools/tour/stamp.py` compares against the checkout
+    // (build.zig `driveSourceHash`): a driver built before its sources
+    // changed is refused or rebuilt rather than trusted.
+    if (std.mem.eql(u8, verb, "version")) {
+        try w.print("source {s}\n", .{drive_build.source_hash});
+        return 0;
+    }
     if (std.mem.eql(u8, verb, "launch")) return launch(arena, io, init.environ_map, rest, w, e);
 
     // Everything else acts on an already-launched window, and every one

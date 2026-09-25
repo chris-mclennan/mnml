@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import imgdiff  # noqa: E402
+import stamp  # noqa: E402
 import zonlite  # noqa: E402
 from mnmlwin import REPO, DriveError, Window, hex_to_rgb, now_ms  # noqa: E402
 
@@ -294,6 +295,8 @@ def judge(a, got, sample):
 # ─── the tour ──────────────────────────────────────────────────────────
 
 def cmd_run(args):
+    if not args.exe:
+        stamp.warn_app("tour.sh")
     out = os.path.abspath(args.out)
     if os.path.exists(out) and not args.keep:
         shutil.rmtree(out)

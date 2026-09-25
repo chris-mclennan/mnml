@@ -61,6 +61,9 @@ def run(args):
         cur = open_window()
         if cur and cur.alive():
             return die(f"a window is already up (pid {cur.pid}, root {cur.run_dir}); `look.sh quit` first — one window per agent")
+        if not args.exe:
+            import stamp
+            stamp.warn_app("look.sh")
         os.makedirs(root, exist_ok=True)
         w = Window(root, ws, exe=args.exe, cols=args.cols, rows=args.rows)
         with open(os.path.join(root, "look.json"), "w", encoding="utf-8") as f:
