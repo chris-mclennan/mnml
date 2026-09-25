@@ -1148,6 +1148,10 @@ fn closeOverlay(app: *App) void {
     if (back) |f| {
         app.focus = f;
         if (f == .panel and !side.isShown(app, side.sectionOfPanel(f.panel))) restoreFocus(app);
+        // A pane snapshot goes stale when the active pane changed (or
+        // closed) while the overlay was up: the keys go to `app.active`,
+        // so focus names it, not the pane the overlay opened over.
+        if (f == .pane and (app.active == null or app.active.? != f.pane)) restoreFocus(app);
     } else restoreFocus(app);
 }
 
@@ -5587,4 +5591,26 @@ test "a button fires on the release inside it: a close badge or a strip chip pre
     try press(&app, c2[0], c2[1], .left);
     try release(&app, c2[0], c2[1]);
     try std.testing.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+}
+
+test "a menu closing after the active pane changed under it focuses the active pane, not the stale snapshot" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const a = try app.openScratch();
+    const b = try app.openScratch();
+    app.setActive(a);
+    app.focus = .{ .pane = a };
+    const items = try app.gpa.alloc(command.MenuItem, 0);
+    try app.openMenu("Test", items, 2, 2);
+    try std.testing.expectEqual(app_mod.FocusId{ .pane = a }, app.overlay.menu.return_focus);
+    // The active pane moves while the menu is up; Esc closes it.
+    app.setActive(b);
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expect(app.overlay == .none);
+    try std.testing.expectEqual(app_mod.FocusId{ .pane = b }, app.focus);
+    // Unchanged active: the snapshot is restored as it was.
+    const items2 = try app.gpa.alloc(command.MenuItem, 0);
+    try app.openMenu("Test", items2, 2, 2);
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expectEqual(app_mod.FocusId{ .pane = b }, app.focus);
 }
