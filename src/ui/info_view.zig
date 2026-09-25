@@ -146,12 +146,11 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // short of the bar.
     const body = Rect.init(area.x, area.y + 2, area.w, area.h -| 3);
     const cap: usize = body.h;
-    const max_body_rows: usize = area.h -| 3;
     var content_w = area.w -| 2;
-    var lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+    var lines = buildLines(ui, p, content_w) orelse return out;
     if (lines.items.len > cap and content_w > 1) {
         content_w -= 1;
-        lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+        lines = buildLines(ui, p, content_w) orelse return out;
     }
     const total = lines.items.len;
     const overflow = total > cap;
@@ -180,9 +179,12 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
 }
 
 /// The body's lines at `content_w`: a blank, the body and the aside
-/// wrapped, then the shortcuts and the try-it links as far as
-/// `max_body_rows` allows. Null on OOM.
-fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.ArrayListUnmanaged(Line) {
+/// wrapped, then every shortcut and every link after a spacer each.
+/// Nothing is dropped for want of rows — the box scrolls, so a link
+/// under a long body is a notch or two of the wheel away rather than
+/// gone (Rust cut the rows that did not fit on screen, and at the
+/// default height every link under a long body with them). Null on OOM.
+fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
     const arena = ui.arena;
     var lines: std.ArrayListUnmanaged(Line) = .empty;
     const t = ui.theme;
@@ -200,20 +202,18 @@ fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.Array
     if (p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     for (wrapWords(arena, p.copy.body, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return null }) catch return null;
     if (!p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
-    var rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.shortcuts.len > 0) {
+    if (p.copy.shortcuts.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
-        for (p.copy.shortcuts[0..@min(p.copy.shortcuts.len, rows_left -| 1)]) |s| {
+        for (p.copy.shortcuts) |s| {
             const segs = arena.alloc(vaxis.Segment, 2) catch return null;
             segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
             segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
             lines.append(arena, .{ .segs = segs }) catch return null;
         }
     }
-    rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.try_it.len > 0) {
+    if (p.copy.try_it.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
-        for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
+        for (p.copy.try_it, 0..) |l, i| {
             lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
         }
     }
@@ -331,15 +331,22 @@ test "shortcuts and links get their rows after a spacer; a link row is a hit by 
     };
     _ = draw(f.ui(), f.full(), .{ .copy = copy });
     try f.expectRow(1, " A title that is far too lo ⋮");
-    try f.expectRow(3, " Body.");
-    try f.expectRow(4, " An aside.");
-    try f.expectRow(5, "");
-    try f.expectRow(6, " [Enter] Open");
-    try f.expectRow(7, " [→ / ←] Expand / collapse");
-    // Only two rows were left: the links needed a spacer and a row.
+    try f.expectRow(3, " Body.                       ┃");
+    try f.expectRow(4, " An aside.                   ┃");
+    try f.expectRow(5, "                             ┃");
+    try f.expectRow(6, " [Enter] Open                ┃");
+    try f.expectRow(7, " [→ / ←] Expand / collapse   ┃");
+    // Out of rows: the link is below the fold, not dropped — the bar
+    // says there is more, and scrolled it is a row with its hit.
     try f.expectLacks("Run it");
     try testing.expect(f.style(4, 4).italic);
     try testing.expect(vaxis.Color.eql(f.style(2, 6).fg, f.theme.palette.cyan));
+    var s = try Fixture.init(30, 10);
+    defer s.deinit();
+    const sl = draw(s.ui(), s.full(), .{ .copy = copy, .scroll = 99 });
+    try testing.expectEqual(@as(u16, 1), sl.max_scroll);
+    try s.expectRow(8, " → Run it                    ┃");
+    try testing.expectEqual(@as(u8, 0), s.hits.at(3, 8).?.info_view.try_it);
     var g = try Fixture.init(30, 14);
     defer g.deinit();
     _ = draw(g.ui(), g.full(), .{ .copy = copy });
