@@ -104,6 +104,10 @@ pub const Editor = struct {
     /// The last bracket object chose whole lines (`select.bracketCount`);
     /// `if_lines_object` reads it.
     object_lines: bool = false,
+    /// `mark_operator_start`: where an operator's range began and the
+    /// column the cursor wanted there. `select_start` forgets both.
+    op_start: ?usize = null,
+    op_goal: ?usize = null,
     /// Visual-block anchor. Independent of `anchor`.
     block_anchor: ?usize = null,
     /// The block runs to each line's end (`$` in V-BLOCK).

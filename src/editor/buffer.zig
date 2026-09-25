@@ -695,18 +695,7 @@ pub const Buffer = struct {
                 else => null,
             };
             if (vertical) |down| {
-                var line = self.visibleRow(cur);
-                for (0..n) |_| {
-                    if (down) {
-                        const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
-                        if (next >= count) break;
-                        line = next;
-                    } else {
-                        if (line == 0) break;
-                        line = self.visibleRow(line - 1);
-                    }
-                }
-                const steps = if (down) line -| cur else cur -| line;
+                const steps = self.foldSteps(cur, down, n);
                 if (steps == n) return list;
                 if (steps == 0) return list[0..head];
                 const ptr = try arena.create(EditOp);
@@ -718,7 +707,25 @@ pub const Buffer = struct {
             }
         }
 
-        // `dd` / `<n>dd` / `dj` / `yy` / `<n>yy`.
+        // An operator's `j` / `k` (`dj`, `>2k`): the counted motion after
+        // `select_start` walks visible lines the way a bare `j` does.
+        if (body.len >= 2 and body[0] == .select_start and body[1] == .repeat) {
+            const r = body[1].repeat;
+            const down: ?bool = switch (r.inner.*) {
+                .move_down, .move_down_first_non_ws => true,
+                .move_up, .move_up_first_non_ws => false,
+                else => null,
+            };
+            if (down) |d| {
+                const steps = self.foldSteps(cur, d, r.count);
+                if (steps == r.count) return list;
+                const out = try arena.dupe(EditOp, list);
+                out[head + 1] = .{ .repeat = .{ .count = @intCast(steps), .inner = r.inner } };
+                return out;
+            }
+        }
+
+        // `dd` / `<n>dd` / `yy` / `<n>yy`.
         const Kind = enum { delete, yank };
         var kind: Kind = .delete;
         var n: usize = 0;
@@ -767,6 +774,25 @@ pub const Buffer = struct {
             .yank => try out.append(arena, .{ .yank_lines_count = covered }),
         }
         return out.items;
+    }
+
+    /// How many buffer lines `n` visible-line steps from `cur` cover:
+    /// a closed fold is one step (`:help fold-behavior`), and the walk
+    /// stops at the buffer's first / last line.
+    fn foldSteps(self: *const Buffer, cur: usize, down: bool, n: usize) usize {
+        const count = self.editor.lineCount();
+        var line = self.visibleRow(cur);
+        for (0..n) |_| {
+            if (down) {
+                const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
+                if (next >= count) break;
+                line = next;
+            } else {
+                if (line == 0) break;
+                line = self.visibleRow(line - 1);
+            }
+        }
+        return if (down) line -| cur else cur -| line;
     }
 
     // ─── dot-repeat ───
@@ -1707,7 +1733,10 @@ test "round two: count p, ci\" forward, dd at EOF, Visual Ctrl-A, gv linewise, d
     // `dd` on the last line lands on the new last line, never past it.
     try vim("Gdd", "|a\nb\n", "|a\n");
     try vim("j3dd", "|a\nb\nc\nd\n", "|a\n");
-    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\n|c\n"); // the count takes what is there
+    // On the last line a count fails: `{n}dd` is `d{n-1}j` (Neovim:
+    // `G3dd` changes nothing); from above it takes what is there.
+    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\nc\n|d\n");
+    try vim("jj3dd", "|a\nb\nc\nd\n", "a\n|b\n");
     // `v_CTRL-A` bumps every selected line's first number; `g` makes a progression.
     try vim("Vj<c-a>", "|x 1\ny 1", "|x 2\ny 2");
     try vim("Vjg<c-a>", "|x 1\ny 1", "|x 2\ny 3");

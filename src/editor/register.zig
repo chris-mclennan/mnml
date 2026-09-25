@@ -26,6 +26,9 @@ pub fn yankLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Erro
 pub fn yankLinesCount(ed: *Editor, n: u32, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     if (n == 0) return;
     const first = ed.currentLine();
+    // `{n}yy` is `y{n-1}j`: on the last line it fails (Neovim: `G2yy`
+    // yanks nothing).
+    if (n > 1 and first + 1 >= ed.lineCount()) return;
     const last = @min(first + n - 1, ed.lineCount() - 1);
     const start = ed.lineStart(first);
     const last_end = ed.lineEnd(last);
@@ -403,7 +406,10 @@ test "charwise yank/put and modeless paste over a selection" {
     ed.cursor = 5;
     try paste(ed, &clip, &out);
     try std.testing.expectEqualStrings("hehe", ed.doc.text.items);
+    // `{n}yy` on the last line fails (`y{n-1}j`); a bare `yy` takes it.
     try yankLinesCount(ed, 3, &clip, &out);
+    try std.testing.expectEqualStrings("he", clip.text());
+    try yankLinesCount(ed, 1, &clip, &out);
     try std.testing.expectEqualStrings("hehe\n", clip.text());
 }
 

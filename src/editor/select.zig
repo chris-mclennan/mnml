@@ -11,6 +11,8 @@ const isSpace = editor.isSpace;
 
 pub fn selectStart(ed: *Editor) void {
     ed.anchor = ed.cursor;
+    ed.op_start = null;
+    ed.op_goal = null;
     for (ed.extra_anchors.items, ed.extra_cursors.items) |*a, c| a.* = c;
 }
 
@@ -742,10 +744,11 @@ pub fn normalizeLinewiseSelection(ed: *Editor) void {
     const a = ed.anchor orelse return;
     const lo = @min(a, ed.cursor);
     const hi = @max(a, ed.cursor);
-    const lo_line = ed.lineOfByte(lo);
     // A cursor sitting exactly on a line start after a downward `V j`
-    // still belongs to that line.
-    const hi_line = ed.lineOfByte(hi);
+    // still belongs to that line. A closed fold at either end is taken
+    // whole (`:help fold-behavior`).
+    const lo_line = foldStart(ed, ed.lineOfByte(lo));
+    const hi_line = foldEnd(ed, ed.lineOfByte(hi));
     const end = ed.lineEnd(hi_line);
     ed.anchor = ed.lineStart(lo_line);
     ed.cursor = if (end < ed.len()) end + 1 else end;
@@ -757,11 +760,55 @@ pub fn normalizeLinewiseSelection(ed: *Editor) void {
 /// line where the lines were — the shape `cc` builds (`:help v_c`).
 pub fn normalizeLinewiseSelectionInner(ed: *Editor) void {
     const a = ed.anchor orelse return;
-    const lo_line = ed.lineOfByte(@min(a, ed.cursor));
-    const hi_line = ed.lineOfByte(@max(a, ed.cursor));
+    const lo_line = foldStart(ed, ed.lineOfByte(@min(a, ed.cursor)));
+    const hi_line = foldEnd(ed, ed.lineOfByte(@max(a, ed.cursor)));
     ed.anchor = ed.lineStart(lo_line);
     ed.cursor = ed.lineEnd(hi_line);
     ed.goal_col = null;
+}
+
+/// The first line of the closed fold holding `row`, else `row`.
+fn foldStart(ed: *const Editor, row: usize) usize {
+    for (ed.folds.keys(), ed.folds.values()) |s, e| if (e > s and row >= s and row <= e) return s;
+    return row;
+}
+
+/// The last line of the closed fold holding `row`, else `row`.
+fn foldEnd(ed: *const Editor, row: usize) usize {
+    for (ed.folds.keys(), ed.folds.values()) |s, e| if (e > s and row >= s and row <= e) return e;
+    return row;
+}
+
+/// `{count}cc`: `count` lines from the cursor's (clamped to the last),
+/// the `_inner` linewise shape.
+pub fn selectCountLines(ed: *Editor, count: u32) void {
+    const first = foldStart(ed, ed.currentLine());
+    var last = first;
+    var i: u32 = 1;
+    while (i < @max(count, 1) and foldEnd(ed, last) + 1 < ed.lineCount()) : (i += 1) last = foldEnd(ed, last) + 1;
+    last = foldEnd(ed, last);
+    ed.anchor = ed.lineStart(first);
+    ed.cursor = ed.lineEnd(last);
+    ed.goal_col = null;
+    ed.op_start = null;
+    ed.op_goal = null;
+}
+
+/// `mark_operator_start`.
+pub fn markOperatorStart(ed: *Editor) void {
+    const a = ed.anchor orelse ed.cursor;
+    ed.op_goal = ed.goalCol();
+    ed.op_start = @min(a, ed.cursor);
+}
+
+/// `cursor_to_operator_start`: back to where the range began, the
+/// wanted column kept for the next `j` / `k`.
+pub fn cursorToOperatorStart(ed: *Editor) void {
+    const at = ed.op_start orelse return;
+    ed.cursor = ed.snapBoundary(@min(at, ed.len()));
+    ed.goal_col = ed.op_goal;
+    ed.op_start = null;
+    ed.op_goal = null;
 }
 
 pub fn continueInsertRun(ed: *Editor) void {

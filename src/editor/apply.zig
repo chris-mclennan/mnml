@@ -40,6 +40,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             }
             // `{count}dd` past the end takes what is there (`:help dd`),
             // never a line above the one it started on.
+            // On the last line a count fails outright: `{n}dd` is
+            // `d{n-1}j`, and `j` cannot move there.
+            if (r.inner.* == .delete_line and r.count > 1 and ed.currentLine() + 1 >= ed.lineCount()) return;
             const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
             if (r.inner.isMutation() and count > 1) {
                 const tok = try ed.beginAtomic();
@@ -178,6 +181,13 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .abort_unless_selection => if (ed.anchor == null) {
             out.aborted = true;
         },
+        .abort_unless_moved => if (ed.anchor == null or ed.anchor.? == ed.cursor) {
+            ed.anchor = null;
+            out.aborted = true;
+        },
+        .mark_operator_start => select.markOperatorStart(ed),
+        .cursor_to_operator_start => select.cursorToOperatorStart(ed),
+        .select_count_lines => |n| select.selectCountLines(ed, n),
         .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
         .if_lines_object => |c| for (if (ed.object_lines) c.lines else c.chars) |o| try applyOne(ed, o, vp, clip, out),
 
@@ -218,6 +228,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .delete_to_line_end => try delete.deleteToLineEnd(ed, out),
         .delete_line => try delete.deleteLine(ed, clip, out),
         .delete_selection => try delete.deleteSelection(ed, clip, out),
+        .delete_selection_linewise => try delete.deleteSelectionLinewise(ed, clip, out),
+        .register_selection_delete => |l| try delete.registerSelectionDelete(ed, l, clip, out),
         .replace_selection => |s| try delete.replaceSelection(ed, s, out),
         .replace_char_at_cursor => |c| try delete.replaceCharAtCursor(ed, c, out),
         .overwrite_char_and_advance => |c| try insert.overwriteCharAndAdvance(ed, c, out),
@@ -417,7 +429,8 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
         .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
         .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
-        .undo_line,
+        .undo_line,                                                             .abort_unless_moved,                                    .mark_operator_start,                                                                                            .cursor_to_operator_start,
+        .{ .select_count_lines = 2 },                                           .delete_selection_linewise,                             .{ .register_selection_delete = true },                                                                          .{ .register_selection_delete = false },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];
