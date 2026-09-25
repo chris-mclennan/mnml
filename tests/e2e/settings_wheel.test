@@ -77,5 +77,7 @@ scroll 60 20 down
 # (+1 notches: this branch's own Settings rows, summed onto main's count at merge)
 scroll 60 20 down
 # (+1 notches: this branch's own Settings rows, summed onto main's count at merge)
+scroll 60 20 down
+# (+1 notches: this branch's own Settings rows, summed onto main's count at merge)
 expect screen contains "── Editor ──"
 expect screen contains "▸"

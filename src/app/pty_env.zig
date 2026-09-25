@@ -12,12 +12,16 @@
 //! current, which a user's rc file opts into with
 //! `[ -n "$MNML_PROMPT_SCRIPT" ] && . "$MNML_PROMPT_SCRIPT"`. With no
 //! data root (a unit test) there is no file and no `MNML_PROMPT_SCRIPT`.
+//! And, with `terminal.shell_integration` on, what makes the shell load
+//! mnml's shell integration — prompt marks, whatever the prompt
+//! (`shell_integration.zig`).
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const App = @import("../app.zig").App;
 const Theme = @import("../ui/theme.zig");
+const shell_integration = @import("shell_integration.zig");
 
 pub const prompt_script = @import("themes").prompt_script;
 pub const prompt_file = "prompt.sh";
@@ -33,7 +37,10 @@ pub fn build(app: *App, extra: []const []const u8, shell: bool) Allocator.Error!
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try env.put(kv[0..eq], kv[eq + 1 ..]);
     }
-    if (shell) try putPrompt(app, &env);
+    if (shell) {
+        try putPrompt(app, &env);
+        try shell_integration.apply(app.io, app.frame.allocator(), &env, app.data_root, app.cfg.terminal.shell_integration);
+    }
     return env;
 }
 

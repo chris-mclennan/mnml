@@ -1,0 +1,28 @@
+# mnml's .zshenv for a shell pane. mnml starts the pane's zsh with
+# ZDOTDIR pointing at the directory this file is installed in, so zsh
+# reads this file first and nothing in the user's dotfiles has to change.
+#
+# It does three things and gets out of the way:
+#   1. puts the user's own ZDOTDIR back (or unsets it, meaning $HOME), so
+#      /etc/zprofile, /etc/zshrc and every later startup file — .zprofile,
+#      .zshrc, .zlogin — are read from where they always are;
+#   2. reads the user's own .zshenv, as zsh would have;
+#   3. in an interactive shell, sources mnml-integration.zsh, which waits
+#      for the first prompt (after .zshrc has set one) to do its work.
+
+__mnml_si_dir=$ZDOTDIR
+if [[ -n ${MNML_ZSH_ZDOTDIR+set} ]]; then
+    export ZDOTDIR=$MNML_ZSH_ZDOTDIR
+else
+    unset ZDOTDIR
+fi
+unset MNML_ZSH_ZDOTDIR
+
+if [[ -r ${ZDOTDIR:-$HOME}/.zshenv ]]; then
+    builtin source "${ZDOTDIR:-$HOME}/.zshenv"
+fi
+
+if [[ -o interactive && -r $__mnml_si_dir/mnml-integration.zsh ]]; then
+    builtin source "$__mnml_si_dir/mnml-integration.zsh"
+fi
+unset __mnml_si_dir

@@ -1,0 +1,44 @@
+# width: 120
+# height: 40
+# env: SHELL=/bin/zsh
+# env: HOME=${MNML_E2E_WORKSPACE}/zdot
+# env: ZDOTDIR=${MNML_E2E_WORKSPACE}/zdot
+# A three-line prompt with no marks of its own — starship's shape, a
+# first line, a long line, then `> ` — keeps ONE prompt on screen when
+# its pane is narrowed by two splits. On SIGWINCH zsh climbs the rows it
+# counted for the prompt at the old width. Narrowed, the long MIDDLE
+# line wraps to more rows than that, the climb stops short, and the
+# prompt's first line is left behind — one row per resize. The pane's
+# shell integration marks the prompt (OSC 133 A … B), so the terminal
+# blanks it before the reflow and it keeps the row count zsh counted.
+#
+# The first line is a counter instead of starship's blank line so a
+# leftover shows: after two resizes the pane shows redraw-3 alone, never
+# the redraw-1 or redraw-2 an unfinished climb leaves behind. The rc
+# file writes no marks: the ones on screen are the integration's. Only
+# the first shell wears the counter; the ones the splits open get a
+# short prompt of their own.
+shell mkdir -p zdot && printf '%s\n' 'unset HISTFILE' 'setopt prompt_subst' 'n=0' 'if [[ ! -e $ZDOTDIR/first ]]; then : > $ZDOTDIR/first' "  PROMPT=\$'redraw-\$((++n))\\n'0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij\$'\\n> '" 'else PROMPT="other> "; fi' > zdot/.zshrc
+command view.toggle_tree
+command term.shell_right
+expect within 5000 screen contains "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij"
+# The pane's first frame resizes it once already (its size before the
+# frame is a guess), so start the count over on a clean screen.
+type "n=0; clear"
+key enter
+wait 500
+expect within 3000 screen contains "▌redraw-1"
+expect screen lacks "redraw-2"
+
+# The first split: 118 columns to 58, the long line now two rows.
+command term.shell_right
+expect within 5000 screen contains "redraw-2"
+expect within 2000 screen contains "other> "
+expect screen lacks "redraw-1"
+
+# The second: 58 to 38, three rows.
+command term.shell_right
+expect within 5000 screen contains "redraw-3"
+expect screen lacks "redraw-1"
+expect screen lacks "redraw-2"
+expect screen contains "▌redraw-3"
