@@ -91,7 +91,8 @@ example.
 | — | `.token_file = "~/…"` | port only: a file holding the token |
 | — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (empty, the default, means `JIRA_API_TOKEN`) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
-| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent (then the request asks again, up to three tries, the SDK's `ratelimit.Retry` the Bitbucket pane uses too), or `cooldown_secs` when it sent none |
+| — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent, or a backoff from `cooldown_secs` doubling to `max_block_secs` when it sent none (the SDK's `budget`, the Bitbucket pane's too: a read asks again after a pause of up to 30 s, a write never) |
+| — | `.dry_run = false` | port only: start in a dry run — nothing is sent, the rows on screen stay, and the request log gets the line it would have been (`"dry":true`). `Shift+N` flips it for the session; the budget chip says `DRY` |
 | — | `.intervals = .{ .listing_secs = 300, .builds_secs = 90, .readiness_secs = 0 }` | port only: how often each kind of thing is kept fresh (`sdk.warm.Intervals`, the defaults shown); `readiness_secs = 0` is on demand only |
 | — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`https://api.bitbucket.org/2.0`, `BITBUCKET_ACCESS_TOKEN`) |
 | — | `.required_approvals = 1` | port only: approvals a linked pull request needs before its `[ Merge ]` stops being dim |
@@ -200,6 +201,19 @@ the next step and waits for `r`.
 | detail open | `c` | comment |
 | any | `d` / `D` | detail pane / detail modal |
 | any | `/` · `J` · `?` | filter · JQL editor (the vars editor on a `jql_editable` tab) · keys |
+| any | `Ctrl+X` · `N` | stop waiting out a rate-limit pause · dry run on / off |
+
+The header's **budget chip**, beside refresh, is the Bitbucket pane's
+same chip (`sdk.pane.chrome.budgetChip`): `812/1000` off Jira Cloud's
+`X-RateLimit-Remaining` / `-Limit`, `37/h` (calls this hour) when the
+site sends none, `DRY`, or `paused until 14:03:22` after a 429 — in the
+host usage meter's colours (yellow from 60 % spent or on
+`X-RateLimit-NearLimit`, red from 85 % and while paused). Its hover adds
+the reset time, the hit ratio (a ticket whose linked PRs the store
+already holds, against a read that carried a body) and calls today ·
+yesterday · last 7 days, from `<data root>/budget/jira.tally`, which
+every process on the data root adds to. A click on it stops a pause;
+so do `Ctrl+X` and the host's `integrations.cancel_wait`.
 
 Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row
@@ -349,7 +363,11 @@ tools/jira-diff.sh [work|fix-versions|boards]  # the reference vs the port, by c
 `tools/fake_jira/` is a deterministic Jira on the loopback (project
 ENG, twelve issues, a scrum board with sprints and quick filters,
 versions, users, the dev-status panel, a forge corner for pipelines);
-every test runs against it, no network. It takes `--port 0` and writes
+every test runs against it, no network. `--rate-limit-first N`
+(`--retry-after N`) answers the next N Jira requests 429;
+`--rate-limit-limit N` / `--rate-limit-remaining N` /
+`--rate-limit-reset ISO` send Jira Cloud's `X-RateLimit-*` on every Jira
+answer — what the budget chip's tests drive. It takes `--port 0` and writes
 where it landed — the bare number to `--port-file`, the whole
 `http://127.0.0.1:NNNNN` to `--url-file` — which is what the corpus
 reads back through `JIRA_BASE_URL=@<path>`. `mnml-jira --dump --steps FILE`

@@ -82,8 +82,10 @@ TOML twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins,
 `@<path>` reads a file — one still missing after 5 s is the setup
 screen and a failing `--check`, never a fall back to
 `api.bitbucket.org`), `.rate` (`rate_per_sec`, `capacity`,
-`max_attempts`, `default_backoff_secs`, `max_backoff_secs`,
-`state_path`), `.required_approvals` (1) and `.merge_strategies`
+`max_attempts`, `default_backoff_secs` — a 429's first pause when it
+carries no `Retry-After`, doubling per attempt — `max_backoff_secs`,
+that doubling's ceiling, and `state_path`), `.dry_run` (false: see
+The API budget below), `.required_approvals` (1) and `.merge_strategies`
 (`.merge_commit`, `.squash`, `.fast_forward`) — both read by the merge
 gate below — and `.intervals` (`sdk.warm.Intervals`: `listing_secs`
 300, `builds_secs` 90, `readiness_secs` 0 — on demand only).
@@ -171,6 +173,7 @@ can drift from what a key does. The keys are the reference's:
 | `m` · `Tab` `Shift+Tab` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
 | `/` `esc` | filter · clear |
 | `r` `R` `?` `q` `^c` | refresh this tab · full refresh (ignore every cache) · keys · quit |
+| `^x` · `N` | stop waiting out a rate-limit pause · dry run on / off (see The API budget) |
 
 The pipelines header's `run pipeline`, `schedules` and `caches` open
 that page for the repo under the cursor (its header or any of its
@@ -432,14 +435,49 @@ Every request passes the shared token bucket the reference and the
 Python scripts on this machine already take turns on —
 `~/.tattle-claude-artifacts/bitbucket-ratelimit.json` (or
 `$TATTLE_ARTIFACTS_ROOT`, `$BITBUCKET_RATELIMIT_STATE`, `<MNML_DATA_ROOT>/ratelimit/`),
-0.22 requests/s, a burst of 40. A 429 is retried up to three times
-honouring `Retry-After` (a park longer than 30 s is not slept through; the SDK's `ratelimit.Retry`, the Jira pane's too) and parks every process on
-the bucket; nothing else is retried. A repo that fails keeps its row,
+0.22 requests/s, a burst of 40. A 429 pauses the pane (The API budget,
+below — the Jira pane's same `sdk.budget`) and parks every process on
+the bucket; a read is asked again, up to three tries, a write never,
+and nothing else is retried. A repo that fails keeps its row,
 labelled `429 · retry in 30s` / `auth failed` / `no such repo`.
 
 A thirteen-repo prefetch takes minutes under that bucket; the pane's
 header says `fetching… 7/13 repos` (over `loading…` until the first
 rows land) and it answers keys meanwhile.
+
+## The API budget
+
+The header's budget chip, beside refresh — the same chip, in the same
+place, as the Jira pane's (`sdk.budget` + `sdk.pane.chrome.budgetChip`):
+
+| chip | means |
+|---|---|
+| `812/1000` | what Bitbucket's `X-RateLimit-Remaining` / `-Limit` last said |
+| `37/h` | Bitbucket sent no numbers: the calls this pane made in the last hour |
+| `DRY` | dry run: nothing is sent |
+| `paused until 14:03:22` | a 429: nothing goes out until then |
+
+In the host usage meter's colours: at rest under 60 % spent (of the
+API's numbers, or of `rate_per_sec × 3600` for `n/h`), yellow from 60 %
+or when the API sends `X-RateLimit-NearLimit: true`, red from 85 % and
+while paused. The hover says it all in words: the API's numbers and
+when they reset, the calls this hour, the cache's hit ratio (a 304 to a
+conditional GET, or the prefetch cache, against a GET that carried its
+body), and calls **today · yesterday · last 7 days** — the tally every
+process on this data root adds to, in `<data root>/budget/bitbucket.tally`.
+
+A 429 pauses the pane for its `Retry-After` (else `default_backoff_secs`
+doubling per attempt, jittered, capped at `max_backoff_secs`). A read
+asks again once a pause of up to 30 s is up; a longer one goes back to
+the row (`429 · retry in 90s`) and nothing is sent until it is over. A
+write — an approval, a merge — is never asked twice. `Ctrl+X`, a click
+on the chip, or the host's `integrations.cancel_wait` stops the wait.
+
+`Shift+N` (or `integrations.toggle_dry_run`) is dry run for the
+session; `.dry_run = true` starts the pane in it. Nothing is sent: a GET
+answers with the body already held for it (the ETag store), anything
+else says `dry run`, and the request log still gets the line
+(`"dry":true`, no status) so you can see what WOULD have gone out.
 
 ## Testing
 
@@ -451,7 +489,9 @@ root builds both binaries beside mnml and runs the same tests under
 loopback — `acme` with `api` and `web`: five pull requests, two merged
 with merge commits, branches and pipeline runs dated against the clock,
 approve / unapprove that land in its state, `--rate-limit-first N` to
-429 the first N requests, `--delay-ms N` to hold every reply (the only
+429 the first N requests (`--retry-after N` sets the header, 0 sends
+none), `--rate-limit-limit N` / `--rate-limit-remaining N` to send
+`X-RateLimit-*` on every answer (the budget chip's numbers), `--delay-ms N` to hold every reply (the only
 way to catch the pane with a fetch in flight on the loopback). `tests/e2e/integrations_bitbucket_*.test`
 drive the pane through a real mount against it; `tools/bitbucket-diff.sh`
 runs the reference and this pane on it and prints the content that
