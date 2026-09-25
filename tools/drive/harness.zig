@@ -66,6 +66,14 @@ pub const ConfigOptions = struct {
     /// on the display is not a preference the harness can honour.
     font_size: ?u16 = null,
     force_font_size: bool = false,
+    /// False writes `mouse-reporting = false` (`launch --no-mouse`): the
+    /// person's own pointer passing over the harness window no longer
+    /// reaches mnml. A window driven through the file channel gets its
+    /// clicks and hovers from there, and a pointer that happened to rest
+    /// over it put its hover help into every shot — the tour's second
+    /// run read `Shortcut` in the info panel where the first read
+    /// `Sidebar`. The driver's own mouse verbs need it on.
+    mouse_reporting: bool = true,
 };
 
 /// Keys the harness must own, whatever the user's config says. A line in
@@ -133,6 +141,7 @@ fn renderInto(w: *Io.Writer, base: []const u8, opts: ConfigOptions) Io.Writer.Er
             for (overridden) |o| {
                 if (std.mem.eql(u8, k, o)) owned = true;
             }
+            if (!opts.mouse_reporting and std.mem.eql(u8, k, "mouse-reporting")) owned = true;
             if (owned) continue;
         }
         const trimmed = std.mem.trimEnd(u8, line, "\r");
@@ -161,6 +170,7 @@ fn renderInto(w: *Io.Writer, base: []const u8, opts: ConfigOptions) Io.Writer.Er
     try w.writeAll("window-position-x = 0\n");
     try w.writeAll("window-position-y = 0\n");
     try w.print("title = {s}\n", .{opts.title});
+    if (!opts.mouse_reporting) try w.writeAll("mouse-reporting = false\n");
     if (!has_font_size or opts.force_font_size) {
         if (opts.font_size) |pt| try w.print("font-size = {d}\n", .{pt});
     }
@@ -533,6 +543,17 @@ test "--allow-input turns the channel's input on, and only when asked" {
     // The copied layout key still lands, beside the switch.
     try t.expect(std.mem.indexOf(u8, on, ".tree_width = 34") != null);
     try t.expect(std.mem.endsWith(u8, on, "} }\n"));
+}
+
+test "--no-mouse turns ghostty's mouse reporting off, and wins over the user's line" {
+    const conf = try renderConfig(t.allocator, "font-family = X\nmouse-reporting = true\n", .{ .cols = 80, .rows = 24, .title = "t", .mouse_reporting = false });
+    defer t.allocator.free(conf);
+    try t.expect(std.mem.indexOf(u8, conf, "mouse-reporting = true") == null);
+    try t.expect(std.mem.indexOf(u8, conf, "mouse-reporting = false\n") != null);
+    try t.expect(std.mem.indexOf(u8, conf, "font-family = X") != null);
+    const on = try renderConfig(t.allocator, "", .{ .cols = 80, .rows = 24, .title = "t" });
+    defer t.allocator.free(on);
+    try t.expect(std.mem.indexOf(u8, on, "mouse-reporting") == null);
 }
 
 test "cellsFor turns measured points into a cell count, floored and clamped" {

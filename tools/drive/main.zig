@@ -38,7 +38,7 @@ const usage_text =
     \\
     \\  launch --workspace DIR --data-root DIR [--size small|corpus|full]
     \\         [--cols N] [--rows N] [--font-size PT] [--exe PATH] [--ghostty PATH]
-    \\         [--timeout MS] [--take-focus] [--allow-input]
+    \\         [--timeout MS] [--take-focus] [--allow-input] [--no-mouse]
     \\  key <spec>              one chord or a chain: ctrl+p, "space f f", enter
     \\  type <text>             literal text, any codepoint
     \\  click|rightclick|doubleclick|hover X Y      cell coordinates
@@ -408,6 +408,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             // A user font-size that does not fit is not a preference the
             // harness can honour; from the second attempt on, ours wins.
             .force_font_size = attempt > 0,
+            .mouse_reporting = !hasFlag(args, "--no-mouse"),
         });
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = conf_path, .data = conf });
         // A previous attempt's dumps would answer for this one.
@@ -493,9 +494,18 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
                 settled = mac.windowOwnedBy(pid, found.id) orelse placed;
             }
         }
-        const settled_fits = settled.x >= screen.origin.x - 1 and settled.y >= screen.origin.y - 1 and
-            settled.x + settled.w <= screen.origin.x + screen.size.width + 1 and
-            settled.y + settled.h <= screen.origin.y + screen.size.height + 1;
+        // Fully on ONE display is what the shot and pixel math need: a
+        // window that straddles a bezel photographs in two halves. The
+        // main display is where the move above aims, but ghostty opens
+        // on the display that has the keyboard, and the move is refused
+        // outright on some setups (its one AX element answers
+        // `kAXErrorAttributeUnsupported` for AXPosition, measured on a
+        // two-display desk) — a window wholly on the other display is
+        // still a window the harness can shoot and read.
+        const settled_fits = mac.displayContaining(.{
+            .origin = .{ .x = settled.x, .y = settled.y },
+            .size = .{ .width = settled.w, .height = settled.h },
+        }) != null;
 
         // `full` has no number until now: measure a cell on THIS machine,
         // at the user's own font, and work out how many of them the
@@ -549,7 +559,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             // window simply landed somewhere off this display.
             try e.print(
                 "mnml-drive launch: the window came up {d}x{d} as asked, but at {d:.0},{d:.0} {d:.0}x{d:.0} pt\n" ++
-                    "  it is not fully on the main display ({d:.0},{d:.0} {d:.0}x{d:.0} pt). Refusing: a window\n" ++
+                    "  it is not wholly on any one display (main: {d:.0},{d:.0} {d:.0}x{d:.0} pt). Refusing: a window\n" ++
                     "  partly off screen photographs as a window partly off screen.\n",
                 .{ got.cols, got.rows, settled.x, settled.y, settled.w, settled.h, screen.origin.x, screen.origin.y, screen.size.width, screen.size.height },
             );

@@ -134,6 +134,25 @@ pub fn mainDisplayBounds() CGRect {
     return CGDisplayBounds(CGMainDisplayID());
 }
 
+extern "c" fn CGGetActiveDisplayList(max: u32, displays: [*]u32, count: *u32) i32;
+
+/// The bounds of the active display that wholly holds `r` (a point of
+/// slack on each edge), or null when it straddles a bezel or hangs off
+/// every display. ghostty opens a window on the display that has the
+/// keyboard, which on a two-display desk is often not the main one.
+pub fn displayContaining(r: CGRect) ?CGRect {
+    var ids: [16]u32 = undefined;
+    var n: u32 = 0;
+    if (CGGetActiveDisplayList(ids.len, &ids, &n) != 0) return null;
+    for (ids[0..n]) |d| {
+        const b = CGDisplayBounds(d);
+        if (r.origin.x >= b.origin.x - 1 and r.origin.y >= b.origin.y - 1 and
+            r.origin.x + r.size.width <= b.origin.x + b.size.width + 1 and
+            r.origin.y + r.size.height <= b.origin.y + b.size.height + 1) return b;
+    }
+    return null;
+}
+
 /// Move one of OUR windows to a point on screen. `pid` must be a process
 /// the harness launched — the caller has already proved that, and this
 /// function takes the pid rather than a window so it cannot be pointed at

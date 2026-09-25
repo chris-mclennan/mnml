@@ -104,7 +104,7 @@ anything that looks like one is posting events somewhere it should not.
 ```
 mnml-drive launch --workspace DIR --data-root DIR [--size small|corpus|full]
                   [--cols N --rows M] [--exe PATH] [--font-size PT]
-                  [--allow-input] [--take-focus]
+                  [--allow-input] [--no-mouse] [--take-focus]
 mnml-drive key ctrl+p            --data-root DIR
 mnml-drive key "space f f"       --data-root DIR
 mnml-drive type "hello"          --data-root DIR
@@ -127,6 +127,17 @@ script drives the window through the file channel — JSONL lines in
 without the harness ever being the active application. That is the way
 `tools/tour.sh` and `tools/look.sh` drive it (`docs/LOOK.md`); `key` /
 `type` / the mouse verbs here need `focus`, which takes the keyboard.
+
+`--no-mouse` writes `mouse-reporting = false` into the harness's
+ghostty config: the person's own pointer crossing the window no longer
+reaches mnml (it steered the hover help into a tour shot once). Clicks
+and hovers then come through the channel; the mouse verbs here need it
+left on.
+
+A window that ghostty opens on another display — it opens on the one
+that has the keyboard — is kept as long as it lies wholly on that one
+display; the move to the main display is tried first and is refused by
+some setups.
 
 `launch` hands the keyboard back: ghostty activates as it opens, so the
 app that was frontmost before the launch is re-activated once the
