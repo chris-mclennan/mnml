@@ -12,12 +12,17 @@
 //!   out, and a transport failure has to read the same way as an HTTP
 //!   one.
 //! * **The shared bucket is in front of every request** (`ratelimit.zig`),
-//!   and a 429 is answered the reference's way: the bucket is penalised
-//!   so every process on the machine backs off, the request retried up
-//!   to `max_attempts` times honouring `Retry-After` (`sdk.ratelimit.Retry`:
-//!   a park longer than `max_backoff_secs` is not slept through — the
-//!   failure goes back to the pane), and nothing else is retried — a
-//!   401 will not become a 200 by asking twice.
+//!   and a 429 is answered the SDK's way (`sdk.budget`), the Jira pane's
+//!   too: the bucket is penalised so every process on the machine backs
+//!   off, and the pane's budget pauses — for `Retry-After`, else an
+//!   exponential backoff with jitter capped at `max_backoff_secs` — with
+//!   the header chip saying `paused until hh:mm:ss`. A READ is asked
+//!   again once the pause is up, up to `max_attempts` in all; a write
+//!   never is, and nothing else is retried — a 401 will not become a 200
+//!   by asking twice.
+//! * **Dry run** (`budget.isDry`): nothing goes out. The line the
+//!   request would have been is written to the request log, and a GET
+//!   is answered with the body already held for it, if there is one.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -179,6 +184,11 @@ pub const Client = struct {
     /// Requests actually sent, retries included — the diagnostics and
     /// the rate-limit tests both read it.
     sent: u32 = 0,
+    /// The pane's API budget (`mnml_sdk.budget`): the headers, the
+    /// 429 pause, the hit ratio, the tally, dry run. Null — a one-shot
+    /// command-line run — gets a budget of its own per request, so a
+    /// 429 is answered the same way with nothing to show it on.
+    budget: ?*sdk.Budget = null,
 
     pub fn init(
         gpa: Allocator,
@@ -225,6 +235,23 @@ pub const Client = struct {
     pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
         const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
         defer gpa.free(url);
+        var own_budget: sdk.Budget = .{};
+        const budget = self.budget orelse blk: {
+            own_budget.configure(self.io, .{ .label = "Bitbucket", .service = ratelimit.service, .backoff = self.backoff() });
+            break :blk &own_budget;
+        };
+        // A dry run sends nothing. The line says what would have gone
+        // out; a GET is answered with what is already held for it.
+        if (budget.isDry()) {
+            self.note(gpa, method, url, null, 0, 0, .{ .ok = true }, 0, .none, .{}, null, .dry);
+            if (method == .GET) {
+                if (self.etags) |st| if (st.stale(url)) |e| {
+                    budget.record(.{ .now_secs = self.nowSecs(), .on_wire = false, .cache = .hit });
+                    return .{ .ok = .{ .status = 200, .bytes = try gpa.dupe(u8, e.body) } };
+                };
+            }
+            return .{ .failed = .{ .status = null, .message = try gpa.dupe(u8, if (method == .GET) "dry run — nothing held for this yet" else "dry run — not sent") } };
+        }
         // A prefetched GET is answered off the disk: no token spent, no
         // round trip, so the pane's first paint is the prefetch's.
         if (method == .GET and self.conditional) {
@@ -233,7 +260,8 @@ pub const Client = struct {
                     // A request that cost nothing is still worth a
                     // line: "the prefetch paid for this" is the answer
                     // to half the questions the log is read with.
-                    self.note(gpa, method, url, null, bytes.len, 0, .{ .ok = true }, 0, .hit, .{}, .cache_hit);
+                    self.note(gpa, method, url, null, bytes.len, 0, .{ .ok = true }, 0, .hit, .{}, .cache_hit, .off_wire);
+                    budget.record(.{ .now_secs = self.nowSecs(), .on_wire = false, .cache = .hit });
                     return .{ .ok = .{ .status = 200, .bytes = bytes } };
                 }
             }
@@ -250,9 +278,17 @@ pub const Client = struct {
                 };
             }
         }
-        var attempt: u8 = 0;
+        var attempt: u32 = 0;
         while (true) {
             attempt += 1;
+            // A 429's pause, before anything else: a short one is
+            // waited out here (the chip says until when, and a click
+            // stops it); a long one sends nothing at all.
+            switch (budget.waitOut()) {
+                .go => {},
+                .paused => return pausedFailure(gpa, budget),
+                .cancelled => return .{ .failed = .{ .status = 429, .message = try gpa.dupe(u8, "stopped waiting out the rate limit") } },
+            }
             // Spacing, before the bucket. A reader waits for nothing;
             // a warm sweep waits its turn (`mnml_sdk.warm.Gate`).
             if (self.gate) |g| {
@@ -291,18 +327,23 @@ pub const Client = struct {
                 if (self.etags) |st| {
                     if (st.stale(url)) |e| {
                         const kept = try gpa.dupe(u8, e.body);
-                        self.note(gpa, method, url, 304, kept.len, ms, gate, attempt - 1, .hit, head.rate_limit, .revalidate);
+                        self.note(gpa, method, url, 304, kept.len, ms, gate, attempt - 1, .hit, head.rate_limit, .revalidate, .wire);
+                        budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = .hit });
                         return .{ .ok = .{ .status = 200, .bytes = kept } };
                     }
                 }
                 // A 304 with nothing held is a server being odd; the
                 // next unconditional GET fixes it.
-                self.note(gpa, method, url, 304, 0, ms, gate, attempt - 1, .miss, head.rate_limit, .revalidate);
+                self.note(gpa, method, url, 304, 0, ms, gate, attempt - 1, .miss, head.rate_limit, .revalidate, .wire);
+                budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = .miss });
                 return .{ .ok = .{ .status = 200, .bytes = try gpa.dupe(u8, "{}") } };
             }
             switch (reply) {
                 .ok => |body| {
-                    self.note(gpa, method, url, body.status, body.bytes.len, ms, gate, attempt - 1, if (self.cache == null) .none else .miss, head.rate_limit, null);
+                    self.note(gpa, method, url, body.status, body.bytes.len, ms, gate, attempt - 1, if (self.cache == null) .none else .miss, head.rate_limit, null, .wire);
+                    // A read that carried its body back is a miss; a
+                    // write is neither.
+                    budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = if (method == .GET) .miss else .none });
                     if (method == .GET) {
                         if (self.cache) |c| c.put(url, body.bytes, self.now_secs);
                         // File the body under the server's own tag, so
@@ -316,17 +357,20 @@ pub const Client = struct {
                     return reply;
                 },
                 .failed => |f| {
-                    self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit, null);
+                    self.note(gpa, method, url, f.status, 0, ms, gate, attempt - 1, .none, head.rate_limit, null, .wire);
+                    budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit });
                     if (!f.isRateLimited()) return reply;
                     // The SDK's one answer to a 429, the Jira pane's too:
-                    // park the bucket for what the server asked, wait
-                    // that long, ask again — never sleep through a park
-                    // longer than `max_backoff_secs`.
-                    const policy: sdk.ratelimit.Retry = .{ .max_attempts = self.rate.max_attempts, .default_backoff_secs = self.rate.default_backoff_secs, .max_backoff_secs = self.rate.max_backoff_secs };
-                    if (self.limiter) |l| l.penalize(@floatFromInt(f.retry_after_secs orelse self.rate.default_backoff_secs));
-                    const wait = policy.next(attempt, f.retry_after_secs) orelse return reply;
+                    // the pane's budget pauses for what the server asked
+                    // (or the backoff), the shared bucket parks every
+                    // process for as long, and a READ asks again once
+                    // the pause is up — `waitOut` at the top of the loop
+                    // is the wait. A write goes back to the pane.
+                    const delay = budget.throttled(attempt, f.retry_after_secs);
+                    if (self.limiter) |l| l.penalize(@floatFromInt(delay));
+                    if (!budget.backoff.retries(attempt, method == .GET)) return reply;
+                    if (delay > budget.backoff.wait_in_request_secs) return reply;
                     reply.deinit(gpa);
-                    self.io.sleep(.fromMilliseconds(@as(i64, wait) * 1000), .awake) catch {};
                 },
             }
         }
@@ -350,6 +394,8 @@ pub const Client = struct {
         /// is a `revalidate` and an answer off the disk is a
         /// `cache_hit`, whatever the job that asked for it was.
         as_reason: ?request_log.Reason,
+        /// `.dry`: the line is what a dry run did NOT send.
+        wire: enum { wire, off_wire, dry },
     ) void {
         const log = self.log orelse return;
         var scratch = std.heap.ArenaAllocator.init(gpa);
@@ -372,7 +418,30 @@ pub const Client = struct {
             .retry_of = retry_of,
             .cache = cache,
             .rate_limit = rate_limit,
+            .dry = wire == .dry,
         });
+    }
+
+    /// The pane's backoff, off the config's `rate` block.
+    pub fn backoff(self: *const Client) sdk.budget.Backoff {
+        return .{
+            .max_attempts = self.rate.max_attempts,
+            .base_secs = self.rate.default_backoff_secs,
+            .cap_secs = self.rate.max_backoff_secs,
+        };
+    }
+
+    fn nowSecs(self: *const Client) i64 {
+        return Io.Timestamp.now(self.io, .real).toSeconds();
+    }
+
+    /// A request refused because a long pause is running: nothing went
+    /// out, and the failure says until when.
+    fn pausedFailure(gpa: Allocator, budget: *sdk.Budget) Allocator.Error!Reply {
+        const snap = budget.snapshot(Io.Timestamp.now(budget.io, .real).toSeconds());
+        var c: [8]u8 = undefined;
+        const msg = try std.fmt.allocPrint(gpa, "rate limited — paused until {s}", .{sdk.budget.clockText(&c, snap.paused_until, snap.offset_secs)});
+        return .{ .failed = .{ .status = 429, .message = msg } };
     }
 
     fn once(self: *Client, gpa: Allocator, method: Method, url: []const u8, payload: ?[]const u8, side: Side, if_none_match: []const u8, head: *Head) Allocator.Error!Reply {
@@ -836,4 +905,130 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"revalidate\"") != null);
     try t.expect(std.mem.indexOf(u8, text, "\"status\":304") != null);
+}
+
+test "a 429 on a write pauses the budget and goes back to the pane: a write is never asked twice" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var budget: sdk.Budget = .{};
+    budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{ .max_attempts = 3 });
+    defer client.deinit();
+    client.budget = &budget;
+    srv.retryAfter(2);
+    srv.rateLimitNext(1);
+    var r = try client.approve(t.allocator, "acme", "api", 1198);
+    defer r.deinit(t.allocator);
+    try t.expect(r == .failed);
+    try t.expect(r.failed.isRateLimited());
+    try t.expectEqual(@as(u32, 1), client.sent);
+    try t.expectEqual(@as(u32, 1), srv.snapshot().served);
+    // The pane's chip says until when.
+    try t.expect(budget.snapshot(Io.Timestamp.now(t.io, .real).toSeconds()).paused_until > 0);
+}
+
+test "a 429 on a read waits the pause out and asks again; nothing goes out while the pause runs" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var budget: sdk.Budget = .{};
+    budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+    defer client.deinit();
+    client.budget = &budget;
+    srv.retryAfter(1);
+    srv.rateLimitNext(1);
+    const t0 = Io.Timestamp.now(t.io, .real).toMilliseconds();
+    var r = try client.whoami(t.allocator);
+    defer r.deinit(t.allocator);
+    try t.expect(r == .ok);
+    // Two on the wire — the 429 and the answer — and a second between.
+    try t.expectEqual(@as(u32, 2), srv.snapshot().served);
+    try t.expect(Io.Timestamp.now(t.io, .real).toMilliseconds() - t0 >= 900);
+}
+
+test "the budget reads the server's rate-limit headers and counts a 304 as a hit, a full GET as a miss" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
+    defer t.allocator.free(store_path);
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
+    defer etags.deinit();
+    var budget: sdk.Budget = .{};
+    budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket", .data_root = dir });
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+    defer client.deinit();
+    client.budget = &budget;
+    client.etags = &etags;
+    srv.budgetHeaders(1000, 900);
+    var first = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer first.deinit(t.allocator);
+    var second = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer second.deinit(t.allocator);
+    const s = budget.snapshot(Io.Timestamp.now(t.io, .real).toSeconds());
+    try t.expectEqual(@as(?i64, 1000), s.limit);
+    try t.expectEqual(@as(?i64, 898), s.remaining);
+    try t.expectEqual(@as(u32, 1), s.hits);
+    try t.expectEqual(@as(u32, 1), s.misses);
+    try t.expectEqual(@as(u32, 2), s.hour_calls);
+    // Both calls are on today's tally, in the data root.
+    try t.expectEqual(@as(u32, 2), s.today);
+}
+
+test "dry run sends nothing: a GET answers what is held, a write is refused, and the log says what would have gone out" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
+    defer t.allocator.free(store_path);
+    const log_dir = try std.fs.path.join(t.allocator, &.{ dir, "requests" });
+    defer t.allocator.free(log_dir);
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
+    defer etags.deinit();
+    var log = try sdk.RequestLog.openAt(t.allocator, t.io, log_dir, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+    var budget: sdk.Budget = .{};
+    budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+    defer client.deinit();
+    client.budget = &budget;
+    client.etags = &etags;
+    client.log = &log;
+    var live = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer live.deinit(t.allocator);
+    const served = srv.snapshot().served;
+
+    _ = budget.toggleDry();
+    var held = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer held.deinit(t.allocator);
+    try t.expect(held == .ok);
+    try t.expectEqualStrings(live.ok.bytes, held.ok.bytes);
+    var never = try client.listPipelines(t.allocator, "acme", "api", 100);
+    defer never.deinit(t.allocator);
+    try t.expect(never == .failed);
+    var write = try client.approve(t.allocator, "acme", "api", 1198);
+    defer write.deinit(t.allocator);
+    try t.expect(write == .failed);
+    try t.expectEqual(served, srv.snapshot().served);
+
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 20));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "\"dry\":true") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"method\":\"POST\"") != null);
 }
