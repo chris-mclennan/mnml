@@ -595,6 +595,36 @@ pub fn retryRefresh(app: *App) CommandError!void {
     mp.send(.{ .input = .{ .event = .{ .key = .{ .spec = "r" } } } });
 }
 
+/// `integrations.toggle_dry_run` — dry run on / off in the focused
+/// integration pane. `Shift+N` is the key every first-party pane binds
+/// for it (the SDK's budget: nothing is sent while it is on, and the
+/// header's budget chip says `DRY`), which is why the host can flip it
+/// without knowing anything about the integration.
+pub fn toggleDryRun(app: *App) CommandError!void {
+    sendKeyToFocusedMount(app, "shift+n", "dry run");
+}
+
+/// `integrations.cancel_wait` — stop the focused integration pane
+/// waiting out a 429's pause. `Ctrl+X` is the family's key for it (a
+/// click on the budget chip does the same).
+pub fn cancelWait(app: *App) CommandError!void {
+    sendKeyToFocusedMount(app, "ctrl+x", "cancel wait");
+}
+
+fn sendKeyToFocusedMount(app: *App, spec: []const u8, what: []const u8) void {
+    const id = app.active orelse return;
+    const pane = app.panes.get(id) orelse return;
+    const mp = pane.asMount() orelse {
+        app.toast("{s}: the focused pane is not an integration", .{what});
+        return;
+    };
+    if (!mp.alive()) {
+        app.toast("{s}: {s} is no longer running", .{ what, mp.title() });
+        return;
+    }
+    mp.send(.{ .input = .{ .event = .{ .key = .{ .spec = spec } } } });
+}
+
 /// After a sessions snapshot: every mount pane hears about every watch
 /// of its own that moved. Called from `sessions.handle`.
 pub fn notifySessionWatches(app: *App) void {

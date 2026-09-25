@@ -888,6 +888,8 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.refresh", .title = "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/", .group = "integrations" },
     .{ .id = "integrations.cycle_sort", .title = "Integrations: cycle sort mode (active tab)", .group = "integrations" },
     .{ .id = "integrations.retry_refresh", .title = "Integrations: ask the focused integration pane to refresh", .group = "integrations" },
+    .{ .id = "integrations.toggle_dry_run", .title = "Integrations: dry run on / off in the focused integration pane (nothing is sent)", .group = "integrations" },
+    .{ .id = "integrations.cancel_wait", .title = "Integrations: stop the focused integration pane waiting out a rate-limit pause", .group = "integrations" },
     .{ .id = "integrations.dev_build", .title = "Integrations: build the focused Dev folder (zig build, in a task pane)", .group = "integrations" },
     .{ .id = "integrations.dev_install", .title = "Integrations: install the focused Dev folder (build if needed, then --install)", .group = "integrations" },
     .{ .id = "integrations.dev_rebuild", .title = "Integrations: rebuild + reinstall the focused Dev folder", .group = "integrations" },
