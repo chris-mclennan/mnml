@@ -1574,7 +1574,8 @@ pub fn paneFocused(app: *const App, id: PaneId) bool {
         .pane, .overlay => true,
         .tree => !app.tree.visible,
         .panel => |p| !side_mod.isShown(app, side_mod.sectionOfPanel(p)),
-        .welcome => false,
+        // The sidebar's info view holds the keys itself (`help.focus`).
+        .welcome, .info_view => false,
     };
 }
 
@@ -3768,6 +3769,9 @@ test "paneFocused: the pane the keys go to, whatever its kind and whatever pane 
     app.tree.visible = true;
     for (all) |id| try t.expect(!paneFocused(&app, id));
     app.tree.visible = false;
+    // The info view holding the keys (`help.focus`): no pane has them.
+    app.focus = .info_view;
+    for (all) |id| try t.expect(!paneFocused(&app, id));
     // No active pane: nobody.
     app.focus = .{ .pane = mount };
     app.active = null;
