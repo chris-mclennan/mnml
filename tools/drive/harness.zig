@@ -197,15 +197,30 @@ pub const copied_keys = [_][]const u8{ "tree_width", "tab_indicator" };
 /// `user` is the text of the developer's `config.zon`, or "" when there
 /// is none.
 pub fn mnmlConfigFrom(gpa: Allocator, user: []const u8) Allocator.Error![]u8 {
+    return mnmlConfigWith(gpa, user, .{});
+}
+
+pub const MnmlOptions = struct {
+    /// `ipc.allow_input`: the channel may drive keys, typing and the
+    /// mouse (`--allow-input`). The way a script drives the window
+    /// WITHOUT taking the keyboard — `key` / `type` need the harness to
+    /// be the active app, a line in the channel does not.
+    allow_input: bool = false,
+};
+
+pub fn mnmlConfigWith(gpa: Allocator, user: []const u8, opts: MnmlOptions) Allocator.Error![]u8 {
     var out: Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     const w = &out.writer;
-    writeMnmlConfig(w, user) catch return error.OutOfMemory;
+    writeMnmlConfig(w, user, opts) catch return error.OutOfMemory;
     return out.toOwnedSlice();
 }
 
-fn writeMnmlConfig(w: *Io.Writer, user: []const u8) Io.Writer.Error!void {
-    try w.writeAll(".{ .ipc = .{ .write_screen = true }, .ui = .{ .first_launch_complete = true");
+fn writeMnmlConfig(w: *Io.Writer, user: []const u8, opts: MnmlOptions) Io.Writer.Error!void {
+    try w.writeAll(if (opts.allow_input)
+        ".{ .ipc = .{ .write_screen = true, .allow_input = true }, .ui = .{ .first_launch_complete = true"
+    else
+        ".{ .ipc = .{ .write_screen = true }, .ui = .{ .first_launch_complete = true");
     for (copied_keys) |key| {
         if (uiValue(user, key)) |v| try w.print(", .{s} = {s}", .{ key, v });
     }
@@ -506,6 +521,18 @@ test "the harness root's mnml config turns the dumps on and the first-launch wiz
     // struct literal, newline-terminated.
     try t.expect(std.mem.startsWith(u8, mnml_config, ".{"));
     try t.expect(std.mem.endsWith(u8, mnml_config, "}\n"));
+}
+
+test "--allow-input turns the channel's input on, and only when asked" {
+    const off = try mnmlConfigWith(t.allocator, "", .{});
+    defer t.allocator.free(off);
+    try t.expect(std.mem.indexOf(u8, off, "allow_input") == null);
+    const on = try mnmlConfigWith(t.allocator, ".{ .ui = .{ .tree_width = 34 } }", .{ .allow_input = true });
+    defer t.allocator.free(on);
+    try t.expect(std.mem.indexOf(u8, on, ".ipc = .{ .write_screen = true, .allow_input = true }") != null);
+    // The copied layout key still lands, beside the switch.
+    try t.expect(std.mem.indexOf(u8, on, ".tree_width = 34") != null);
+    try t.expect(std.mem.endsWith(u8, on, "} }\n"));
 }
 
 test "cellsFor turns measured points into a cell count, floored and clamped" {

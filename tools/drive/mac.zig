@@ -291,10 +291,12 @@ pub fn frontWindowPid() ?i32 {
     return null;
 }
 
-/// Make OUR OWN process the active application. Called only by the
-/// explicit `focus` verb, never on the way to something else: taking the
-/// keyboard is the one thing this tool does that the person at the
-/// machine will notice, so it is never a side effect.
+/// Make a process the active application. Called by the explicit
+/// `focus` verb for OUR process, and by `launch` for exactly one other:
+/// the app that was frontmost before the harness opened, to give the
+/// keyboard back that ghostty's own activation took. Taking the keyboard
+/// is the one thing this tool does that the person at the machine will
+/// notice, so it is never a side effect.
 pub fn activate(pid: i32) bool {
     const app = AXUIElementCreateApplication(pid) orelse return false;
     defer CFRelease(app);
