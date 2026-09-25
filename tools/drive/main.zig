@@ -45,7 +45,7 @@ const usage_text =
     \\  drag FX FY TX TY
     \\  scroll X Y up|down [--notches N]
     \\  shot PATH.png           the harness window only
-    \\  pixel X Y [--expect #RRGGBB] [--tolerance N]
+    \\  pixel X Y [--expect #RRGGBB] [--tolerance N] [--fx F] [--fy F]
     \\  screen | status | rects                     the live IPC dumps
     \\  wait-frame [--timeout MS]                   block until screen.txt moves
     \\  info                    the recorded window, re-verified
@@ -915,9 +915,15 @@ fn pixel(s: *Session, args: []const [:0]const u8, cx: u16, cy: u16, w: *Io.Write
     // from the capture rather than assuming 2 keeps a non-Retina display
     // honest.
     const scale: f64 = if (s.rec.w > 0) @as(f64, @floatFromInt(img.width)) / s.rec.w else 1;
-    const c = s.rec.cellCentre(cx, cy);
-    const px: usize = @intFromFloat(@max((c.x - s.rec.x) * scale, 0));
-    const py: usize = @intFromFloat(@max((c.y - s.rec.y) * scale, 0));
+    // Where in the cell: the centre unless `--fx` / `--fy` (0..1 across
+    // the cell) say otherwise. A half-block glyph — the pane rail's `▌`
+    // — fills only the left half, and its centre sample is background.
+    const fx = std.math.clamp(flagFloat(args, "--fx") orelse 0.5, 0.0, 0.999);
+    const fy = std.math.clamp(flagFloat(args, "--fy") orelse 0.5, 0.0, 0.999);
+    const cx_pt = s.rec.x + (@as(f64, @floatFromInt(cx)) + fx) * s.rec.cellW();
+    const cy_pt = s.rec.y + (@as(f64, @floatFromInt(cy)) + fy) * s.rec.cellH();
+    const px: usize = @intFromFloat(@max((cx_pt - s.rec.x) * scale, 0));
+    const py: usize = @intFromFloat(@max((cy_pt - s.rec.y) * scale, 0));
     const got = img.rgb(px, py) orelse {
         try e.print("mnml-drive pixel: {d},{d} is outside the {d}x{d} capture\n", .{ px, py, img.width, img.height });
         return exit_refused;
@@ -1018,6 +1024,11 @@ fn flagValue(args: []const [:0]const u8, name: []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+fn flagFloat(args: []const [:0]const u8, name: []const u8) ?f64 {
+    const v = flagValue(args, name) orelse return null;
+    return std.fmt.parseFloat(f64, v) catch null;
 }
 
 fn hasFlag(args: []const [:0]const u8, name: []const u8) bool {

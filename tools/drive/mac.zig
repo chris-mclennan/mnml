@@ -58,6 +58,7 @@ const kCGWindowListOptionIncludingWindow: u32 = 1 << 3;
 
 extern "c" fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) CFTypeRef;
 extern "c" fn CGWindowListCreateImage(rect: CGRect, option: u32, window_id: u32, image_option: u32) CFTypeRef;
+const kCGWindowImageBoundsIgnoreFraming: u32 = 1 << 0;
 extern "c" fn CGImageGetWidth(img: CFTypeRef) usize;
 extern "c" fn CGImageGetHeight(img: CFTypeRef) usize;
 extern "c" fn CGImageGetBytesPerRow(img: CFTypeRef) usize;
@@ -586,7 +587,14 @@ pub const Image = struct {
 /// Screen Recording was revoked between the check and the call.
 pub fn captureWindow(id: u32) ?Image {
     const null_rect: CGRect = .{ .origin = .{ .x = std.math.inf(f64), .y = std.math.inf(f64) }, .size = .{ .width = 0, .height = 0 } };
-    const img = CGWindowListCreateImage(null_rect, kCGWindowListOptionIncludingWindow, id, 0) orelse return null;
+    // `kCGWindowImageBoundsIgnoreFraming`: the window's own bounds, not
+    // the shadow around them. Without it the capture is the window plus
+    // a transparent margin, so every cell → pixel sum was offset by the
+    // margin and scaled by the wrong width: a cell at the frame's edge
+    // sampled the shadow (#000000) and one in the middle landed a few
+    // pixels off its cell. `screencapture -o` (the `shot` verb) already
+    // left the shadow out, which is why the two disagreed.
+    const img = CGWindowListCreateImage(null_rect, kCGWindowListOptionIncludingWindow, id, kCGWindowImageBoundsIgnoreFraming) orelse return null;
     const provider = CGImageGetDataProvider(img) orelse {
         CFRelease(img);
         return null;
