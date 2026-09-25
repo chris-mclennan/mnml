@@ -27,6 +27,13 @@ SWEEP_BASELINE = os.path.join(TOUR_DIR, "sweep-baseline")
 MASKS = os.path.join(TOUR_DIR, "masks.zon")
 ASSERTS = os.path.join(TOUR_DIR, "asserts.zon")
 REVIEW = os.path.join(REPO, "tools", "tour-review.md")
+# The tour's workspace lives HERE, not under --out: the sidebar header
+# paints the workspace's path, abbreviated (`/Use…`), so a workspace
+# under `--out /private/tmp/x` painted `/pr…` and flagged every shot
+# with the tree open against baselines taken under the repo. The path
+# is the same whichever --out the shots go to. (masks.zon masks the
+# cell too, belt and braces.)
+TOUR_WS = os.path.join(REPO, ".verify", "tour-ws")
 COLS, ROWS = 120, 40
 
 
@@ -294,15 +301,50 @@ def judge(a, got, sample):
 
 # ─── the tour ──────────────────────────────────────────────────────────
 
+def take_ws_lock():
+    """One tour at a time on TOUR_WS: a second run would rebuild the
+    workspace under the first one's window. Returns the lock path, or
+    None when a live tour holds it."""
+    os.makedirs(os.path.dirname(TOUR_WS), exist_ok=True)
+    lock = TOUR_WS + ".lock"
+    try:
+        with open(lock, encoding="utf-8") as f:
+            pid = int(f.read().strip() or 0)
+        if pid and pid != os.getpid():
+            os.kill(pid, 0)
+            return None
+    except (OSError, ValueError):
+        pass
+    with open(lock, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    return lock
+
+
 def cmd_run(args):
+    out = os.path.abspath(args.out)
+    lock = take_ws_lock()
+    if lock is None:
+        log(f"tour.sh: another tour is running on {os.path.relpath(TOUR_WS, REPO)} — one at a time")
+        return 64
+    try:
+        return run_tour(args, out)
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+
+
+def run_tour(args, out):
     if not args.exe:
         stamp.warn_app("tour.sh")
-    out = os.path.abspath(args.out)
     if os.path.exists(out) and not args.keep:
         shutil.rmtree(out)
     os.makedirs(out, exist_ok=True)
     run_dir = os.path.join(out, ".run")
-    ws = os.path.join(run_dir, "ws")
+    ws = os.path.join(TOUR_WS, "ws")
+    if os.path.exists(TOUR_WS):
+        shutil.rmtree(TOUR_WS)
     home = os.path.join(run_dir, "home")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import workspace

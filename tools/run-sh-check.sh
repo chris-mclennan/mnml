@@ -43,7 +43,8 @@
 #      whose `version` stamp is missing or disagrees with tools/drive is
 #      refused (MNML_DRIVE_NO_REBUILD=1) or rebuilt (a fake $MNML_ZIG);
 #      the stamp, not the mtime, decides; `diff` never checks; an app
-#      binary older than src/ is a warning only.
+#      binary older than src/ is a warning only; masks.zon hides the tree
+#      header's workspace path under either root.
 #
 #   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~30 s)
 set -o pipefail
@@ -504,5 +505,20 @@ check "stamp app: a 1970 mnml-zig older than src/ is a warning, exit 0" '[ $rc -
 touch "$TR/zig-out/bin/mnml-zig"
 out=$(cd "$TR" && python3 tools/tour/stamp.py app 2>&1)
 check "stamp app: a fresh mnml-zig says nothing" '[ -z "$out" ]' "$out"
+# h) The tree header's workspace path is masked wherever the checkout
+# lives: `/Use…` under /Users, `/pr…` under /private/tmp.
+out=$(cd "$ROOT" && python3 -c '
+import sys
+sys.path.insert(0, "tools/tour")
+import tour
+m = tour.load_masks()
+for line in ("   │  ● /Use…            │ x", "   │  ● /pr…             │ x"):
+    got = [r for r in tour.masks_for("start", m, line) if r[1] == 0]
+    a, b = line.index("/"), line.index("\u2026") + 1  # the path cells
+    assert any(r[0] <= a and r[0] + r[2] >= b for r in got), (line, got)
+print("masked")
+' 2>&1)
+check "masks.zon: the tree header's path is masked under either root" '[ "$out" = masked ]' "$out"
+
 echo "run-sh-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
