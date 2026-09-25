@@ -460,7 +460,7 @@ pub const Session = struct {
         // After EOF the reader has closed the master; only the grid is left to size.
         if (!self.eof() and c.ioctl(self.master, T.IOCSWINSZ, @intFromPtr(&ws)) < 0)
             log.warn("TIOCSWINSZ failed: {t}", .{c.errno(-1)});
-        try self.stream.handler.resize(.{ .cols = cols, .rows = rows });
+        try common.resizeGrid(&self.stream.handler, cols, rows);
         self.cols = cols;
         self.rows = rows;
     }
