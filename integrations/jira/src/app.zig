@@ -834,7 +834,13 @@ pub const App = struct {
         if (a.me != null or a.me_failed) return;
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        switch (jira.myself(a.client, scratch.allocator()) catch |err| switch (err) {
+        // This runs on the paint loop: a 429 must not park it in the
+        // pause's wait (the chip could not say `paused until` from a
+        // loop that is asleep), so this one call answers at once — and
+        // a 429 is not a refusal: `me` is asked again on the next fetch.
+        var c = a.client.*;
+        c.wait_pauses = false;
+        switch (jira.myself(&c, scratch.allocator()) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Transport => {
                 a.me_failed = true;
@@ -842,7 +848,9 @@ pub const App = struct {
             },
         }) {
             .ok => |u| a.me = .{ .account_id = try a.keep(u.account_id), .display_name = try a.keep(u.display_name) },
-            .failed => a.me_failed = true,
+            .failed => |f| if (f.status != 429) {
+                a.me_failed = true;
+            },
         }
     }
 

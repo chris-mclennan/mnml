@@ -120,6 +120,11 @@ pub const Client = struct {
     /// same object. Null (a one-shot run) gets one of its own per
     /// request, so a 429 is answered the same way.
     budget: ?*sdk.Budget = null,
+    /// False for a call made on the paint loop's own thread (`/myself`
+    /// at startup): a 429's pause is never waited out there, because a
+    /// loop parked in a sleep cannot paint the `paused until` that
+    /// explains it. The call answers the 429 at once instead.
+    wait_pauses: bool = true,
     user_agent: []const u8 = "mnml-jira",
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
@@ -165,22 +170,27 @@ pub const Client = struct {
         var attempt: u32 = 0;
         while (true) {
             attempt += 1;
+            if (!c.wait_pauses and budget.pausedUntilMs() > 0) return pausedRaw(arena, c.io, budget);
             switch (budget.waitOut()) {
                 .go => {},
-                .paused => {
-                    const snap = budget.snapshot(Io.Timestamp.now(c.io, .real).toSeconds());
-                    var clock: [8]u8 = undefined;
-                    return synthetic(arena, 429, try std.fmt.allocPrint(arena, "rate limited — paused until {s}", .{sdk.budget.clockText(&clock, snap.paused_until, snap.offset_secs)}));
-                },
+                .paused => return pausedRaw(arena, c.io, budget),
                 .cancelled => return synthetic(arena, 429, "stopped waiting out the rate limit"),
             }
             const raw = try c.once(arena, method, url, body, reason, budget, read);
             if (raw.status != 429) return raw;
             const ra: ?u32 = if (raw.retry_after_secs) |x| @intFromFloat(x) else null;
             const delay = budget.throttled(attempt, ra);
-            if (!budget.backoff.retries(attempt, read)) return raw;
+            if (!c.wait_pauses or !budget.backoff.retries(attempt, read)) return raw;
             if (delay > budget.backoff.wait_in_request_secs) return raw;
         }
+    }
+
+    /// A request refused because a pause is running: nothing went out,
+    /// and the answer says until when.
+    fn pausedRaw(arena: Allocator, io: Io, budget: *sdk.Budget) Allocator.Error!Raw {
+        const snap = budget.snapshot(Io.Timestamp.now(io, .real).toSeconds());
+        var clock: [8]u8 = undefined;
+        return synthetic(arena, 429, try std.fmt.allocPrint(arena, "rate limited — paused until {s}", .{sdk.budget.clockText(&clock, snap.paused_until, snap.offset_secs)}));
     }
 
     /// An answer that never came off the wire — a dry run, a pause —
@@ -1491,6 +1501,33 @@ test "a 429 on a write pauses the budget and goes back to the pane: a transition
     }
     try testing.expectEqual(@as(usize, 1), r.store.requests - before);
     try testing.expect(r.budget.snapshot(Io.Timestamp.now(testing.io, .real).toSeconds()).paused_until > 0);
+}
+
+test "a call on the paint loop never waits a pause out: a 429 answers at once, and nothing goes out while the pause runs" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var r: BudgetRig = undefined;
+    try r.start(arena);
+    defer r.stop(arena);
+    r.store.rate_limit_next = 1;
+    r.store.rate_limit_retry_after = 20;
+    var c = r.c;
+    c.wait_pauses = false;
+    const before = r.store.requests;
+    const t0 = Io.Timestamp.now(testing.io, .real).toMilliseconds();
+    switch (try myself(&c, arena)) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |f| try testing.expectEqual(@as(u16, 429), f.status),
+    }
+    switch (try myself(&c, arena)) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |f| try testing.expect(std.mem.indexOf(u8, f.message, "paused until") != null),
+    }
+    try testing.expect(Io.Timestamp.now(testing.io, .real).toMilliseconds() - t0 < 5000);
+    try testing.expectEqual(@as(usize, 1), r.store.requests - before);
+    // `stop` sends its `/__done` past the pause.
+    _ = r.budget.cancelWait();
 }
 
 test "the budget reads Jira's rate-limit headers — the ISO reset too — and a read that carried a body is a miss" {
