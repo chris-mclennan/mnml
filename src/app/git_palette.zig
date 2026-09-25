@@ -95,12 +95,19 @@ pub const Part = view.Part;
 pub const MenuAct = command.GitPaletteAct;
 
 const Stash = struct { layout: Layout, active: ?PaneId };
+pub const PreSize = struct { side: side.Side, n: u16 };
 
 pub const State = struct {
     /// Git is the active section.
     active: bool = false,
     /// The layout that was showing before Git took it over.
     pre: ?Stash = null,
+    /// The width of the palette's column before the mode's snap took it
+    /// to a fifth of the screen, and the column it was — what `leave`
+    /// puts back. The sections share one column width; the snap is the
+    /// mode's, so the explorer (or whatever follows) gets the column
+    /// back at the width it had, never at the git mode's.
+    pre_size: ?PreSize = null,
     /// Repos whose tab was closed this session (their paths, owned):
     /// not reopened on re-entry until `reopen`.
     closed: std.ArrayListUnmanaged([]u8) = .empty,
@@ -329,6 +336,10 @@ pub fn enter(app: *App) CommandError!void {
     // Rediscovered on every entry: the workspace roots may have landed
     // after the first tick's look, and a repo may have been made since.
     try git.discover(app);
+    if (!st.active) {
+        const gs = side.sideOf(app, .git);
+        st.pre_size = if (gs == .bottom) null else .{ .side = gs, .n = side.size(app, gs) };
+    }
     snapSidebar(app);
     if (!st.active) {
         // A layout already made of graph tabs is not worth stashing —
@@ -353,6 +364,14 @@ pub fn enter(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// A column's width as the session should remember it: the width it
+/// had before git mode's snap while the mode holds it, so a session
+/// saved in the mode does not bring the explorer back at a fifth.
+pub fn restingSize(app: *const App, s: side.Side) u16 {
+    if (app.git_palette.active) if (app.git_palette.pre_size) |ps| if (ps.side == s) return ps.n;
+    return side.size(app, s);
+}
+
 /// Leave git mode: the stashed layout comes back, the graph panes stay
 /// in the store. A no-op outside the mode.
 pub fn leave(app: *App) void {
@@ -360,6 +379,8 @@ pub fn leave(app: *App) void {
     if (!st.active) return;
     st.active = false;
     st.filter_focused = false;
+    if (st.pre_size) |ps| side.setSize(app, ps.side, ps.n);
+    st.pre_size = null;
     const cur = app.layouts.current();
     if (st.pre) |*p| {
         var gone = cur.*;

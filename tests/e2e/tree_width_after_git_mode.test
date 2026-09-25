@@ -1,0 +1,29 @@
+# Git mode snaps the left column to a fifth of the screen (24 cells at
+# 120 wide, Rust's `open_git_graph`); the snap is the mode's, so leaving
+# it gives the column back at the width it had — the configured 30. It
+# used to stay 24, and every section shown after the mode read its rows
+# through a 20-cell panel: an 18-character file name that is whole at
+# 30 lost its tail to `…`.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write .gitignore ".mnml/\n"
+write whole_at_thirty.md "one\n"
+shell git add .gitignore whole_at_thirty.md
+shell git commit -q -m "init"
+expect screen contains "whole_at_thirty.md "
+command view.activity_git
+expect within 5000 screen contains " GIT "
+command view.activity_explorer
+expect screen lacks " GIT "
+expect screen contains "whole_at_thirty.md "
+# The toggle out of the mode, and a section other than the explorer.
+command view.activity_git
+expect within 5000 screen contains " GIT "
+command git.branch_rail_toggle
+expect screen contains "whole_at_thirty.md "
+command view.activity_git
+expect within 5000 screen contains " GIT "
+command view.activity_todos
+command view.activity_explorer
+expect screen contains "whole_at_thirty.md "

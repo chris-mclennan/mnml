@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /pr…        │ 󰎒 Sessions 󰅖   󰐕                                                                󱸀  󲀀      
-  │▌    docs         │▌ SESSIONS (0)                             ended: hidden   ⏸ pause   ? help   sort: state    
-   │     󱼅  notes.md   │▌  󰍉 / filter
- 󰍉 │     src          │▌
-   │     󱼄  main.zig   │▌  + New session
- 󰊢 │     󱼅  util.zig M │▌
-   │      .gitignore   │▌  No sessions in the last 7 days — + New session starts one.
-  │      CHANGELOG.m? │▌
-   │     󰂺 README.md    │▌
- 󰐱 │                    │▌
-   │   󰐙 Add workspace  │▌
-▌󰎒 │                    │▌
-   │                    │▌
-  │                    │▌
-   │                    │▌
-  │                    │▌
-   │                    │▌
-  │                    │▌
-   │                    │▌
- 󱘣 │                    │▌
-   │                    │▌
- 󰢱 │                    │▌
-   │                    │▌
-   │                    │▌
-   │                    │▌
-   │                    │▌
-   │                    │▌
-   │                    │▌
-   │                    │▌
-   │────────────────────│▌
-   │ Sidebar        󰐃 ⋮ │▌
-   │                   ┃│▌
-   │ Arrows or j/k     ┃│▌── summary ───────────────────────────────────────────────────────────────────────────────────
-   │ walk rows. Enter  ┃│▌  ⚠ 0 waiting · ● 0 live · ▸ 0 tool · ○ 0 idle · ✗ 0 failed · · 0 done · 0 tokens · $0.00
-   │ opens the         ││▌  no session under the cursor                                ┌─────────────────────────── × ┐
-  │ selection.        ││▌                                                             │ info panel: pinned — Sidebar │
-   │                    │▌                                                             └──────────────────────────────┘
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:13  ws   —
+   │  ● /Use…            │ 󰎒 Sessions 󰅖   󰐕                                                          󱸀  󲀀      
+  │▌    docs               │▌ SESSIONS (0)                       ended: hidden   ⏸ pause   ? help   sort: state    
+   │     󱼅  notes.md         │▌  󰍉 / filter
+ 󰍉 │     src                │▌
+   │     󱼄  main.zig         │▌  + New session
+ 󰊢 │     󱼅  util.zig       M │▌
+   │      .gitignore         │▌  No sessions in the last 7 days — + New session starts one.
+  │      CHANGELOG.md     ? │▌
+   │     󰂺 README.md          │▌
+ 󰐱 │                          │▌
+   │         󰐙 Add workspace  │▌
+▌󰎒 │                          │▌
+   │                          │▌
+  │                          │▌
+   │                          │▌
+  │                          │▌
+   │                          │▌
+  │                          │▌
+   │                          │▌
+ 󱘣 │                          │▌
+   │                          │▌
+ 󰢱 │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌
+   │ Sidebar              󰐃 ⋮ │▌
+   │                          │▌
+   │ Arrows or j/k walk rows. │▌── summary ─────────────────────────────────────────────────────────────────────────────
+   │ Enter opens the          │▌  ⚠ 0 waiting · ● 0 live · ▸ 0 tool · ○ 0 idle · ✗ 0 failed · · 0 done · 0 tokens · $0.…
+   │ selection. Ctrl+Shift+P  │▌  no session under the cursor                          ┌─────────────────────────── × ┐
+  │ opens the palette.       │▌                                                       │ info panel: pinned — Sidebar │
+   │                          │▌                                                       └──────────────────────────────┘
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:40  ws   —
 info panel: pinned — Sidebar                               ⋯

@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Us…        │  util.zig 󰅖   󰐕                                                                󱸀  󲀀      
-▌ │▌    docs         │▌src › util.zig
-   │     󱼅  notes.md   │▌  1 const std = @import("std");
- 󰍉 │     src          │▌  2
-   │     󱼄  main.zig   │▌  3 /// Sum a slice of integers.
- 󰊢 │     󱼅  util.zig M │▌  4 pub fn sum(xs: []const i64) i64 {
-   │      .gitignore   │▌  5 │   var total: i64 = 0;
-  │      CHANGELOG.m? │▌  6 │   for (xs) |x| total += x;
-   │     󰂺 README.md    │▌  7 │   return total;
- 󰐱 │                    │▌  8 }                                       ┌ Editor ───────────────────┐
-   │   󰐙 Add workspace  │▌  9                                         │   Cut                    │
- 󰎒 │                    │▌ 10 test "sum adds" {                       │   Copy                   │
-   │                    │▌ 11 │   try std.testing.expectEqual(@as(i64,│   Paste                  │
-  │                    │▌ 12 }                                       │   Undo                   │
-   │                    │▌ 13▎                                        │   Redo                   │
-  │                    │▌ 14▎/// The largest element, or null for an │   Select all             │
-   │                    │▌ 15▎pub fn max(xs: []const i64) ?i64 {      │───────────────────────────│
-  │                    │▌ 16▎│   if (xs.len == 0) return null;       │   Go to definition       │
-   │                    │▌ 17▎│   var best = xs[0];                   │   Find references        │
- 󱘣 │                    │▌ 18▎│   for (xs[1..]) |x| best = @max(best, │   Hover info             │
-   │                    │▌ 19▎│   return best;                        │   Rename symbol          │
- 󰢱 │                    │▌ 20▎}                                       │───────────────────────────│
-   │                    │▌                                            │   Select all occurrences │
-   │                    │▌                                            │   Expand selection       │
-   │                    │▌                                            │   Toggle fold            │
-   │                    │▌                                            │───────────────────────────│
-   │                    │▌                                            │ 󰚩  Explain with Claude    │
-   │                    │▌                                            │ 󰚩  Ask Claude…            │
-   │                    │▌                                            │───────────────────────────│
-   │────────────────────│▌                                            │   Save                   │
-   │ Sidebar        󰐃 ⋮ │▌                                            └───────────────────────────┘
-   │                   ┃│▌
-   │ Arrows or j/k     ┃│▌
-   │ walk rows. Enter  ┃│▌
-   │ opens the         ││▌                                                                          ┌────────────── × ┐
-  │ selection.        ││▌                                                                          │ dock: auto_hide │
-   │                    │▌                                                                          └─────────────────┘
- EDIT  dev   main  󰐙 1…  util.zig  › sum   󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  15:30  ws   zig
+   │  ● /Use…            │  util.zig 󰅖   󰐕                                                          󱸀  󲀀      
+▌ │▌    docs               │▌src › util.zig
+   │     󱼅  notes.md         │▌  1 const std = @import("std");
+ 󰍉 │     src                │▌  2
+   │     󱼄  main.zig         │▌  3 /// Sum a slice of integers.
+ 󰊢 │     󱼅  util.zig       M │▌  4 pub fn sum(xs: []const i64) i64 {
+   │      .gitignore         │▌  5 │   var total: i64 = 0;
+  │      CHANGELOG.md     ? │▌  6 │   for (xs) |x| total += x;
+   │     󰂺 README.md          │▌  7 │   return total;
+ 󰐱 │                          │▌  8 }                                 ┌ Editor ───────────────────┐
+   │         󰐙 Add workspace  │▌  9                                   │   Cut                    │
+ 󰎒 │                          │▌ 10 test "sum adds" {                 │   Copy                   │
+   │                          │▌ 11 │   try std.testing.expectEqual(@a│   Paste                  │);
+  │                          │▌ 12 }                                 │   Undo                   │
+   │                          │▌ 13▎                                  │   Redo                   │
+  │                          │▌ 14▎/// The largest element, or null f│   Select all             │
+   │                          │▌ 15▎pub fn max(xs: []const i64) ?i64 {│───────────────────────────│
+  │                          │▌ 16▎│   if (xs.len == 0) return null; │   Go to definition       │
+   │                          │▌ 17▎│   var best = xs[0];             │   Find references        │
+ 󱘣 │                          │▌ 18▎│   for (xs[1..]) |x| best = @max(│   Hover info             │
+   │                          │▌ 19▎│   return best;                  │   Rename symbol          │
+ 󰢱 │                          │▌ 20▎}                                 │───────────────────────────│
+   │                          │▌                                      │   Select all occurrences │
+   │                          │▌                                      │   Expand selection       │
+   │                          │▌                                      │   Toggle fold            │
+   │                          │▌                                      │───────────────────────────│
+   │                          │▌                                      │ 󰚩  Explain with Claude    │
+   │                          │▌                                      │ 󰚩  Ask Claude…            │
+   │                          │▌                                      │───────────────────────────│
+   │──────────────────────────│▌                                      │   Save                   │
+   │ Sidebar              󰐃 ⋮ │▌                                      └───────────────────────────┘
+   │                          │▌
+   │ Arrows or j/k walk rows. │▌
+   │ Enter opens the          │▌
+   │ selection. Ctrl+Shift+P  │▌                                                                    ┌────────────── × ┐
+  │ opens the palette.       │▌                                                                    │ dock: auto_hide │
+   │                          │▌                                                                    └─────────────────┘
+ EDIT  dev   main  󰐙 1…  util.zig  › sum   󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  20:40  ws   zig
                                                            ⋯

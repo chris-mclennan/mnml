@@ -940,3 +940,54 @@ test "git mode follows its section's side: on the right, entering snaps the righ
     try t.expect(!app.git_palette.active);
     try t.expectEqual(Section.todos, shown(&app, .left).?);
 }
+
+test "git mode's snap is the mode's: the column it narrowed gets its width back when the mode ends — the explorer at 30 again, not 24 — a dragged width comes back as dragged, the right column too, and a session saved in the mode keeps the width from before it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    // Before: the configured 30 — the rail's 3 and its border off it.
+    try t.expectEqual(@as(u16, 30), app.tree.width);
+    try t.expectEqual(@as(u16, 26), rects(&app).sidebar.w);
+    // In the mode: a fifth of 120.
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try t.expectEqual(@as(u16, 24), app.tree.width);
+    try t.expectEqual(@as(u16, 20), rects(&app).sidebar.w);
+    // A session saved now remembers the width the column rests at.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_state.deinit();
+        const saved = try @import("session.zig").capture(&app, arena_state.allocator());
+        try t.expectEqual(@as(u16, 30), saved.tree_width);
+    }
+    // Back to the explorer: 30 again.
+    try command.run(&app, .{ .static = .@"view.activity_explorer" });
+    try t.expect(!app.git_palette.active);
+    try t.expectEqual(Section.explorer, shown(&app, .left).?);
+    try t.expectEqual(@as(u16, 30), app.tree.width);
+    try t.expectEqual(@as(u16, 26), rects(&app).sidebar.w);
+    // Through another section, and through the toggle, the same.
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try command.run(&app, .{ .static = .@"view.activity_todos" });
+    try t.expectEqual(@as(u16, 30), app.tree.width);
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try command.run(&app, .{ .static = .@"git.branch_rail_toggle" });
+    try t.expectEqual(@as(u16, 30), app.tree.width);
+    // A width the user dragged to is the one that comes back.
+    app.tree.width = 40;
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try t.expectEqual(@as(u16, 24), app.tree.width);
+    try command.run(&app, .{ .static = .@"view.activity_explorer" });
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    // Entering twice stashes once: the second entry does not stash 24.
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try command.run(&app, .{ .static = .@"view.activity_explorer" });
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    // On the right, the right column's width comes back.
+    try move(&app, .git, .right);
+    try t.expectEqual(@as(u16, 32), app.side.right_width);
+    try command.run(&app, .{ .static = .@"view.activity_git" });
+    try t.expectEqual(@as(u16, 24), app.side.right_width);
+    try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
+    try t.expectEqual(@as(u16, 32), app.side.right_width);
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+}

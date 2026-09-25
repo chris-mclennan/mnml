@@ -1,7 +1,7 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Us…        │ 󰐕                                                                                  󱸀  󲀀    
-▌ │▌    docs         │
-   │     󱼅  notes.md   │
+   │  ● /Use…            │ 󰐕                                                                            󱸀  󲀀    
+▌ │▌    docs               │
+   │     󱼅  notes.md         │
  󰍉 │     src    ┌ Help ────────────────────────────────────────────────────────────────────────────┐
    │     󱼄  main.│ / filter…                                                                        │
  󰊢 │     󱼅  util.│▾ ── modes ── (10)                                                               █│
@@ -9,32 +9,32 @@
   │      CHANGEL│  INSERT                vim/standard editable (green)                            █│
    │     󰂺 README.│  VISUAL                vim visual — charwise (purple)                           █│
  󰐱 │              │  V-LINE                vim visual — linewise (purple)                           █│
-   │   󰐙 Add works│  V-BLOCK               vim visual — block/column (purple)                       █│
+   │         󰐙 Add│  V-BLOCK               vim visual — block/column (purple)                       █│
  󰎒 │              │  REPLACE               vim replace mode (orange)                                █│
    │              │  TREE                  file tree focused (blue)                                 █│
   │              │  VIEW                  read-only pane focused (cyan)                            █│
    │              │  EDIT                  standard mode editing (green)                            █│
-  │              │  PANEL                 right side panel focused (cyan)                          █│here
+  │              │  PANEL                 right side panel focused (cyan)                          █│on here
    │              │▾ ── stress meter ── (6)                                                         █│
   │              │  0-20                  1 block, green — idle / smooth (hidden at exactly 0)     █│
    │              │  20-40                 2 blocks, yellow — slight load                           █│
  󱘣 │              │  40-70                 3 blocks, orange — noticeable slowdown                   █│
-   │              │  70-100                4 blocks, red — mnml is stressed                         █│
- 󰢱 │              │  chip location         top-right cluster + bottom-right statusline (twin bars)  █│s
-   │              │  right-click           reset window · copy summary · toast the numbers          █│ee
-   │              │▾ ── app ── (7)                                                                  █│tree
-   │              │  ctrl+q                Quit mnml                                                █│ette
-   │              │  ·                     Restart mnml (rebuild + relaunch via run.sh)             █│enu
-   │              │  ·                     Reset mnml to factory defaults (backup + relaunch)       █│
+   │              │  70-100                4 blocks, red — mnml is stressed                         █│ile
+ 󰢱 │              │  chip location         top-right cluster + bottom-right statusline (twin bars)  █│iles
+   │              │  right-click           reset window · copy summary · toast the numbers          █│ tree
+   │              │▾ ── app ── (7)                                                                  █│he tree
+   │              │  ctrl+q                Quit mnml                                                █│palette
+   │              │  ·                     Restart mnml (rebuild + relaunch via run.sh)             █│y menu
+   │              │  ·                     Reset mnml to factory defaults (backup + relaunch)       █│et
    │              │  ·                     Choose data layout — Portable (mnml-data/) or Normal (~/ █│
    │              │▾ ── view ── (219)                                                               █│
    │──────────────│  ctrl+b · space t e    Toggle left panel (file tree · Git · Integrations · Agen █│
    │ Sidebar      │  ·                     Reset file tree width to the config default              █│
    │              │  ·                     Click-discovery overlay (highlight what's clickable)     █│
    │ Arrows or j/k│  ·                     Welcome: show the start surface (workspaces, recent file █│
-   │ walk rows. En│/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close      │
-   │ opens the    └──────────────────────────────────────────────────────────────────────────────────┘
-  │ selection.        ││
-   │                    │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  15:30  ws   —
+   │ Enter opens t│/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close      │
+   │ selection. Ct└──────────────────────────────────────────────────────────────────────────────────┘
+  │ opens the palette.       │
+   │                          │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:40  ws   —
                                                            ⋯

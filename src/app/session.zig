@@ -531,14 +531,14 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
 
     // Chrome.
     saved.tree_visible = app.tree.visible;
-    saved.tree_width = app.tree.width;
+    saved.tree_width = @import("git_palette.zig").restingSize(app, .left);
     saved.tree_show_hidden = app.tree.show_hidden;
     var expanded: std.ArrayListUnmanaged([]const u8) = .empty;
     var kit = app.tree.expanded.keyIterator();
     while (kit.next()) |k| try expanded.append(arena, k.*);
     std.mem.sort([]const u8, expanded.items, {}, lessThan);
     saved.tree_expanded = expanded.items;
-    saved.right_panel_width = app.side.right_width;
+    saved.right_panel_width = @import("git_palette.zig").restingSize(app, .right);
     saved.bottom_panel_height = app.side.bottom_height;
     saved.left = app.side.open.get(.left);
     saved.right = app.side.open.get(.right);
