@@ -1470,7 +1470,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             // destination — completes folders on Tab; any other key ends
             // the cycle. The worktree prompt is `<path> [branch]`: its
             // path is the first word.
-            const path_prompt: ?bool = if (p.purpose == .add_workspace or p.purpose == .rename or p.purpose == .move_paths) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
+            const path_prompt: ?bool = if (p.purpose == .add_workspace or p.purpose == .rename or p.purpose == .move_paths or p.purpose == .save_as) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
             if (path_prompt) |first_word| {
                 if (k.code == .tab) return promptPathComplete(app, &p.state, first_word);
                 dropComplete(app);
@@ -1715,6 +1715,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
         },
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
+        .save_as => |id| try @import("cmd_file.zig").acceptSaveAs(app, id, text),
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),

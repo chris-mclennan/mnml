@@ -238,6 +238,8 @@ pub const PromptPurpose = union(enum) {
     /// the directory it is created in (owned).
     new_file: []u8,
     new_folder: []u8,
+    /// `file.save_as`: the editor pane the typed path is saved from.
+    save_as: PaneId,
     /// A note / finding name typed into the seeded prompt; the payload
     /// is the panel's directory, workspace-relative (owned).
     new_note: []u8,
