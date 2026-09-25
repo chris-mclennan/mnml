@@ -15,7 +15,7 @@ So a hunter or fixer agent works in two gears on the **same workspace**:
    on that workspace, send the same channel lines, take a PNG, `Read` it.
 
 ```
-tools/look.sh launch <ws> [--exe zig-out/bin/mnml-zig] [--cols 120 --rows 40]
+tools/look.sh launch <ws> [--exe zig-out/bin/mnml-zig] [--cols 120 --rows 40] [--sandbox]
 tools/look.sh run view.activity_git          # a command id
 tools/look.sh key ctrl+shift+p               # a key spec, as the channel reads it
 tools/look.sh type "git"                     # literal text (\n is Enter)
@@ -72,6 +72,15 @@ recorded (`.verify/look/current`).
   it opens; `mnml-drive launch` hands the keyboard straight back to
   whichever app had it. Launch once and drive many steps, not one launch
   per step.
+
+`launch --sandbox` starts the app with `--sandbox` (docs/CONFIG.md,
+*Sandbox*): it re-executes into a fresh `mnml-sandbox-*` under the
+window's own `TMPDIR` (`<root>/tmp`, inside the worktree), so the
+statusline shows the ` sandbox ` chip and the data root starts empty.
+The driver's `config.zon` rides along as the explicit `--config` layer,
+so the channel still works; the app removes the directory when `quit`
+ends it. It is an extra, not a replacement for the private `HOME`: the
+wrapper's `env -i`, clean `PATH` and refusing proxy still apply.
 
 ## Reading what you see
 

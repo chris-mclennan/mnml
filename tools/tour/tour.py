@@ -620,6 +620,8 @@ def main(argv):
     lk.add_argument("--cols", type=int, default=COLS)
     lk.add_argument("--rows", type=int, default=ROWS)
     lk.add_argument("--root")
+    lk.add_argument("--sandbox", action="store_true",
+                    help="launch with `--sandbox` (a throwaway HOME under the window's TMPDIR)")
 
     args = ap.parse_args(argv)
     if args.cmd == "run":

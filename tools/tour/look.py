@@ -1,7 +1,7 @@
 """`tools/look.sh`: one agent, one real window, driven like the headless
 harness — see docs/LOOK.md.
 
-    look.sh launch WS [--exe PATH] [--cols N --rows N] [--root DIR]
+    look.sh launch WS [--exe PATH] [--cols N --rows N] [--root DIR] [--sandbox]
     look.sh key SPEC | type TEXT | run ID | open PATH
     look.sh click X Y [right] | hover X Y | send JSON…
     look.sh shot NAME         → prints the PNG's path (Read it)
@@ -65,9 +65,17 @@ def run(args):
             import stamp
             stamp.warn_app("look.sh")
         os.makedirs(root, exist_ok=True)
-        w = Window(root, ws, exe=args.exe, cols=args.cols, rows=args.rows)
+        # `--sandbox`: the app re-executes itself into a fresh
+        # `mnml-sandbox-*` under the window's own TMPDIR (inside ROOT), so
+        # the data root the driver seeded is not the one it reads. The
+        # driver's `config.zon` (write_screen, allow_input) rides along as
+        # the explicit `--config` layer instead — read, never written.
+        app_args = []
+        if getattr(args, "sandbox", False):
+            app_args = ["--sandbox", "--config", os.path.join(root, "data", "config.zon")]
+        w = Window(root, ws, exe=args.exe, cols=args.cols, rows=args.rows, app_args=app_args)
         with open(os.path.join(root, "look.json"), "w", encoding="utf-8") as f:
-            json.dump({"ws": ws, "exe": w.exe, "cols": args.cols, "rows": args.rows}, f)
+            json.dump({"ws": ws, "exe": w.exe, "cols": args.cols, "rows": args.rows, "app_args": app_args}, f)
         try:
             w.launch()
         except DriveError as e:
