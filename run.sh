@@ -261,9 +261,13 @@ do_install() {
 
   # 1. A tree you can name. An install you cannot trace back to a commit
   #    is the thing that makes "which mnml is this?" unanswerable.
+  #    Every git here only reads, and says `--no-optional-locks`: a
+  #    plain `git status` rewrites the index under `.git/index.lock`,
+  #    which races a build or a commit in the same checkout and, killed,
+  #    leaves the lock behind (tools/run-sh-check.sh holds this).
   local dirty head
-  head=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
-  dirty=$(cd "$REPO" && git status --porcelain 2>/dev/null | head -n 5)
+  head=$(cd "$REPO" && git --no-optional-locks rev-parse --short HEAD 2>/dev/null || echo unknown)
+  dirty=$(cd "$REPO" && git --no-optional-locks status --porcelain 2>/dev/null | head -n 5)
   if [ -n "$dirty" ] && [ "$allow_dirty" = 0 ]; then
     log "$say: the tree is dirty — commit, stash, or pass --allow-dirty"
     printf '%s\n' "$dirty" | sed 's/^/  /' >&2
@@ -483,14 +487,22 @@ install_one() {
 do_installed_status() {
   local prefix="${PREFIX:-$HOME/.local}" dest
   dest="$prefix/bin/mnml"
-  local head
-  head=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+  local head here
+  head=$(cd "$REPO" && git --no-optional-locks rev-parse --short HEAD 2>/dev/null || echo unknown)
+  # `git describe --dirty` refreshes the index and writes it back under
+  # `.git/index.lock` — `--no-optional-locks` does not stop it — so the
+  # `-dirty` is worked out here from a status that takes no lock
+  # (tracked files only, as `--dirty` counts them).
+  here=$(cd "$REPO" && git --no-optional-locks describe --tags --always 2>/dev/null || echo "$head")
+  if [ -n "$(cd "$REPO" && git --no-optional-locks status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    here="$here-dirty"
+  fi
   echo "prefix:    $prefix"
   if [ ! -e "$dest" ]; then
     echo "installed: nothing at $dest (./run.sh install)"
   elif is_ours "$dest"; then
     echo "installed: $("$dest" --version)"
-    echo "here:      $(cd "$REPO" && git describe --tags --always --dirty 2>/dev/null || echo "$head")  (HEAD $head)"
+    echo "here:      $here  (HEAD $head)"
     local root
     root=$(MNML_PROFILE=stable installed_data_root "$dest")
     echo "data:      ${root:-?}"

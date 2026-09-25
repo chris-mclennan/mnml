@@ -1122,6 +1122,17 @@ fn rustTriple(b: *std.Build, t: std.Target) []const u8 {
     };
 }
 
+/// The two gits every `zig build` runs for the version string. Both only
+/// read, and both say `--no-optional-locks`: a plain `git status`
+/// refreshes the index's stat data and writes it back under
+/// `.git/index.lock`, so two builds that overlap in one checkout (a
+/// verification chain beside an editor's build) race for the lock, and a
+/// build killed at the wrong moment leaves it behind — a stale lock that
+/// then fails the user's next commit. `tools/run-sh-check.sh` holds
+/// every read-only git the build and the tooling run to this.
+const version_git_head = [_][]const u8{ "git", "--no-optional-locks", "rev-parse", "--short", "HEAD" };
+const version_git_status = [_][]const u8{ "git", "--no-optional-locks", "status", "--porcelain", "--untracked-files=no" };
+
 /// `<zon version>+g<short sha>[-dirty]` — what a build without `-Dversion=`
 /// prints. The zon file is read as text (a dev build should not fail because
 /// the manifest grew a field); git is optional (a tarball checkout has none).
@@ -1133,10 +1144,10 @@ fn deriveVersion(b: *std.Build) []const u8 {
     const base = zon[start..end];
 
     var code: u8 = undefined;
-    const sha_raw = b.runAllowFail(&.{ "git", "rev-parse", "--short", "HEAD" }, &code, .ignore) catch return base;
+    const sha_raw = b.runAllowFail(&version_git_head, &code, .ignore) catch return base;
     const sha = std.mem.trim(u8, sha_raw, " \t\r\n");
     if (sha.len == 0) return base;
-    const status = b.runAllowFail(&.{ "git", "status", "--porcelain", "--untracked-files=no" }, &code, .ignore) catch "";
+    const status = b.runAllowFail(&version_git_status, &code, .ignore) catch "";
     const dirty = std.mem.trim(u8, status, " \t\r\n").len != 0;
     return b.fmt("{s}+g{s}{s}", .{ base, sha, if (dirty) "-dirty" else "" });
 }

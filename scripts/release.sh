@@ -33,9 +33,9 @@ cd "$(dirname "$0")/.."
 say() { printf '\n── %s ──\n' "$*"; }
 
 say "tree"
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+if [ -n "$(git --no-optional-locks status --porcelain --untracked-files=no)" ]; then
     echo "release: the tree has uncommitted changes — commit or stash first" >&2
-    git status --short --untracked-files=no
+    git --no-optional-locks status --short --untracked-files=no
     exit 1
 fi
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then

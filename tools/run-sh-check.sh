@@ -287,6 +287,40 @@ check "installed-status: names the installed version" 'echo "$out" | grep -q "^i
 check "installed-status: names the data root" 'echo "$out" | grep -q "^data:      $MNML_DATA_ROOT\$"' "$out"
 check "installed-status: the link reads as pointing into the prefix" 'echo "$out" | grep -q "^link:      mnml-jira → $PREFIX_OK/bin/mnml-jira\$"' "$out"
 
+# ── 8a. the gits run.sh runs to READ take no lock ─────────────────────
+# A plain `git status` (and `git describe --dirty`, which
+# `--no-optional-locks` does not stop) refreshes the index and writes it
+# back under `.git/index.lock`: in the checkout a verification chain runs
+# in, that races the user's own commit and, killed, leaves a stale lock.
+# A tracked file whose stat data is stale but whose content is not — a
+# `touch` — is what makes git write; the index's inode says whether it did.
+inode() { ls -i "$FAKE/.git/index" | awk '{ print $1 }'; }
+touch -t 202001010000 "$FAKE/integrations/jira/manifest.zon"
+before=$(inode)
+(cd "$FAKE" && git status --porcelain > /dev/null)
+check "git-read: the control — a plain git status rewrites a stale index" '[ "$(inode)" != "$before" ]'
+touch -t 202101010000 "$FAKE/integrations/jira/manifest.zon"
+before=$(inode)
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh install --dry-run 2>&1); rc=$?
+check "git-read: install's dirty-tree check leaves the index alone" '[ "$(inode)" = "$before" ]' "$out"
+check "git-read: and a touched-but-unchanged tree is clean to it (exit 0)" '[ $rc -eq 0 ]' "$out"
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh installed-status 2>&1)
+check "git-read: installed-status leaves the index alone" '[ "$(inode)" = "$before" ]' "$out"
+check "git-read: installed-status calls the touched tree clean" 'echo "$out" | grep "^here:" | grep -vq -- "-dirty"' "$out"
+printf 'edited\n' >> "$FAKE/integrations/jira/manifest.zon"
+out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh installed-status 2>&1)
+check "git-read: installed-status says -dirty for an edited tracked file" 'echo "$out" | grep "^here:" | grep -q -- "-dirty  (HEAD "' "$out"
+(cd "$FAKE" && git checkout -q -- integrations/jira/manifest.zon)
+# Every read-only git the build and the tooling run says so: a `status`
+# without `--no-optional-locks`, or a `describe --dirty` at all, is a lock
+# taken in the checkout on every `zig build` / chain step.
+lockers=$(cd "$ROOT" && grep -nE '(\bgit\b[^|;&#]*[ "]status\b|"git",[^;]*"status"|describe[^|;#]*--dirty)' build.zig run.sh tools/*.sh scripts/*.sh 2>/dev/null \
+    | grep -v '^tools/run-sh-check.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' \
+    | grep -vE -- '--no-optional-locks[^|;]*status|describe[^|;]*--dirty' ; \
+    cd "$ROOT" && grep -nE 'describe[^|;#]*--dirty' build.zig run.sh tools/*.sh scripts/*.sh 2>/dev/null \
+    | grep -v '^tools/run-sh-check.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)')
+check "git-read: every status the build and tools run is --no-optional-locks; no describe --dirty" '[ -z "$lockers" ]' "$lockers"
+
 # ── 8b. the font step, and install-font ────────────────────────────────
 # `install` must never write to the OS font directory; it prints the
 # step instead. `install-font` is the verb that does, with HOME pointed
