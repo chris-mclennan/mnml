@@ -104,6 +104,7 @@ anything that looks like one is posting events somewhere it should not.
 ```
 mnml-drive launch --workspace DIR --data-root DIR [--size small|corpus|full]
                   [--cols N --rows M] [--exe PATH] [--font-size PT]
+                  [--allow-input] [--take-focus]
 mnml-drive key ctrl+p            --data-root DIR
 mnml-drive key "space f f"       --data-root DIR
 mnml-drive type "hello"          --data-root DIR
@@ -112,13 +113,27 @@ mnml-drive rightclick|doubleclick|hover X Y
 mnml-drive drag FX FY TX TY
 mnml-drive scroll X Y up|down [--notches N]
 mnml-drive shot out.png
-mnml-drive pixel X Y [--expect '#61afef'] [--tolerance 8]
+mnml-drive pixel X Y [--expect '#61afef'] [--tolerance 8] [--fx F --fy F]
 mnml-drive screen | status | rects
 mnml-drive wait-frame [--timeout MS]
 mnml-drive info
 mnml-drive focus                  # take the keyboard (keys need it)
 mnml-drive quit
 ```
+
+`--allow-input` turns `ipc.allow_input` on in the harness config, so a
+script drives the window through the file channel — JSONL lines in
+`<ws>/.mnml/ipc-zig/command`, `key`, `type`, `click`, `run-command`… —
+without the harness ever being the active application. That is the way
+`tools/tour.sh` and `tools/look.sh` drive it (`docs/LOOK.md`); `key` /
+`type` / the mouse verbs here need `focus`, which takes the keyboard.
+
+`launch` hands the keyboard back: ghostty activates as it opens, so the
+app that was frontmost before the launch is re-activated once the
+window is listed. `--take-focus` leaves the harness in front.
+
+`pixel --fx F --fy F` samples at a fraction of the cell (0..1) instead
+of its centre — a `▌` half block's centre is background.
 
 `--data-root` can be `$MNML_DRIVE_DATA_ROOT` instead. Coordinates are
 **cells**, not pixels — the same coordinates a `.test` script's `click`
@@ -262,7 +277,9 @@ and none of them fails on it:
 * headless — nothing happens, and the step passes. That is the point: a
   script sprinkled with `shot` has to run unchanged under the driver
   that has no pixels, or nobody will sprinkle it.
-* ghostty — a PNG lands under the run directory.
+* ghostty — `tools/tour.sh sweep` runs a `.test` file through the real
+  window and a `shot <name>` step lands as `<file>--<name>.png` beside
+  the file's final frame (`.verify/sweep/sweep/`).
 
 The name is a bare name, never a path.
 
@@ -331,5 +348,8 @@ because a test that pretends otherwise will flake on a font change.
   keyboard; nothing takes it as a side effect. Only `shot`, `pixel`,
   `screen`, `status` and `rects` work while you carry on with something
   else.
+  The file channel is the way round it: with `--allow-input` a script
+  appends `key` / `type` / `click` lines to the workspace's channel and
+  the window never needs the foreground (`docs/LOOK.md`).
 * One window. Not tabs, not splits at the terminal level.
 * macOS, ghostty. Both on purpose.
