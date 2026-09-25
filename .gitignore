@@ -25,3 +25,6 @@ __pycache__/
 # display profile) and ~1000 PNGs — never committed. The curated tour's
 # baselines under tests/tour/baseline/ are.
 tests/tour/sweep-baseline/
+
+# the HTTP pane's request history — workspace state, never source
+.rqst/
