@@ -10,6 +10,8 @@
 //! view of all of it on the frame arena.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -1745,7 +1747,7 @@ fn byteAtCol(text: []const u8, col: usize) usize {
 /// Assemble the view's model on the frame arena and paint.
 pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allocator.Error!void {
     const arena = ui.arena;
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     // The find bar docks under the pane it searches, as under an editor.
     var area = area_in;
     var bar: ?Rect = null;

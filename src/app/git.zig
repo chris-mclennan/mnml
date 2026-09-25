@@ -12,6 +12,8 @@
 //! command that asked — the extra lives here, not in the trunk.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const alloc_mod = @import("../core/alloc.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -5301,7 +5303,7 @@ pub fn drawStatusPane(app: *App, ui: Ui, id: PaneId, sp: *StatusPane, full: Rect
 
 /// `Pane.diff`.
 pub fn drawDiffPane(app: *App, ui: Ui, id: PaneId, dp: *DiffPane, full: Rect) void {
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     // colors: the repo's gutter down the left edge.
     const area = git_palette.repoGutter(app, ui, dp.repo, full);
     // Rust's `chip_actions_for_scope`: a worktree / file / HEAD diff
@@ -5385,7 +5387,7 @@ pub fn drawGraphPane(app: *App, ui: Ui, id: PaneId, g: *GraphPane, full: Rect) v
     const area = git_palette.repoGutter(app, ui, g.repo, full);
     syncWip(app, g);
     if (st.activeRepo() != null and st.status == null and !st.status_pending) requestStatus(app) catch {};
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     const now = nowUnix(app);
     const arena = ui.arena;
     var wip: ?graph_view.WipDoc = null;

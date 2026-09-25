@@ -24,6 +24,8 @@
 //! and `suggest_idle_ms`.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -1531,7 +1533,7 @@ fn claudeCodeFocus(app: *App) CommandError!void {
         _ = try openSession(app, .claude, null);
         return;
     };
-    if (app.active == id and app.focus == .pane) {
+    if (paneFocused(app, id)) {
         const prev = app.prev_active orelse return;
         if (prev == id or app.panes.get(prev) == null or app.layouts.pageOf(prev) == null) return;
         return app.showPane(prev);

@@ -16,6 +16,8 @@
 //! "gather from several directories, then act" works.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -1254,7 +1256,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, f: *FilesPane, area: Rect) Allocator.
         };
     }
     const cs = try crumbs(app, f, arena);
-    const focused_ = app.active == id and app.focus == .pane;
+    const focused_ = paneFocused(app, id);
     const empty: []const u8 = if (f.filter.items.len > 0) "No matches — Esc clears" else if (f.in_trash) "The trash is empty" else "Empty directory";
     const caret = files_view.draw(ui, id, area, .{
         .crumbs = cs.labels,

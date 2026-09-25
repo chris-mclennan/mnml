@@ -1541,11 +1541,25 @@ fn drawBody(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
     }
 }
 
-/// Whether pane `id` has the keys — what the focus cue marks.
+/// Whether pane `id` has the keys — what the focus cue marks, and the
+/// one answer every "is this pane focused" in the chrome reads.
+///
+/// It is asked the way `dispatch.keyInner` routes a key, not of the
+/// id `app.focus` carries: a key that no overlay, visible tree or shown
+/// section takes goes to `app.active`, whatever pane `.pane` names. The
+/// two can disagree — an overlay closed back to the `.pane` it was
+/// opened over after the active pane changed under it leaves `.pane`
+/// naming the old one — and reading the id then put the cue on a pane
+/// the keys were not going to and stepped back the one they were (an
+/// integration pane with the keys and the VIEW chip, the editor lit).
 pub fn paneFocused(app: *const App, id: PaneId) bool {
+    if (app.active != id) return false;
+    if (app.overlay != .none) return false;
     return switch (app.focus) {
-        .pane => |p| p == id,
-        else => false,
+        .pane, .overlay => true,
+        .tree => !app.tree.visible,
+        .panel => |p| !side_mod.isShown(app, side_mod.sectionOfPanel(p)),
+        .welcome => false,
     };
 }
 
@@ -1569,6 +1583,10 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         focus_cue.rail(ui.theme, ui.focus_cue, paneFocused(app, id), c, ui.theme.bg.bg)
     else
         null;
+    // A pane that paints its own stripe takes no rail; the cue goes on
+    // its stripe instead, after it has painted (`pane_rail.recolor`).
+    const own_stripe = if (rail == null) pane_accent.ownStripeColorOf(app, id, ui.theme) else null;
+    defer if (own_stripe) |c| pane_rail.recolor(ui, full_rect, focus_cue.rail(ui.theme, ui.focus_cue, paneFocused(app, id), c, ui.theme.bg.bg));
     const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
     const inset = rail != null and !shares_gutter;
     const rect = pane_rail.body(full_rect, inset);
@@ -1602,7 +1620,7 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         .sessions_table => |*tp| try sessions_table.drawPane(app, ui, id, tp, rect),
         .spend_report => |*s| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
-            spend_view.draw(ui, id, rect, s, app.active == id and app.focus == .pane);
+            spend_view.draw(ui, id, rect, s, paneFocused(app, id));
         },
         .ai_usage => |*u| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
@@ -1610,7 +1628,7 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         },
         .grep => |*g| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
-            grep_view.draw(ui, id, rect, g, app.active == id and app.focus == .pane);
+            grep_view.draw(ui, id, rect, g, paneFocused(app, id));
         },
         .debug => |*d| try dap.drawDebug(app, ui, id, d, rect),
         .request => |*rp| try request_pane.draw(app, ui, id, rp, rect),
@@ -1623,11 +1641,11 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         .tests => |*tp| try drawTests(app, ui, id, tp, rect),
         .flaky => |*fp| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
-            flaky_view.draw(ui, id, rect, fp, app.active == id and app.focus == .pane);
+            flaky_view.draw(ui, id, rect, fp, paneFocused(app, id));
         },
         .requests => |*rp| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
-            requests_view.draw(ui, id, rect, rp, app.active == id and app.focus == .pane);
+            requests_view.draw(ui, id, rect, rp, paneFocused(app, id));
         },
         .files => |*f| try files_pane.draw(app, ui, id, f, rect),
         .image => |*im| try image_pane.draw(app, ui, id, im, rect),
@@ -1686,7 +1704,7 @@ fn drawDropHint(app: *App, ui: Ui, pane: PaneId, body: Rect) void {
 /// no-op when unchanged), then the grid is refreshed and painted.
 fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allocator.Error!void {
     if (!pty_pane.supported) return;
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     // A dormant pane never ran, so it has no exit to report and a key
     // starts it rather than closing it.
     const exit_label: ?[]const u8 = if (p.dormant)
@@ -1749,7 +1767,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
 fn drawZon(app: *App, ui: Ui, id: PaneId, z: *zon_pane.ZonPane, rect: Rect) Allocator.Error!void {
     if (app.active == id) app.pane_rows = @max(rect.h, 1);
     if (z.stale) try z.rebuildRows();
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     const caret = zon_view.draw(ui, id, rect, z, focused);
     if (focused) if (caret) |c| {
         app.cursor_pos = .{ .x = c.x, .y = c.y };
@@ -1757,7 +1775,7 @@ fn drawZon(app: *App, ui: Ui, id: PaneId, z: *zon_pane.ZonPane, rect: Rect) Allo
 }
 
 fn drawAi(app: *App, ui: Ui, id: PaneId, a: *ai_app.AiPane, rect: Rect) void {
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     if (app.active == id) app.pane_rows = @max(rect.h, 1);
     const over = ai_view.draw(ui, id, rect, .{
         .title = a.title,
@@ -1787,7 +1805,7 @@ fn drawAiApply(app: *App, ui: Ui, id: PaneId, p: *ai_apply.AiApplyPane, rect: Re
         .hunks = p.hunks,
         .rows = p.rows,
         .cursor = p.cursor,
-        .focused = app.active == id and app.focus == .pane,
+        .focused = paneFocused(app, id),
         .cursor_row = p.cursorRow(),
         .lineText = &Text.line,
     });
@@ -1800,7 +1818,7 @@ fn drawTests(app: *App, ui: Ui, id: PaneId, p: *tests_pane.TestsPane, rect: Rect
     for (p.run.tests, 0..) |tc, i| wobbly[i] = flaky.isWobbly(app, tc.file, tc.suite_path, tc.title);
     tests_view.draw(ui, id, rect, .{
         .p = p,
-        .focused = app.active == id and app.focus == .pane,
+        .focused = paneFocused(app, id),
         .wobbly = wobbly,
         .command = try tests_pane.cmdlineFor(ui.arena, p.runner, p.last_args),
     });
@@ -2123,7 +2141,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         rect = s.top;
         bar = s.rest;
     };
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     const ed = e.buf.editor;
     // Another window's edit above this one's viewport moved the lines
     // under it: the scroll follows so the same text stays in view.
@@ -3693,4 +3711,50 @@ test "an overlay's field wins over the editor; a box that takes no typing hides 
     try app.render();
     try t.expect(app.cursor_out == null);
     try t.expect(!app.screen.cursor_vis);
+}
+
+test "paneFocused: the pane the keys go to, whatever its kind and whatever pane `.pane` names" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // One pane of each kind that builds without a process or a disk: an
+    // editor, an integration (mount) pane, the usage pane, a git panel
+    // opened as a pane, a session's changes view.
+    _ = try app.openScratch();
+    const ed = app.active.?;
+    const mount = try app.panes.add(.{ .mount = .{ .gpa = app.gpa, .mount = null, .label = try app.gpa.dupe(u8, "Bitbucket PRs"), .generation = 0 } });
+    const usage = try app.panes.add(.{ .ai_usage = .{ .product = .claude } });
+    const status = try app.panes.add(.{ .git_status = .{ .repo = 0 } });
+    const changes = try app.panes.add(.{ .session_changes = .{ .session = ed, .token = 0, .title = try app.gpa.dupe(u8, "changes") } });
+    const all = [_]PaneId{ ed, mount, usage, status, changes };
+    for (all) |id| {
+        app.showPane(id);
+        for (all) |other| try t.expectEqual(other == id, paneFocused(&app, other));
+    }
+    // The keys go to the active pane even when `.pane` still names the
+    // one an overlay was opened over — the integration pane with the
+    // keys and the VIEW chip whose rail stepped back.
+    app.showPane(mount);
+    app.focus = .{ .pane = ed };
+    try t.expect(paneFocused(&app, mount));
+    try t.expect(!paneFocused(&app, ed));
+    // A focus left on `.overlay` with no overlay up: the keys go on to
+    // the active pane.
+    app.focus = .overlay;
+    try t.expect(paneFocused(&app, mount));
+    // An overlay up has the keys: no pane does.
+    try app.openMenu("m", try app.gpa.alloc(command.MenuItem, 0), 0, 0);
+    for (all) |id| try t.expect(!paneFocused(&app, id));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // The tree has them only while it is on screen.
+    app.focus = .tree;
+    try t.expect(paneFocused(&app, mount));
+    app.tree.visible = true;
+    for (all) |id| try t.expect(!paneFocused(&app, id));
+    app.tree.visible = false;
+    // No active pane: nobody.
+    app.focus = .{ .pane = mount };
+    app.active = null;
+    for (all) |id| try t.expect(!paneFocused(&app, id));
 }

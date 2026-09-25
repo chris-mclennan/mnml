@@ -9,6 +9,8 @@
 //! `<data_root>/ws-history/<host>/history.jsonl`.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -499,7 +501,7 @@ pub fn scrollBy(p: *WebsocketPane, delta: i32) void {
 }
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *WebsocketPane, area: Rect) Allocator.Error!void {
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     const entries = try ui.arena.alloc(view.Entry, p.log.items.len);
     for (p.log.items, 0..) |e, i| entries[i] = .{ .outgoing = e.outgoing, .text = e.text, .kind = switch (e.kind) {
         .message => .message,

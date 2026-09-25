@@ -8,6 +8,8 @@
 //! to the socket; the reply is matched by id to what it was for.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -1777,7 +1779,7 @@ pub fn click(app: *App, p: *BrowserPane, hit_id: u32) Allocator.Error!void {
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocator.Error!void {
     const arena = ui.arena;
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     const visible = try visibleIndices(arena, p);
     var log: []view.LogLine = &.{};
     var net: []view.NetRow = &.{};

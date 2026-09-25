@@ -135,6 +135,39 @@ pub fn absorbList(ui: Ui, rect: Rect) void {
     }
 }
 
+/// The focus cue on a stripe a pane painted down its own first column
+/// — a mounted integration's app-colour gutter, a git pane's repo
+/// gutter (`pane_accent.paintsOwnStripe`) — where the rail would have
+/// been. Such a pane takes no rail, so without this its stripe said
+/// nothing about the keys: an integration's gutter is its brand, dim
+/// on every row but the cursor's, and read as stepped back while the
+/// pane had the keys. Called after the pane has painted: each cell of
+/// `rect`'s first column that holds a stripe takes `color` (the cue's
+/// answer for the pane) and loses the pane's dim; its glyph, its
+/// ground and its bold stay. Anything else in the column is the pane's.
+pub fn recolor(ui: Ui, rect: Rect, color: Color) void {
+    if (rect.w < 2 or rect.h == 0) return;
+    var y: u16 = 0;
+    while (y < rect.h) : (y += 1) {
+        const cell = ui.canvas.screen.readCell(rect.x, rect.y + y) orelse continue;
+        const g = stripeGlyph(ui.ascii, cell.char.grapheme) orelse continue;
+        var s = Theme.withFg(cell.style, color);
+        s.dim = false;
+        _ = ui.putStr(rect.x, rect.y + y, width, g, s);
+    }
+}
+
+/// `g` as a stripe: the half block, or under ASCII the rail's marker or
+/// the integration SDK's `|` gutter. The literal, not the cell's own
+/// bytes, so the repaint never reads the cell it is writing.
+fn stripeGlyph(ascii: bool, g: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, g, list_panel.marker_glyph)) return list_panel.marker_glyph;
+    if (!ascii) return null;
+    if (std.mem.eql(u8, g, list_panel.marker_ascii)) return list_panel.marker_ascii;
+    if (std.mem.eql(u8, g, "|")) return "|";
+    return null;
+}
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -290,4 +323,32 @@ test "absorbList: a list row's own stripe one cell in, or the selection marker, 
     try testing.expectEqualStrings("a", f.cell(4, 0).char.grapheme);
     try testing.expectEqualStrings("x", f.cell(3, 2).char.grapheme);
     try testing.expect(vaxis.Color.eql(f.cell(0, 3).style.fg, f.theme.palette.blue));
+}
+
+test "recolor: a pane's own stripe takes the cue's colour and loses its dim; the rest of the column is the pane's" {
+    var f = try Fixture.init(12, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    ui.fill(f.full(), f.theme.bg);
+    // An integration's gutter: dim brand on three rows, bold on the
+    // cursor's, and a letter on the last that is not a stripe.
+    var dim = Theme.withFg(f.theme.bg, f.theme.palette.blue);
+    dim.dim = true;
+    var on = Theme.withFg(f.theme.bg, f.theme.palette.blue);
+    on.bold = true;
+    _ = ui.putStr(0, 0, 1, list_panel.marker_glyph, dim);
+    _ = ui.putStr(0, 1, 1, list_panel.marker_glyph, on);
+    _ = ui.putStr(0, 2, 1, list_panel.marker_glyph, dim);
+    _ = ui.putStr(0, 3, 1, "x", dim);
+    recolor(ui, f.full(), f.theme.palette.red);
+    var y: u16 = 0;
+    while (y < 3) : (y += 1) {
+        try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, y).char.grapheme);
+        try testing.expect(vaxis.Color.eql(f.cell(0, y).style.fg, f.theme.palette.red));
+        try testing.expect(!f.cell(0, y).style.dim);
+    }
+    try testing.expect(f.cell(0, 1).style.bold);
+    try testing.expectEqualStrings("x", f.cell(0, 3).char.grapheme);
+    try testing.expect(vaxis.Color.eql(f.cell(0, 3).style.fg, f.theme.palette.blue));
+    try testing.expect(f.cell(0, 3).style.dim);
 }

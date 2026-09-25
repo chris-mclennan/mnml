@@ -18,6 +18,8 @@
 //! commands (`sessions.zig`'s table).
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -814,7 +816,7 @@ pub fn drawPane(app: *App, ui: Ui, id: PaneId, tp: *TablePane, rect: Rect) Alloc
         .item => |ii| .{ .item = try itemView(app, st.items[ii]) },
     };
     const now_s = sessions.wallNowS(app);
-    const focused_pane = app.active == id and app.focus == .pane;
+    const focused_pane = paneFocused(app, id);
     const caret = view.draw(ui, id, rect, tp, .{
         .rows = rows,
         .focused = focused_pane,

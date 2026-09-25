@@ -27,6 +27,8 @@
 //! those two are Rust's, and they are the two this file runs.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -156,6 +158,6 @@ pub fn dragTo(app: *App, y: u16) void {
 /// Whether the keys are in the dock: its section, or its hosted pane.
 pub fn focused(app: *const App) bool {
     if (side.shown(app, .bottom)) |s| if (side.focusOf(s)) |f| if (std.meta.eql(app.focus, f)) return true;
-    if (activePane(app)) |p| return app.focus == .pane and app.active == p;
+    if (activePane(app)) |p| return paneFocused(app, p);
     return false;
 }

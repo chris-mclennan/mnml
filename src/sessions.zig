@@ -995,7 +995,7 @@ pub const NotifyWhat = enum { waiting, finished, failed };
 /// The pane is the one being looked at: the active pane, the keyboard
 /// on it, and the terminal window in front (`App.host_focused`).
 pub fn paneFocused(app: *const App, pid: app_mod.PaneId) bool {
-    return app.host_focused and app.active == pid and app.focus == .pane;
+    return app.host_focused and @import("app/render.zig").paneFocused(app, pid);
 }
 
 /// `ui.session_notify` for a pane that is (or is not) being looked at.

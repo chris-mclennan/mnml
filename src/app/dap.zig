@@ -18,6 +18,8 @@
 //! list with "(no value)". The gate exercises exactly that.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -1677,9 +1679,9 @@ pub fn drawDebug(app: *App, ui: Ui, id: PaneId, p: *DebugPane, area: Rect) Alloc
         .input = c.input.items,
         .caret = c.caret,
         .state = sessionState(app),
-        .focused = app.active == id and app.focus == .pane,
+        .focused = paneFocused(app, id),
     });
-    if (app.active == id and app.focus == .pane) if (caret) |cr| {
+    if (paneFocused(app, id)) if (caret) |cr| {
         app.cursor_pos = .{ .x = cr.x, .y = cr.y };
     };
 }
