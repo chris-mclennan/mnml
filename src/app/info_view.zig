@@ -1372,9 +1372,16 @@ test "help.focus: the box takes the keys, Tab / Shift+Tab walk and wrap, Enter r
     try t.expect(app.focus == .tree);
     try t.expect(!isPinned(&app));
     // Enter on a link row leaves first, then runs it: `→ Show the tree`.
+    // Back on the Explorer icon first: with the keys given back the
+    // entry follows the pointer again, and (80, 20) is whatever the
+    // start surface lays out there — a row without links, on some
+    // layouts, and Enter would keep the keys.
     try app.render();
+    try hoverAt(&app, ex);
+    try hoverAt(&app, ex);
     try command.run(&app, .{ .static = .@"help.focus" });
     try app.render();
+    try t.expectEqual(@as(usize, 3), st.n_links);
     st.cursor = 1;
     try t.expect(try handleKey(&app, Key.named(.enter)));
     try t.expect(app.focus != .info_view);
