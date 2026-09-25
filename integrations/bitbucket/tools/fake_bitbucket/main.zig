@@ -9,6 +9,9 @@
 //!   mnml-fake-bitbucket --lifetime-secs 60    exit after a minute, whatever happens
 //!   mnml-fake-bitbucket --parent-pid 1234     exit when 1234 is gone
 //!   mnml-fake-bitbucket --rate-limit-first 2  429 the first two requests
+//!   mnml-fake-bitbucket --retry-after 8       …with `Retry-After: 8` (0: none)
+//!   mnml-fake-bitbucket --rate-limit-limit 1000 --rate-limit-remaining 900
+//!                                             `X-RateLimit-*` on every answer
 //!   mnml-fake-bitbucket --log-file bb.jsonl   a JSON line per request served
 //!   mnml-fake-bitbucket --delay-ms 3000       hold every reply three seconds
 //!
@@ -36,6 +39,9 @@ pub fn main(init: std.process.Init) !u8 {
     var log_file: ?[]const u8 = null;
     var extra_prs: u32 = 0;
     var delay_ms: u32 = 0;
+    var retry_after: ?u32 = null;
+    var budget_limit: u32 = 0;
+    var budget_remaining: ?u32 = null;
 
     var i: usize = 1;
     var out_buf: [512]u8 = undefined;
@@ -67,6 +73,15 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--rate-limit-first") and i + 1 < args.len) {
             i += 1;
             rate_limit_first = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--retry-after") and i + 1 < args.len) {
+            i += 1;
+            retry_after = std.fmt.parseInt(u32, args[i], 10) catch 1;
+        } else if (std.mem.eql(u8, a, "--rate-limit-limit") and i + 1 < args.len) {
+            i += 1;
+            budget_limit = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--rate-limit-remaining") and i + 1 < args.len) {
+            i += 1;
+            budget_remaining = std.fmt.parseInt(u32, args[i], 10) catch null;
         } else if (std.mem.eql(u8, a, "--log-file") and i + 1 < args.len) {
             i += 1;
             log_file = args[i];
@@ -87,6 +102,8 @@ pub fn main(init: std.process.Init) !u8 {
     };
     defer srv.stop();
     if (rate_limit_first > 0) srv.rateLimitNext(rate_limit_first);
+    if (retry_after) |ra| srv.retryAfter(ra);
+    if (budget_limit > 0) srv.budgetHeaders(budget_limit, budget_remaining orelse budget_limit);
     if (extra_prs > 0) srv.setExtraPrs(extra_prs);
     srv.delay_ms = delay_ms;
     // A fresh log per run: the measurement is one tab load's worth, not
@@ -139,6 +156,9 @@ const usage =
     \\  --extra-prs N         N more generated OPEN pull requests on acme/api
     \\  --parent-pid N        exit when that process is gone (an orphan holds a port)
     \\  --rate-limit-first N  answer the first N requests with 429
+    \\  --retry-after N       the Retry-After those 429s carry (default 1; 0 sends none)
+    \\  --rate-limit-limit N  send X-RateLimit-Limit/-Remaining/-NearLimit on every answer
+    \\  --rate-limit-remaining N  where -Remaining starts (default: the limit); it drops one per request
     \\  --log-file PATH       append one JSON line per request served
     \\  --delay-ms N          hold every reply N ms (catch a pane mid-fetch)
     \\

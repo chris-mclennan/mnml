@@ -24,6 +24,18 @@
 //!   mnml-fake-jira [--port N] [--port-file P] [--url-file P] [--pid-file P]
 //!                  [--life-secs N] [--parent-pid N] [--no-auth] [--quiet]
 //!                  [--extra-issues N] [--log-file P] [--version]
+//!                  [--rate-limit-first N] [--retry-after N]
+//!                  [--rate-limit-limit N] [--rate-limit-remaining N]
+//!                  [--rate-limit-reset ISO]
+//!
+//! The rate-limit flags are the budget dial. `--rate-limit-first N`
+//! answers the next N Jira requests `429` with `Retry-After:
+//! --retry-after` (default 1; 0 sends none). `--rate-limit-limit N`
+//! sends Jira Cloud's `X-RateLimit-Limit` / `-Remaining` /
+//! `-NearLimit` on every Jira answer, `-Remaining` starting at
+//! `--rate-limit-remaining` and dropping one per request, and
+//! `--rate-limit-reset` as `X-RateLimit-Reset`, ISO 8601 the way Jira
+//! spells it.
 //!
 //! Two flags exist for the request-count measurements rather than for
 //! the tests. `--extra-issues N` grows the fixture by N more open
@@ -83,16 +95,45 @@ pub const Response = struct {
     content_type: []const u8 = "application/json",
     /// Sent as `Retry-After: <n>` when set — a 429's hint.
     retry_after_secs: ?u32 = null,
+    /// `X-RateLimit-*`, when the budget dial is on (`Store.budget_limit`).
+    budget: ?Budget = null,
 
-    /// The response's headers, into `buf`: the content type, and the
-    /// `Retry-After` a 429 carries.
-    pub fn headers(r: *const Response, buf: *[2]std.http.Header, num: *[12]u8) []const std.http.Header {
-        buf[0] = .{ .name = "content-type", .value = r.content_type };
+    pub const Budget = struct {
+        limit: u32,
+        remaining: u32,
+        /// A fifth or less left — Jira Cloud's `X-RateLimit-NearLimit`.
+        near: bool,
+        /// `X-RateLimit-Reset` as Jira Cloud spells it, ISO 8601; empty
+        /// sends none.
+        reset: []const u8 = "",
+    };
+
+    pub const HeaderBuf = struct {
+        list: [6]std.http.Header = undefined,
+        num: [3][16]u8 = undefined,
+    };
+
+    /// The response's headers, into `hb`: the content type, the
+    /// `Retry-After` a 429 carries, and the budget dial's numbers.
+    pub fn headers(r: *const Response, hb: *HeaderBuf) []const std.http.Header {
+        var n: usize = 0;
+        hb.list[n] = .{ .name = "content-type", .value = r.content_type };
+        n += 1;
         if (r.retry_after_secs) |ra| {
-            buf[1] = .{ .name = "retry-after", .value = std.fmt.bufPrint(num, "{d}", .{ra}) catch "1" };
-            return buf[0..2];
+            hb.list[n] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&hb.num[0], "{d}", .{ra}) catch "1" };
+            n += 1;
         }
-        return buf[0..1];
+        if (r.budget) |b| {
+            hb.list[n] = .{ .name = "x-ratelimit-limit", .value = std.fmt.bufPrint(&hb.num[1], "{d}", .{b.limit}) catch "0" };
+            hb.list[n + 1] = .{ .name = "x-ratelimit-remaining", .value = std.fmt.bufPrint(&hb.num[2], "{d}", .{b.remaining}) catch "0" };
+            hb.list[n + 2] = .{ .name = "x-ratelimit-nearlimit", .value = if (b.near) "true" else "false" };
+            n += 3;
+            if (b.reset.len > 0) {
+                hb.list[n] = .{ .name = "x-ratelimit-reset", .value = b.reset };
+                n += 1;
+            }
+        }
+        return hb.list[0..n];
     }
 };
 
@@ -170,6 +211,13 @@ pub const Store = struct {
     /// the site asked, then asks again.
     rate_limit_next: u32 = 0,
     rate_limit_retry_after: u32 = 1,
+    /// The budget dial: when non-zero every Jira answer carries
+    /// `X-RateLimit-Limit: budget_limit` and a `-Remaining` that starts
+    /// at `budget_remaining` and drops by one per request, plus
+    /// `budget_reset` as `X-RateLimit-Reset` when it is set.
+    budget_limit: u32 = 0,
+    budget_remaining: u32 = 0,
+    budget_reset: []const u8 = "",
     requests: usize = 0,
     /// Where `--log-file` appends its JSON line per request; null is no
     /// log. The socket loop writes it, not `handle`, so a unit test
@@ -277,6 +325,16 @@ pub const Store = struct {
 
     /// The whole server. `arena` owns everything in the answer.
     pub fn handle(s: *Store, arena: Allocator, method: std.http.Method, target: []const u8, authorization: ?[]const u8, body: []const u8) Allocator.Error!Response {
+        var res = try s.route(arena, method, target, authorization, body);
+        // The dial is Jira's: the forge corner is a different service.
+        if (s.budget_limit > 0 and !std.mem.startsWith(u8, pathOf(target), "/2.0/")) {
+            s.budget_remaining -|= 1;
+            res.budget = .{ .limit = s.budget_limit, .remaining = s.budget_remaining, .near = s.budget_remaining * 5 <= s.budget_limit, .reset = s.budget_reset };
+        }
+        return res;
+    }
+
+    fn route(s: *Store, arena: Allocator, method: std.http.Method, target: []const u8, authorization: ?[]const u8, body: []const u8) Allocator.Error!Response {
         s.requests += 1;
         const path = pathOf(target);
         const query = queryOf(target);
@@ -291,7 +349,7 @@ pub const Store = struct {
         if (s.rate_limit_next > 0) {
             s.rate_limit_next -= 1;
             var r = try err(arena, 429, "Rate limit exceeded");
-            r.retry_after_secs = s.rate_limit_retry_after;
+            r.retry_after_secs = if (s.rate_limit_retry_after > 0) s.rate_limit_retry_after else null;
             return r;
         }
 
@@ -1028,6 +1086,11 @@ pub fn main(init: std.process.Init) !u8 {
     var quiet = false;
     var log_file: ?[]const u8 = null;
     var extra_issues: usize = 0;
+    var rate_limit_first: u32 = 0;
+    var retry_after: ?u32 = null;
+    var budget_limit: u32 = 0;
+    var budget_remaining: ?u32 = null;
+    var budget_reset: []const u8 = "";
 
     var buf: [1024]u8 = undefined;
     var out_w: Io.File.Writer = .init(.stdout(), io, &buf);
@@ -1068,6 +1131,21 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--extra-issues") and i + 1 < args.len) {
             i += 1;
             extra_issues = std.fmt.parseInt(usize, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--rate-limit-first") and i + 1 < args.len) {
+            i += 1;
+            rate_limit_first = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--retry-after") and i + 1 < args.len) {
+            i += 1;
+            retry_after = std.fmt.parseInt(u32, args[i], 10) catch 1;
+        } else if (std.mem.eql(u8, a, "--rate-limit-limit") and i + 1 < args.len) {
+            i += 1;
+            budget_limit = std.fmt.parseInt(u32, args[i], 10) catch 0;
+        } else if (std.mem.eql(u8, a, "--rate-limit-remaining") and i + 1 < args.len) {
+            i += 1;
+            budget_remaining = std.fmt.parseInt(u32, args[i], 10) catch null;
+        } else if (std.mem.eql(u8, a, "--rate-limit-reset") and i + 1 < args.len) {
+            i += 1;
+            budget_reset = args[i];
         } else {
             try out.print("mnml-fake-jira: unknown argument {s}\n", .{a});
             return 2;
@@ -1078,6 +1156,11 @@ pub fn main(init: std.process.Init) !u8 {
     defer store.deinit();
     store.require_auth = require_auth;
     if (extra_issues > 0) try store.addExtraIssues(extra_issues);
+    store.rate_limit_next = rate_limit_first;
+    if (retry_after) |ra| store.rate_limit_retry_after = ra;
+    store.budget_limit = budget_limit;
+    store.budget_remaining = budget_remaining orelse budget_limit;
+    store.budget_reset = budget_reset;
     // A fresh log per run: the measurement is one tab load's worth, not
     // everything this file has ever seen.
     if (log_file) |p| {
@@ -1268,11 +1351,10 @@ pub fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream, op
         const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
             Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
         logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
-        var hbuf: [2]std.http.Header = undefined;
-        var nbuf: [12]u8 = undefined;
+        var hbuf: Response.HeaderBuf = .{};
         request.respond(res.body, .{
             .status = @enumFromInt(res.status),
-            .extra_headers = res.headers(&hbuf, &nbuf),
+            .extra_headers = res.headers(&hbuf),
         }) catch break :lost if (stop) .stop else .dropped;
         return if (stop) .stop else .answered;
     };
@@ -1466,6 +1548,34 @@ test "versions, assignable users, dev-status PRs, the forge's PR and pipelines" 
     const pipes = try store.handle(arena, .GET, "/2.0/repositories/acme/checkout/pipelines/?pagelen=60&sort=-created_on", expected_forge_auth, "");
     try testing.expect(std.mem.indexOf(u8, pipes.body, "\"build_number\":412") != null);
     try testing.expectEqual(@as(u16, 404), (try store.handle(arena, .GET, "/2.0/repositories/acme/nope/pullrequests/1", expected_forge_auth, "")).status);
+}
+
+test "the budget dial: every Jira answer carries the numbers, remaining drops per request, the forge corner carries none" {
+    var store = try Store.init(testing.allocator);
+    defer store.deinit();
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    store.require_auth = false;
+    store.budget_limit = 10;
+    store.budget_remaining = 3;
+    store.budget_reset = "2026-09-25T14:10:00.000Z";
+    const one = try store.handle(a.allocator(), .GET, "/rest/api/3/myself", null, "");
+    try testing.expectEqual(@as(u32, 2), one.budget.?.remaining);
+    try testing.expect(one.budget.?.near);
+    var hb: Response.HeaderBuf = .{};
+    const hs = one.headers(&hb);
+    var saw_reset = false;
+    for (hs) |h| if (std.mem.eql(u8, h.name, "x-ratelimit-reset")) {
+        saw_reset = std.mem.eql(u8, h.value, "2026-09-25T14:10:00.000Z");
+    };
+    try testing.expect(saw_reset);
+    store.rate_limit_next = 1;
+    store.rate_limit_retry_after = 0;
+    const limited = try store.handle(a.allocator(), .GET, "/rest/api/3/myself", null, "");
+    try testing.expectEqual(@as(u16, 429), limited.status);
+    try testing.expectEqual(@as(?u32, null), limited.retry_after_secs);
+    const forge = try store.handle(a.allocator(), .GET, "/2.0/user", "Bearer fake-forge", "");
+    try testing.expectEqual(@as(?Response.Budget, null), forge.budget);
 }
 
 test "--fail-with turns every Jira route into that status; target parsing; /__shutdown" {
