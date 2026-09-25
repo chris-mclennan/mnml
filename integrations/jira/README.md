@@ -92,7 +92,7 @@ example.
 | — | `.token_env = "JIRA_API_TOKEN"` | port only: the variable (empty, the default, means `JIRA_API_TOKEN`) |
 | — | `.api = .v3` | port only: `.v2` for a site that answers `410` |
 | — | `.rate = .{ .per_sec = 0.33, .burst = 60, .cooldown_secs = 45, .max_block_secs = 120 }` | port only: the shared bucket's numbers (the reference's). The bucket is one file — `<root>/jira-ratelimit.json` — so every pane, the statusline poller and the Rust tracker take turns on one allowance and one 429 parks them all — for the `Retry-After` the site sent, or a backoff from `cooldown_secs` doubling to `max_block_secs` when it sent none (the SDK's `budget`, the Bitbucket pane's too: a read asks again after a pause of up to 30 s, a write never) |
-| — | `.dry_run = false` | port only: start in a dry run — nothing is sent, the rows on screen stay, and the request log gets the line it would have been (`"dry":true`). `Shift+N` flips it for the session; the budget chip says `DRY` |
+| — | `.dry_run = false` | no TOML twin: start in a dry run — nothing is sent, the rows on screen stay, and the request log gets the line it would have been (`"dry":true`). `Shift+N` flips it for the session; the budget chip says `DRY` |
 | — | `.intervals = .{ .listing_secs = 300, .builds_secs = 90, .readiness_secs = 0 }` | port only: how often each kind of thing is kept fresh (`sdk.warm.Intervals`, the defaults shown); `readiness_secs = 0` is on demand only |
 | — | `.bitbucket_api_url`, `.bitbucket_token_env` | port only: the forge for post-merge pipelines (`https://api.bitbucket.org/2.0`, `BITBUCKET_ACCESS_TOKEN`) |
 | — | `.required_approvals = 1` | port only: approvals a linked pull request needs before its `[ Merge ]` stops being dim |
