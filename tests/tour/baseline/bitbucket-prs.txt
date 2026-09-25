@@ -29,12 +29,12 @@
    │                          │▌
    │                          │▌
    │──────────────────────────│▌
-   │ Sidebar              󰐃 ⋮ │▌
+   │ Bitbucket PRs        󰐃 ⋮ │▌
    │                          │▌
-   │ Arrows or j/k walk rows. │▌
-   │ Enter opens the          │▌
-   │ selection. Ctrl+Shift+P  │▌
-  │ opens the palette.       │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+  │                          │▌
    │                          │ Open + Draft · 2 repos, 3 PRs     d detail · m open↔merged · r refresh · ? keys · q quit
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]         󰌃 3  󰂨 2(1)   1  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  20:41  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]         󰌃 3  󰂨 2(1)   1  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  21:32  ws   —
                                                            ⋯

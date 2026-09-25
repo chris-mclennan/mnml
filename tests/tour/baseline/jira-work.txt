@@ -29,12 +29,12 @@
    │                          │▌
    │                          │▌
    │──────────────────────────│▌
-   │ Sidebar              󰐃 ⋮ │▌
+   │ Jira Work            󰐃 ⋮ │▌
    │                          │▌
-   │ Arrows or j/k walk rows. │▌
-   │ Enter opens the          │▌
-   │ selection. Ctrl+Shift+P  │▌
-  │ opens the palette.       │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+  │                          │▌
    │                          │ Assigned · 3 issues f fix version · d detail · . actions · / filter · r refresh · ? keys
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  20:41  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  21:32  ws   —
                                                            ⋯

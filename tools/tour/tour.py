@@ -35,6 +35,9 @@ REVIEW = os.path.join(REPO, "tools", "tour-review.md")
 # cell too, belt and braces.)
 TOUR_WS = os.path.join(REPO, ".verify", "tour-ws")
 COLS, ROWS = 120, 40
+# A toast lives four seconds (`app.zig` `toast_ttl_ms`); a shot waits
+# this long for the last one to go before it gives up and says so.
+TOAST_WAIT_MS = 6000
 
 
 def log(msg):
@@ -92,7 +95,11 @@ STATES = [
     ("which-key", "which-key on the standard leader Ctrl+K", [RESET, ("key", "ctrl+k"), ("wait", 1500)]),
     ("hover-help-focus", "the info panel holding the keys (help.focus)", [RESET, ("run", "help.focus"), ("wait", 300)]),
     ("hover-help-pinned", "the info panel pinned (help.pin_toggle)", [("run", "help.pin_toggle"), ("wait", 300)]),
-    ("sessions-table", "the sessions table", [RESET, ("run", "help.pin_toggle"), ("run", "sessions.table"), ("wait", 1500)]),
+    # No `help.pin_toggle` here: the reset's Esc leaves the HELP focus
+    # and that unpins (`app/info_view.zig`), so a toggle after it pinned
+    # the panel again — and its "info panel: pinned" toast was in the
+    # baseline.
+    ("sessions-table", "the sessions table", [RESET, ("run", "sessions.table"), ("wait", 1500)]),
     ("launcher-dock", "the launcher dock revealed (mode always)", [
         RESET, ("run", "view.dock_cycle_mode"), ("run", "view.dock_cycle_mode"), ("wait", 600),
     ]),
@@ -184,6 +191,36 @@ def play(win, steps, state_log):
                 win.click(at[0], at[1])
         else:
             raise ValueError(f"unknown step {st!r}")
+
+
+def wait_toasts_gone(win, state_log, timeout_ms=TOAST_WAIT_MS):
+    """Hold the shot until no toast is up (`status.json` `toasts`). A
+    toast raised by this state or the one before rides its own clock into
+    the next shot otherwise — the sessions table was baselined with the
+    previous toggle's "info panel: pinned" in its corner. Nothing is sent
+    to the app: a command would close the overlay some states shoot. A
+    toast that outlives the wait (a sticky progress line) is named in the
+    state's notes and the shot is taken anyway."""
+    st = win.status()
+    if "toasts" not in st:
+        state_log.append("status.json has no `toasts` count (an app older than the tour); not waited for")
+        return
+    if not st["toasts"]:
+        return
+    rows = win.screen().rstrip("\n").split("\n")
+    # The bottom row echoes the newest toast (under no overlay): its
+    # words go in the note, so a warning the wait kept out of the shot
+    # is still read by whoever reads the log.
+    echo = rows[-1].strip().rstrip("⋯").strip() if rows else ""
+    said = f" (`{echo}`)" if echo else ""
+    t0 = now_ms()
+    while now_ms() - t0 < timeout_ms:
+        time.sleep(0.05)
+        if not win.status().get("toasts"):
+            win.settle(quiet_ms=300, cap_ms=1500)
+            state_log.append(f"waited {int(now_ms() - t0)} ms for {st['toasts']} toast(s) to go{said}")
+            return
+    state_log.append(f"toast lingered: {win.status().get('toasts')} up after {timeout_ms} ms{said}")
 
 
 def find_text(screen, text, row=None):
@@ -374,6 +411,7 @@ def run_tour(args, out):
             try:
                 play(win, steps, state_log)
                 win.settle(quiet_ms=400, cap_ms=3000)
+                wait_toasts_gone(win, state_log)
                 png = os.path.join(out, f"{i:02d}-{name}.png")
                 win.shot(png)
                 check_asserts_live(win, name, asserts, assert_results)
