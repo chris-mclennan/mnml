@@ -241,9 +241,12 @@ through `tools/zig-spec-git.sh`, `integrations` through
 `.workspaces` list taken out. Beside the head, the rows moved only
 where main had moved since the last cut (the `Ctrl+K Ctrl+S
 cheatsheet` shortcut row, the version hash, the clock and coverage
-chip). `whichkey` was NOT re-cut: its steps now open the standard
-Ctrl+K menu where the committed dump shows the leader menu — drift from
-main, not from the logo, left for its own cut.
+chip). `whichkey` was re-cut after the logo landed (branch `postfix`,
+`tools/zig-spec.sh whichkey`): the five-row logo in place of the
+three-row mark above the popup, the workspace line and the section
+heads a row lower, and — main's drift since the last cut — the popup's
+`shift+h → pin hover help` row (`help.pin_toggle`, `Ctrl+K Shift+H`)
+in the right column, the rows under it one lower.
 
 ## The chrome walk (2026-09-14)
 
@@ -858,7 +861,8 @@ rows and the leader tree is the vim profile's. *Re-cut 2026-09-25*
 rows are the `Ctrl+K` continuations — VS Code's meanings (`Ctrl+K
 Ctrl+S` cheatsheet, `Ctrl+K Ctrl+0` fold all, `Ctrl+K Z` full screen) —
 in two columns, 21 rows tall, so it covers the start surface from row
-15 down. The notes below on glyphs and chord counts describe the leader
+15 down. Re-cut again for the five-row logo (see "The start surface's
+logo"). The notes below on glyphs and chord counts describe the leader
 popup, which is now the vim profile's screen.
 The rows carry the same keys and labels in the same order — the root's
 `r → +lsp` became `vim_only` to make that true — but this is the **one

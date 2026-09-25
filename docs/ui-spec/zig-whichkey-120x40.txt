@@ -4,15 +4,15 @@
    │       ipc-zig          │
  󰍉 │      prog.dbg           │
    │                          │
- 󰊢 │         󰐙 Add workspace  │
-   │                          │                                _ __    _ _    _ __    _
-  │                          │                               | '  \  | ' \  | '  \  | |
-   │                          │                               |_|_|_| |_||_| |_|_|_| |_|
- 󰐱 │                          │
-   │                          │                                     workspace · ws
- 󰎒 │                          │
-   │                          │   WORKSPACES                                  SESSIONS
-  │                          │    ws                                open
+ 󰊢 │         󰐙 Add workspace  │                                                            _
+   │                          │                            _ __ ___    _ __    _ __ ___   | |
+  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                           | | | | | | | | | | | | | | | | | |
+ 󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                          │
+ 󰎒 │                          │                                     workspace · ws
+   │                          │
+  │                          │   WORKSPACES                                  SESSIONS
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │            a → sessions                       ctrl+shift+n → messages (toast log)                                  │
  │            b → blame toggle                         ctrl+t → theme…                                                │
@@ -30,11 +30,11 @@
  │       ctrl+o → switch workspace                      right → move split right                                      │
  │       ctrl+p → buffers                                   s → save all                                              │
  │ctrl+pagedown → next buffer                     shift+enter → pin / unpin tab                                       │
- │  ctrl+pageup → previous buffer                           t → theme light ↔ dark                                    │
- │       ctrl+q → last edit location                       up → move split up                                         │
- │       ctrl+r → keybindings reference                     w → close others                                          │
- │   ctrl+right → focus right                               z → full screen (Esc Esc leaves)                          │
- │       ctrl+s → cheatsheet (all chords)                                                                             │
+ │  ctrl+pageup → previous buffer                     shift+h → pin hover help                                        │
+ │       ctrl+q → last edit location                        t → theme light ↔ dark                                    │
+ │       ctrl+r → keybindings reference                    up → move split up                                         │
+ │   ctrl+right → focus right                               w → close others                                          │
+ │       ctrl+s → cheatsheet (all chords)                   z → full screen (Esc Esc leaves)                          │
  │  esc to cancel                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                            ⋯
