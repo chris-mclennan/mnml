@@ -6,7 +6,8 @@
 # and exit 1 (the transcript deleted between the save and the resume).
 # The pane must not be a dead `[exited 1] — Enter closes`: it says why,
 # and `Enter` starts a new session in its place under the same id
-# (`pty_pane.startFresh`).
+# (`pty_pane.startFresh`). Its SESSIONS card says why too, and keeps
+# the session's name rather than the binary's.
 #
 # The fake `claude`: its first session writes a transcript (the user
 # typed into it) and ends after two seconds; a `--resume` deletes the
@@ -32,7 +33,14 @@ expect screen contains "No conversation found"
 expect screen contains "[exited 1] Enter starts a new session"
 expect screen lacks "Enter closes"
 
-# Enter on the pane starts afresh.
+# The card: the reason, in words, and a name that is not `claude`.
+command view.activity_sessions
+wait 500
+expect screen contains "exited 1 · not found"
+expect screen lacks "▌ claude"
+
+# Enter on the card shows its pane; Enter on the pane starts afresh.
+key enter
 key enter
 wait 1500
 shell test "$(grep -c '^new ' argv.log)" -eq 2 && test "$(cut -d' ' -f2 argv.log | sort -u | wc -l | tr -d ' ')" -eq 1
