@@ -1132,45 +1132,38 @@ pub const Buffer = struct {
                 if (self.macros_by_app) return .{ .app = cmd };
                 return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena);
             },
-            .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
+            .operator_to_mark => |m| return self.operatorToMark(m.mark, m.exact, clip, viewport_rows, wrap_width, arena),
+            .operator_motion => |m| return self.finishPendingMotion(m.motion, m.linewise, clip, viewport_rows, wrap_width, arena),
             else => return .{ .app = cmd },
         }
     }
 
-    /// `d'a` / `` y`a `` / `c'a` (`:help '`): the range from the cursor to
-    /// the mark — whole lines for `'`, charwise and exclusive for the
-    /// backtick — as the op list the operator would have built from a
-    /// motion, so folds, `.` and the registers see the usual shape. A
-    /// mark that is not set does nothing (Vim: E20).
-    fn operatorToMark(self: *Buffer, op: u8, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+    /// `d'a` / `` y`a `` / `>'a` (`:help '`): the mark is the end of the
+    /// pending operator's motion — linewise for `'`, exclusive for the
+    /// backtick — and the handler finishes the operator the way it does
+    /// after any motion, so folds, `.` and the registers see the usual
+    /// shape. A mark that is not set drops the operator (Vim: E20).
+    fn operatorToMark(self: *Buffer, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         const ed = self.editor;
-        const mark_byte = @min(self.doc.marks.get(mark) orelse return .noop, ed.len());
-        const row = ed.lineOfByte(mark_byte);
-        var list: std.ArrayList(EditOp) = .empty;
-        if (exact) {
-            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = @min(ed.cursor, mark_byte) }, .select_start, .{ .set_cursor_byte = @max(ed.cursor, mark_byte) } });
-        } else {
-            const lo = @min(ed.currentLine(), row);
-            const hi = @max(ed.currentLine(), row);
-            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = ed.lineStart(lo) }, .select_start, .{ .set_cursor_byte = ed.lineEnd(hi) } });
-        }
-        switch (op) {
-            'd' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection);
-                try list.append(arena, .delete_selection);
-            },
-            'y' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection);
-                try list.appendSlice(arena, &.{ if (exact) .yank_selection else .yank_selection_linewise, .move_cursor_to_selection_start, .select_clear });
-            },
-            'c' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection_inner);
-                try list.appendSlice(arena, &.{ .{ .replace_selection = "" }, .continue_insert_run });
-                self.input.requestInsertMode();
-            },
-            else => return .noop,
-        }
-        return self.applyHandlerOps(list.items, null, clip, viewport_rows, arena);
+        const mark_byte = @min(self.doc.marks.get(mark) orelse {
+            self.input.onBlur();
+            return .noop;
+        }, ed.len());
+        return self.finishPendingMotion(&.{.{ .set_cursor_byte = mark_byte }}, !exact, clip, viewport_rows, wrap_width, arena);
+    }
+
+    /// The handler's pending operator, finished with `motion` as its
+    /// motion (`InputHandler.finishPendingMotion`).
+    fn finishPendingMotion(self: *Buffer, motion: []const EditOp, linewise: bool, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const undo_before = self.editor.doc.history.undoLen();
+        const ctx = self.makeCtx(wrap_width, clip);
+        const r = (try self.input.finishPendingMotion(motion, linewise, ctx, arena)) orelse return .noop;
+        const ev = switch (r) {
+            .ops => |list| try self.applyHandlerOps(list, null, clip, viewport_rows, arena),
+            else => .redraw,
+        };
+        self.syncInsertSession(undo_before);
+        return ev;
     }
 };
 

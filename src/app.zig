@@ -806,6 +806,9 @@ pub const FindBarState = struct {
     snapshot_cursor: usize,
     /// vim `?`: the accept lands on the closest match before the cursor.
     reverse: bool = false,
+    /// `d/pat<CR>`: the bar is a pending operator's motion; Enter hands
+    /// the match to the operator, Esc (or no match) drops it.
+    operator: bool = false,
     /// Enter chains straight into the replace prompt (VS Code `Ctrl+H`).
     chain_to_replace: bool = false,
     /// An Enter (or a step) has put the cursor on a match of this
@@ -3112,6 +3115,8 @@ pub const App = struct {
         const fb = &(self.find_bar orelse return);
         // A terminal's bar leaves its selection on the current match.
         if (self.panes.pty(fb.pane)) |p| @import("app/pty_search.zig").barClosed(self, p, restore);
+        // A pending operator whose search was cancelled goes too.
+        if (fb.operator) if (self.panes.editor(fb.pane)) |e| if (e.buf.input.isOpPending()) e.buf.input.onBlur();
         if (fb.snapshot) |*snap| {
             if (restore) {
                 if (self.panes.editor(fb.pane)) |e| {

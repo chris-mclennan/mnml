@@ -225,6 +225,21 @@ pub const Vim = struct {
         self.enterNormal();
     }
 
+    /// The end of a pending operator's motion that only the buffer or the
+    /// app could find — a mark (`d'a`), a search (`d/pat<CR>`): `motion`
+    /// moves the cursor there from the range's start, and the operator
+    /// finishes the way it finishes after `j` (`linewise`) or `w`. Null
+    /// when no operator is pending.
+    pub fn finishPendingMotion(self: *Vim, motion_ops: []const EditOp, linewise: bool, ctx: EditCtx, arena: Allocator) Allocator.Error!?InputResult {
+        const op = self.op orelse return null;
+        self.resetPending();
+        var b = Builder.init(arena);
+        try b.push(.select_start);
+        for (motion_ops) |m| try b.push(m);
+        if (linewise) return try self.finishLinewise(&b, op, ctx);
+        return try self.finishExclusive(&b, op, ctx);
+    }
+
     /// Insert-mode `Ctrl+N` / `Ctrl+P` / `Ctrl+O` are vim's before they
     /// are the keymap's (lowercase only: `Ctrl+Shift+P` stays the palette).
     pub fn reservesKey(self: *const Vim, k: Key) bool {
@@ -931,6 +946,64 @@ pub const Vim = struct {
         return b.finish();
     }
 
+    /// An operator after a linewise motion (`j` `k` `+` `-` `_`, `'a`):
+    /// every line the range touches, whole. Delete / yank / change keep
+    /// their linewise registers; the case operators and `yk` end where
+    /// the range began (`:help y`).
+    fn finishLinewise(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        try b.push(.mark_operator_start);
+        return self.finishLinewiseMarked(b, op, ctx);
+    }
+
+    /// `finishLinewise` once `mark_operator_start` has run.
+    fn finishLinewiseMarked(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        switch (op) {
+            .delete, .yank, .change, .script => {
+                const r = try self.finishOperator(b, op, ctx, true);
+                if (op == .yank and r == .ops) {
+                    const list: []EditOp = @constCast(r.ops);
+                    list[list.len - 1] = .cursor_to_operator_start;
+                }
+                return r;
+            },
+            .fold, .reflow, .surround_add, .filter => return self.finishOperator(b, op, ctx, false),
+            .lower, .upper, .toggle_case => {
+                try b.push(.normalize_linewise_selection);
+                _ = try self.finishOperator(b, op, ctx, false);
+                try b.push(.cursor_to_operator_start);
+                return b.finish();
+            },
+            else => {
+                try b.push(.normalize_linewise_selection);
+                return self.finishOperator(b, op, ctx, false);
+            },
+        }
+    }
+
+    /// An operator after an exclusive motion (`w` `b` `}` `` `a `` `/pat`
+    /// `n`): `:help exclusive` decides, when the op is applied, whether a
+    /// range ending in column 1 stops at the line above's end or turns
+    /// linewise. The operators that hand their range to the app keep
+    /// the plain range.
+    fn finishExclusive(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        switch (op) {
+            .fold, .reflow, .surround_add, .@"align", .filter, .script, .comment => return self.finishOperator(b, op, ctx, false),
+            else => {},
+        }
+        // The column the motion ended on is the one a linewise delete
+        // keeps (`d/pat` onto a line start lands on column 1).
+        try b.push(.mark_operator_start);
+        try b.push(.exclusive_motion_rule);
+        const vmode_before = self.vmode;
+        var lb = Builder.init(b.arena);
+        const lines = (try self.finishLinewiseMarked(&lb, op, ctx)).ops;
+        self.vmode = vmode_before;
+        var cb = Builder.init(b.arena);
+        const chars = (try self.finishOperator(&cb, op, ctx, false)).ops;
+        try b.push(.{ .if_lines_object = .{ .lines = lines, .chars = chars } });
+        return b.finish();
+    }
+
     /// `{count}cc` / `{count}S`: the lines go to the register whole and
     /// one line stays to type into, keeping the first one's indent
     /// (Neovim's `autoindent`: `  abc` + `ccX` → `  X`).
@@ -1089,14 +1162,13 @@ pub const Vim = struct {
                     // '`). The buffer holds the mark, so it builds the
                     // range; only the buffer-local marks are targets.
                     if (op) |o| {
-                        const glyph: u8 = switch (o) {
-                            .delete => 'd',
-                            .yank => 'y',
-                            .change => 'c',
-                            else => return .consumed,
-                        };
                         if (c < 'a' or c > 'z') return .consumed;
-                        return .{ .app = .{ .operator_to_mark = .{ .op = glyph, .mark = c, .exact = exact } } };
+                        // The operator stays pending: the buffer finds
+                        // the mark and hands it back as the motion's end
+                        // (`finishPendingMotion`), so every operator
+                        // takes a mark the way it takes `w` or `j`.
+                        self.op = o;
+                        return .{ .app = .{ .operator_to_mark = .{ .op = o.glyph()[0], .mark = c, .exact = exact } } };
                     }
                     return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
                 }
@@ -1609,13 +1681,10 @@ pub const Vim = struct {
                     '%' => {
                         const pct = self.count;
                         self.resetPending();
-                        if (pct) |p| {
-                            const clamped: usize = @min(@max(p, 1), 100);
-                            const lc = @max(ctx.line_count, 1);
-                            const target = @max(@min((clamped * lc + 99) / 100, lc), 1);
-                            return ops(arena, &.{.{ .move_to_line_keep_col = target }});
-                        }
-                        return runCmd(.@"editor.bracket_match");
+                        if (pct) |p| return ops(arena, &.{.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) }});
+                        // A motion, so operators and Visual take it too;
+                        // `editor.bracket_match` runs the same one.
+                        return ops(arena, &.{.move_bracket_match});
                     },
                     '*' => {
                         self.resetPending();
@@ -1852,6 +1921,7 @@ pub const Vim = struct {
             if (try self.findCharKey(key, ctx, arena)) |r| return r;
         }
         const n = self.count1();
+        const self_count_pct = self.count;
         self.resetPending();
         if (key.code == .esc) return .consumed;
         if (doubled) {
@@ -2012,30 +2082,47 @@ pub const Vim = struct {
             // Always a `repeat`, so `3.` can replace the count of `dj`.
             try b.pushRepeated(step, n);
             try b.push(.abort_unless_moved);
-            try b.push(.mark_operator_start);
-            switch (op) {
-                .delete, .yank, .change, .script => {
-                    const r = try self.finishOperator(&b, op, ctx, true);
-                    // `yk` ends where the range began, not back where
-                    // the yank was typed (`:help y`).
-                    if (op == .yank and r == .ops) {
-                        const list: []EditOp = @constCast(r.ops);
-                        list[list.len - 1] = .cursor_to_operator_start;
-                    }
-                    return r;
-                },
-                .fold, .reflow, .surround_add => return self.finishOperator(&b, op, ctx, false),
-                .lower, .upper, .toggle_case => {
-                    try b.push(.normalize_linewise_selection);
-                    _ = try self.finishOperator(&b, op, ctx, false);
-                    try b.push(.cursor_to_operator_start);
-                    return b.finish();
-                },
-                else => {
-                    try b.push(.normalize_linewise_selection);
-                    return self.finishOperator(&b, op, ctx, false);
-                },
+            return self.finishLinewise(&b, op, ctx);
+        }
+        // `d_` is `dd`, `d3_` three lines (`:help _`): `count - 1` lines
+        // down, linewise.
+        if (ch == '_') {
+            if (op == .filter) return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n } } };
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            if (n > 1) {
+                try b.pushRepeated(.move_down, n - 1);
+                try b.push(.abort_unless_moved);
             }
+            return self.finishLinewise(&b, op, ctx);
+        }
+        // `%` is an inclusive motion (`d%`, `y%`, `c%`); `{count}%` is
+        // linewise to that percentage of the file.
+        if (ch == '%') {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            if (self_count_pct) |p| {
+                try b.push(.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) });
+                return self.finishLinewise(&b, op, ctx);
+            }
+            try b.push(.move_bracket_match);
+            try b.push(.make_selection_inclusive);
+            return self.finishOperator(&b, op, ctx, false);
+        }
+        // `dn` / `dN` (`:help n`): to the next / previous match of the last
+        // search, exclusive. `d/pat<CR>` / `d?pat<CR>`: the find bar opens
+        // with the operator still pending; the app hands the match back
+        // (`finishPendingMotion`).
+        if (ch == 'n' or ch == 'N') {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            try b.push(.{ .move_to_find_match = (ch == 'n') != self.last_search_backward });
+            return self.finishExclusive(&b, op, ctx);
+        }
+        if (ch == '/' or ch == '?') {
+            self.op = op;
+            self.last_search_backward = ch == '?';
+            return .{ .app = .{ .operator_search = .{ .backward = ch == '?' } } };
         }
         if (motion(code)) |m0| {
             const m: EditOp = if (n == 1 and (op == .delete or op == .yank)) switch (m0) {
@@ -2060,7 +2147,8 @@ pub const Vim = struct {
             if (inclusive) try b.push(.move_right);
             // `G` is linewise: the last line counts whole.
             if (ch == 'G') try b.push(.move_line_end);
-            return self.finishOperator(&b, op, ctx, false);
+            if (inclusive or ch == 'G') return self.finishOperator(&b, op, ctx, false);
+            return self.finishExclusive(&b, op, ctx);
         }
         return .consumed;
     }
@@ -2262,6 +2350,12 @@ pub const Vim = struct {
             const n = self.count1();
             self.count = null;
             return repeated(arena, m, n);
+        }
+        if (ch == '%' and !key.mods.ctrl) {
+            const pct = self.count;
+            self.count = null;
+            if (pct) |p| return ops(arena, &.{.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) }});
+            return ops(arena, &.{.move_bracket_match});
         }
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
         self.count = null;
@@ -2523,6 +2617,14 @@ const Builder = struct {
         return .{ .ops = b.list.items };
     }
 };
+
+/// `{count}%` (`:help N%`): the line `count` percent into the file,
+/// rounded up, 1-based.
+fn pctLine(p: u32, line_count: usize) usize {
+    const clamped: usize = @min(@max(p, 1), 100);
+    const lc = @max(line_count, 1);
+    return @max(@min((clamped * lc + 99) / 100, lc), 1);
+}
 
 fn asciiLetter(c: ?u21) ?u8 {
     const v = c orelse return null;

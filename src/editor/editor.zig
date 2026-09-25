@@ -101,6 +101,11 @@ pub const Editor = struct {
     /// and `select_find_match` reads them when it is applied.
     find_next: ?[2]usize = null,
     find_prev: ?[2]usize = null,
+    /// The match `n` / `N` would go to as a motion: the first one that
+    /// starts after the cursor, the last one that starts before it, both
+    /// wrapping (`:help n`). Seeded with `find_next`; `move_to_find_match`.
+    find_after: ?usize = null,
+    find_before: ?usize = null,
     /// The last bracket object chose whole lines (`select.bracketCount`);
     /// `if_lines_object` reads it.
     object_lines: bool = false,

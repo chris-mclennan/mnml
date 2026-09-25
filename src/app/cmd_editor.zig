@@ -499,34 +499,7 @@ fn enclosingPair(text: []const u8, cursor: usize, open: u8, close: u8) ?[2]usize
     return .{ o, c };
 }
 
-fn matchForward(text: []const u8, open_byte: usize, open: u8, close: u8) ?usize {
-    var depth: usize = 1;
-    var i = open_byte + 1;
-    while (i < text.len) : (i += 1) {
-        if (text[i] == open) {
-            depth += 1;
-        } else if (text[i] == close) {
-            depth -= 1;
-            if (depth == 0) return i;
-        }
-    }
-    return null;
-}
-
-fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?usize {
-    var depth: usize = 1;
-    var i = close_byte;
-    while (i > 0) {
-        i -= 1;
-        if (text[i] == close) {
-            depth += 1;
-        } else if (text[i] == open) {
-            depth -= 1;
-            if (depth == 0) return i;
-        }
-    }
-    return null;
-}
+const matchForward = @import("../editor/motion.zig").matchForward;
 
 /// `editor.fold_all_brackets` (`zM` without a server): one stack scan
 /// per bracket family closes every multi-line pair, then — for an
@@ -619,32 +592,15 @@ fn unfoldAll(app: *App) CommandError!void {
 
 /// Jump to the bracket paired with the one under the cursor; when the
 /// cursor is not on a bracket, the first one after it on the line.
-/// Silent when there is nothing to match.
+/// Silent when there is nothing to match. The motion is vim's `%`
+/// (`motion.bracketMatch`), which operators take as their range too.
 fn bracketMatch(app: *App) CommandError!void {
     const e = try app.requireEditor();
     @import("jumplist.zig").noteJumpMotion(app);
     const ed = e.buf.editor;
-    const text = ed.bytes();
-    const pairs = [_][2]u8{ .{ '(', ')' }, .{ '[', ']' }, .{ '{', '}' } };
-    var at = ed.cursor;
-    const le = ed.lineEnd(ed.currentLine());
-    while (at < le and bracketKind(text[at], &pairs) == null) at += 1;
-    if (at >= le) return;
-    const kind = bracketKind(text[at], &pairs).?;
-    const pr = pairs[kind.idx];
-    const target = if (kind.open) matchForward(text, at, pr[0], pr[1]) else matchBackward(text, at, pr[0], pr[1]);
-    const dest = target orelse return;
-    ed.setCursor(dest);
+    if (!@import("../editor/motion.zig").bracketMatch(ed)) return;
     ed.goal_col = null;
     app.needs_render = true;
-}
-
-fn bracketKind(c: u8, pairs: []const [2]u8) ?struct { idx: usize, open: bool } {
-    for (pairs, 0..) |p, i| {
-        if (c == p[0]) return .{ .idx = i, .open = true };
-        if (c == p[1]) return .{ .idx = i, .open = false };
-    }
-    return null;
 }
 
 // ─── change list (`g;` / `g,`) ──────────────────────────────────────────

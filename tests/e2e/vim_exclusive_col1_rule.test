@@ -1,0 +1,15 @@
+# `:help exclusive`: an exclusive motion ending in column 1 moves its end
+# to the previous line's end, inclusive. Neovim: w mb j d`b on "abc def/x"
+# -> "abc " / "x". mnml also deletes the line break -> "abc x".
+write f.txt "abc def\nx\n"
+open f.txt
+command editor.use_vim
+key w
+key m
+key b
+key j
+key d
+key `
+key b
+ex w
+expect file f.txt contains "abc \nx\n"

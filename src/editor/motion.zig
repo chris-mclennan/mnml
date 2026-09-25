@@ -512,6 +512,75 @@ fn findCharFrom(ed: *Editor, cur: usize, ch: u21, forward: bool, before: bool, r
 
 // ─── tests ──────────────────────────────────────────────────────────────
 
+// ─── `%` and search matches ──────────────────────────────────────────
+
+const bracket_pairs = [_][2]u8{ .{ '(', ')' }, .{ '[', ']' }, .{ '{', '}' } };
+
+/// `%` (`:help %`): to the bracket paired with the one under the
+/// cursor — or, off a bracket, with the first one after it on the line.
+/// False (nothing moves) when there is no bracket or no partner; an
+/// operator then fails.
+pub fn bracketMatch(ed: *Editor) bool {
+    const text = ed.bytes();
+    var at = ed.cursor;
+    const le = ed.lineEnd(ed.currentLine());
+    while (at < le and bracketKind(text[at]) == null) at += 1;
+    if (at >= le) return false;
+    const kind = bracketKind(text[at]).?;
+    const pr = bracket_pairs[kind.idx];
+    const dest = (if (kind.open) matchForward(text, at, pr[0], pr[1]) else matchBackward(text, at, pr[0], pr[1])) orelse return false;
+    ed.cursor = dest;
+    return true;
+}
+
+fn bracketKind(c: u8) ?struct { idx: usize, open: bool } {
+    for (bracket_pairs, 0..) |p, i| {
+        if (c == p[0]) return .{ .idx = i, .open = true };
+        if (c == p[1]) return .{ .idx = i, .open = false };
+    }
+    return null;
+}
+
+/// The `close` pairing the `open` at `open_byte`, nesting counted.
+pub fn matchForward(text: []const u8, open_byte: usize, open: u8, close: u8) ?usize {
+    var depth: usize = 1;
+    var i = open_byte + 1;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == open) {
+            depth += 1;
+        } else if (text[i] == close) {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return null;
+}
+
+/// The `open` pairing the `close` at `close_byte`, nesting counted.
+pub fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?usize {
+    var depth: usize = 1;
+    var i = close_byte;
+    while (i > 0) {
+        i -= 1;
+        if (text[i] == close) {
+            depth += 1;
+        } else if (text[i] == open) {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return null;
+}
+
+/// `n` / `N` as a motion: to the start of the find match the app seeded
+/// after (`forward`) or before the cursor (`Editor.find_after` /
+/// `find_before`). False when there is none.
+pub fn toFindMatch(ed: *Editor, forward: bool) bool {
+    const at = (if (forward) ed.find_after else ed.find_before) orelse return false;
+    ed.cursor = ed.snapBoundary(@min(at, ed.len()));
+    return true;
+}
+
 fn mk(text: []const u8, cursor: usize) !*Editor {
     const ed = try Editor.init(std.testing.allocator, text);
     ed.cursor = cursor;

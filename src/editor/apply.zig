@@ -126,6 +126,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             motion.lineEnd(ed);
             try mc.moveExtras(ed, motion.lineEnd);
         },
+        .move_bracket_match => if (!motion.bracketMatch(ed)) {
+            out.aborted = true;
+        },
+        .move_to_find_match => |fwd| if (!motion.toFindMatch(ed, fwd)) {
+            out.aborted = true;
+        },
         .move_line_last_char => {
             motion.lineLastChar(ed);
             try mc.moveExtras(ed, motion.lineLastChar);
@@ -188,6 +194,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .mark_operator_start => select.markOperatorStart(ed),
         .cursor_to_operator_start => select.cursorToOperatorStart(ed),
         .select_count_lines => |n| select.selectCountLines(ed, n),
+        .exclusive_motion_rule => select.exclusiveMotionRule(ed),
         .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
         .if_lines_object => |c| for (if (ed.object_lines) c.lines else c.chars) |o| try applyOne(ed, o, vp, clip, out),
 
@@ -430,7 +437,8 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
         .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
         .undo_line,                                                             .abort_unless_moved,                                    .mark_operator_start,                                                                                            .cursor_to_operator_start,
-        .{ .select_count_lines = 2 },                                           .delete_selection_linewise,                             .{ .register_selection_delete = true },                                                                          .{ .register_selection_delete = false },
+        .{ .select_count_lines = 2 },                                           .move_bracket_match,                                    .{ .move_to_find_match = true },                                                                                 .exclusive_motion_rule,
+        .delete_selection_linewise,                                             .{ .register_selection_delete = true },                 .{ .register_selection_delete = false },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

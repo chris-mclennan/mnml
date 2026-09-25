@@ -794,6 +794,22 @@ pub fn selectCountLines(ed: *Editor, count: u32) void {
     ed.op_goal = null;
 }
 
+/// `exclusive_motion_rule` (`:help exclusive`): `d}` from a line's
+/// start is linewise, `` d`m `` onto a line's first column stops short
+/// of that line's break.
+pub fn exclusiveMotionRule(ed: *Editor) void {
+    ed.object_lines = false;
+    const a = ed.anchor orelse return;
+    const lo = @min(a, ed.cursor);
+    const hi = @max(a, ed.cursor);
+    const hi_line = ed.lineOfByte(hi);
+    const lo_line = ed.lineOfByte(lo);
+    if (hi_line <= lo_line or hi != ed.lineStart(hi_line)) return;
+    const new_hi = ed.lineEnd(hi_line - 1);
+    if (ed.cursor >= a) ed.cursor = new_hi else ed.anchor = new_hi;
+    ed.object_lines = lo <= ed.firstNonWs(lo_line);
+}
+
 /// `mark_operator_start`.
 pub fn markOperatorStart(ed: *Editor) void {
     const a = ed.anchor orelse ed.cursor;

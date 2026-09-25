@@ -164,6 +164,19 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
     app.needs_render = true;
 }
 
+/// `d/pat<CR>` / `c?pat<CR>`: the bar opens for the handler's pending
+/// operator (`AppCommand.operator_search`).
+pub fn openBarForOperator(app: *App, reverse: bool) Allocator.Error!void {
+    openBar(app, reverse) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            if (app.activeEditor()) |e| e.buf.input.onBlur();
+            return;
+        },
+    };
+    if (app.find_bar) |*fb| fb.operator = true;
+}
+
 /// vim's `/` and `?` read the query as a vim pattern, always — the same
 /// text `:s` and `:g` take; only the standard profile's Ctrl+F bar has a
 /// literal mode behind its `.*` chip (VS Code). `\V` is vim's literal.
@@ -367,6 +380,16 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
     }
     const idx = (if (reverse) f.indexBefore(tg.cursor()) else f.indexAtOrAfter(forwardFrom(app, tg.cursor()))) orelse 0;
     f.current = idx;
+    if (fb.operator and tg == .editor) {
+        // The match ends the pending operator's motion (exclusive,
+        // `:help /`); `move_to_find_match` reads it when applied, so `.`
+        // goes on to the next one.
+        fb.operator = false;
+        app.closeFindBar(false);
+        const e = tg.editor;
+        try @import("dispatch.zig").runBufferApp(app, pane, e, .{ .operator_motion = .{ .motion = &.{.{ .move_to_find_match = !reverse }}, .linewise = false } });
+        return;
+    }
     jumplist.noteJumpMotion(app);
     try noteWrap(app, f.matches.items[idx].start, tg.cursor(), !reverse, false);
     tg.setCursor(tg.landing(idx));
@@ -745,8 +768,25 @@ pub fn seedCtxMatches(e: *EditorPane) Allocator.Error!void {
     const cur = e.buf.editor.cursor;
     e.buf.editor.find_next = null;
     e.buf.editor.find_prev = null;
+    e.buf.editor.find_after = null;
+    e.buf.editor.find_before = null;
     const ms = e.find.matches.items;
     if (ms.len == 0) return;
+    // `n` / `N` as motions (`dn`) step off a match the cursor is on.
+    e.buf.editor.find_after = ms[0].start;
+    for (ms) |m| if (m.start > cur) {
+        e.buf.editor.find_after = m.start;
+        break;
+    };
+    e.buf.editor.find_before = ms[ms.len - 1].start;
+    var bi = ms.len;
+    while (bi > 0) {
+        bi -= 1;
+        if (ms[bi].start < cur) {
+            e.buf.editor.find_before = ms[bi].start;
+            break;
+        }
+    }
     for (ms) |m| if (m.start <= cur and cur < m.end) {
         e.buf.editor.find_next = .{ m.start, m.end };
         e.buf.editor.find_prev = .{ m.start, m.end };
