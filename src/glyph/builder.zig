@@ -102,7 +102,7 @@ pub const ghostty_svg = data.ghostty_svg;
 /// change, so its footprint is what moves.
 ///
 /// So the ghost comes down a tenth, to a 0.72 em band (`ghost_fit`),
-/// and the figure goes up to a 1.30-advance cap (`figure_fit`) — the
+/// and the figure goes up to a 1.45-advance cap (`figure_fit`) — the
 /// rough tenth it was asked for stops at the cap, +4 %, because past
 /// 1.3 advances a mark is more in its neighbours' cells than its own.
 /// Both keep the shared centre (0.36 em), so nothing sits lower than
@@ -113,7 +113,7 @@ pub const ghostty_svg = data.ghostty_svg;
 /// placed the same way. The placed-box test below prints every box
 /// and pins each one to ±3 %.
 pub const ghost_fit: ttf.Fit = .{ .height = 0.72 };
-pub const figure_fit: ttf.Fit = .{ .width = 1.30 };
+pub const figure_fit: ttf.Fit = .{ .width = 1.45 };
 
 /// The art behind the two marks a user may replace. Each field
 /// defaults to the shipped drawing, so a build that only swaps one
@@ -709,11 +709,11 @@ const Pin = struct { cp: u21, w: f64, h: f64 };
 
 /// The shipped boxes. The ghost is height-limited by `ghost_fit` (0.72
 /// em, so 0.601 em — 1.00 advances — across from its 27 × 32 art); the
-/// figure is width-limited by `figure_fit` (1.30 advances is 0.780 em,
-/// and its 24 × 15 art makes that 0.4875 em tall); the square pair sit
+/// figure is width-limited by `figure_fit` (1.45 advances is 0.870 em,
+/// and its 24 × 15 art makes that 0.5438 em tall); the square pair sit
 /// on the default `Fit`'s 1.25-advance cap, 0.75 em each way.
 const pins = [_]Pin{
-    .{ .cp = claude, .w = 0.780, .h = 0.4875 },
+    .{ .cp = claude, .w = 0.870, .h = 0.54375 },
     .{ .cp = codex, .w = 0.750, .h = 0.750 },
     .{ .cp = claude_spark, .w = 0.750, .h = 0.750 },
     .{ .cp = terminal, .w = 0.6014, .h = 0.720 },
@@ -724,7 +724,7 @@ const pins = [_]Pin{
 /// change of a tenth (the size of the ones the user asks for) fails.
 const pin_tolerance = 0.03;
 
-test "every shipped mark's placed box is pinned: the ghost's 0.72 em band, the figure's 1.30-advance cap, the square pair on the default — all on one centre" {
+test "every shipped mark's placed box is pinned: the ghost's 0.72 em band, the figure's 1.45-advance cap, the square pair on the default — all on one centre" {
     // The table these numbers come from, for a human. It prints under
     // `-Dtest-trace` (whose runner is `root` and streams every test's
     // name anyway — `tools/test_runner.zig`):
@@ -776,9 +776,9 @@ test "the placed boxes stand in the relation the user asked for: the figure as w
     try t.expectApproxEqAbs(@as(f64, 0.72), ghost.emHeight(), 0.001);
     try t.expectApproxEqAbs(@as(f64, 27.0 / 32.0), ghost.w / ghost.h, 0.01);
     // The figure was 1.25 advances (as wide as the ghost's 1.114 and
-    // then some); it is 1.30 now, and still 15/24 as tall as it is
+    // then some); it is 1.45 now, and still 15/24 as tall as it is
     // wide: a uniform scale, never a stretch.
-    try t.expectApproxEqAbs(@as(f64, 1.30), figure.advances(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 1.45), figure.advances(), 0.001);
     try t.expectApproxEqAbs(@as(f64, 15.0 / 24.0), figure.h / figure.w, 0.001);
     try t.expect(figure.w > ghost.w);
     // The square pair are square and match each other exactly, which
@@ -801,9 +801,10 @@ test "a custom SVG in either slot is placed with that slot's fit — the user's 
     // A square in the terminal slot stops at the ghost's 0.72 em band…
     try t.expectApproxEqAbs(@as(f64, 0.72), by_cp.get(terminal).?.emHeight(), 0.001);
     try t.expectApproxEqAbs(@as(f64, 1.20), by_cp.get(terminal).?.advances(), 0.001);
-    // …and the same square in Claude's slot at the figure's 1.30-advance
-    // cap (0.78 em, under the default 0.80 band), so the two slots
+    // …and the same square in Claude's slot: the figure's 1.45-advance
+    // cap would be 0.87 em, so the default 0.80 band wins and the square
+    // stops at 0.80 em, 800/600 advances wide — so the two slots
     // place the same art differently and each as its own mark is.
-    try t.expectApproxEqAbs(@as(f64, 1.30), by_cp.get(claude).?.advances(), 0.001);
-    try t.expectApproxEqAbs(@as(f64, 0.78), by_cp.get(claude).?.emHeight(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 800.0 / 600.0), by_cp.get(claude).?.advances(), 0.001);
+    try t.expectApproxEqAbs(@as(f64, 0.80), by_cp.get(claude).?.emHeight(), 0.001);
 }
