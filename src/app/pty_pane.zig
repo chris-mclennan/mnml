@@ -1684,6 +1684,34 @@ const screen_mod = @import("../ipc/screen.zig");
 const Rect = @import("../ui/rect.zig");
 
 /// Tick + render until `needle` is on screen or `ms` elapse.
+/// Tick until `needle` is on screen `n` times: for output that arrives
+/// in pieces, the first piece is not the state the test asserts on.
+fn tickUntilScreenCount(app: *App, needle: []const u8, n: usize, ms: u32) !bool {
+    var waited: u32 = 0;
+    while (waited <= ms) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        try app.render();
+        const txt = try screen_mod.toTestText(app.gpa, &app.screen);
+        defer app.gpa.free(txt);
+        if (std.mem.count(u8, txt, needle) >= n) return true;
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    return false;
+}
+
+/// Tick until the child has switched the pane's input encoding to
+/// bracketed paste (state, not a beat of wall time); the deadline only
+/// fails.
+fn tickUntilBracketedPaste(app: *App, id: PaneId, ms: u32) !bool {
+    var waited: u32 = 0;
+    while (waited <= ms) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        if (app.panes.pty(id).?.encoding().bracketed_paste) return true;
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    return false;
+}
+
 pub fn tickUntilScreen(app: *App, needle: []const u8, ms: u32) !bool {
     var waited: u32 = 0;
     while (waited <= ms) : (waited += 10) {
@@ -1773,12 +1801,16 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
-    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo; cat | tr a-z A-Z" }, .label = "cat" });
-    // Give the shell a beat to set up the tty, then type.
-    app.io.sleep(.fromMilliseconds(200), .awake) catch {};
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo; echo ready; cat | tr a-z A-Z" }, .label = "cat" });
+    // The tty is set up (echo off) once the child says so; then type.
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
     for ("shout") |c| try app.handle(.{ .key = Key.char(c) });
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(try tickUntilScreen(&app, "SHOUT", 5000));
+    // What was typed reached the child and only the child: no echo.
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "shout") == null);
     try app.handle(.{ .key = Key.ctrl('d') });
     try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
     try t.expect(app.panes.pty(id).?.exit.?.ok());
@@ -1794,8 +1826,8 @@ test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader an
     try command.run(&app, .{ .static = .@"editor.use_vim" });
     // `-isig`: a `Ctrl-\` that reaches the child is a byte, not SIGQUIT;
     // `tr` paints it as `#`.
-    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -isig; cat | tr '\\034a-z' '#A-Z'" }, .label = "cat" });
-    app.io.sleep(.fromMilliseconds(200), .awake) catch {};
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -isig; echo ready; cat | tr '\\034a-z' '#A-Z'" }, .label = "cat" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
     const p = app.panes.pty(id).?;
     // Terminal mode: `space v` is the child's, not the leader's.
     for (" v") |c| try app.handle(.{ .key = Key.char(c) });
@@ -1871,8 +1903,7 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     app.tree.visible = false;
     // The child switches bracketed paste on, then dumps what it reads as octal.
     const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty raw -echo; printf '\\033[?2004h'; dd bs=1 count=12 2>/dev/null | od -An -c" }, .label = "od" });
-    app.io.sleep(.fromMilliseconds(200), .awake) catch {};
-    try app.tick(App.nowMs(app.io));
+    try t.expect(try tickUntilBracketedPaste(&app, id, 5000));
     try t.expect(app.panes.pty(id).?.encoding().bracketed_paste);
     const text = try app.gpa.dupe(u8, "ab");
     try app.handle(.{ .paste = text });
@@ -2037,7 +2068,8 @@ test "the wheel over a pty: a child tracking the mouse gets every event of a bat
     app.now_ms += 1000;
     for (0..3) |_| try app.handle(.{ .mouse = .{ .x = r.x + 5, .y = r.y + 3, .kind = .scroll_down } });
     try app.tick(app.now_ms);
-    try t.expect(try tickUntilScreen(&app, "<65;", 3000));
+    // All three echoes, not the first: they can arrive in pieces.
+    try t.expect(try tickUntilScreenCount(&app, "<65;", 3, 5000));
     const txt = try screen_mod.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
     try t.expectEqual(@as(usize, 3), std.mem.count(u8, txt, "<65;"));
