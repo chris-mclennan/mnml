@@ -3392,6 +3392,7 @@ pub const App = struct {
         sidebar_auto.tick(self, now);
         launcher_dock_mod.tick(self, now);
         focus_follow.tick(self, now);
+        info_view_app.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -3433,6 +3434,7 @@ pub const App = struct {
         if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (focus_follow.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (info_view_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);

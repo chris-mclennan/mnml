@@ -290,6 +290,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.wheel_lines", .label = "Lines per wheel notch", .section = .ui, .scope = .home, .number = .{ .min = 1, .max = 12, .step = 1 } },
     .{ .path = "ui.md_image_rows", .label = "Markdown image rows", .section = .ui, .scope = .home, .number = .{ .min = 3, .max = 40, .step = 1 } },
     .{ .path = "ui.hover_help_height", .label = "Hover help rows", .section = .ui, .scope = .home, .number = .{ .min = config.Config.hover_help_height_min, .max = config.Config.hover_help_height_max, .step = 1 } },
+    // How long the box holds an entry while the pointer travels to it
+    // (`app/info_view.zig`, the corridor).
+    .{ .path = "ui.hover_help_grace_ms", .label = "Hover help grace (ms)", .section = .ui, .scope = .home, .number = .{ .min = 0, .max = config.Config.hover_help_grace_ms_max, .step = 100 } },
     // ── Editor ──
     .{ .path = "editor.input_style", .label = "Input style", .section = .editor, .scope = .home },
     .{ .path = "editor.auto_pair", .label = "Auto-pair brackets", .section = .editor, .scope = .workspace },

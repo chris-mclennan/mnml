@@ -23,6 +23,20 @@
 //! (`info_view_copy.askPrompt`), built at press time from the state of
 //! that moment. Nothing from the frame arena is kept between frames.
 //!
+//! **The way to the box is safe.** The pointer leaving a target for
+//! the box crosses other targets on the way — the tree's rows, the
+//! empty space under them — and each used to take the box over, so a
+//! link was never reachable. Leaving a target starts a grace window
+//! (`ui.hover_help_grace_ms`): while it runs and the pointer keeps
+//! heading for the box — no farther from it than the step before, and
+//! inside the column (± `corridor_margin`) or the triangle from where it
+//! left toward the box's near edge (`inCorridor`) — the box keeps the
+//! entry it had. A step outside the corridor switches at once; the
+//! window running out while the pointer rests switches too (the tick's
+//! one deadline, `nextDeadlineMs`, not a timer of its own). On the box
+//! the entry is held until the pointer leaves it, whatever the event —
+//! a wheel notch or a press included.
+//!
 //! The kebab's menu is the one row Rust has: turn the panel off.
 
 const std = @import("std");
@@ -43,6 +57,7 @@ const copy = @import("info_view_copy.zig");
 const settings_app = @import("settings.zig");
 const git_app = @import("git.zig");
 const docs = @import("docs.zig");
+const Rect = @import("../ui/rect.zig");
 
 pub const Copy = view.Copy;
 pub const Part = view.Part;
@@ -72,7 +87,102 @@ pub const State = struct {
     hover_target: ?HitTarget = null,
     /// A hovered link's url, copied out of the dying frame.
     link_url: [512]u8 = undefined,
+    /// Where the box was painted last frame (null while it is not):
+    /// what the corridor heads for.
+    rect: ?Rect = null,
+    /// The pointer at the previous snapshot — the corridor asks whether
+    /// the pointer is still closing on the box.
+    last_ptr: ?Pt = null,
+    /// The pointer was on the box at the previous snapshot: leaving the
+    /// box is not leaving a target, and starts no grace.
+    was_on_box: bool = false,
+    /// The entry held while the pointer travels to the box.
+    grace: ?Grace = null,
 };
+
+pub const Pt = struct { x: u16, y: u16 };
+
+/// The entry the box keeps while the pointer heads for it: the target
+/// it came from, where the pointer left it, and when the window shuts.
+pub const Grace = struct {
+    target: HitTarget,
+    anchor: Pt,
+    until_ms: i64,
+};
+
+/// Cells either side of the column the pointer may stray and still be
+/// on its way down (or up) to the box.
+pub const corridor_margin: u16 = 2;
+
+/// Whether the pointer at `now` is still on its way to `box`: no
+/// farther from it on either axis than at `prev`, and inside the
+/// column's band (± `corridor_margin`) or the triangle from `anchor`
+/// (where it left its target) to the box's near edge, widened by the
+/// margin at the box's end.
+pub fn inCorridor(anchor: Pt, prev: Pt, now: Pt, box: Rect) bool {
+    if (box.isEmpty()) return false;
+    const dp = gap(prev, box);
+    const dn = gap(now, box);
+    if (dn.x > dp.x or dn.y > dp.y) return false;
+    if (now.x + corridor_margin >= box.x and now.x < box.right() + corridor_margin) return true;
+    // The near edge's two ends, widened by the margin.
+    const m: i32 = corridor_margin;
+    const bx0: i32 = @as(i32, box.x) - m;
+    const bx1: i32 = @as(i32, box.right()) - 1 + m;
+    const by0: i32 = @as(i32, box.y) - m;
+    const by1: i32 = @as(i32, box.bottom()) - 1 + m;
+    const ax: i32 = anchor.x;
+    const ay: i32 = anchor.y;
+    const c1, const c2 = if (ay < box.y)
+        .{ [2]i32{ bx0, box.y }, [2]i32{ bx1, box.y } }
+    else if (ay >= box.bottom())
+        .{ [2]i32{ bx0, @as(i32, box.bottom()) - 1 }, [2]i32{ bx1, @as(i32, box.bottom()) - 1 } }
+    else if (ax < box.x)
+        .{ [2]i32{ box.x, by0 }, [2]i32{ box.x, by1 } }
+    else
+        .{ [2]i32{ @as(i32, box.right()) - 1, by0 }, [2]i32{ @as(i32, box.right()) - 1, by1 } };
+    return inTriangle(.{ ax, ay }, c1, c2, .{ now.x, now.y });
+}
+
+/// The pointer's distance to `box` along each axis (0 inside its span).
+fn gap(p: Pt, box: Rect) Pt {
+    const dx: u16 = if (p.x < box.x) box.x - p.x else if (p.x >= box.right()) p.x - (box.right() - 1) else 0;
+    const dy: u16 = if (p.y < box.y) box.y - p.y else if (p.y >= box.bottom()) p.y - (box.bottom() - 1) else 0;
+    return .{ .x = dx, .y = dy };
+}
+
+/// `p` inside (or on an edge of) the triangle `a b c`.
+fn inTriangle(a: [2]i32, b: [2]i32, c: [2]i32, p: [2]i32) bool {
+    const d1 = cross(a, b, p);
+    const d2 = cross(b, c, p);
+    const d3 = cross(c, a, p);
+    const neg = d1 < 0 or d2 < 0 or d3 < 0;
+    const pos = d1 > 0 or d2 > 0 or d3 > 0;
+    return !(neg and pos);
+}
+
+fn cross(a: [2]i32, b: [2]i32, p: [2]i32) i64 {
+    return @as(i64, b[0] - a[0]) * (p[1] - a[1]) - @as(i64, b[1] - a[1]) * (p[0] - a[0]);
+}
+
+/// The grace window's end is a frame: the box switches to whatever the
+/// resting pointer is on. One deadline, read by `App.nextDeadlineMs`.
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    const g = app.info_view.grace orelse return null;
+    return g.until_ms;
+}
+
+/// `App.tick`: a grace window that ran out asks for the frame that
+/// shows what the pointer rests on now.
+pub fn tick(app: *App, now: i64) void {
+    const g = app.info_view.grace orelse return;
+    if (now < g.until_ms) return;
+    // The held entry is let go with the window: what the pointer rests
+    // on takes the box at the next frame.
+    app.info_view.grace = null;
+    app.info_view.sticky = null;
+    app.needs_render = true;
+}
 
 /// Read the previous frame's hits while they are still whole: what the
 /// pointer rests on, with the box's own cells resolving to the last
@@ -80,13 +190,42 @@ pub const State = struct {
 pub fn snapshotHover(app: *App) void {
     const st = &app.info_view;
     st.hover_target = null;
-    if (!app.hover_live) return;
-    const h = app.hover orelse return;
-    const target = app.hits.at(h.x, h.y) orelse return;
-    if (target == .info_view) {
+    const h = app.hover orelse {
+        st.grace = null;
+        st.last_ptr = null;
+        st.was_on_box = false;
+        return;
+    };
+    const ptr: Pt = .{ .x = h.x, .y = h.y };
+    const prev = st.last_ptr;
+    const was_on_box = st.was_on_box;
+    st.last_ptr = ptr;
+    const under = app.hits.at(h.x, h.y);
+    // On the box, whatever brought the pointer there — a move, a wheel
+    // notch, a press on a link — the box holds what it had.
+    if (under != null and under.? == .info_view) {
+        st.was_on_box = true;
+        st.grace = null;
         st.hover_target = st.sticky;
         return;
     }
+    st.was_on_box = false;
+    if (!app.hover_live) {
+        st.grace = null;
+        return;
+    }
+    // On the way to the box: the entry the pointer left stays while it
+    // keeps heading there and the window is open.
+    if (graceHolds(app, ptr, prev, was_on_box, under)) {
+        st.hover_target = st.sticky;
+        return;
+    }
+    // Over nothing, the entry is let go: a later step toward the box
+    // must not bring back one the pointer already left behind.
+    const target = under orelse {
+        st.sticky = null;
+        return;
+    };
     st.sticky = if (target == .link) null else target;
     // A link's url is an arena slice about to die: copy it into the
     // state's own buffer (a longer one is cut — the copy names it).
@@ -97,6 +236,49 @@ pub fn snapshotHover(app: *App) void {
         return;
     }
     st.hover_target = target;
+}
+
+/// Whether the box keeps the entry it had while the pointer is at
+/// `ptr` over `under`: a grace window is open (or opens now, as the
+/// pointer leaves the target it had) and the pointer is still in the
+/// corridor to the box. A new target outside the corridor ends it.
+fn graceHolds(app: *App, ptr: Pt, prev: ?Pt, was_on_box: bool, under: ?HitTarget) bool {
+    const st = &app.info_view;
+    const box = st.rect orelse {
+        st.grace = null;
+        return false;
+    };
+    const kept = st.sticky orelse {
+        st.grace = null;
+        return false;
+    };
+    // Back on the target the box already shows: nothing to hold.
+    if (under) |u| if (sameTarget(u, kept)) {
+        st.grace = null;
+        return false;
+    };
+    const from = prev orelse return false;
+    if (st.grace == null) {
+        // A pointer that has not moved is resting, not travelling.
+        if (from.x == ptr.x and from.y == ptr.y) return false;
+        const ms = app.cfg.ui.hover_help_grace_ms;
+        // Leaving the box, or a pointer that was not resting on the
+        // entry's target, starts nothing.
+        if (ms == 0 or was_on_box) return false;
+        st.grace = .{ .target = kept, .anchor = from, .until_ms = app.now_ms + ms };
+    }
+    const g = st.grace.?;
+    if (app.now_ms >= g.until_ms or !inCorridor(g.anchor, from, ptr, box)) {
+        st.grace = null;
+        return false;
+    }
+    return true;
+}
+
+/// Two targets name the same thing (a `.link`'s url compared by text).
+fn sameTarget(a: HitTarget, b: HitTarget) bool {
+    if (a == .link or b == .link) return a == .link and b == .link and std.mem.eql(u8, a.link.url, b.link.url);
+    return std.meta.eql(a, b);
 }
 
 /// The copy for this frame — and the state it implies: the links the
@@ -704,4 +886,108 @@ test "an AI answer pane's copy names its own keys — it has no prompt to type a
     try t.expect(std.mem.indexOf(u8, c.body, "bottom prompt") == null);
     for ([_][]const u8{ "r re-ask", "c cancel", "a apply", "p continue", "y copy", "q close" }) |k|
         try t.expect(std.mem.indexOf(u8, c.body, k) != null);
+}
+
+test "the corridor: closing on the box inside the column or the triangle holds; a step away, or wide of both, does not" {
+    const box = Rect.init(4, 30, 26, 8);
+    // Straight down the column.
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, box));
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 16, .y = 20 }, box));
+    // A step back up is a step away.
+    try t.expect(!inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 18, .y = 4 }, box));
+    // Sideways, still level and inside the column: no farther.
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 28, .y = 5 }, box));
+    // Out of the column sideways is away from the box.
+    try t.expect(!inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 31, .y = 5 }, box));
+    // Right of the column past the margin, closing in: only the triangle
+    // from where it left (x 80) toward the box's top edge holds it.
+    try t.expect(inCorridor(.{ .x = 80, .y = 2 }, .{ .x = 80, .y = 2 }, .{ .x = 70, .y = 6 }, box));
+    try t.expect(!inCorridor(.{ .x = 80, .y = 2 }, .{ .x = 80, .y = 2 }, .{ .x = 79, .y = 25 }, box));
+    // From below (the statusline), heading up to the box's bottom edge.
+    try t.expect(inCorridor(.{ .x = 40, .y = 39 }, .{ .x = 40, .y = 39 }, .{ .x = 35, .y = 38 }, box));
+    try t.expect(!inCorridor(.{ .x = 40, .y = 39 }, .{ .x = 40, .y = 39 }, .{ .x = 41, .y = 39 }, box));
+    // No box, no corridor.
+    try t.expect(!inCorridor(.{ .x = 1, .y = 1 }, .{ .x = 1, .y = 1 }, .{ .x = 1, .y = 2 }, Rect.empty));
+}
+
+/// The cell of the first hit `pred` accepts, from the last paint.
+fn hitCell(app: *App, comptime pred: fn (HitTarget) bool) ?Pt {
+    for (app.hits.items.items) |e| if (pred(e.target)) return .{ .x = e.rect.x, .y = e.rect.y };
+    return null;
+}
+
+fn hoverAt(app: *App, p: Pt) !void {
+    app.hover = .{ .x = p.x, .y = p.y };
+    app.hover_live = true;
+    try app.render();
+}
+
+test "grace: the entry stays while the pointer crosses rows toward the box, switches on a step away, and lets go when the window runs out" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt" }) |n| try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.now_ms = 1000;
+    try app.render();
+    const chip = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .tree_chip and h.tree_chip == .new_file;
+        }
+    }.f).?;
+    const box = app.info_view.rect.?;
+    const row_a = app.tree.rowOf("a.txt").?;
+    const row_b = app.tree.rowOf("b.txt").?;
+    var a_cell: Pt = undefined;
+    var b_cell: Pt = undefined;
+    for (app.hits.items.items) |e| if (e.target == .tree_node) {
+        if (e.target.tree_node == row_a) a_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+        if (e.target.tree_node == row_b) b_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+    };
+    const arena = app.frame.allocator();
+    try hoverAt(&app, chip);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Down the column over b.txt's row, then the empty tree under it.
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try t.expect(app.info_view.grace != null);
+    try t.expectEqual(@as(?i64, 1000 + 900), nextDeadlineMs(&app));
+    try hoverAt(&app, .{ .x = b_cell.x, .y = box.y - 2 });
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Onto the box: held with no window running.
+    try hoverAt(&app, .{ .x = box.x + 2, .y = box.y + 3 });
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try t.expect(app.info_view.grace == null);
+    // A wheel notch over the box (no motion) keeps it too.
+    app.hover_live = false;
+    try app.render();
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Back to the chip, then a step UP the column from b.txt to a.txt:
+    // away from the box, so a.txt's row takes the box at once.
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try hoverAt(&app, a_cell);
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    try t.expect(app.info_view.grace == null);
+    // The window running out while the pointer rests on a crossed row:
+    // the tick asks for the frame, and the row takes the box.
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try app.tick(app.now_ms + 900);
+    try t.expect(app.info_view.grace == null);
+    try t.expect(app.needs_render);
+    try app.render();
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    // `ui.hover_help_grace_ms = 0`: every crossing switches at once.
+    app.cfg.ui.hover_help_grace_ms = 0;
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    try t.expectEqual(@as(?i64, null), nextDeadlineMs(&app));
 }

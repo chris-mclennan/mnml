@@ -590,6 +590,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // Zen: the panes fill everything above the `:` line — no bar, no
     // tree, no right panel, no strips, no statusline (`zen.zig`).
     try drawPaletteBar(app, ui, fr.bar);
+    // The info view says where it is when it paints (the corridor).
+    app.info_view.rect = null;
     var panes_area = fr.body;
     if (!fr.sidebar.isEmpty()) {
         // ── rail ──
@@ -618,6 +620,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
             side = parts.top;
             const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll });
             app.info_view.max_scroll = l.max_scroll;
+            // Where the box is, for the next frame's corridor.
+            app.info_view.rect = parts.rest;
         };
         if (side_mod.shown(app, .left)) |s| try drawColumn(app, ui, side, s);
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);
