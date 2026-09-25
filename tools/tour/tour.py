@@ -440,17 +440,10 @@ def run_tour(args, out):
         json.dump({"states": [{"name": n, "notes": l} for n, l in notes],
                    "asserts": [{"shot": s, "why": w, "ok": ok, "detail": d} for s, w, ok, d in assert_results]},
                   f, indent=2)
-    bad = 0
-    if assert_results:
-        log("asserts:")
-        for s, why, ok, detail in assert_results:
-            log(f"  {'ok  ' if ok else 'FAIL'} {s:22} {why} — {detail}")
-            bad += 0 if ok else 1
-    rc = 0 if bad == 0 else 1
+    results = None
     if not args.no_diff and os.path.isdir(BASELINE):
-        rc = max(rc, diff_dir(out, BASELINE, args))
-    summary(out)
-    return rc
+        results = diff_results(out, BASELINE, args)
+    return report(out, results, assert_results, args)
 
 
 def shot_name(png):
@@ -458,31 +451,89 @@ def shot_name(png):
     return re.sub(r"^\d+-", "", base)
 
 
-def diff_dir(out, baseline, args, names=None):
+def diff_results(out, baseline, args, names=None):
+    """Every fresh shot against its baseline, without printing: a dict of
+    the threshold, the tolerance and one (kind, name, pct, bbox, png) per
+    shot — kind `ok`, `CHANGED` or `new`. Writes flagged.txt."""
     masks = load_masks()
     thr = args.threshold if args.threshold is not None else float(masks.get("threshold_pct", 0.02))
     tol = args.tolerance if args.tolerance is not None else int(masks.get("tolerance", 24))
-    flagged = []
-    log(f"diff vs {os.path.relpath(baseline, REPO)} (threshold {thr}%, tolerance {tol}):")
-    fresh = sorted(p for p in os.listdir(out) if p.endswith(".png"))
+    rows = []
+    fresh = sorted(p for p in os.listdir(out) if p.endswith(".png")) if os.path.isdir(out) else []
     for p in fresh:
         name = shot_name(p)
         if names and name not in names:
             continue
         base = os.path.join(baseline, name + ".png")
+        png = os.path.join(out, p)
         if not os.path.exists(base):
-            log(f"  new      {name}  (no baseline — `tour.sh accept {name}`)")
+            rows.append(("new", name, 0.0, None, png))
             continue
-        pct, bbox, changed = compare(name, os.path.join(out, p), base, masks, thr, tol)
-        where = f"  cells {bbox[0]},{bbox[1]}–{bbox[2]},{bbox[3]}" if bbox else ""
-        if changed:
-            flagged.append(os.path.join(out, p))
-            log(f"  CHANGED {pct:7.3f}%  {name}{where}")
-        else:
-            log(f"  ok      {pct:7.3f}%  {name}")
+        pct, bbox, changed = compare(name, png, base, masks, thr, tol)
+        rows.append(("CHANGED" if changed else "ok", name, pct, bbox, png))
+    os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "flagged.txt"), "w", encoding="utf-8") as f:
-        f.write("".join(p + "\n" for p in flagged))
-    return 1 if flagged else 0
+        f.write("".join(r[4] + "\n" for r in rows if r[0] == "CHANGED"))
+    return {"baseline": baseline, "threshold": thr, "tolerance": tol, "rows": rows}
+
+
+def summary_line(results, assert_results):
+    """`N ok, M changed, K asserts ok` (plus the failed asserts and the
+    shots with no baseline, when there are any) — printed before the
+    per-shot lines so the verdict is the first thing read."""
+    rows = results["rows"] if results else []
+    ok = sum(1 for r in rows if r[0] == "ok")
+    changed = sum(1 for r in rows if r[0] == "CHANGED")
+    new = sum(1 for r in rows if r[0] == "new")
+    a_ok = sum(1 for a in assert_results if a[2])
+    a_bad = len(assert_results) - a_ok
+    line = f"{ok} ok, {changed} changed, {a_ok} asserts ok"
+    if a_bad:
+        line += f", {a_bad} asserts FAILED"
+    if new:
+        line += f", {new} new"
+    if results is None:
+        line += " (no diff)"
+    return line, changed + a_bad
+
+
+def report(out, results, assert_results, args):
+    """The summary line, then the asserts and the per-shot lines. Exit 1
+    on a CHANGED shot or a failed assert and on nothing else — a stale
+    app, a lingering toast or a missing baseline are notes, not
+    failures."""
+    line, bad = summary_line(results, assert_results)
+    log(line)
+    if assert_results:
+        log("asserts:")
+        for s, why, ok, detail in assert_results:
+            log(f"  {'ok  ' if ok else 'FAIL'} {s:22} {why} — {detail}")
+    if results is not None:
+        log(f"diff vs {os.path.relpath(results['baseline'], REPO)} "
+            f"(threshold {results['threshold']}%, tolerance {results['tolerance']}):")
+        for kind, name, pct, bbox, _png in results["rows"]:
+            if kind == "new":
+                log(f"  new      {name}  (no baseline — `tour.sh accept {name}`)")
+                continue
+            where = f"  cells {bbox[0]},{bbox[1]}–{bbox[2]},{bbox[3]}" if bbox else ""
+            if kind == "CHANGED":
+                log(f"  CHANGED {pct:7.3f}%  {name}{where}")
+            else:
+                log(f"  ok      {pct:7.3f}%  {name}")
+    summary(out)
+    return 1 if bad else 0
+
+
+def last_asserts(out, names=None):
+    """The asserts the last run recorded (tour.json), as check_asserts_live
+    returns them."""
+    try:
+        with open(os.path.join(out, "tour.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [(a["shot"], a.get("why", ""), a.get("ok", False), a.get("detail", ""))
+            for a in data.get("asserts", []) if not names or a.get("shot") in names]
 
 
 def summary(out):
@@ -497,9 +548,8 @@ def summary(out):
 def cmd_diff(args):
     out = os.path.abspath(args.out)
     names = set(args.names) if args.names else None
-    rc = diff_dir(out, BASELINE, args, names)
-    summary(out)
-    return rc
+    results = diff_results(out, BASELINE, args, names)
+    return report(out, results, last_asserts(out, names), args)
 
 
 def cmd_accept(args):

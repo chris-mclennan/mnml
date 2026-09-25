@@ -42,9 +42,10 @@
 #  10. tools/tour.sh / tools/look.sh on a copy of themselves: a driver
 #      whose `version` stamp is missing or disagrees with tools/drive is
 #      refused (MNML_DRIVE_NO_REBUILD=1) or rebuilt (a fake $MNML_ZIG);
-#      the stamp, not the mtime, decides; `diff` never checks; an app
-#      binary older than src/ is a warning only; masks.zon hides the tree
-#      header's workspace path under either root.
+#      the stamp, not the mtime, decides; `diff` never checks, leads with
+#      its summary and exits 1 only on a CHANGED shot or a failed assert;
+#      an app binary older than src/ is a warning only;
+#      masks.zon hides the tree header's workspace path under either root.
 #
 #   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~30 s)
 set -o pipefail
@@ -492,10 +493,35 @@ fake_drive "0123456789abcdef"
 printf '#!/bin/sh\necho "compile error"\nexit 1\n' > "$TMP/badzig"; chmod +x "$TMP/badzig"
 out=$(MNML_ZIG="$TMP/badzig" "$TR/tools/tour.sh" run --out "$TMP/tourout" 2>&1); rc=$?
 check "tour.sh: a failed rebuild stops (exit 64) and names its log" '[ $rc -eq 64 ] && echo "$out" | grep -q "zig build -Ddrive failed (exit 1); see $TR/.verify/drive-rebuild.log"' "$out"
-# f) diff never launches, so a stale driver does not stop it.
-mkdir -p "$TMP/tourout-empty"
+# f) diff never launches, so a stale driver does not stop it; its first
+# line is the summary.
 out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TMP/tourout-empty" 2>&1); rc=$?
-check "tour.sh diff: skips the driver check" '[ $rc -eq 0 ] && ! echo "$out" | grep -q stale' "$out"
+check "tour.sh diff: skips the driver check and leads with the summary" '[ $rc -eq 0 ] && ! echo "$out" | grep -q stale && [ "$(echo "$out" | head -1)" = "0 ok, 0 changed, 0 asserts ok" ]' "$out"
+# f2) The exit is 1 on a CHANGED shot or a failed assert and on nothing
+# else: a shot with no baseline is a note. Tiny synthetic PNGs.
+(cd "$TR" && python3 -c '
+import os, sys
+sys.path.insert(0, "tools/tour")
+import imgdiff
+def solid(v):
+    return imgdiff.Image(240, 80, [bytes([v, v, v, 255]) * 240 for _ in range(80)], (0, 1, 2))
+os.makedirs("tests/tour/baseline", exist_ok=True)
+for d in ("x/same", "x/moved"):
+    os.makedirs(d, exist_ok=True)
+imgdiff.save_png(solid(0), "tests/tour/baseline/a.png")
+imgdiff.save_png(solid(0), "tests/tour/baseline/b.png")
+imgdiff.save_png(solid(0), "x/same/01-a.png")
+imgdiff.save_png(solid(0), "x/same/03-c.png")
+imgdiff.save_png(solid(0), "x/moved/01-a.png")
+imgdiff.save_png(solid(255), "x/moved/02-b.png")
+')
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/same" 2>&1); rc=$?
+check "tour.sh diff: a shot with no baseline is a note — exit 0" '[ $rc -eq 0 ] && [ "$(echo "$out" | head -1)" = "1 ok, 0 changed, 0 asserts ok, 1 new" ]' "$out"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/moved" 2>&1); rc=$?
+check "tour.sh diff: a CHANGED shot exits 1, counted first" '[ $rc -eq 1 ] && [ "$(echo "$out" | head -1)" = "1 ok, 1 changed, 0 asserts ok" ] && echo "$out" | grep -q "CHANGED 100.000%  b"' "$out"
+printf '{"states": [], "asserts": [{"shot": "a", "why": "w", "ok": false, "detail": "d"}, {"shot": "a", "why": "v", "ok": true, "detail": "e"}]}' > "$TR/x/same/tour.json"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/same" 2>&1); rc=$?
+check "tour.sh diff: the last run's failed assert exits 1 and is counted" '[ $rc -eq 1 ] && [ "$(echo "$out" | head -1)" = "1 ok, 0 changed, 1 asserts ok, 1 asserts FAILED, 1 new" ]' "$out"
 # g) The app binary: warned about, never refused.
 mkdir -p "$TR/src/app"; echo "// a source" > "$TR/src/app/x.zig"
 printf '#!/bin/sh\n' > "$TR/zig-out/bin/mnml-zig"; chmod +x "$TR/zig-out/bin/mnml-zig"
