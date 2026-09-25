@@ -1725,6 +1725,14 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
     // starts it rather than closing it.
     const exit_label: ?[]const u8 = if (p.dormant)
         ui.fmt("[exited] — any key restarts {s}", .{p.label})
+    else if (p.resume_missing)
+        // The resume found no conversation (the CLI said so just
+        // above): Enter starts a new one in place rather than closing
+        // the tab (`pty_pane.startFresh`).
+        ui.fmt("[exited {d}] Enter starts a new session", .{switch (p.exit.?) {
+            .code => |c| c,
+            .signal => |sg| sg,
+        }})
     else if (p.exit) |e| switch (e) {
         .code => |c| ui.fmt("[exited {d}] — Enter closes", .{c}),
         .signal => |sg| ui.fmt("[killed by signal {d}] — Enter closes", .{sg}),

@@ -1,0 +1,41 @@
+# requires: macos
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A restore resumes a Claude session that has a transcript — but the
+# CLI can still answer `No conversation found with session ID: <id>`
+# and exit 1 (the transcript deleted between the save and the resume).
+# The pane must not be a dead `[exited 1] — Enter closes`: it says why,
+# and `Enter` starts a new session in its place under the same id
+# (`pty_pane.startFresh`).
+#
+# The fake `claude`: its first session writes a transcript (the user
+# typed into it) and ends after two seconds; a `--resume` deletes the
+# transcript and fails as the real CLI does when it has none; a
+# `--session-id` of an id with a transcript is `already in use`.
+write bin/claude #!/bin/bash\nsid=""\nmode="bare"\nwhile [ $# -gt 0 ]; do case "$1" in --session-id) sid=$2; mode=new; shift 2;; --resume) sid=$2; mode=resume; shift 2;; *) shift;; esac; done\nd="$HOME/.claude/projects/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')"\nprintf '%s %s\\n' "$mode" "$sid" >> argv.log\nif [ "$mode" = resume ]; then rm -f "$d/$sid.jsonl"; printf 'No conversation found with session ID: %s\\n' "$sid"; exit 1; fi\nif [ "$mode" = new ] && [ -f "$d/$sid.jsonl" ]; then printf 'Error: Session ID %s is already in use.\\n' "$sid"; exit 1; fi\nif [ ! -f first-done ]; then mkdir -p "$d"; printf '{"type":"user","message":{"role":"user","content":"hello"}}\\n' > "$d/$sid.jsonl"; fi\nprintf 'Claude Code (fake)\\n'\nn=60; if [ ! -f first-done ]; then n=2; : > first-done; fi\nexec -a claude /bin/sh -c 'i=0; while [ $i -lt $0 ]; do sleep 1; i=$((i+1)); done' "$n"
+shell chmod +x bin/claude
+write notes.txt "alpha\n"
+open notes.txt
+
+command ai.claude_code_new
+wait 1500
+expect screen contains "Claude Code (fake)"
+command session.save
+wait 3000
+expect screen contains "[exited"
+
+command session.restore
+wait 2000
+expect screen contains "session restored"
+expect file argv.log contains "resume "
+expect screen contains "No conversation found"
+expect screen contains "[exited 1] Enter starts a new session"
+expect screen lacks "Enter closes"
+
+# Enter on the pane starts afresh.
+key enter
+wait 1500
+shell test "$(grep -c '^new ' argv.log)" -eq 2 && test "$(cut -d' ' -f2 argv.log | sort -u | wc -l | tr -d ' ')" -eq 1
+expect screen lacks "already in use"
+expect screen lacks "Enter starts a new session"
+expect screen lacks "[exited"

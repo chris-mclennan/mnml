@@ -657,7 +657,8 @@ fn listPaneKey(app: *App, id: PaneId, l: *app_mod.ListPane, k: Key) Allocator.Er
 /// programs need it; the app's chords are the way out). A modified
 /// chord goes to the chord chain first when the keymap binds it, except
 /// the ones a terminal owns outright (`pty_pane.childOwned`). An exited
-/// pane closes on Enter or Esc; its scrollback keys still scroll it, and
+/// pane closes on Enter or Esc (a resume that found no conversation
+/// starts a new session on Enter instead); its scrollback keys still scroll it, and
 /// every other key is the app's (the vim leader included).
 fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!void {
     if (app.chord.len > 0) {
@@ -681,6 +682,15 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
             return;
         }
         const plain = !modified and !k.mods.shift;
+        // A resume that found no conversation: Enter starts a new
+        // session in its place; Esc still closes.
+        if (plain and k.code == .enter and p.resume_missing) {
+            pty_pane.startFresh(app, id) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {},
+            };
+            return;
+        }
         if (plain and (k.code == .enter or k.code == .esc)) return app.forceClosePane(id);
         _ = try chordChain(app, k);
         return;
