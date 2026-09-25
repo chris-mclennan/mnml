@@ -8,6 +8,9 @@
 # (The click that OPENS a file and takes the panel with it is pinned by
 # the unit test in src/app/sidebar_auto.zig, which finds the tree row by
 # the hit its paint registered instead of guessing a cell.)
+# The info view is off: its own pin chip (the same 󰐃, `ui/pin_chip.zig`)
+# would answer the column pin's `lacks` below.
+command view.toggle_hover_help
 write wide.txt "...............................................................................................ENDMARK\n"
 write zz_marker.txt "nothing opens this\n"
 open wide.txt

@@ -37,6 +37,12 @@
 //! the entry is held until the pointer leaves it, whatever the event —
 //! a wheel notch or a press included.
 //!
+//! **A pin holds it outright.** The pin chip on the title row (and
+//! `help.pin_toggle`) freezes the entry the box shows — its words and
+//! what its links do, copied onto the gpa (`Pinned`), since the frame
+//! that resolved them is gone by the next paint — until the pin is
+//! pressed again or Esc is pressed in the box.
+//!
 //! The kebab's menu is the one row Rust has: turn the panel off.
 
 const std = @import("std");
@@ -98,7 +104,101 @@ pub const State = struct {
     was_on_box: bool = false,
     /// The entry held while the pointer travels to the box.
     grace: ?Grace = null,
+    /// The hover target the last pick resolved its copy from, if any —
+    /// what a pin asks its `Ask` link about.
+    shown: ?HitTarget = null,
+    /// The pinned entry: while set, it is what the box says.
+    pinned: ?Pinned = null,
+
+    pub fn deinit(st: *State) void {
+        if (st.pinned) |*p| p.deinit();
+        st.pinned = null;
+    }
 };
+
+/// A pinned entry, owned: the copy and its link actions deep-copied off
+/// the frame arena, and the target it came from (never a `.link`, whose
+/// url is an arena slice) for an `Ask` link.
+pub const Pinned = struct {
+    arena: std.heap.ArenaAllocator,
+    copy: Copy,
+    links: [max_links]?copy.LinkAction,
+    target: ?HitTarget,
+
+    pub fn init(gpa: Allocator, c: Copy, links: [max_links]?copy.LinkAction, target: ?HitTarget) Allocator.Error!Pinned {
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        const shortcuts = try a.alloc(view.Shortcut, c.shortcuts.len);
+        for (c.shortcuts, shortcuts) |s, *d| d.* = .{ .chord = try a.dupe(u8, s.chord), .label = try a.dupe(u8, s.label) };
+        const try_it = try a.alloc(view.Link, c.try_it.len);
+        for (c.try_it, try_it) |l, *d| d.* = .{ .label = try a.dupe(u8, l.label), .kind = l.kind };
+        var owned: [max_links]?copy.LinkAction = @splat(null);
+        for (links, 0..) |l, i| owned[i] = if (l) |act| switch (act) {
+            .url => |u| .{ .url = try a.dupe(u8, u) },
+            .docs => |d| .{ .docs = .{ .doc = d.doc, .section = try a.dupe(u8, d.section) } },
+            else => act,
+        } else null;
+        return .{
+            .copy = .{
+                .title = try a.dupe(u8, c.title),
+                .body = try a.dupe(u8, c.body),
+                .aside = if (c.aside) |x| try a.dupe(u8, x) else null,
+                .aside_first = c.aside_first,
+                .shortcuts = shortcuts,
+                .try_it = try_it,
+            },
+            .links = owned,
+            .target = if (target) |tg| (if (tg == .link) null else tg) else null,
+            .arena = arena,
+        };
+    }
+
+    pub fn deinit(p: *Pinned) void {
+        p.arena.deinit();
+    }
+};
+
+/// Pinned or not — what the title row's chip shows.
+pub fn isPinned(app: *const App) bool {
+    return app.info_view.pinned != null;
+}
+
+/// `help.pin_toggle` and the pin chip: freeze the entry the box shows,
+/// or let it go.
+pub fn togglePin(app: *App) Allocator.Error!void {
+    const st = &app.info_view;
+    app.needs_render = true;
+    if (st.pinned) |*p| {
+        p.deinit();
+        st.pinned = null;
+        app.toast("info panel: unpinned", .{});
+        return;
+    }
+    const c = try pickCopy(app, app.frame.allocator());
+    st.pinned = try Pinned.init(app.gpa, c, st.links, st.shown);
+    app.toast("info panel: pinned \u{2014} {s}", .{st.pinned.?.copy.title});
+}
+
+/// Let a pinned entry go (Esc in the box); false when nothing was pinned.
+pub fn unpin(app: *App) bool {
+    const st = &app.info_view;
+    if (st.pinned) |*p| {
+        p.deinit();
+        st.pinned = null;
+        app.needs_render = true;
+        return true;
+    }
+    return false;
+}
+
+pub const table = .{
+    .@"help.pin_toggle" = &pinCommand,
+};
+
+fn pinCommand(app: *App) command.CommandError!void {
+    try togglePin(app);
+}
 
 pub const Pt = struct { x: u16, y: u16 };
 
@@ -297,7 +397,16 @@ pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
 fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
     const st = &app.info_view;
     st.links = @splat(null);
-    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| return c;
+    st.shown = null;
+    if (st.pinned) |*p| {
+        st.links = p.links;
+        st.shown = p.target;
+        return p.copy;
+    }
+    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| {
+        st.shown = if (target == .link) null else target;
+        return c;
+    };
     if (try focusCopy(app, arena)) |c| return c;
     if (try activePaneCopy(app, arena)) |c| return c;
     return emptyCopy(app);
@@ -539,6 +648,7 @@ pub fn mouse(app: *App, part: Part, m: Mouse, count: u16) Allocator.Error!void {
             if (m.button != .left) return;
             switch (part) {
                 .kebab => try openKebabMenu(app, m.x, m.y + 1),
+                .pin => try togglePin(app),
                 .try_it => |i| if (i < max_links) if (st.links[i]) |action| try runLink(app, action),
                 .body => {},
             }
@@ -559,7 +669,8 @@ fn runLink(app: *App, action: copy.LinkAction) Allocator.Error!void {
         .url => |url| git_app.openExternal(app, url),
         .docs => |d| _ = try docs.open(app, d.doc, d.section),
         .ask => {
-            const target = app.info_view.sticky orelse return;
+            // A pinned entry asks about what it was pinned from.
+            const target = (if (app.info_view.pinned) |p| p.target else app.info_view.sticky) orelse return;
             const arena = app.frame.allocator();
             const entry = (try copy.lookup(app, arena, target)) orelse return;
             try copy.ask(app, arena, target, entry);
@@ -990,4 +1101,65 @@ test "grace: the entry stays while the pointer crosses rows toward the box, swit
     try hoverAt(&app, b_cell);
     try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
     try t.expectEqual(@as(?i64, null), nextDeadlineMs(&app));
+}
+
+test "pin: the entry and its links outlive the frame and every hover until unpinned; a pin left on is freed with the app" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    for ([_][]const u8{ "a.txt", "b.txt" }) |n| try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    try app.render();
+    const chip = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .tree_chip and h.tree_chip == .new_file;
+        }
+    }.f).?;
+    const pin_at = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .info_view and h.info_view == .pin;
+        }
+    }.f).?;
+    const arena = app.frame.allocator();
+    try hoverAt(&app, chip);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // The chip's press pins it (through the box's own mouse handler).
+    try mouse(&app, .pin, .{ .x = pin_at.x, .y = pin_at.y, .kind = .press, .button = .left }, 1);
+    try t.expect(isPinned(&app));
+    try t.expect(app.info_view.pinned.?.target.? == .tree_chip);
+    // Frames go by and the pointer wanders — up the column, off it.
+    const a_row = app.tree.rowOf("a.txt").?;
+    var a_cell: Pt = undefined;
+    for (app.hits.items.items) |e| if (e.target == .tree_node and e.target.tree_node == a_row) {
+        a_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+    };
+    try hoverAt(&app, a_cell);
+    try hoverAt(&app, .{ .x = 80, .y = 20 });
+    const held = try pick(&app, arena);
+    try t.expectEqualStrings("New file", held.title);
+    try t.expect(std.mem.startsWith(u8, held.body, "Creates an empty file"));
+    try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?.command);
+    // The link still runs what it named.
+    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
+    try t.expect(app.overlay == .prompt);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = .tree;
+    // The command unpins; the pointer's row takes the box.
+    try command.run(&app, .{ .static = .@"help.pin_toggle" });
+    try t.expect(!isPinned(&app));
+    try hoverAt(&app, a_cell);
+    try hoverAt(&app, a_cell);
+    try t.expectEqualStrings("a.txt — Plain text", (try pick(&app, arena)).title);
+    // Pinned again and left on: `App.deinit` frees it (the allocator
+    // is the leak-checking one).
+    try togglePin(&app);
+    try t.expectEqualStrings("a.txt — Plain text", app.info_view.pinned.?.copy.title);
+    try t.expect(unpin(&app));
+    try t.expect(!unpin(&app));
+    try togglePin(&app);
 }

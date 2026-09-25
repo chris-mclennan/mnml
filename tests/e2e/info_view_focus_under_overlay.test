@@ -2,7 +2,8 @@
 # as Rust's does (its focus never leaves the surface): the picker over
 # the tree says `Sidebar`; a file open with the tree focused at its
 # first row falls through to the editor's summary; walked past it the
-# row's doc wins, and the delete box over that row keeps it.
+# row's doc wins, and the delete box over that row keeps it. (The title
+# row is 20 cells beside the pin chip, so the checks read that much.)
 write src/main.rs "fn main() {}\n"
 write README.md "# hi\n"
 command view.focus_tree
@@ -12,17 +13,17 @@ expect screen contains "Arrows or j/k walk rows."
 expect screen lacks "Hover a chip, tab, or tree row"
 key esc
 open src/main.rs
-expect screen contains "fn  ·  RS  ·  main.rs"
+expect screen contains "fn  ·  RS  ·  main."
 command view.focus_tree
 expect screen contains " TREE "
-expect screen contains "fn  ·  RS  ·  main.rs"
+expect screen contains "fn  ·  RS  ·  main."
 key r
 key end
-expect screen contains "README.md — Project re"
+expect screen contains "README.md — Project"
 command file.delete
 expect screen contains "Delete README.md?"
-expect screen contains "README.md — Project re"
-expect screen lacks "fn  ·  RS  ·  main.rs"
+expect screen contains "README.md — Project"
+expect screen lacks "fn  ·  RS  ·  main."
 key esc
 expect screen lacks "README.md?"
-expect screen contains "README.md — Project re"
+expect screen contains "README.md — Project"

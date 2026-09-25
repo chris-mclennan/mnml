@@ -542,7 +542,8 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     for (leaves) |l| {
         if (l.vim_only) vim_only += 1;
     }
-    try t.expectEqual(@as(u16, 44), vim_only);
+    // (+1: `space t p`, the info view's pin — hoverpin)
+    try t.expectEqual(@as(u16, 45), vim_only);
     try t.expectEqual(chordCount(&root, false) + vim_only, chordCount(&root, true));
     // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
     try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);

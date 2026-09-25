@@ -17,6 +17,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
+const pin_chip = @import("pin_chip.zig");
 
 const Style = vaxis.Style;
 
@@ -89,13 +90,21 @@ pub const Props = struct {
     copy: Copy,
     /// The first content line shown; the painter clamps it.
     scroll: u16 = 0,
+    /// The entry is pinned: the title row's pin chip is lit.
+    pinned: bool = false,
 };
 
 pub const Layout = struct {
     /// The last `scroll` that still fills the rows; 0 when it all fits.
     max_scroll: u16 = 0,
     kebab: ?Rect = null,
+    /// The pin chip's cells, when the title row had room for it.
+    pin: ?Rect = null,
 };
+
+/// The title row keeps at least this many cells for the title before
+/// the pin chip is dropped from it.
+pub const pin_min_title: u16 = 6;
 
 pub const kebab_glyph = "⋮";
 pub const kebab_ascii = ":";
@@ -126,12 +135,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // kebab and a trailing cell at the right.
     const ty = area.y + 1;
     const kebab_cells: u16 = 2;
-    const title_avail = area.w -| kebab_cells -| 1;
+    // The pin sits left of the kebab when the title keeps room beside
+    // it; a narrower box has the kebab alone.
+    const with_pin = area.w >= kebab_cells + pin_chip.width + 1 + pin_min_title;
+    const title_avail = area.w -| kebab_cells -| 1 -| (if (with_pin) pin_chip.width else 0);
     var title_style = Theme.onBg(t.fg, title_bg);
     title_style.bold = true;
     ui.fill(Rect.init(area.x + 1, ty, title_avail, 1), title_style);
-    // A long title is cut, not ellipsised (Rust), a cell short of the kebab.
-    _ = ui.putStr(area.x + 1, ty, title_avail -| 1, p.copy.title, title_style);
+    // A long title is cut, not ellipsised (Rust), a cell short of the
+    // kebab — or of the pin, whose own leading cell is that gap.
+    _ = ui.putStr(area.x + 1, ty, if (with_pin) title_avail else title_avail -| 1, p.copy.title, title_style);
     if (area.w >= 3) {
         const kx = area.right() - kebab_cells;
         ui.fill(Rect.init(kx, ty, kebab_cells, 1), Theme.onBg(t.fg, title_bg));
@@ -139,6 +152,11 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         const kr = Rect.init(kx, ty, 1, 1);
         ui.hit(kr, .{ .info_view = .kebab });
         out.kebab = kr;
+        if (with_pin) {
+            const pr = Rect.init(kx - pin_chip.width, ty, pin_chip.width, 1);
+            pin_chip.draw(ui, pr, .{ .pinned = p.pinned, .bg = title_bg, .hit = .{ .info_view = .pin } });
+            out.pin = pr;
+        }
     }
     if (area.h <= 2) return out;
     // Rows 2..: the lines, wrapped to the width less the gutters — and
@@ -295,7 +313,7 @@ test "the spec's rows 27..33 at 26x11: the rule, `Sidebar` with the kebab, a spa
     const l = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
     try f.expectRows(&.{
         "──────────────────────────",
-        " Sidebar                ⋮",
+        " Sidebar              󰐃 ⋮",
         "",
         " Arrows or j/k walk rows.",
         " Enter opens the",
@@ -309,6 +327,16 @@ test "the spec's rows 27..33 at 26x11: the rule, `Sidebar` with the kebab, a spa
     try testing.expectEqual(@as(u16, 0), l.max_scroll);
     try testing.expect(l.kebab.?.eql(Rect.init(24, 1, 1, 1)));
     try testing.expect(f.hits.at(24, 1).?.info_view == .kebab);
+    // The pin chip left of the kebab (`ui/pin_chip.zig`): its three
+    // cells are its hit, cold (dim) until pinned.
+    try testing.expect(l.pin.?.eql(Rect.init(21, 1, 3, 1)));
+    try testing.expect(f.hits.at(21, 1).?.info_view == .pin);
+    try testing.expect(f.hits.at(23, 1).?.info_view == .pin);
+    try testing.expect(f.style(22, 1).dim);
+    const lit = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .pinned = true });
+    try testing.expect(lit.pin != null);
+    try testing.expect(vaxis.Color.eql(f.style(22, 1).fg, f.theme.palette.yellow));
+    try testing.expect(f.style(22, 1).bold);
     try testing.expect(f.hits.at(5, 4).?.info_view == .body);
     try testing.expect(f.hits.at(0, 0).?.info_view == .body);
     // The title band from the second cell on bg2, the first cell on the panel ground.
@@ -330,7 +358,7 @@ test "shortcuts and links get their rows after a spacer; a link row is a hit by 
         .try_it = &.{.{ .label = "Run it" }},
     };
     _ = draw(f.ui(), f.full(), .{ .copy = copy });
-    try f.expectRow(1, " A title that is far too lo ⋮");
+    try f.expectRow(1, " A title that is far too  󰐃 ⋮");
     try f.expectRow(3, " Body.                       ┃");
     try f.expectRow(4, " An aside.                   ┃");
     try f.expectRow(5, "                             ┃");
@@ -398,6 +426,7 @@ test "wrapWords: greedy on whitespace, a long word broken, empty is one line" {
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
     try f.expectRow(0, "──────────");
+    // Too narrow for the pin and a title beside it: the kebab alone.
     try f.expectRow(1, " Sideba ⋮");
     _ = draw(f.ui(), Rect.empty, .{ .copy = sidebar_copy });
 }

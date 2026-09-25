@@ -327,6 +327,7 @@ fn walkPanels(w: *Walk) Allocator.Error!void {
     try w.probe("link", .{ .link = .{ .url = "https://example.com/" } });
     try w.probe("info_view:body", .{ .info_view = .body });
     try w.probe("info_view:kebab", .{ .info_view = .kebab });
+    try w.probe("info_view:pin", .{ .info_view = .pin });
     try w.probe("info_view:try_it", .{ .info_view = .{ .try_it = 0 } });
 }
 

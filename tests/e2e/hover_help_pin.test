@@ -1,0 +1,52 @@
+# width: 120
+# height: 40
+# The info view's pin: the `󰐃` chip on the box's title row (26,31 at
+# 120x40, left of the `⋮` kebab) holds the entry the box shows — a
+# hover anywhere else, even a step away from the box, leaves it — and
+# wears the pin family's lit yellow (onedark #e7c787) while it does.
+# `help.pin_toggle` (the palette; Ctrl+K Shift+H in the standard
+# profile, Space t p in vim) does the same; unpinned, the next hover
+# takes the box again.
+write a.txt "alpha\n"
+write b.txt "beta\n"
+hover 21 1
+expect screen contains "Creates an empty file"
+# Onto the box (the entry holds), then a click on the pin.
+hover 10 34
+click 26 31
+expect color 26 31 fg #e7c787
+# Up the column, away from the box: a.txt's row would take it — pinned,
+# it does not.
+hover 18 2
+expect screen contains "Creates an empty file"
+expect screen lacks "a.txt — Plain text"
+hover 60 20
+expect screen contains "Creates an empty file"
+# The pin again: unpinned, the chip goes cold and the next hover wins.
+hover 10 34
+click 26 31
+expect color 26 31 fg not #e7c787
+hover 18 2
+expect screen contains "a.txt — Plain text"
+# The command, by its standard chord: pins what the box shows now.
+key ctrl+k
+key shift+h
+expect color 26 31 fg #e7c787
+hover 18 3
+expect screen contains "a.txt — Plain text"
+expect screen lacks "b.txt — Plain text"
+# …and the palette's id unpins it.
+command help.pin_toggle
+expect color 26 31 fg not #e7c787
+hover 18 3
+expect screen contains "b.txt — Plain text"
+# The vim profile's chord: Space t p (under +toggle).
+ex set input=vim
+key space
+key t
+key p
+expect color 26 31 fg #e7c787
+key space
+key t
+key p
+expect color 26 31 fg not #e7c787

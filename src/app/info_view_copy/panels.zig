@@ -601,6 +601,12 @@ pub fn infoView(part: hit.InfoPart) Entry {
             .keys = &.{.{ .chord = "Wheel", .label = "Scroll the entry" }},
             .links = &.{ .{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_height"), .label = "Its height" } }, .{ .command = .{ .id = .@"view.discovery", .label = "The click-discovery panel" } } },
         },
+        .pin => .{
+            .title = "Pin the entry",
+            .body = "Click pins what the box shows now: the entry stays — its words and its links — wherever the pointer goes, until the pin is clicked again or Esc is pressed in the box. Lit yellow while pinned. Without it the box follows the pointer, and holds an entry only while the pointer travels to the box.",
+            .keys = &.{.{ .command = .@"help.pin_toggle", .label = "Pin / unpin" }},
+            .links = &.{ .{ .command = .{ .id = .@"help.pin_toggle", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_grace_ms"), .label = "The travel grace" } } },
+        },
         .kebab => .{
             .title = "Info panel menu",
             .body = "Click opens the panel's one row: turn it off. Settings → UI → Hover help brings it back — the kebab goes with the panel, so the menu cannot undo itself. The panel's height is `ui.hover_help_height`.",

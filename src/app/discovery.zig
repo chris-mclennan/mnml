@@ -204,6 +204,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .info_view => |part| switch (part) {
             .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },
+            .pin => .{ .title = "Pin the entry", .detail = "click: hold what the panel shows wherever the pointer goes · again to unpin (help.pin_toggle)" },
             .try_it => .{ .title = "Try it", .detail = "click runs the command the panel names" },
             .body => .{ .title = "Info panel", .detail = "what the pointer or the focus is on · wheel scrolls · Settings → UI hides it" },
         },

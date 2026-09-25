@@ -1931,6 +1931,7 @@ pub const App = struct {
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.welcome.deinit(gpa);
+        self.info_view.deinit();
         self.dock.deinit(gpa, self.io);
         self.bottom.deinit(gpa);
         self.http.deinit(gpa, self.io);
