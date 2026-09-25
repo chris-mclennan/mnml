@@ -96,6 +96,25 @@ pub const Target = union(enum) {
     }
 };
 
+/// Make `tg`'s matches the text's matches before anything reads their
+/// offsets: an edit made while they stood (an indent with the bar open,
+/// a paste, an undo) moved the bytes, and a stale range selects the
+/// wrong characters — or splits one. An editor asks its edit log first,
+/// so a key with nothing changed costs nothing.
+pub fn ensureFresh(tg: Target) Allocator.Error!void {
+    const f = tg.find();
+    if (!f.isActive()) return;
+    switch (tg) {
+        .editor => |e| {
+            const head = e.buf.editor.doc.edits.head();
+            if (f.seen_edit) |seen| if (seen == head) return;
+            _ = try f.refresh(e.buf.editor.bytes());
+            f.seen_edit = head;
+        },
+        .request => |rp| _ = try f.refresh(rp.respFindText()),
+    }
+}
+
 /// The active pane's target, else the diagnostic the editor commands give.
 fn requireTarget(app: *App) CommandError!Target {
     const id = app.active orelse return error.NoActivePane;
@@ -382,6 +401,7 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     const id = app.active orelse return;
     const tg = Target.of(app, id) orelse return;
     const f = tg.find();
+    try ensureFresh(tg);
     if (!f.isActive()) {
         app.toast("no active find — use / or Ctrl+F first", .{});
         app.key_failed = true;
@@ -479,6 +499,7 @@ pub fn openReplacePrompt(app: *App) Allocator.Error!void {
         if (app.find_bar) |*fb| fb.chain_to_replace = true;
         return;
     }
+    try ensureFresh(.{ .editor = e });
     const n = e.find.matches.items.len;
     if (n == 0) {
         app.toast("no matches to replace — refine the find query", .{});
@@ -498,6 +519,7 @@ pub fn openReplacePrompt(app: *App) Allocator.Error!void {
 pub fn replaceAll(app: *App, replacement: []const u8) Allocator.Error!void {
     const id = app.active orelse return;
     const e = app.panes.editor(id) orelse return;
+    try ensureFresh(.{ .editor = e });
     const n = e.find.matches.items.len;
     if (n == 0) {
         app.toast("no matches to replace", .{});
@@ -544,6 +566,7 @@ pub fn replaceCurrent(app: *App) Allocator.Error!void {
         app.toast("a response is read-only", .{});
         return;
     };
+    try ensureFresh(.{ .editor = e });
     const idx = e.find.current orelse e.find.indexAtOrAfter(e.buf.editor.cursor) orelse {
         app.toast("no matches to replace", .{});
         return;
@@ -670,6 +693,7 @@ fn selectionBackward(app: *App) CommandError!void {
 }
 
 fn stepFromCurrent(app: *App, e: *EditorPane) Allocator.Error!void {
+    try ensureFresh(.{ .editor = e });
     const idx = e.find.current orelse {
         app.toast("no matches for \"{s}\"", .{e.find.query.items});
         app.key_failed = true;
@@ -689,6 +713,7 @@ fn selectMatch(app: *App, forward: bool) CommandError!void {
         app.toast("gn — no active find (use / first)", .{});
         return;
     }
+    try ensureFresh(.{ .editor = e });
     if (e.find.matches.items.len == 0) {
         app.toast("gn — no matches", .{});
         return;
@@ -716,11 +741,7 @@ fn selectMatchBackward(app: *App) CommandError!void {
 /// Matches found before an edit are found again first: the text moved
 /// under them (`cgnQ<Esc>` then `.`).
 pub fn seedCtxMatches(e: *EditorPane) Allocator.Error!void {
-    const head = e.buf.editor.doc.edits.head();
-    if (e.find.isActive()) {
-        if (e.find.seen_edit) |seen| if (seen != head) try e.find.recompute(e.buf.editor.bytes());
-        e.find.seen_edit = head;
-    }
+    try ensureFresh(.{ .editor = e });
     const cur = e.buf.editor.cursor;
     e.buf.editor.find_next = null;
     e.buf.editor.find_prev = null;

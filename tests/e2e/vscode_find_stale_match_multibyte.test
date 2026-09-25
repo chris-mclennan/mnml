@@ -1,0 +1,18 @@
+# SEV-1 (round-7 hunt): an edit made while the find bar is open (Ctrl+]
+# indents the line four bytes right) left the bar's matches on the old
+# offsets. Shift+F3 selected the stale range — here it cut Ω≈ in half —
+# and the next typed character spliced it: "reached unreachable code" in
+# Document.spliceBy, exit 134. The matches are found again first, so the
+# selection is the needle where it now is and typing replaces exactly it.
+write f.txt "héllo 世界\n"
+open f.txt
+type Ω≈ç
+key ctrl+f
+type Ω≈ç
+key ctrl+]
+key shift+f3
+key esc
+type 世
+key ctrl+s
+expect file f.txt contains "    世héllo 世界"
+expect file f.txt lacks "Ω"

@@ -3228,6 +3228,7 @@ fn applyHighlights(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
             return a.start < b.start;
         }
     }.lt);
+    e.find.stampText(text);
     app.toast("{d} usage(s) highlighted", .{e.find.matches.items.len});
     app.needs_render = true;
 }
