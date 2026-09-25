@@ -75,6 +75,22 @@ pub const Server = struct {
         self.state.rate_limit_next = n;
     }
 
+    /// The `Retry-After` those 429s carry; 0 sends none.
+    pub fn retryAfter(self: *Server, secs: u32) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.rate_limit_retry_after = secs;
+    }
+
+    /// Send `X-RateLimit-*` on every answer: `limit`, and a remaining
+    /// that starts at `remaining` and drops by one per request.
+    pub fn budgetHeaders(self: *Server, limit: u32, remaining: u32) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.budget_limit = limit;
+        self.state.budget_remaining = remaining;
+    }
+
     /// N more generated OPEN pull requests on `acme/api`, so a
     /// measurement runs against a workspace the size of a real one.
     pub fn setExtraPrs(self: *Server, n: u32) void {
@@ -200,7 +216,7 @@ pub const Server = struct {
         }) catch bb.Reply{ .status = 500, .body = "{\"error\":{\"message\":\"out of memory\"}}" };
         self.state_lock.unlock(self.io);
 
-        var extra: [3]std.http.Header = undefined;
+        var extra: [6]std.http.Header = undefined;
         var n_extra: usize = 1;
         extra[0] = .{ .name = "content-type", .value = reply.content_type };
         var ra_buf: [8]u8 = undefined;
@@ -211,6 +227,14 @@ pub const Server = struct {
         if (reply.etag.len > 0) {
             extra[n_extra] = .{ .name = "etag", .value = reply.etag };
             n_extra += 1;
+        }
+        var lim_buf: [12]u8 = undefined;
+        var rem_buf: [12]u8 = undefined;
+        if (reply.budget) |b| {
+            extra[n_extra] = .{ .name = "x-ratelimit-limit", .value = std.fmt.bufPrint(&lim_buf, "{d}", .{b.limit}) catch "0" };
+            extra[n_extra + 1] = .{ .name = "x-ratelimit-remaining", .value = std.fmt.bufPrint(&rem_buf, "{d}", .{b.remaining}) catch "0" };
+            extra[n_extra + 2] = .{ .name = "x-ratelimit-nearlimit", .value = if (b.near) "true" else "false" };
+            n_extra += 3;
         }
         self.logRequest(method, target, reply.status, reply.body.len);
         if (self.delay_ms > 0) self.io.sleep(.fromMilliseconds(self.delay_ms), .awake) catch {};

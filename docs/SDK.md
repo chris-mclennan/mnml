@@ -890,15 +890,58 @@ authority outright.
 
 mnml's own REQUESTS pane (`integrations.requests`) reads these files.
 
-### A 429 — `ratelimit.Retry`
+Every line also carries `route` — the path with its ids elided
+(`/pullrequests/{n}`, `/issue/{key}`, `{sha}`, `{uuid}`), so one
+endpoint reads as one — and a dry run's line carries `"dry":true` and
+no status. `RateLimit` reads `X-RateLimit-Limit` / `-Remaining` /
+`-Reset` (epoch seconds, or the ISO 8601 stamp Jira Cloud sends) /
+`-NearLimit` and `Retry-After`.
 
-Read `Retry-After` with `ratelimit.parseRetryAfter`, park the shared
-bucket with `Limiter.penalize(retry_after)` (the service's default
-cooldown when the server sent none), and ask `Retry.next(attempt,
-retry_after)` how long to wait before the next try — null means give
-up now: out of attempts, or a park longer than `max_backoff_secs`,
-which is not slept through inside a request. Both first-party
-integrations answer a 429 through it.
+## The API budget — `mnml_sdk.budget`
+
+One `sdk.Budget` per pane process: the client writes it on every
+request, the paint loop reads it for the header's budget chip. Both
+first-party integrations hold one and paint it with
+`Painter.budgetChip` and `help.budget`, so the chip is the same in the
+same place on every pane.
+
+```zig
+app.budget.configure(io, .{
+    .label = "Jira", .service = "jira", .data_root = root,
+    .hourly_budget = @intFromFloat(rate_per_sec * 3600),
+    .dry_run = config.dry_run,
+    .backoff = .{ .base_secs = 45, .cap_secs = 120 },
+});
+client.budget = &app.budget;
+```
+
+- **`record(.{ .now_secs, .on_wire, .rate_limit, .cache })`** after
+  every request: the latest headers, the calls in the last hour, cache
+  hits (a local answer, a 304 with the body held) against misses (a
+  read that carried its body), and the day's tally —
+  `<data root>/budget/<service>.tally`, `YYYY-MM-DD N` per line, read,
+  bumped and written under one exclusive lock so every process on the
+  data root adds to one count, rolled over at local midnight.
+  `noteHit` records a read a pane's own store answered.
+- **A 429**: `throttled(attempt, retry_after)` pauses for `Retry-After`
+  (else `Backoff`: `base_secs` doubling per attempt, jittered ±20 %,
+  capped at `cap_secs`) and says how long; `backoff.retries(attempt,
+  is_read)` only ever says yes for a read. `waitOut()` goes at the top
+  of every attempt: a pause of up to `wait_in_request_secs` (30) is
+  waited in tenths of a second — `cancelWait()` ends it at once — and a
+  longer one is `.paused`, answered without sending anything. Keep the
+  bucket's `Limiter.penalize` beside it: the pause is this pane's, the
+  bucket every process's. A call made on the paint loop's own thread
+  must not wait at all (the loop could not paint `paused until`).
+- **Dry run**: `isDry()` / `toggleDry()`. The client writes the line it
+  would have sent (`Entry.dry`) and answers from what it holds.
+- **`snapshot(now)`**: what the chip and its hover read —
+  `chipWords` (`812/1000`, `37/h`, `DRY`, `paused until 14:03:22`),
+  `tier()` on the host usage meter's 60 / 85 thresholds, `helpBody`.
+
+`ratelimit.Retry` and `parseRetryAfter` are still there for a client
+that has no budget; both first-party integrations answer a 429 through
+the budget.
 
 ## The warmer — pacing, one warmer per service, windows
 
@@ -1288,6 +1331,8 @@ sdk/mnml-sdk/src/
   broker.zig     the local broker: one queue per service, four classes
   ratelimit.zig  one cross-process token bucket per service
   request_log.zig  one JSON line per request, with its reason
+  budget.zig     the API budget a pane shows and obeys: headers, a
+                 429's pause, hit ratio, the daily tally, dry run
   store.zig      bodies kept between runs, keyed by the server's stamp
   zon_edit.zig   saving a hand-written ZON file in place, comments kept —
                  the splice the host's settings write through too

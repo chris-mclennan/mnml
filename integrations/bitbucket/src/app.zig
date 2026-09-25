@@ -413,6 +413,11 @@ pub const App = struct {
     /// worker thread. `noteWait` turns it into the one line that keeps
     /// `loading…` from being silent.
     wait_notice: ratelimit.Notice = .{},
+    /// The API budget (`mnml_sdk.budget`): the client writes it on
+    /// every request, the header's budget chip and its hover read it.
+    /// `main` configures it and points the client at it; unconfigured
+    /// (a test) it paints `0/h` and never pauses.
+    budget: sdk.Budget = .{},
     effects: std.ArrayList(Effect) = .empty,
     effect_arena: std.heap.ArenaAllocator,
     jobs: std.ArrayList(fetch.Job) = .empty,
@@ -751,6 +756,26 @@ pub const App = struct {
         const w = app.wait_notice.take() orelse return;
         var buf: [96]u8 = undefined;
         app.setStatus("{s}", .{w.text(&buf)});
+    }
+
+    /// `Ctrl+X`, or a click on the budget chip: stop waiting out a
+    /// 429's pause. With no pause running the click says the budget's
+    /// figures on the hint row instead, so it is never a dead click.
+    pub fn cancelWait(app: *App) void {
+        if (app.budget.cancelWait()) {
+            app.say(.info, "stopped waiting out the rate limit — the next request goes when you ask", .{});
+            return;
+        }
+        const s = app.budget.snapshot(app.now_secs);
+        var buf: [48]u8 = undefined;
+        app.setStatus("API budget {s} · today {d} · yesterday {d} · 7 days {d}", .{ s.chipWords(&buf), s.today, s.yesterday, s.week });
+    }
+
+    /// `Shift+N`: dry run on / off for this session.
+    pub fn toggleDryRun(app: *App) void {
+        if (app.budget.toggleDry()) {
+            app.say(.info, "dry run on — nothing is sent; the pane shows what it already holds", .{});
+        } else app.say(.info, "dry run off — requests go out again", .{});
     }
 
     pub fn setStatus(app: *App, comptime fmt: []const u8, args: anytype) void {
@@ -1185,6 +1210,8 @@ pub const App = struct {
                 app.filter_caret = app.filter.items.len;
             },
             .help => app.mode = .help,
+            .cancel_wait => app.cancelWait(),
+            .toggle_dry_run => app.toggleDryRun(),
             .escape => {
                 if (app.filter.items.len > 0) {
                     app.filter.clearRetainingCapacity();
@@ -1355,6 +1382,7 @@ pub const App = struct {
                 .schedules => .{ .title = "schedules", .body = "Opens the pipeline schedules of the repo under the cursor in the browser." },
                 .caches => .{ .title = "caches", .body = "Opens the pipeline caches of the repo under the cursor in the browser." },
                 .usage => .{ .title = "usage", .body = "The workspace's pipeline-minutes page. Asks before it opens the browser." },
+                .budget => H.budget(buf, app.budget.snapshot(app.now_secs)),
             },
             .row => H.common(if (app.activeTab().spec.isTree()) .tree_row else .list_row),
             .build_line => H.common(.build_line),
@@ -2857,6 +2885,7 @@ pub const App = struct {
             .tab => |i| try app.switchTab(i),
             .chip => |c| switch (c) {
                 .refresh => try app.refreshActive(),
+                .budget => app.cancelWait(),
                 .help => {
                     app.mode = .help;
                     app.help_scroll = 0;
@@ -3857,4 +3886,25 @@ test "a pane that does not hold the machine's warm lock fetches only its own tab
         else => {},
     };
     try t.expectEqual(@as(usize, 1), refreshes);
+}
+
+test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a rate-limit pause" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    r.app.budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    r.client.budget = &r.app.budget;
+    _ = try r.key("shift+n");
+    try t.expect(r.app.budget.isDry());
+    try t.expect(std.mem.indexOf(u8, r.app.status.items, "dry run on") != null);
+    const served = r.srv.snapshot().served;
+    _ = try r.key("r");
+    try t.expectEqual(served, r.srv.snapshot().served);
+    _ = try r.key("shift+n");
+    try t.expect(!r.app.budget.isDry());
+
+    _ = r.app.budget.throttled(1, 60);
+    try t.expect(r.app.budget.snapshot(r.app.now_secs).paused_until > 0);
+    _ = try r.key("ctrl+x");
+    try t.expectEqual(@as(i64, 0), r.app.budget.snapshot(r.app.now_secs).paused_until);
+    try t.expect(std.mem.indexOf(u8, r.app.status.items, "stopped waiting") != null);
 }

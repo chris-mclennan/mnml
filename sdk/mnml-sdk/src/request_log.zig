@@ -125,9 +125,13 @@ pub const RateLimit = struct {
     reset: ?i64 = null,
     /// `Retry-After`, in seconds.
     retry_after: ?i64 = null,
+    /// `X-RateLimit-NearLimit: true` — both Atlassian clouds send it
+    /// when less than a fifth of the budget is left, sometimes without
+    /// the numbers.
+    near_limit: ?bool = null,
 
     pub fn any(r: RateLimit) bool {
-        return r.limit != null or r.remaining != null or r.reset != null or r.retry_after != null;
+        return r.limit != null or r.remaining != null or r.reset != null or r.retry_after != null or r.near_limit != null;
     }
 };
 
@@ -170,6 +174,10 @@ pub const Entry = struct {
     /// `pane_open`. A line that took no token (`cache_hit`) still says
     /// `file`, which is what a bucket nobody asked looks like.
     via: Via = .file,
+    /// A dry run: the request was NOT sent. The line is what it would
+    /// have been — method, route, reason — with no status, so counting
+    /// requests by counting lines with a status still counts requests.
+    dry: bool = false,
 };
 
 /// Where a token came from. The limiter's own enum, so the broker, the
@@ -335,6 +343,12 @@ pub fn writeLine(w: *Io.Writer, e: Entry) Io.Writer.Error!void {
         e.ms,           e.bytes,    e.reason.tag(),    e.wait_ms,   e.waited_for.tag(),
         e.tokens_after, e.retry_of, @tagName(e.cache), e.via.tag(),
     });
+    // The path with its ids elided — `/repositories/{…}/pullrequests/{n}`
+    // — so lines about the same endpoint read (and group) as one, and a
+    // line quoted in a bug report carries no ticket key or PR number.
+    var route_buf: [512]u8 = undefined;
+    try w.print(",\"route\":\"{f}\"", .{std.zig.fmtString(elideIds(&route_buf, e.path))});
+    if (e.dry) try w.writeAll(",\"dry\":true");
     if (e.rate_limit.any()) {
         try w.writeAll(",\"rate_limit\":{");
         var first = true;
@@ -344,6 +358,10 @@ pub fn writeLine(w: *Io.Writer, e: Entry) Io.Writer.Error!void {
                 first = false;
                 try w.print("\"{s}\":{d}", .{ name, v });
             }
+        }
+        if (e.rate_limit.near_limit) |near| {
+            if (!first) try w.writeByte(',');
+            try w.print("\"near_limit\":{}", .{near});
         }
         try w.writeAll("}");
     }
@@ -411,13 +429,112 @@ fn isCredentialParam(pair: []const u8) bool {
 
 /// `X-RateLimit-…` / `Retry-After` off a response, by name. Anything
 /// else is ignored: this is an allow-list, not a filter.
+///
+/// Both clouds are read with the one function. Bitbucket sends
+/// `X-RateLimit-Limit` / `-Remaining` / `-NearLimit`; Jira Cloud sends
+/// the same three and a `X-RateLimit-Reset` that is an ISO 8601 stamp
+/// (`2026-09-25T14:10:00Z`) where other services send epoch seconds —
+/// both land in `reset` as epoch seconds.
 pub fn rateLimitHeader(r: *RateLimit, name: []const u8, value: []const u8) void {
     const v = std.mem.trim(u8, value, " \t\r\n");
+    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-nearlimit")) {
+        if (std.ascii.eqlIgnoreCase(v, "true")) r.near_limit = true;
+        if (std.ascii.eqlIgnoreCase(v, "false")) r.near_limit = false;
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-reset")) {
+        r.reset = std.fmt.parseInt(i64, v, 10) catch (isoSeconds(v) orelse return);
+        return;
+    }
     const n = std.fmt.parseInt(i64, v, 10) catch return;
     if (std.ascii.eqlIgnoreCase(name, "retry-after")) r.retry_after = n;
     if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-limit")) r.limit = n;
     if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-remaining")) r.remaining = n;
-    if (std.ascii.eqlIgnoreCase(name, "x-ratelimit-reset")) r.reset = n;
+}
+
+/// `YYYY-MM-DDTHH:MM:SS[.fff][Z]` as epoch seconds, UTC. An offset
+/// other than `Z` is not honoured (Jira sends `Z`); null for anything
+/// that is not the shape.
+pub fn isoSeconds(s: []const u8) ?i64 {
+    if (s.len < 19 or s[4] != '-' or s[7] != '-' or (s[10] != 'T' and s[10] != ' ') or s[13] != ':' or s[16] != ':') return null;
+    const y = std.fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const mo = std.fmt.parseInt(u32, s[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(u32, s[8..10], 10) catch return null;
+    const h = std.fmt.parseInt(i64, s[11..13], 10) catch return null;
+    const mi = std.fmt.parseInt(i64, s[14..16], 10) catch return null;
+    const se = std.fmt.parseInt(i64, s[17..19], 10) catch return null;
+    if (mo < 1 or mo > 12 or d < 1 or d > 31) return null;
+    return daysFromCivil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Hinnant).
+pub fn daysFromCivil(y_in: i64, m: u32, d: u32) i64 {
+    const y = if (m <= 2) y_in - 1 else y_in;
+    const era = @divFloor(y, 400);
+    const yoe = y - era * 400;
+    const mp: i64 = @intCast((m + 9) % 12);
+    const doy = @divFloor(153 * mp + 2, 5) + @as(i64, d) - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+/// The path half of a request line with the parts that name ONE thing
+/// replaced by what kind of thing they are, and the query dropped:
+///
+///   /2.0/repositories/acme/api/pullrequests/1198/comments
+///     → /2.0/repositories/acme/api/pullrequests/{n}/comments
+///   /rest/api/3/issue/ENG-12/transitions → /rest/api/3/issue/{key}/transitions
+///
+/// A number is `{n}`, a tracker key (`ABC-12`) `{key}`, a brace or
+/// `%7B` uuid `{uuid}`, a hex run of seven or more with a digit in it
+/// (a commit) `{sha}`. Names — a workspace, a repo — stay: they are
+/// what tells two endpoints apart. Written into `buf`; clipped there.
+pub fn elideIds(buf: []u8, path_and_query: []const u8) []const u8 {
+    const q = std.mem.indexOfAny(u8, path_and_query, "?#") orelse path_and_query.len;
+    const path = path_and_query[0..q];
+    var n: usize = 0;
+    var it = std.mem.splitScalar(u8, path, '/');
+    var first = true;
+    var prev: []const u8 = "";
+    while (it.next()) |seg| {
+        defer prev = seg;
+        if (!first) {
+            if (n >= buf.len) break;
+            buf[n] = '/';
+            n += 1;
+        }
+        first = false;
+        // `/rest/api/3` is a version, not an id.
+        const version = std.ascii.eqlIgnoreCase(prev, "api") or std.ascii.eqlIgnoreCase(prev, "agile");
+        const out = if (version) seg else segmentKind(seg) orelse seg;
+        const take = @min(out.len, buf.len - n);
+        @memcpy(buf[n .. n + take], out[0..take]);
+        n += take;
+    }
+    return buf[0..n];
+}
+
+fn segmentKind(seg: []const u8) ?[]const u8 {
+    if (seg.len == 0) return null;
+    if (allOf(seg, std.ascii.isDigit)) return "{n}";
+    if (seg[0] == '{' or std.ascii.startsWithIgnoreCase(seg, "%7B")) return "{uuid}";
+    if (isTrackerKey(seg)) return "{key}";
+    if (seg.len >= 7 and allOf(seg, std.ascii.isHex) and !allOf(seg, std.ascii.isAlphabetic)) return "{sha}";
+    return null;
+}
+
+fn allOf(s: []const u8, comptime pred: fn (u8) bool) bool {
+    for (s) |c| if (!pred(c)) return false;
+    return true;
+}
+
+/// `ABC-12`: an upper-case project key, a dash, a number.
+fn isTrackerKey(seg: []const u8) bool {
+    const dash = std.mem.lastIndexOfScalar(u8, seg, '-') orelse return false;
+    if (dash == 0 or dash + 1 >= seg.len) return false;
+    if (!std.ascii.isUpper(seg[0])) return false;
+    for (seg[0..dash]) |c| if (!(std.ascii.isUpper(c) or std.ascii.isDigit(c) or c == '_')) return false;
+    return allOf(seg[dash + 1 ..], std.ascii.isDigit);
 }
 
 /// The SDK's own read of mnml's data-root ladder. The host always sets
@@ -780,4 +897,41 @@ test "the reasons the warmer added, and which of them yield to a reader" {
     try t.expectEqualStrings("delta", Reason.delta.tag());
     try t.expectEqualStrings("revalidate", Reason.revalidate.tag());
     try t.expectEqualStrings("cache_hit", Reason.cache_hit.tag());
+}
+
+test "a line names its route with the ids elided, so one endpoint reads as one and no key or number is quoted" {
+    var buf: [256]u8 = undefined;
+    try t.expectEqualStrings("/2.0/repositories/acme/api/pullrequests/{n}/comments", elideIds(&buf, "/2.0/repositories/acme/api/pullrequests/1198/comments?pagelen=50"));
+    try t.expectEqualStrings("/rest/api/3/issue/{key}/transitions", elideIds(&buf, "/rest/api/3/issue/ENG-12/transitions"));
+    try t.expectEqualStrings("/2.0/repositories/acme/api/commit/{sha}/statuses", elideIds(&buf, "/2.0/repositories/acme/api/commit/4f2a9c01be/statuses"));
+    try t.expectEqualStrings("/2.0/workspaces/acme/pipelines/{uuid}", elideIds(&buf, "/2.0/workspaces/acme/pipelines/%7Babc-1%7D"));
+    // A word made of hex letters is still a word.
+    try t.expectEqualStrings("/rest/agile/1.0/board/{n}/backlog", elideIds(&buf, "/rest/agile/1.0/board/7/backlog"));
+    try t.expectEqualStrings("/2.0/repositories/acme/deadbeef", elideIds(&buf, "/2.0/repositories/acme/deadbeef"));
+
+    var out: [1024]u8 = undefined;
+    var w: Io.Writer = .fixed(&out);
+    try writeLine(&w, .{ .service = "jira", .integration = "mnml-jira", .method = "GET", .host = "h", .path = "/rest/api/3/issue/ENG-7?fields=summary", .reason = .detail, .dry = true, .rate_limit = .{ .near_limit = true } });
+    const line = w.buffered();
+    try t.expect(std.mem.indexOf(u8, line, "\"route\":\"/rest/api/3/issue/{key}\"") != null);
+    try t.expect(std.mem.indexOf(u8, line, "\"dry\":true") != null);
+    try t.expect(std.mem.indexOf(u8, line, "\"near_limit\":true") != null);
+}
+
+test "both clouds' budget headers read into one shape: Bitbucket's epoch reset, Jira's ISO reset, the near-limit flag" {
+    var r: RateLimit = .{};
+    rateLimitHeader(&r, "X-RateLimit-Limit", "1000");
+    rateLimitHeader(&r, "x-ratelimit-remaining", " 812 ");
+    rateLimitHeader(&r, "X-RateLimit-NearLimit", "true");
+    rateLimitHeader(&r, "X-RateLimit-Reset", "2026-09-25T14:10:00.000Z");
+    rateLimitHeader(&r, "Authorization", "Basic abc");
+    try t.expectEqual(@as(?i64, 1000), r.limit);
+    try t.expectEqual(@as(?i64, 812), r.remaining);
+    try t.expectEqual(@as(?bool, true), r.near_limit);
+    try t.expectEqual(@as(?i64, 1_790_345_400), r.reset);
+    rateLimitHeader(&r, "X-RateLimit-Reset", "1790345999");
+    try t.expectEqual(@as(?i64, 1_790_345_999), r.reset);
+    rateLimitHeader(&r, "X-RateLimit-Reset", "soon");
+    try t.expectEqual(@as(?i64, 1_790_345_999), r.reset);
+    try t.expectEqual(@as(?i64, null), isoSeconds("2026-13-01T00:00:00Z"));
 }

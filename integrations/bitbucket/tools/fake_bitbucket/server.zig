@@ -37,6 +37,18 @@ pub const Reply = struct {
     /// does the same so a test can prove the client uses it. Owned by
     /// the arena.
     etag: []const u8 = "",
+    /// `X-RateLimit-Limit` / `-Remaining` / `-NearLimit`, when the
+    /// budget dial is on (`State.budget_limit`). Bitbucket Cloud sends
+    /// these on some routes and not others; the dial sends them on
+    /// every answer so a test can drive the pane's budget chip.
+    budget: ?Budget = null,
+};
+
+pub const Budget = struct {
+    limit: u32,
+    remaining: u32,
+    /// A fifth or less left — what Bitbucket's `NearLimit` flags.
+    near: bool,
 };
 
 pub const Method = enum { GET, POST, PUT, DELETE, other };
@@ -62,6 +74,14 @@ pub const State = struct {
     merged_count: usize = 0,
     /// Answer the next `n` requests with a 429 — the retry path.
     rate_limit_next: u32 = 0,
+    /// The `Retry-After` those 429s carry, in seconds. 0 sends none,
+    /// which is what makes the client fall back to its own backoff.
+    rate_limit_retry_after: u32 = 1,
+    /// The budget dial: when non-zero every answer carries
+    /// `X-RateLimit-Limit: budget_limit` and a `-Remaining` that
+    /// starts at `budget_remaining` and drops by one per request.
+    budget_limit: u32 = 0,
+    budget_remaining: u32 = 0,
     /// Answer `/2.0/user` with a 403, the way a token without
     /// **Account: Read** does. Everything else still works — which is
     /// exactly the case a `mine` tab's fallback exists for.
@@ -405,6 +425,10 @@ pub const Request = struct {
 /// Answer one request. `arena` owns the reply body.
 pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
     var reply = try route(arena, st, req);
+    if (st.budget_limit > 0) {
+        st.budget_remaining -|= 1;
+        reply.budget = .{ .limit = st.budget_limit, .remaining = st.budget_remaining, .near = st.budget_remaining * 5 <= st.budget_limit };
+    }
     // Every 2xx answer to a GET carries a tag over its own bytes, and
     // a GET that arrives holding that tag is told there is nothing
     // new. Bitbucket Cloud does this on its read routes; the cheap
@@ -413,7 +437,7 @@ pub fn handle(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply 
         reply.etag = try etagOf(arena, reply.body);
         if (req.if_none_match.len > 0 and std.mem.eql(u8, std.mem.trim(u8, req.if_none_match, " \t"), reply.etag)) {
             st.not_modified += 1;
-            return .{ .status = 304, .body = "", .etag = reply.etag };
+            return .{ .status = 304, .body = "", .etag = reply.etag, .budget = reply.budget };
         }
     }
     return reply;
@@ -439,7 +463,7 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
         st.rate_limit_next -= 1;
         return .{
             .status = 429,
-            .retry_after_secs = 1,
+            .retry_after_secs = if (st.rate_limit_retry_after > 0) st.rate_limit_retry_after else null,
             .body = "{\"type\":\"error\",\"error\":{\"message\":\"Rate limit for this resource has been exceeded\"}}",
         };
     }
@@ -1380,6 +1404,22 @@ test "the rate-limit dial answers 429 with a Retry-After the client can read, th
     try t.expectEqual(@as(u16, 429), (try call(a, &st, .GET, "/2.0/user", "")).status);
     try t.expectEqual(@as(u16, 200), (try call(a, &st, .GET, "/2.0/user", "")).status);
     try t.expectEqual(@as(u32, 3), st.served);
+}
+
+test "the budget dial counts down on every answer and flags the last fifth; a 429 can carry no Retry-After" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var st: State = .{ .budget_limit = 10, .budget_remaining = 4, .rate_limit_next = 1, .rate_limit_retry_after = 0 };
+    const first = try call(a, &st, .GET, "/2.0/user", "");
+    try t.expectEqual(@as(u16, 429), first.status);
+    try t.expectEqual(@as(?u32, null), first.retry_after_secs);
+    try t.expectEqual(@as(u32, 3), first.budget.?.remaining);
+    try t.expect(!first.budget.?.near);
+    const second = try call(a, &st, .GET, "/2.0/user", "");
+    try t.expectEqual(@as(u32, 2), second.budget.?.remaining);
+    try t.expectEqual(@as(u32, 10), second.budget.?.limit);
+    try t.expect(second.budget.?.near);
 }
 
 test "path segments and the tiny JSON string reader" {

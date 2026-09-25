@@ -79,6 +79,10 @@ pub const Action = enum {
     filter,
     help,
     escape,
+    /// Stop waiting out a 429's pause (the budget chip's click, too).
+    cancel_wait,
+    /// Dry run on / off: nothing is sent while it is on.
+    toggle_dry_run,
 
     /// Which tab, for the numbered actions.
     pub fn tabNumber(a: Action) ?u8 {
@@ -171,6 +175,8 @@ pub const table = [_]Binding{
     .{ .keys = &.{"/"}, .action = .filter, .title = "filter the rows", .section = "pane" },
     .{ .keys = &.{"r"}, .action = .refresh, .title = "refresh this tab", .hint = true, .section = "pane" },
     .{ .keys = &.{"shift+r"}, .action = .refresh_full, .title = "full refresh (ignore every cache)", .section = "pane" },
+    .{ .keys = &.{"ctrl+x"}, .action = .cancel_wait, .title = "stop waiting out a rate-limit pause", .section = "pane" },
+    .{ .keys = &.{"shift+n"}, .action = .toggle_dry_run, .title = "dry run on / off (nothing is sent)", .section = "pane" },
     .{ .keys = &.{"?"}, .action = .help, .title = "this key sheet", .hint = true, .section = "pane" },
     .{ .keys = &.{"esc"}, .action = .escape, .title = "close the sheet / clear the filter", .section = "pane" },
     .{ .keys = &.{ "q", "ctrl+c" }, .action = .quit, .title = "quit", .hint = true, .section = "pane" },
@@ -284,6 +290,9 @@ test "the reference's keys dispatch to their actions, scoped to where they apply
     // The button is a convenience; the key is the guarantee. A pane
     // too narrow to paint `[ Merge ]` must still be able to merge.
     try t.expectEqual(Action.merge_pr, lookup("shift+m", .{ .on_row = true }).?);
+    // The budget's two keys, the tracker pane's too, on every family.
+    try t.expectEqual(Action.cancel_wait, lookup("ctrl+x", .{}).?);
+    try t.expectEqual(Action.toggle_dry_run, lookup("shift+n", .{ .family = .pipelines }).?);
     try t.expect(lookup("z", tree) == null);
 }
 

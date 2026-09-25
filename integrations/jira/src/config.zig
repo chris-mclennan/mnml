@@ -503,6 +503,11 @@ pub const Config = struct {
     token_env: []const u8 = "",
     api: ApiVersion = .v3,
     rate: Rate = .{},
+    /// Dry run: log what WOULD be requested and keep what the pane
+    /// already shows, sending nothing — for a morning near the limit.
+    /// `Shift+N` (or `integrations.toggle_dry_run`) flips it for the
+    /// session; the header's budget chip says `DRY` while it is on.
+    dry_run: bool = false,
     /// How often each kind of thing is kept fresh. A listing drifts,
     /// a pipeline mid-run does not wait, and whether a pull request
     /// may merge is only ever asked about the row under the cursor —
@@ -694,6 +699,9 @@ pub fn load(arena: Allocator, io: Io, path: []const u8) Allocator.Error!Loaded {
 }
 
 pub fn parse(arena: Allocator, src: [:0]const u8, path: []const u8) Allocator.Error!Loaded {
+    // The parser unrolls a branch per field at compile time; a config
+    // this wide passes the default quota.
+    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
     const cfg = std.zon.parse.fromSliceAlloc(Config, arena, src, &diag, .{ .free_on_error = false }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,

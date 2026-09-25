@@ -23,6 +23,10 @@
 //!             one JSON line per request under
 //!             `<data root>/requests/<service>.jsonl` — what a slow
 //!             pane spent, and what it spent it waiting on
+//!   budget    the API budget a pane shows and obeys: the latest
+//!             rate-limit headers, a 429's pause (Retry-After, else a
+//!             jittered exponential backoff), cache hits and misses, a
+//!             daily tally shared across processes, and dry run
 //!   base_url  the `$<SERVICE>_BASE_URL` override a test points an
 //!             integration at its fake with — a URL or `@<file>`; a
 //!             file that never arrives is an error, never a fallback
@@ -51,6 +55,7 @@ pub const manifest = @import("manifest.zig");
 pub const broker = @import("broker.zig");
 pub const ratelimit = @import("ratelimit.zig");
 pub const request_log = @import("request_log.zig");
+pub const budget = @import("budget.zig");
 pub const store = @import("store.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
@@ -70,6 +75,7 @@ pub const Manifest = manifest.Manifest;
 pub const Limiter = ratelimit.Limiter;
 pub const BrokerClass = broker.Class;
 pub const RequestLog = request_log.Log;
+pub const Budget = budget.Budget;
 pub const Store = store.Store;
 pub const Gate = warm.Gate;
 pub const WarmLock = warm.Lock;
@@ -94,6 +100,7 @@ test {
     _ = broker;
     _ = ratelimit;
     _ = request_log;
+    _ = budget;
     _ = store;
     _ = warm;
     _ = pane;

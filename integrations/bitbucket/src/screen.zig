@@ -219,6 +219,10 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     n += 1;
     chips[n] = .{ .text = p.c.refreshOrBusyChipText(busy, app.now_ms), .target = .{ .chip = .refresh } };
     n += 1;
+    // The API budget, beside refresh — the same chip in the same place
+    // on the tracker pane (`sdk.pane.chrome.budgetChip`).
+    chips[n] = p.c.budgetChip(app.budget.snapshot(app.now_secs), .{ .chip = .budget });
+    n += 1;
     switch (app.family()) {
         .prs => {},
         .pipelines => {
@@ -1773,6 +1777,8 @@ test "hover help names each element: a chip, a row, a hint entry, the refresh ch
     try t.expectEqualStrings("status:", try Probe.at(app, .{ .chip = .status }, &buf));
     try t.expectEqualStrings("author:", try Probe.at(app, .{ .chip = .author }, &buf));
     try t.expectEqualStrings("Refresh", try Probe.at(app, .{ .chip = .refresh }, &buf));
+    // The budget chip is in the header and says what it is.
+    try t.expectEqualStrings("API budget", try Probe.at(app, .{ .chip = .budget }, &buf));
     try t.expectEqualStrings("Row", try Probe.at(app, .{ .row = 1 }, &buf));
     try t.expectEqualStrings("r — refresh this tab", try Probe.at(app, .{ .hint = .refresh }, &buf));
     // Nothing under the pointer: an empty title, which clears the view.

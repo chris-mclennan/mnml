@@ -97,9 +97,11 @@ pub const Rate = struct {
     capacity: f64 = 40.0,
     /// Attempts per request on a 429, retries included.
     max_attempts: u8 = 3,
-    /// Used when a 429 carries no `Retry-After`.
+    /// The first pause when a 429 carries no `Retry-After`; it doubles
+    /// per attempt, jittered (`sdk.budget.Backoff`).
     default_backoff_secs: u32 = 15,
-    /// A `Retry-After` longer than this is clamped.
+    /// The ceiling on that doubling. A `Retry-After` is honoured as the
+    /// server sent it.
     max_backoff_secs: u32 = 30,
     /// The state file; empty means the shared one (see `ratelimit.zig`).
     state_path: []const u8 = "",
@@ -150,6 +152,11 @@ pub const Config = struct {
     /// `$BITBUCKET_BASE_URL` wins over this.
     base_url: []const u8 = "",
     rate: Rate = .{},
+    /// Dry run: log what WOULD be requested and answer from what is
+    /// already held, sending nothing — for a morning near the limit.
+    /// `Shift+N` (or `integrations.toggle_dry_run`) flips it for the
+    /// session; the header's budget chip says `DRY` while it is on.
+    dry_run: bool = false,
     /// How often each kind of thing is kept fresh. A listing drifts,
     /// a pipeline mid-run does not wait, and whether a pull request
     /// may merge is only ever asked about the row under the cursor —
@@ -303,6 +310,9 @@ pub fn load(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[
 }
 
 pub fn parseText(arena: Allocator, text: [:0]const u8) !Config {
+    // The parser unrolls a branch per field at compile time; a config
+    // this wide passes the default quota.
+    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
     defer diag.deinit(arena);
     return std.zon.parse.fromSliceAlloc(Config, arena, text, &diag, .{ .free_on_error = false });

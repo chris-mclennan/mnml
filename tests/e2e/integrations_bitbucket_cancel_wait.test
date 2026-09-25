@@ -1,0 +1,33 @@
+# width: 120
+# height: 40
+# A pause the reader does not want to sit through is theirs to stop:
+# the host's `integrations.cancel_wait` (Ctrl+X in the pane, a click on
+# the budget chip) ends the wait at once — the chip stops saying
+# `paused until`, the pane says so, and the cancelled read is NOT sent
+# behind the reader's back.
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+# The fake answers its first request 429 with `Retry-After: 25`.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl --rate-limit-first 1 --retry-after 25 >/dev/null 2>&1 &
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 30000 screen contains "paused until "
+command integrations.cancel_wait
+expect within 5000 screen lacks "paused until "
+expect within 5000 screen contains "stopped waiting out the rate limit"
+wait 2000
+shell test "$(grep -c . wire.jsonl)" -eq 1
+key q
+wait 500

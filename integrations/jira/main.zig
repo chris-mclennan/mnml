@@ -446,6 +446,20 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // copy of the client carries stays good for the whole run.
     client.notice = &app.wait_notice;
     app.forge.notice = &app.wait_notice;
+    // The API budget the header chip shows and the client obeys: the
+    // headers, a 429's pause, the hit ratio, the day's tally (shared
+    // with every process on this data root), dry run.
+    const budget_root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(budget_root);
+    app.budget.configure(io, .{
+        .label = "Jira",
+        .service = ratelimit.service,
+        .data_root = budget_root,
+        .hourly_budget = @intFromFloat(@max(rd.cfg.rate.per_sec, 0) * 3600),
+        .dry_run = rd.cfg.dry_run,
+        .backoff = jira.backoffFor(rd.cfg.rate),
+    });
+    client.budget = &app.budget;
     // What the last run learned about each ticket's linked PRs, keyed
     // by the ticket's own `updated` stamp: a tab that has not moved
     // paints them on open for nothing.
@@ -544,7 +558,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                         try app.hover(h.col, h.row);
                         // The host's info view, told what is under the
                         // pointer (sent only when it changed).
-                        var hb: [96]u8 = undefined;
+                        // Room for the budget chip's hover, the longest.
+                        var hb: [640]u8 = undefined;
                         const help = app.helpAt(h.col, h.row, &hb);
                         mount.hover(help.title, help.body) catch {};
                     },

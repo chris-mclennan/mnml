@@ -1379,6 +1379,20 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     // `app` is a local that is never moved, so the pointer the worker
     // thread's client carries stays good for the whole run.
     session.client.notice = &app.wait_notice;
+    // The API budget the header chip shows and the client obeys: the
+    // headers, a 429's pause, the hit ratio, the day's tally (shared
+    // with every process on this data root), dry run.
+    const budget_root = try sdk.request_log.dataRoot(gpa, env);
+    defer gpa.free(budget_root);
+    app.budget.configure(io, .{
+        .label = "Bitbucket",
+        .service = ratelimit.service,
+        .data_root = budget_root,
+        .hourly_budget = @intFromFloat(@max(session.loaded.config.rate.rate_per_sec, 0) * 3600),
+        .dry_run = session.loaded.config.dry_run,
+        .backoff = session.client.backoff(),
+    });
+    session.client.budget = &app.budget;
     if (app.tabs.len == 0) {
         const msg = try std.fmt.allocPrint(gpa, "--only {s}: no tabs of that family in {s} (check the `tabs` entries and their `kind`)", .{ opts.only orelse "?", session.loaded.path });
         defer gpa.free(msg);
@@ -1449,7 +1463,8 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     app.hover(hv.col, hv.row);
                     // The host's info view, told what is under the
                     // pointer (sent only when it changed).
-                    var hb: [96]u8 = undefined;
+                    // Room for the budget chip's hover, the longest.
+                    var hb: [640]u8 = undefined;
                     const help = app.helpAt(hv.col, hv.row, &hb);
                     mount.hover(help.title, help.body) catch {};
                 },

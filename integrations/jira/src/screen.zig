@@ -330,6 +330,9 @@ pub const Painter = struct {
         const head = try p.c.capsHeader(1, y, title, sub_all, t.fetched_at, p.a.nowSecs(), &.{
             .{ .text = help_chip_text, .target = .{ .chip = .help } },
             .{ .text = p.c.refreshOrBusyChipText(busy, now_ms), .target = .{ .chip = .refresh } },
+            // The API budget, beside refresh — the same chip in the
+            // same place on the forge pane (`sdk.pane.chrome.budgetChip`).
+            p.c.budgetChip(p.a.budget.snapshot(p.a.nowSecs()), .{ .chip = .budget }),
         });
         if (p.a.selection.count() > 0) {
             _ = p.put(head.x + 1, y, head.edge -| (head.x + 1), p.fmt("{d} selected", .{p.a.selection.count()}), p.s.bulk);
@@ -1695,7 +1698,10 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     defer arena.deinit();
     const ar = arena.allocator();
     try paint(ar, &f, a, .{});
-    const r0 = try rowText(ar, &f, 0);
+    // Off the frame arena: the block below resets it three times, and
+    // a row read off a reset arena is whatever landed there since.
+    const r0 = try testing.allocator.dupe(u8, try rowText(ar, &f, 0));
+    defer testing.allocator.free(r0);
     // While a refetch is out the header says what it is doing — the
     // forge pane's words, from the SDK — and the refresh chip turns
     // the host's ring; queued behind the broker says how many ahead.
@@ -1903,7 +1909,10 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     try paint(ar, &f, a, .{});
     try testing.expect((try findRow(ar, &f, "▾ ── overlays ──")) != null);
     try testing.expect((try findRow(ar, &f, "JQL editor: line ends")) != null);
-    try a.click(60, 20, false);
+    // A click on the Esc row runs Esc: the sheet closes. Found by its
+    // words, not a fixed row, so a binding added above it moves nothing.
+    const esc_y = (try findRow(ar, &f, "clear the selection")).?;
+    try a.click(60, esc_y, false);
     try testing.expect(!a.help);
 }
 
@@ -2547,6 +2556,9 @@ test "hover help names each element: the assignee chip, a row, a hint entry — 
     };
     try testing.expectEqualStrings("assignee:", try Probe.at(a, .{ .chip = .assignee }, &buf));
     try testing.expectEqualStrings("Refresh", try Probe.at(a, .{ .chip = .refresh }, &buf));
+    // The budget chip is in the header and says what it is — the forge
+    // pane's same entry (`sdk.pane.help.budget`).
+    try testing.expectEqualStrings("API budget", try Probe.at(a, .{ .chip = .budget }, &buf));
     try testing.expectEqualStrings("Row", try Probe.at(a, .{ .row = 1 }, &buf));
     try testing.expectEqualStrings("r — refresh", try Probe.at(a, .{ .hint = .refresh }, &buf));
 }
