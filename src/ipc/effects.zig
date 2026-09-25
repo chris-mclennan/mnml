@@ -23,6 +23,8 @@ const sessions_table = @import("../app/sessions_table.zig");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const pty_pane = @import("../app/pty_pane.zig");
+const keymap = @import("../core/keymap.zig");
+const key_mod = @import("../core/key.zig");
 
 pub const Side = ipc_command.SegmentSide;
 pub const Level = ipc_command.ToastLevel;
@@ -504,8 +506,143 @@ pub fn openPty(app: *App, p: OpenPty) Allocator.Error!void {
 pub fn isInput(cmd: *const ipc_command.Command) bool {
     return switch (cmd.*) {
         .key, .type, .click, .hover, .scroll, .drag, .mouse_down, .mouse_move, .mouse_up => true,
+        // The driver verbs that act as the person would: opening a file,
+        // seeding a suggestion, running an ex line.
+        .open, .ghost, .ex => true,
         else => false,
     };
+}
+
+/// A key spec as a host writes it — one chord (`ctrl+p`), a whitespace
+/// chain (`ctrl+w h`), or a run of single chars (`gg`, `2j`) when the
+/// whole thing is not a chord and could plausibly be a vim chain. Three
+/// or more letters with no modifier (`hom`, `esx`) read as a misspelled
+/// named key and stay unparsed rather than typing wrong keystrokes.
+/// Null unless every token parses: half a chain is not dispatched.
+///
+/// The headless loop and the terminal loop both read a `key` line
+/// through this, so a spec cannot mean one thing to the driver an agent
+/// tests with and another to the window a person looks at.
+pub fn keySpecKeys(arena: Allocator, spec: []const u8) Allocator.Error!?[]const key_mod.Key {
+    const chars = std.unicode.utf8CountCodepoints(spec) catch spec.len;
+    const has_ws = std.mem.indexOfAny(u8, spec, " \t\r\n") != null;
+    var all_alpha = true;
+    for (spec) |c| if (!std.ascii.isAlphabetic(c)) {
+        all_alpha = false;
+        break;
+    };
+    const looks_like_typo = chars >= 3 and all_alpha;
+    const per_char = !has_ws and std.mem.indexOfScalar(u8, spec, '+') == null and keymap.parseKeySpec(spec) == null and chars >= 2 and !looks_like_typo;
+
+    var keys: std.ArrayList(key_mod.Key) = .empty;
+    if (per_char) {
+        var it = (std.unicode.Utf8View.init(spec) catch return null).iterator();
+        while (it.nextCodepointSlice()) |g| {
+            try keys.append(arena, keymap.parseKeySpec(g) orelse return null);
+        }
+    } else {
+        var it = std.mem.tokenizeAny(u8, spec, " \t\r\n");
+        while (it.next()) |tok| try keys.append(arena, keymap.parseKeySpec(tok) orelse return null);
+    }
+    if (keys.items.len == 0) return null;
+    return keys.items;
+}
+
+/// The INPUT set at a live terminal — `key`, `type`, `click`, `hover`,
+/// `scroll`, `drag`, `mouse_*` — plus `open`, `ghost` and `ex`, the
+/// driver verbs a script leans on. The terminal loop only posts these
+/// when `ipc.allow_input` is on (`tui/loop.zig`); here they become the
+/// same `App.handle` events a keyboard and a mouse produce, so a host
+/// driving the real window through the channel sees what a person
+/// would, without the window ever taking the keyboard.
+///
+/// It used to be missing: the loop acknowledged the line `accepted`
+/// and the App's `.ipc` arm, which only knew the tier-2 set, answered
+/// "not in this build". The ack was true and nothing moved.
+///
+/// False for a command this is not.
+pub fn applyInput(app: *App, arena: Allocator, cmd: *const ipc_command.Command) Allocator.Error!bool {
+    switch (cmd.*) {
+        .key => |spec| {
+            const keys = try keySpecKeys(arena, spec) orelse {
+                app.toast("ipc key: cannot read `{s}`", .{spec});
+                return true;
+            };
+            for (keys) |k| try app.handle(.{ .key = k });
+        },
+        .type => |text| {
+            var it = (std.unicode.Utf8View.init(text) catch return true).iterator();
+            while (it.nextCodepoint()) |c| {
+                try app.handle(.{ .key = if (c == '\n') key_mod.Key.named(.enter) else key_mod.Key.char(c) });
+            }
+        },
+        .click => |c| {
+            try app.handle(.{ .mouse = .{ .x = c.col, .y = c.row, .kind = .press, .button = c.button, .mods = c.mods } });
+            try app.handle(.{ .mouse = .{ .x = c.col, .y = c.row, .kind = .release, .button = c.button, .mods = c.mods } });
+        },
+        .hover => |h| try app.handle(.{ .mouse = .{ .x = h.col, .y = h.row, .kind = .motion } }),
+        .mouse_down => |m| {
+            app.ipc_button_held = true;
+            try app.handle(.{ .mouse = .{ .x = m.col, .y = m.row, .kind = .press, .button = m.button, .mods = m.mods } });
+        },
+        .mouse_move => |m| try app.handle(.{ .mouse = .{
+            .x = m.col,
+            .y = m.row,
+            .kind = if (app.ipc_button_held) .drag else .motion,
+            .button = if (app.ipc_button_held) .left else .none,
+        } }),
+        .mouse_up => |m| {
+            app.ipc_button_held = false;
+            try app.handle(.{ .mouse = .{ .x = m.col, .y = m.row, .kind = .release, .button = m.button, .mods = m.mods } });
+        },
+        .drag => |g| {
+            try app.handle(.{ .mouse = .{ .x = g.from_col, .y = g.from_row, .kind = .press, .button = .left } });
+            const dx = if (g.col > g.from_col) g.col - g.from_col else g.from_col - g.col;
+            const dy = if (g.row > g.from_row) g.row - g.from_row else g.from_row - g.row;
+            const steps: u16 = @max(dx, dy);
+            var s: u16 = 1;
+            while (s <= steps) : (s += 1) {
+                const f: f32 = @as(f32, @floatFromInt(s)) / @as(f32, @floatFromInt(steps));
+                try app.handle(.{ .mouse = .{ .x = lerpCell(g.from_col, g.col, f), .y = lerpCell(g.from_row, g.row, f), .kind = .drag, .button = .left } });
+            }
+            try app.handle(.{ .mouse = .{ .x = g.col, .y = g.row, .kind = .release, .button = .left } });
+        },
+        .scroll => |sc| {
+            // One deliberate notch per `dy`, each landed before the next,
+            // as the headless loop applies them.
+            const kind: key_mod.MouseKind = if (sc.dy >= 0) .scroll_up else .scroll_down;
+            var n: u32 = @abs(sc.dy);
+            while (n > 0) : (n -= 1) {
+                app.accel.endGesture();
+                try app.handle(.{ .mouse = .{ .x = sc.col, .y = sc.row, .kind = kind } });
+                try app.flushWheel();
+            }
+        },
+        .open => |p| {
+            const path = if (std.fs.path.isAbsolute(p)) p else try std.fs.path.join(arena, &.{ app.workspace, p });
+            _ = app.openPath(path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => app.toast("open {s}: {s}", .{ app.relPath(path), @errorName(err) }),
+            };
+        },
+        .ghost => |text| {
+            const e = app.activeEditor() orelse {
+                app.toast("ipc ghost: the active pane is not an editor", .{});
+                return true;
+            };
+            try e.buf.editor.setGhostSuggestion(text);
+        },
+        .ex => |line| try @import("../app/dispatch.zig").runExLine(app, line),
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
+}
+
+fn lerpCell(from: u16, to: u16, f: f32) u16 {
+    const a: f32 = @floatFromInt(from);
+    const b: f32 = @floatFromInt(to);
+    return @intFromFloat(@round(a + (b - a) * f));
 }
 
 /// The whole tier-2 set an integration is promised: the toast family,

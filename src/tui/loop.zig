@@ -511,3 +511,53 @@ test "the live loop takes the tier-2 set and refuses input: a segment lands, a k
     try t.expectEqual(@as(usize, 1), n);
     buf[0].ipc.destroy();
 }
+
+test "with allow_input the live loop's input lines MOVE the App: a key opens the picker, open + type edit a file, a click lands" {
+    // The ack said `accepted` and the App's `.ipc` arm answered "not in
+    // this build": a host driving the real window through the channel
+    // saw nothing happen. Each line below must change App state, not
+    // just be posted.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "one\n" });
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.cfg.ipc.allow_input = true;
+    var ch = try ipc.Channel.init(t.allocator, t.io, ws, .{});
+    defer ch.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var buf: [8]event.AppEvent = undefined;
+
+    const Feed = struct {
+        fn line(c: *ipc.Channel, a: *App, ar: std.mem.Allocator, b: []event.AppEvent, text: []const u8) !void {
+            try dispatchIpcLine(c, a, ar, text);
+            const n = a.events.drain(t.io, b);
+            try t.expectEqual(@as(usize, 1), n);
+            try a.handle(b[0]);
+            try a.render();
+        }
+    };
+
+    try t.expect(app.overlay == .none);
+    try Feed.line(&ch, &app, arena, &buf, "{\"cmd\":\"key\",\"key\":\"ctrl+p\"}");
+    try t.expect(app.overlay != .none);
+    try Feed.line(&ch, &app, arena, &buf, "{\"cmd\":\"key\",\"key\":\"esc\"}");
+    try t.expect(app.overlay == .none);
+
+    try Feed.line(&ch, &app, arena, &buf, "{\"cmd\":\"open\",\"path\":\"a.txt\"}");
+    try t.expect(app.activeEditor() != null);
+    try Feed.line(&ch, &app, arena, &buf, "{\"cmd\":\"type\",\"text\":\"zz\"}");
+    try t.expect(std.mem.indexOf(u8, app.activeEditor().?.buf.editor.bytes(), "zz") != null);
+
+    // A right-click on the editor opens its context menu: the mouse
+    // path, not only the keyboard one.
+    try Feed.line(&ch, &app, arena, &buf, "{\"cmd\":\"click\",\"col\":50,\"row\":5,\"button\":\"right\"}");
+    try t.expect(app.overlay == .menu);
+
+    // Nothing here was answered "not in this build".
+    for (app.toasts.items) |ts| try t.expect(std.mem.indexOf(u8, ts.text, "not in this build") == null);
+}

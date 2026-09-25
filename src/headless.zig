@@ -314,6 +314,10 @@ const Loop = struct {
                 const applied = if (d.ghost(text)) true else |_| false;
                 return ev(arena, &.{ .{ "event", "ghost" }, .{ "applied", if (applied) "true" else "false" }, .{ "text", text } });
             },
+            .ex => |line| {
+                const ok = if (d.ex(line)) true else |_| false;
+                return ev(arena, &.{ .{ "event", "ex" }, .{ "line", line }, .{ "ok", if (ok) "true" else "false" } });
+            },
             .quit => {
                 d.requestQuit(false);
                 self.quit = true;
@@ -336,28 +340,8 @@ const Loop = struct {
     /// stay unparsed rather than typing wrong keystrokes. Every token
     /// must parse for any to be dispatched.
     fn dispatchKeySpec(self: *Loop, arena: Allocator, spec: []const u8) !bool {
-        const chars = std.unicode.utf8CountCodepoints(spec) catch spec.len;
-        const has_ws = std.mem.indexOfAny(u8, spec, " \t\r\n") != null;
-        var all_alpha = true;
-        for (spec) |c| if (!std.ascii.isAlphabetic(c)) {
-            all_alpha = false;
-            break;
-        };
-        const looks_like_typo = chars >= 3 and all_alpha;
-        const per_char = !has_ws and std.mem.indexOfScalar(u8, spec, '+') == null and keymap.parseKeySpec(spec) == null and chars >= 2 and !looks_like_typo;
-
-        var keys: std.ArrayList(input.Key) = .empty;
-        if (per_char) {
-            var it = std.unicode.Utf8View.initUnchecked(spec).iterator();
-            while (it.nextCodepointSlice()) |g| {
-                try keys.append(arena, keymap.parseKeySpec(g) orelse return false);
-            }
-        } else {
-            var it = std.mem.tokenizeAny(u8, spec, " \t\r\n");
-            while (it.next()) |tok| try keys.append(arena, keymap.parseKeySpec(tok) orelse return false);
-        }
-        if (keys.items.len == 0) return false;
-        for (keys.items) |k| self.driver.key(k) catch {};
+        const keys = try ipc.effects.keySpecKeys(arena, spec) orelse return false;
+        for (keys) |k| self.driver.key(k) catch {};
         return true;
     }
 };
