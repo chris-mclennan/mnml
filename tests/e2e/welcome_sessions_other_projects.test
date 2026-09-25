@@ -12,7 +12,7 @@
 # Each first prompt is one short word, so a row the list truncates is
 # still found — or its absence still means something.
 write a.txt "alpha\n"
-shell B=$(basename "$MNML_E2E_WORKSPACE"); n=0; for cwd in "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE-old" "/elsewhere/$B"; do n=$((n+1)); ENC=$(printf '%s' "$cwd" | sed 's/[\/.]/-/g'); mkdir -p "home/.claude/projects/$ENC"; case $n in 1) m="HERE";; 2) m="SIBLING";; 3) m="SAMENAME";; esac; printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"%s"}}\n' "$cwd" "$m" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-00000000000$n.jsonl"; done
+shell B=$(basename "$MNML_E2E_WORKSPACE"); n=0; for cwd in "$MNML_E2E_WORKSPACE" "$MNML_E2E_WORKSPACE-old" "/elsewhere/$B"; do n=$((n+1)); ENC=$(printf '%s' "$cwd" | sed 's/[^A-Za-z0-9]/-/g'); mkdir -p "home/.claude/projects/$ENC"; case $n in 1) m="HERE";; 2) m="SIBLING";; 3) m="SAMENAME";; esac; printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"%s"}}\n' "$cwd" "$m" > "home/.claude/projects/$ENC/e2e00000-0000-4000-8000-00000000000$n.jsonl"; done
 command sessions.refresh
 wait 1500
 expect screen contains "SESSIONS"
