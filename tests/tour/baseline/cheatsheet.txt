@@ -1,40 +1,40 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Us…        │  Cheatsheet 󰅖   󰐕                                                              󱸀  󲀀      
-▌ │▌    docs         │▌ Cheatsheet · / filter · ↑↓ · C collapse · X all · Esc → back
-   │     󱼅  notes.md   │▌ app (2)
- 󰍉 │     src          │▌  ctrl+q            Quit mnml                                                        app.quit
-   │     󱼄  main.zig   │▌  ctrl+;            Open the `:` command line (any focus, either keymap profile)app.command_l
- 󰊢 │     󱼅  util.zig M │▌ view (86)
-   │      .gitignore   │▌  space t e         Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Fin…
-  │      CHANGELOG.m? │▌  ctrl+b            Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Fin…
-   │     󰂺 README.md    │▌  f1                Keybindings & help — help overlay (auto-generated keymap reference)
- 󰐱 │                    │▌  ctrl+k ctrl+r     Keybindings & help — help overlay (auto-generated keymap reference)
-   │   󰐙 Add workspace  │▌  ctrl+,            Settings overlay (keyboard-driven schema editor)            view.settings
- 󰎒 │                    │▌  ctrl+shift+e      Focus the file tree (opening it when closed)              view.focus_tree
-   │                    │▌  ctrl+0            Focus the file tree (opening it when closed)              view.focus_tree
-  │                    │▌  space t h         Toggle hidden files in focused tree section            view.toggle_hidden
-   │                    │▌  space t H         Toggle hidden files across every workspace section view.toggle_hidden_all
-  │                    │▌  space t f         Toggle full screen (hide tree + bufferline + statusline)  view.fullscreen
-   │                    │▌  ctrl+k z          Toggle full screen (hide tree + bufferline + statusline)  view.fullscreen
-  │                    │▌  space t 0         Reset view to default (leave full screen and zoom, show the tree, menu …
-   │                    │▌  space n           Toggle line-number gutter                        view.toggle_line_numbers
- 󱘣 │                    │▌  space t n         Toggle line-number gutter                        view.toggle_line_numbers
-   │                    │▌  space s o         Close all other panes (keep active; respects unsaved guards)view.close_ot
- 󰢱 │                    │▌  ctrl+k w          Close all other panes (keep active; respects unsaved guards)view.close_ot
-   │                    │▌  space t w         Toggle line wrapping (vim :set wrap)                     view.toggle_wrap
-   │                    │▌  alt+z             Toggle line wrapping (vim :set wrap)                     view.toggle_wrap
-   │                    │▌  ctrl+k f12        Split + jump to definition (vim `Ctrl+W d`)    view.split_goto_definition
-   │                    │▌  ctrl+k ctrl+m     Zoom the split / restore                                 view.toggle_zoom
-   │                    │▌  ctrl+k left       Move active split to the left of its parent (vim `Ctrl+W H`)view.move_spl
-   │                    │▌  ctrl+k right      Move active split to the right of its parent (vim `Ctrl+W L`)view.move_sp
-   │                    │▌  ctrl+k up         Move active split to the top of its parent (vim `Ctrl+W K`)view.move_spli
-   │────────────────────│▌  ctrl+k down       Move active split to the bottom of its parent (vim `Ctrl+W J`)
-   │ Sidebar        󰐃 ⋮ │▌  space s H         Move the focused activity section to the left side (vim `Ctrl+W H` in a…
-   │                   ┃│▌  space s L         Move the focused activity section to the right side (vim `Ctrl+W L` in …
-   │ Arrows or j/k     ┃│▌  ctrl+k ctrl+shift+Messages: recent toasts (searchable log)                    messages.show
-   │ walk rows. Enter  ┃│▌  space j           Jobs: the background jobs — running, and the last fifty finished (the s…
-   │ opens the         ││▌  ctrl+k j          Jobs: the background jobs — running, and the last fifty finished (the s…
-  │ selection.        ││▌  Ctrl+Shift+B      Toggle the right column (the sections on the right side)view.toggle_right
-   │                    │▌  space t r         Toggle the right column (the sections on the right side)view.toggle_right
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  15:30  ws   —
+   │  ● /Use…            │  Cheatsheet 󰅖   󰐕                                                        󱸀  󲀀      
+▌ │▌    docs               │▌ Cheatsheet · / filter · ↑↓ · C collapse · X all · Esc → back
+   │     󱼅  notes.md         │▌ app (2)
+ 󰍉 │     src                │▌  ctrl+q            Quit mnml                                                  app.quit
+   │     󱼄  main.zig         │▌  ctrl+;            Open the `:` command line (any focus, either keymap profile)
+ 󰊢 │     󱼅  util.zig       M │▌ view (86)
+   │      .gitignore         │▌  space t e         Toggle left panel (file tree · Git · Integrations · Agents · HTTP…
+  │      CHANGELOG.md     ? │▌  ctrl+b            Toggle left panel (file tree · Git · Integrations · Agents · HTTP…
+   │     󰂺 README.md          │▌  f1                Keybindings & help — help overlay (auto-generated keymap referenc…
+ 󰐱 │                          │▌  ctrl+k ctrl+r     Keybindings & help — help overlay (auto-generated keymap referenc…
+   │         󰐙 Add workspace  │▌  ctrl+,            Settings overlay (keyboard-driven schema editor)      view.settings
+ 󰎒 │                          │▌  ctrl+shift+e      Focus the file tree (opening it when closed)        view.focus_tree
+   │                          │▌  ctrl+0            Focus the file tree (opening it when closed)        view.focus_tree
+  │                          │▌  space t h         Toggle hidden files in focused tree section      view.toggle_hidden
+   │                          │▌  space t H         Toggle hidden files across every workspace sectionview.toggle_hidde
+  │                          │▌  space t f         Toggle full screen (hide tree + bufferline + statusline)
+   │                          │▌  ctrl+k z          Toggle full screen (hide tree + bufferline + statusline)
+  │                          │▌  space t 0         Reset view to default (leave full screen and zoom, show the tree,…
+   │                          │▌  space n           Toggle line-number gutter                  view.toggle_line_numbers
+ 󱘣 │                          │▌  space t n         Toggle line-number gutter                  view.toggle_line_numbers
+   │                          │▌  space s o         Close all other panes (keep active; respects unsaved guards)
+ 󰢱 │                          │▌  ctrl+k w          Close all other panes (keep active; respects unsaved guards)
+   │                          │▌  space t w         Toggle line wrapping (vim :set wrap)               view.toggle_wrap
+   │                          │▌  alt+z             Toggle line wrapping (vim :set wrap)               view.toggle_wrap
+   │                          │▌  ctrl+k f12        Split + jump to definition (vim `Ctrl+W d`)view.split_goto_definiti
+   │                          │▌  ctrl+k ctrl+m     Zoom the split / restore                           view.toggle_zoom
+   │                          │▌  ctrl+k left       Move active split to the left of its parent (vim `Ctrl+W H`)
+   │                          │▌  ctrl+k right      Move active split to the right of its parent (vim `Ctrl+W L`)
+   │                          │▌  ctrl+k up         Move active split to the top of its parent (vim `Ctrl+W K`)
+   │──────────────────────────│▌  ctrl+k down       Move active split to the bottom of its parent (vim `Ctrl+W J`)
+   │ Sidebar              󰐃 ⋮ │▌  space s H         Move the focused activity section to the left side (vim `Ctrl+W H…
+   │                          │▌  space s L         Move the focused activity section to the right side (vim `Ctrl+W …
+   │ Arrows or j/k walk rows. │▌  ctrl+k ctrl+shift+Messages: recent toasts (searchable log)              messages.show
+   │ Enter opens the          │▌  space j           Jobs: the background jobs — running, and the last fifty finished …
+   │ selection. Ctrl+Shift+P  │▌  ctrl+k j          Jobs: the background jobs — running, and the last fifty finished …
+  │ opens the palette.       │▌  Ctrl+Shift+B      Toggle the right column (the sections on the right side)
+   │                          │▌  space t r         Toggle the right column (the sections on the right side)
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:40  ws   —
                                                            ⋯
