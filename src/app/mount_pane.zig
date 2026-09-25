@@ -11,6 +11,8 @@
 //! the banner and any key closes it.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -434,7 +436,7 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
                 },
             });
             m.greeted = true;
-            const focused = app.active == ev.pane and app.focus == .pane;
+            const focused = paneFocused(app, ev.pane);
             p.send(.{ .focus = focused });
             p.focus_sent = focused;
         },
@@ -712,7 +714,7 @@ fn wireColor(c: vaxis.Color) ?wire.Color {
 }
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *MountPane, rect: Rect) Allocator.Error!void {
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     if (app.active == id) {
         app.pane_rows = @max(rect.h, 1);
         app.pane_cols = @max(rect.w, 1);

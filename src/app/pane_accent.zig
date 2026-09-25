@@ -200,6 +200,18 @@ fn paintsOwnStripe(app: *App, p: *const pane_mod.Pane) bool {
     };
 }
 
+/// The colour of the stripe a pane paints down its own first column
+/// (`paintsOwnStripe`) — the one the focus cue steps back while the
+/// pane does not have the keys (`pane_rail.recolor`) — under the same
+/// `ui.pane_rail = .all` that gives every other pane its rail. Null for
+/// a pane that paints none.
+pub fn ownStripeColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
+    const p = app.panes.get(id) orelse return null;
+    if (!paintsOwnStripe(app, p)) return null;
+    if (app.cfg.ui.pane_rail != .all) return null;
+    return colorOf(app, id, theme);
+}
+
 /// The rail colour for a pane under the current `ui.pane_rail` setting:
 /// `.all` paints every pane, `.sessions` only the AI session panes that
 /// wore one before the rail was a rule, `.off` none.

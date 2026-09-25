@@ -31,6 +31,8 @@
 //! sections.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -2988,7 +2990,7 @@ pub fn scrollBy(app: *App, p: *IntegrationsPane, delta: i64) void {
 
 pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) Allocator.Error!void {
     const st = &app.integrations;
-    const focused = app.active == id and app.focus == .pane;
+    const focused = paneFocused(app, id);
     if (app.active == id) app.pane_rows = @max(rect.h, 1);
     const buttons = buttonsFor(app, p);
     const labels = try ui.arena.alloc([]const u8, buttons.len);

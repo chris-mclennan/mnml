@@ -16,6 +16,8 @@
 
 const sessions = @import("../sessions.zig");
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -819,7 +821,7 @@ fn reportFocus(app: *App, p: *PtyPane, id: PaneId) void {
 }
 
 fn focusedNow(app: *const App, id: PaneId) bool {
-    return app.host_focused and app.active == id and app.focus == .pane;
+    return app.host_focused and paneFocused(app, id);
 }
 
 /// A fresh child starts out knowing its pane's focus: no report is owed

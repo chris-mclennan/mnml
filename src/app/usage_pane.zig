@@ -16,6 +16,8 @@
 //! spec dumps and the unit tests use it.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -1137,7 +1139,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *UsagePane, area: Rect) Allocator.
         .now = now,
         .tz = if (st(app).tz_override) |o| .{ .fixed = o } else .local,
         .loading = s.anyPending(),
-    }, app.active == id and app.focus == .pane);
+    }, paneFocused(app, id));
 }
 
 // ─── the chip ───────────────────────────────────────────────────────────

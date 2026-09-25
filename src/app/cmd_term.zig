@@ -7,6 +7,8 @@
 //! in the store: the shell keeps its history across toggles.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -160,7 +162,7 @@ fn scratchToggle(app: *App) CommandError!void {
     if (scratchPane(app)) |id| {
         const layout = app.layouts.current();
         const shown = layout.leafOf(id) != null;
-        if (shown and app.active == id and app.focus == .pane) {
+        if (shown and paneFocused(app, id)) {
             const next = layout.removePane(id);
             app.afterSplitChange();
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;

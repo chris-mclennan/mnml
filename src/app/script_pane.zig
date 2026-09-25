@@ -10,6 +10,8 @@
 //! `*Lua` it was made with — `Pane.deinit` has no App.
 
 const std = @import("std");
+/// The one "does this pane have the keys" (`render.paneFocused`).
+const paneFocused = @import("render.zig").paneFocused;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -61,7 +63,7 @@ pub fn draw(app: *App, ui: Ui, pane: PaneId, sp: *ScriptPane, area: Rect) Alloca
     if (app.active == pane) app.pane_rows = @max(area.h, 1);
     if (sp.list != 0) {
         const l = script_list.find(app, sp.list) orelse return;
-        const caret = try script_list.draw(app, ui, area, l, .{ .panel = .todos, .pane = pane, .focused = app.active == pane and app.focus == .pane and app.focus.pane == pane });
+        const caret = try script_list.draw(app, ui, area, l, .{ .panel = .todos, .pane = pane, .focused = paneFocused(app, pane) });
         if (caret) |c| app.cursor_pos = .{ .x = c.x, .y = c.y };
         return;
     }

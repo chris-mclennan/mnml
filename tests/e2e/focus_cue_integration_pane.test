@@ -1,0 +1,91 @@
+# width: 150
+# height: 30
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+# The focus cue on an integration pane: the pane with the keys wears
+# its rail at full colour and every other pane's steps back
+# (`ui/focus_cue.zig`), whatever kind the focused pane is.
+#
+# The user's screen: the Bitbucket PRs pane had the keys — its tab
+# active, the chip reading VIEW, keys going to it — and every rail was
+# stepped back, its own included. Two things said so:
+#
+# - An integration takes no rail: its own app-colour gutter is the
+#   stripe (`pane_accent.paintsOwnStripe`), and the SDK paints it dim
+#   on every row but the cursor's, whoever has the keys. The cue never
+#   touched it. It now goes on that stripe (`pane_rail.recolor`): the
+#   full colour, undimmed, with the keys; stepped back without.
+# - `render.paneFocused` read the pane `App.focus` named. A menu closed
+#   back to the `.pane` it was opened over, after the PRs pane took the
+#   keys under it, left that naming the editor: the editor's rail lit
+#   while the keys went to the PRs pane. The cue now asks what key
+#   routing does — no overlay, visible tree or shown section has the
+#   keys, so the active pane does.
+#
+# A script sees colours, not SGR dim, so the fg is what is read here;
+# `pane_rail.zig`'s recolor test holds the dim.
+#
+# Layout: the editor on top (its rail at 0,2), a terminal bottom-left
+# (0,17) and the PRs pane beside it (its gutter at 76,17 on the header
+# row, 76,20 on a list row). Onedark: the editor green #98c379 (stepped
+# back #4b5e47), the terminal white (stepped back #535862), the PRs
+# pane its manifest's blue #61afef (stepped back #375774).
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 >/dev/null 2>&1 &
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket PRs\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+write a.txt "alpha\n"
+open a.txt
+ex term printf TT; sleep 30
+expect screen contains "TT"
+# The PRs pane opens beside the terminal and takes the keys.
+command bitbucket_prs.open
+wait 1500
+expect screen contains "BITBUCKET PRS"
+expect screen contains "#1234"
+# The sidebar goes (it carries the integration's own section once the
+# pane is up), so the panes sit at the screen's left edge; the keys go
+# back to the PRs pane.
+command view.toggle_tree
+expect screen lacks "INTEGRATIONS"
+command view.focus_pane
+expect screen contains " VIEW "
+expect color 76 17 fg #61afef
+expect color 76 20 fg #61afef
+expect color 0 2 fg #4b5e47
+expect color 0 17 fg #535862
+# The editor takes them: its rail lights, the PRs pane's steps back.
+command view.focus_up
+expect screen contains " EDIT "
+expect color 0 2 fg #98c379
+expect color 76 17 fg #375774
+expect color 76 20 fg #375774
+expect color 0 17 fg #535862
+# A focus left naming the wrong pane: a menu opened over the editor,
+# the PRs pane shown while it is up, the menu closed back to the
+# editor's `.pane`. The keys go to the PRs pane and the chip reads
+# VIEW — and its rail is the lit one, not the editor's.
+key f10
+expect screen contains "Open file"
+command bitbucket_prs.open
+key esc
+expect screen lacks "Open file"
+expect screen contains " VIEW "
+expect status contains "\"activePane\":2"
+expect color 76 17 fg #61afef
+expect color 76 20 fg #61afef
+expect color 0 2 fg #4b5e47
+expect color 0 17 fg #535862
+# And back to the editor: the reverse.
+command view.focus_up
+expect screen contains " EDIT "
+expect color 0 2 fg #98c379
+expect color 76 17 fg #375774
+expect color 76 20 fg #375774
