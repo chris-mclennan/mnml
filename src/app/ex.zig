@@ -1504,7 +1504,7 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
-        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.auto_pair") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
             try app.syncBufferPrefs();
         }
         app.needs_render = true;

@@ -1880,6 +1880,7 @@ pub const App = struct {
         buf.doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
         buf.doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
         buf.doc.auto_indent = self.cfg.editor.auto_indent;
+        buf.doc.auto_pair = self.cfg.editor.auto_pair;
         const path = buf.doc.path orelse return;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
@@ -2462,7 +2463,7 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     /// `editor.auto_indent` changed (`:set ai`, the settings row): every
     /// open buffer follows.
-    /// The per-buffer copies of `editor.auto_indent`,
+    /// The per-buffer copies of `editor.auto_indent`, `auto_pair`,
     /// `trim_trailing_ws_on_save` and `ensure_trailing_newline` follow
     /// the config when it changes (`:set`, Settings, a reload), so the
     /// file already open obeys the toast — a file's `.editorconfig`
@@ -2474,6 +2475,7 @@ pub const App = struct {
             .editor => |*e| {
                 const doc = e.buf.doc;
                 doc.auto_indent = self.cfg.editor.auto_indent;
+                doc.auto_pair = self.cfg.editor.auto_pair;
                 doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
                 doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
                 const path = doc.path orelse continue;
