@@ -8,7 +8,9 @@ the keyboard from the person at the machine. So this module drives the
 app the other way — JSONL lines appended to `<ws>/.mnml/ipc-zig/command`
 with `ipc.allow_input` on (`mnml-drive launch --allow-input`) — and
 uses the driver only for what needs the window: launch, shot, pixel,
-quit.
+quit. The window's own mouse reporting is off (`--no-mouse`): the
+person's pointer crossing it would otherwise steer the hover help in a
+shot; clicks and hovers come through the channel instead.
 
 The app does not run in the environment it is launched from. On macOS
 ghostty starts its command through `login(1)`, which resets HOME to the
@@ -148,7 +150,7 @@ class Window:
         }
         cmd = [DRIVE, "launch", "--workspace", self.ws, "--data-root", self.data_root,
                "--cols", str(self.cols), "--rows", str(self.rows), "--exe", wrapper,
-               "--allow-input", "--timeout", str(self.timeout_ms)]
+               "--allow-input", "--no-mouse", "--timeout", str(self.timeout_ms)]
         r = subprocess.run(cmd, env=drive_env, capture_output=True, text=True)
         if r.returncode != 0:
             raise DriveError(f"mnml-drive launch exited {r.returncode}: {r.stderr.strip()}")

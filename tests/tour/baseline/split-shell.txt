@@ -1,20 +1,20 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /Use…            │  main.zig 󰅖   󰐕             󱸀  󲀀       │ 󲀀 ghostty (zsh) 󰅖   󰐕        󱸀  󲀀      
-▌ │▌    docs               │▌src › main.zig                             │▌tour % ls
-   │     󱼅  notes.md         │▌  1 std = @import("std");                  │▌bb.url
- 󰍉 │     src                │▌  2 util = @import("util.zig");            │▌bitbucket.zon
-   │     󱼄  main.zig         │▌  3                                        │▌CHANGELOG.md
- 󰊢 │     󱼅  util.zig       M │▌  4 e entry point: add a few numbers and pr│▌docs
-   │      .gitignore         │▌  5  main() !void {                        │▌fake-jira.pid
-  │      CHANGELOG.md     ? │▌  6  TODO: read the numbers from the comman│▌integrations
-   │     󰂺 README.md          │▌  7 nst numbers = [_]i64{ 1, 2, 3, 4, 5 }; │▌jira-broker.lock
- 󰐱 │                          │▌  8 nst total = util.sum(&numbers);        │▌jira-broker.sock
-   │         󰐙 Add workspace  │▌  9 d.debug.print("total: {d}\n", .{total})│▌jira.url
- 󰎒 │                          │▌ 10  FIXME: an empty list should print a fr│▌market
-   │                          │▌ 11  (total == 0) std.debug.print("nothing │▌README.md
-  │                          │▌ 12                                        │▌sdk
-   │                          │▌                                           │▌src
-  │                          │▌                                           │▌tour %
+▌ │▌    docs               │▌src › main.zig                             │▌tour % ls src docs
+   │     󱼅  notes.md         │▌  1 std = @import("std");                  │▌docs:
+ 󰍉 │     src                │▌  2 util = @import("util.zig");            │▌notes.md
+   │     󱼄  main.zig         │▌  3                                        │▌
+ 󰊢 │     󱼅  util.zig       M │▌  4 e entry point: add a few numbers and pr│▌src:
+   │      .gitignore         │▌  5  main() !void {                        │▌main.zig        util.zig
+  │      CHANGELOG.md     ? │▌  6  TODO: read the numbers from the comman│▌tour %
+   │     󰂺 README.md          │▌  7 nst numbers = [_]i64{ 1, 2, 3, 4, 5 }; │▌
+ 󰐱 │                          │▌  8 nst total = util.sum(&numbers);        │▌
+   │         󰐙 Add workspace  │▌  9 d.debug.print("total: {d}\n", .{total})│▌
+ 󰎒 │                          │▌ 10  FIXME: an empty list should print a fr│▌
+   │                          │▌ 11  (total == 0) std.debug.print("nothing │▌
+  │                          │▌ 12                                        │▌
+   │                          │▌                                           │▌
+  │                          │▌                                           │▌
    │                          │▌                                           │▌
   │                          │▌                                           │▌
    │                          │▌                                           │▌
@@ -36,5 +36,5 @@
    │ Close.                   │▌                                           │▌
   │                          │▌                                           │▌
    │                          │▌                                           │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                 󱸀 95% 52%  󱼀 󰐎  LSP?    15:29  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                 󱸀 95% 52%  󱼀 󰐎  LSP?    16:01  ws   —
                                                            ⋯

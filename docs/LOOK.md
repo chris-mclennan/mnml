@@ -45,6 +45,10 @@ recorded (`.verify/look/current`).
   `<ws>/.mnml/ipc-zig/command`, acknowledged in `events.jsonl`. An
   `unsupported` ack means the switch is off — relaunch, do not reach for
   `focus`.
+* **The pointer is not an input.** The window's own mouse reporting is
+  off (`mnml-drive launch --no-mouse`), so the person's pointer passing
+  over it cannot move the hover help into your shot; `click` / `hover`
+  go through the channel like everything else.
 * **One window per agent. Quit when done.** `look.sh launch` refuses while
   its window is up. A window left open is a window on somebody's desktop.
 * **Own data root, under the worktree.** Everything the window writes —

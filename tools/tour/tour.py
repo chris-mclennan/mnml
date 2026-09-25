@@ -55,7 +55,11 @@ STATES = [
         ("key", "shift+down"), ("key", "shift+down"), ("key", "shift+down"), ("key", "shift+end"),
     ]),
     ("split-shell", "a vertical split: the editor left, a shell focused right", [
-        ("run", "term.shell"), ("until", "tour %"), ("type", "ls\n"), ("until", "CHANGELOG.md", 4000),
+        ("run", "term.shell"), ("until", "tour %"),
+        # `ls src docs`, not `ls`: the workspace root gains lock and
+        # socket files when the integrations' broker starts, on its own
+        # clock, which reflowed the listing between two runs.
+        ("type", "ls src docs\n"), ("until", "util.zig", 4000),
     ]),
     ("editor-refocused", "the same split with the editor focused again: the shell's rail steps back", [
         ("run", "view.focus_left"),
@@ -99,13 +103,14 @@ STATES = [
         ("until", "Jira Work", 4000), ("find-click", "Jira Work"), ("key", "i"),
         ("until", "installed jira_work", 15000), ("wait", 4500),
         ("run", "integrations.open_as_tab"), ("run", "jira_work.open"),
-        ("until", "JIRA WORK", 15000), ("wait", 1500),
+        ("until", "JIRA WORK", 15000), ("heal", "fetch failed", "r", "JIRA WORK (3)"), ("wait", 1500),
     ]),
     ("bitbucket-prs", "the Bitbucket PRs pane against the offline fake", [
-        RESET, ("run", "integrations.show_marketplace"), ("until", "Mkt  (1)", 4000), ("key", "i"),
+        RESET, ("run", "integrations.show_marketplace"), ("wait", 1200), ("key", "i"),
         ("until", "installed bitbucket_prs", 15000), ("wait", 4500),
         ("run", "integrations.open_as_tab"), ("run", "bitbucket_prs.open"),
-        ("until", "BITBUCKET PRS", 15000), ("until", "3 PRs", 15000), ("wait", 1000),
+        ("until", "BITBUCKET PRS", 15000), ("until", "3 PRs", 15000),
+        ("heal", "fetch failed", "r", "3 PRs"), ("wait", 1000),
     ]),
 ]
 
@@ -146,6 +151,19 @@ def play(win, steps, state_log):
             ms = st[2] if len(st) > 2 else 3000
             if not win.wait_for(st[1], timeout_ms=ms):
                 state_log.append(f"`{st[1]}` never appeared on screen within {ms} ms")
+            win.settle(cap_ms=1500)
+        elif op == "heal":
+            # A pane whose first fetch failed (seen once in ~10 runs: both
+            # offline fakes unanswered for one run) gets its own retry
+            # key, and the note says so: the shot is then of the healed
+            # pane, and the log keeps the flake visible.
+            bad, key, good = st[1], st[2], st[3]
+            for _ in range(3):
+                if bad not in win.screen():
+                    break
+                state_log.append(f"`{bad}` on screen; pressed `{key}`")
+                win.key(key)
+                win.wait_for(good, timeout_ms=8000)
             win.settle(cap_ms=1500)
         elif op == "find-click":
             # Click the first cell of a label where the screen shows it:
@@ -320,6 +338,10 @@ def cmd_run(args):
                     notes.append((name, state_log))
                     log(f"  {i:02d} {name:22} FAILED — the app is gone")
                     break
+            for fk in fakes:
+                if fk.poll() is not None and not getattr(fk, "_reported", False):
+                    fk._reported = True
+                    state_log.append(f"{os.path.basename(fk.args[0])} exited {fk.returncode}")
             notes.append((name, state_log))
             flag = "" if not state_log else "  (" + "; ".join(state_log) + ")"
             log(f"  {i:02d} {name:22} {int(now_ms() - t0):5d} ms{flag}")
