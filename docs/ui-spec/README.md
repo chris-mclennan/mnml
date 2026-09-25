@@ -853,8 +853,13 @@ is centred on the hit line, not the file's head.
 showed (`tools/zig-spec.sh whichkey`), beside `rust-whichkey-120x40.txt`.
 *Since 2026-09-24* the standard profile's popup is its own `Ctrl+K`
 chords (`docs/KEYMAP_PROFILES.md` rule 2), so the steps now paint those
-rows and the leader tree is the vim profile's; this dump predates that
-and is due a re-cut (`docs/PARITY.md`, the which-key row).
+rows and the leader tree is the vim profile's. *Re-cut 2026-09-25*
+(`tools/zig-spec.sh whichkey`): the popup is headed `Ctrl+K` and its
+rows are the `Ctrl+K` continuations — VS Code's meanings (`Ctrl+K
+Ctrl+S` cheatsheet, `Ctrl+K Ctrl+0` fold all, `Ctrl+K Z` full screen) —
+in two columns, 21 rows tall, so it covers the start surface from row
+15 down. The notes below on glyphs and chord counts describe the leader
+popup, which is now the vim profile's screen.
 The rows carry the same keys and labels in the same order — the root's
 `r → +lsp` became `vim_only` to make that true — but this is the **one
 place the which-key popup deliberately leaves the Rust screen**: on

@@ -5,36 +5,36 @@
  󰍉 │      prog.dbg           │
    │                          │
  󰊢 │         󰐙 Add workspace  │
-   │                          │
-  │                          │                                _ __    _ _    _ __    _
-   │                          │                               | '  \  | ' \  | '  \  | |
- 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
-   │                          │
- 󰎒 │                          │                                     workspace · ws
-   │                          │
-  │                          │   WORKSPACES                                  SESSIONS
-   │                          │    ws                                open
-  │                          │                                                + New Claude Code session here
-   │                          │   RECENT FILES
-  │                          │    No recent files yet                         No session to resume
-   │                          │
- 󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P        find a file
- 󰢱 │                          │                                                Ctrl+R        recent files
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
+   │                          │                                _ __    _ _    _ __    _
+  │                          │                               | '  \  | ' \  | '  \  | |
+   │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰐱 │                          │
+   │                          │                                     workspace · ws
+ 󰎒 │                          │
+   │                          │   WORKSPACES                                  SESSIONS
+  │                          │    ws                                open
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │󰘵 1 → harpoon 1                   H → +harpoon (2)               󰐱 i → +integrations (5)                           │
- │󰘵 2 → harpoon 2                   I → +insert (2)                󰘵 j → background jobs                             │
- │󰘵 3 → harpoon 3                   L → +lang/run (19)              l → +lsp (12)                                   │
- │󰘵 4 → harpoon 4                  󰓂 P → +pr (2)                    󰘵 m → markdown preview                            │
- │󰘵 5 → harpoon 5                   R → +http (5)                  󰘵 n → line numbers                                │
- │󰘵 6 → harpoon 6                   T → +test (6)                  󰘵 o → run task…                                   │
- │󰘵 7 → harpoon 7                   W → +layouts (3)               󰘵 p → command palette                             │
- │󰘵 8 → harpoon 8                  󰚩 a → +ai/term (14)              󰘵 q → close buffer                                │
- │󰘵 9 → harpoon 9                  󰎒 b → +buffer (5)                 s → +split (12)                                 │
- │󰘵 ? → cheatsheet (all chords)    󰍉 f → +find (4)                   t → +toggle (13)                                │
- │󰘵 B → open browser (Chrome/CDP)  󰊢 g → +git (17)                                                                    │
+ │            a → sessions                       ctrl+shift+n → messages (toast log)                                  │
+ │            b → blame toggle                         ctrl+t → theme…                                                │
+ │       ctrl+0 → fold all                            ctrl+up → focus up                                              │
+ │       ctrl+\ → split down                             down → move split down                                       │
+ │   ctrl+alt+c → copy path                             enter → keep preview tab                                      │
+ │       ctrl+b → pin/unpin the sidebar                   f12 → definition to the side                                │
+ │    ctrl+down → focus down                                g → +git (1)                                              │
+ │       ctrl+f → format selection                          i → +integrations (1)                                     │
+ │       ctrl+i → hover docs                                j → background jobs                                       │
+ │       ctrl+j → unfold all                             left → move split left                                       │
+ │       ctrl+l → toggle fold                               n → new tab page                                          │
+ │    ctrl+left → focus left                                p → copy path                                             │
+ │       ctrl+m → zoom the split / restore                  r → reveal in Finder / Explorer                           │
+ │       ctrl+o → switch workspace                      right → move split right                                      │
+ │       ctrl+p → buffers                                   s → save all                                              │
+ │ctrl+pagedown → next buffer                     shift+enter → pin / unpin tab                                       │
+ │  ctrl+pageup → previous buffer                           t → theme light ↔ dark                                    │
+ │       ctrl+q → last edit location                       up → move split up                                         │
+ │       ctrl+r → keybindings reference                     w → close others                                          │
+ │   ctrl+right → focus right                               z → full screen (Esc Esc leaves)                          │
+ │       ctrl+s → cheatsheet (all chords)                                                                             │
  │  esc to cancel                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                            ⋯
