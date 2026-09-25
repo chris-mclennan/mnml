@@ -20,6 +20,7 @@ const action_mod = @import("action.zig");
 const wire_mod = @import("../wire.zig");
 const warm_mod = @import("../warm.zig");
 const keysheet_mod = @import("keysheet.zig");
+const budget_mod = @import("../budget.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -156,6 +157,17 @@ pub const Fetch = union(enum) {
     }
 };
 
+/// The budget chip's ink by tier: the chip at rest while there is
+/// room, yellow on the chip ground at the warning, red and bold at the
+/// alarm — the host usage meter's two colours on its thresholds.
+pub fn budgetStyle(th: Theme, tier: budget_mod.Tier) Style {
+    return switch (tier) {
+        .ok => th.chip(),
+        .warn => .{ .fg = th.yellow, .bg = th.chip_bg },
+        .alarm => .{ .fg = th.red, .bg = th.chip_bg, .mods = .{ .bold = true } },
+    };
+}
+
 /// `fetching…` / `fetching… 2/13 repos` / `queued behind 3 requests` /
 /// `waiting for the API budget` / `fetch failed: <why>`; "" when idle.
 /// Written into `buf`.
@@ -186,9 +198,17 @@ pub const CapsHeader = struct { x: u16, edge: u16 };
 /// that `capsHeader` paints instead of `text` when the full ladder
 /// would push the title's count off the row. A chip without one keeps
 /// its words on every rung.
+///
+/// `style` overrides the chip's ink where the chip's colour IS what it
+/// says — the budget chip's tier. Every other chip leaves it null and
+/// wears the rest / active pair.
 pub fn Chip(comptime Target: type) type {
-    return struct { text: []const u8, target: Target, active: bool = false, icon: ?[]const u8 = null };
+    return struct { text: []const u8, target: Target, active: bool = false, icon: ?[]const u8 = null, style: ?Style = null };
 }
+
+/// The API budget chip's glyph (cod-dashboard) and its `--ascii` twin.
+pub const budget_nerd = "\u{eacd}";
+pub const budget_ascii = "~";
 
 /// One `key label` entry of the hint row. `target` makes it clickable.
 pub fn Hint(comptime Target: type) type {
@@ -343,7 +363,7 @@ pub fn Painter(comptime Target: type) type {
                 const w = width(text);
                 if (right < left_edge + w + 2) break;
                 right -= w + 1;
-                _ = p.put(right, y, w, text, if (c.active) p.th.chipActive() else p.th.chip());
+                _ = p.put(right, y, w, text, c.style orelse if (c.active) p.th.chipActive() else p.th.chip());
                 try p.mark(.{ .x = right, .y = y, .w = w, .h = 1 }, c.target);
             }
             return right;
@@ -427,6 +447,25 @@ pub fn Painter(comptime Target: type) type {
             return .{ .x = x, .edge = edge };
         }
 
+        /// The API budget chip, for the header ladder — the same chip
+        /// in the same place on every pane in the family:
+        /// ` <g> 812/1000 ` off the API's own headers, ` <g> 37/h ` when
+        /// it sends none, ` <g> DRY ` in a dry run and ` <g> paused
+        /// until 14:03:22 ` after a 429, in the host usage meter's
+        /// tiers (`budget.Tier`). Its narrow rung is the glyph alone,
+        /// still in the tier's ink. The hover is `help.budget`.
+        pub fn budgetChip(p: *Self, snap: budget_mod.Snapshot, target: Target) ChipSpec {
+            const g = if (p.ui.ascii or !p.ui.nerd) budget_ascii else budget_nerd;
+            var buf: [48]u8 = undefined;
+            const words = snap.chipWords(&buf);
+            return .{
+                .text = p.fmt(" {s} {s} ", .{ g, words }),
+                .target = target,
+                .icon = p.fmt(" {s} ", .{g}),
+                .style = budgetStyle(p.th, snap.tier()),
+            };
+        }
+
         /// The refresh glyph as a chip's text, for the ladder.
         pub fn refreshChipText(p: *const Self) []const u8 {
             return if (p.ui.ascii or !p.ui.nerd) " " ++ refresh_ascii ++ " " else " " ++ refresh_nerd ++ " ";
@@ -490,7 +529,7 @@ pub fn Painter(comptime Target: type) type {
                 }
                 const cw = @min(w, max_x -| x);
                 if (cw == 0) break;
-                _ = p.put(x, y, cw, c.text, if (c.active) p.th.chipActive() else p.th.chip());
+                _ = p.put(x, y, cw, c.text, c.style orelse if (c.active) p.th.chipActive() else p.th.chip());
                 try p.mark(.{ .x = x, .y = y, .w = cw, .h = 1 }, c.target);
                 x += w + 1;
             }

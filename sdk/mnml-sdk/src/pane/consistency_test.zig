@@ -17,6 +17,7 @@ const build_mod = @import("build.zig");
 const merge_mod = @import("merge.zig");
 const hit = @import("hit.zig");
 const theme_mod = @import("theme.zig");
+const budget_mod = @import("../budget.zig");
 
 const Frame = frame_mod.Frame;
 const Theme = theme_mod.Theme;
@@ -258,6 +259,10 @@ fn paintRowWords(comptime Target: type, p: *chrome.Painter(Target), y: u16) void
 }
 
 /// Every shared element, once, at fixed coordinates.
+/// A budget 70 % spent — the warning tier, so the chip's own ink is on
+/// the screen being compared rather than the rest colour every chip has.
+const demo_budget: budget_mod.Snapshot = .{ .label = "API", .limit = 1000, .remaining = 300 };
+
 fn paintTracker(r: *Rig(TrackerTarget), th: Theme) !void {
     var p = r.painter(th);
     p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = rows - 1 }, 5);
@@ -265,6 +270,7 @@ fn paintTracker(r: *Rig(TrackerTarget), th: Theme) !void {
     _ = try p.rightChips(0, x, &.{
         .{ .text = " ? ", .target = .{ .chip = 0 } },
         .{ .text = p.refreshChipText(), .target = .{ .chip = 1 } },
+        p.budgetChip(demo_budget, .{ .chip = 2 }),
     });
     _ = try p.tabStrip(1, 1, &.{
         .{ .label = " 1 First (3) ", .target = .{ .tab = 0 }, .active = true },
@@ -304,6 +310,7 @@ fn paintForge(r: *Rig(ForgeTarget), th: Theme) !void {
     _ = try p.rightChips(0, x, &.{
         .{ .text = " ? ", .target = .{ .chip = .{ .kind = 0 } } },
         .{ .text = p.refreshChipText(), .target = .{ .chip = .{ .kind = 1 } } },
+        p.budgetChip(demo_budget, .{ .chip = .{ .kind = 2 } }),
     });
     _ = try p.tabStrip(1, 1, &.{
         .{ .label = " 1 First (3) ", .target = .{ .tab = 0 }, .active = true },
@@ -653,4 +660,34 @@ test "the hint row says a chord once, however many times the pane passes it" {
     const first = std.mem.indexOf(u8, row, "? keys").?;
     try testing.expect(std.mem.indexOf(u8, row[first + 6 ..], "? keys") == null);
     try testing.expect(std.mem.indexOf(u8, row, "r refresh") != null);
+}
+
+test "the budget chip is the same chip in the same place on both panes, in the tier's ink" {
+    var tracker = try Rig(TrackerTarget).init(cols, rows);
+    defer tracker.deinit();
+    var forge = try Rig(ForgeTarget).init(cols, rows);
+    defer forge.deinit();
+    try paintTracker(&tracker, demoTheme());
+    try paintForge(&forge, demoTheme());
+    const th = demoTheme();
+    for ([_]*Frame{ &tracker.f, &forge.f }) |f| {
+        var line: std.ArrayList(u8) = .empty;
+        defer line.deinit(testing.allocator);
+        for (f.slots[0..cols]) |*sl| try line.appendSlice(testing.allocator, sl.symbol());
+        if (std.mem.indexOf(u8, line.items, "300/1000") == null) return error.BudgetChipMissing;
+    }
+    // Same cells, same ink, both panes: the whole header row.
+    var x: u16 = 0;
+    var yellow: usize = 0;
+    while (x < cols) : (x += 1) {
+        const a = &tracker.f.slots[x];
+        const b = &forge.f.slots[x];
+        try testing.expectEqualStrings(a.symbol(), b.symbol());
+        try testing.expect(std.meta.eql(a.style.fg, b.style.fg));
+        if (a.style.fg) |fg| if (sameColor(fg, th.yellow) and a.style.bg != null) {
+            yellow += 1;
+        };
+    }
+    // ` ~ 300/1000 ` in the warning's yellow on the chip ground.
+    try testing.expect(yellow >= "300/1000".len);
 }

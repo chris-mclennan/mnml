@@ -13,6 +13,7 @@
 //! page).
 
 const std = @import("std");
+const budget_mod = @import("../budget.zig");
 
 /// One entry: a few words of title, a sentence or two of body.
 pub const Help = struct {
@@ -69,6 +70,13 @@ pub fn common(c: Common) Help {
         .menu_item => .{ .title = "Menu entry", .body = "Runs this entry; the key beside it does the same from the list." },
         .key_sheet => .{ .title = "Key sheet", .body = "Every key this pane answers to. Click a row to run it; Esc closes the sheet." },
     };
+}
+
+/// The API budget chip: what the API says is left, this hour's calls,
+/// the cache's hit ratio, the daily tally and the state (a pause, dry
+/// run) — one entry, written into `buf`, the same on every pane.
+pub fn budget(buf: []u8, snap: budget_mod.Snapshot) Help {
+    return .{ .title = "API budget", .body = snap.helpBody(buf) };
 }
 
 /// A hint-row entry or a key-sheet row: the key and what it does. The
