@@ -1,14 +1,15 @@
 //! The welcome pane — the editor area when no pane is open. Two forms,
 //! chosen by `ui.welcome` (`app/welcome.zig` reads it):
 //!
-//! **The start surface** (`full`, the default, `drawStart`): a compact
-//! word mark, the workspace line, then four lists drawn through
+//! **The start surface** (`full`, the default, `drawStart`): the
+//! five-row `mnml` logo (the three-row word mark on a pane of thirty or
+//! thirty-one rows), the workspace line, then four lists drawn through
 //! `ListPanel` — WORKSPACES, RECENT FILES, SESSIONS (with its
 //! `+ New Claude Code session here` row) and SHORTCUTS — and the
 //! version line at the foot. The lists sit in two columns when the
 //! pane is wide enough and one when it is not; `layout` decides, and
-//! what does not fit is dropped whole in a fixed order (the mark under
-//! thirty rows, then SHORTCUTS, then the workspaces, then SESSIONS),
+//! what does not fit is dropped whole in a fixed order (the head art
+//! under thirty rows, then SHORTCUTS, then the workspaces, then SESSIONS),
 //! never overlapped. A list the room cuts short scrolls in its rect
 //! with the panel's own bar. The rows are the app's: the pickers'
 //! sources, handed in each frame.
@@ -244,15 +245,27 @@ pub const StartProps = struct {
     focused: bool = false,
 };
 
-/// The compact word mark — the minimal form's logo in figlet "small",
-/// three rows where that one takes five.
+/// The compact word mark — the logo in figlet "small", three rows
+/// where that one takes five — for a pane with too few rows for the
+/// logo but enough for a head at all.
 pub const mark = [_][]const u8{
     " _ __    _ _    _ __    _ ",
     "| '  \\  | ' \\  | '  \\  | |",
     "|_|_|_| |_||_| |_|_|_| |_|",
 };
-/// Under this many rows the mark is dropped.
+/// Under this many rows the head is dropped: no logo, no mark.
 pub const mark_min_rows: u16 = 30;
+/// From this many rows the head is the five-row logo, the same art the
+/// minimal form draws; below it (down to `mark_min_rows`) the mark. The
+/// logo is two rows taller than the mark, so it asks for two more.
+pub const logo_min_rows: u16 = mark_min_rows + (logo.len - mark.len);
+
+/// The art the start surface heads a pane of `h` rows with, if any.
+pub fn headArt(h: u16) ?[]const []const u8 {
+    if (h >= logo_min_rows) return &logo;
+    if (h >= mark_min_rows) return &mark;
+    return null;
+}
 /// The widest a column grows, and the narrowest two can be before the
 /// lists fall back to one column.
 pub const col_max: u16 = 48;
@@ -290,7 +303,9 @@ fn chromeRows(l: List) u16 {
 pub const Counts = [lists.len]usize;
 
 pub const Layout = struct {
-    mark: ?Rect = null,
+    /// Where the head art goes; `art` is which one.
+    head: ?Rect = null,
+    art: []const []const u8 = &.{},
     title: ?Rect = null,
     lists: [lists.len]?Rect = @splat(null),
     version: ?Rect = null,
@@ -305,8 +320,9 @@ pub fn layout(area: Rect, n: Counts) Layout {
     const two = area.w >= 2 * col_min + gutter + 4;
     const col_w: u16 = if (two) @min((area.w - 4 - gutter) / 2, col_max) else @min(area.w -| 4, col_max + 8);
     out.columns = if (two) 2 else 1;
-    const with_mark = area.h >= mark_min_rows;
-    const top_h: u16 = (if (with_mark) @as(u16, mark.len) + 1 else 0) + 2;
+    const art = headArt(area.h);
+    const art_h: u16 = if (art) |rows| @intCast(rows.len) else 0;
+    const top_h: u16 = (if (art != null) art_h + 1 else 0) + 2;
     const bottom_h: u16 = 2;
     const room: u16 = area.h -| (top_h + bottom_h);
 
@@ -366,10 +382,11 @@ pub fn layout(area: Rect, n: Counts) Layout {
     var y = area.y + (area.h - total_h) / 2;
     const block_w: u16 = if (two) 2 * col_w + gutter else col_w;
     const x0 = area.x + (area.w -| block_w) / 2;
-    if (with_mark) {
-        const mw: u16 = @intCast(mark[0].len);
-        out.mark = Rect.init(area.x + (area.w -| mw) / 2, y, @min(mw, area.w), @intCast(mark.len));
-        y += @as(u16, mark.len) + 1;
+    if (art) |rows| {
+        const aw: u16 = @intCast(rows[0].len);
+        out.head = Rect.init(area.x + (area.w -| aw) / 2, y, @min(aw, area.w), art_h);
+        out.art = rows;
+        y += art_h + 1;
     }
     out.title = Rect.init(x0, y, block_w, 1);
     y += 2;
@@ -479,9 +496,9 @@ pub fn drawStart(st: *State, ui: Ui, area: Rect, p: StartProps) void {
     const lay = layout(area, counts);
 
     const dim = Style{ .fg = pal.comment, .bg = pal.bg_dark };
-    if (lay.mark) |m| {
+    if (lay.head) |m| {
         const logo_style = Style{ .fg = pal.blue, .bg = pal.bg_dark, .bold = true };
-        for (mark, 0..) |line, i| _ = ui.putStr(m.x, m.y + @as(u16, @intCast(i)), m.w, line, logo_style);
+        for (lay.art, 0..) |line, i| _ = ui.putStr(m.x, m.y + @as(u16, @intCast(i)), m.w, line, logo_style);
     }
     if (lay.title) |r| {
         const path = Style{ .fg = pal.fg, .bg = pal.bg_dark };
@@ -801,7 +818,7 @@ fn overlaps(a: Rect, b: Rect) bool {
 fn expectSound(area: Rect, lay: Layout) !void {
     var rects: [lists.len + 3]Rect = undefined;
     var n: usize = 0;
-    for ([_]?Rect{ lay.mark, lay.title, lay.version }) |r| if (r) |x| {
+    for ([_]?Rect{ lay.head, lay.title, lay.version }) |r| if (r) |x| {
         rects[n] = x;
         n += 1;
     };
@@ -820,11 +837,11 @@ fn expectSound(area: Rect, lay: Layout) !void {
 
 const typical: Counts = .{ 1, 2, 1, 9 };
 
-test "start layout: 80x24 drops the mark and SHORTCUTS, one column, nothing overlaps" {
+test "start layout: 80x24 drops the head art and SHORTCUTS, one column, nothing overlaps" {
     const area = gate_areas[0];
     const lay = layout(area, typical);
     try expectSound(area, lay);
-    try testing.expect(lay.mark == null);
+    try testing.expect(lay.head == null);
     try testing.expectEqual(@as(u16, 1), lay.columns);
     try testing.expect(lay.lists[@intFromEnum(List.shortcuts)] == null);
     try testing.expect(lay.lists[@intFromEnum(List.workspaces)] != null);
@@ -837,11 +854,18 @@ test "start layout: 80x24 drops the mark and SHORTCUTS, one column, nothing over
     try testing.expectEqual(ws.bottom() + 1, rc.y);
 }
 
-test "start layout: 120x40 keeps the mark and every list in two columns" {
+test "start layout: 120x40 heads with the five-row logo and keeps every list in two columns" {
     const area = gate_areas[1];
     const lay = layout(area, typical);
     try expectSound(area, lay);
-    try testing.expect(lay.mark != null);
+    const head = lay.head.?;
+    try testing.expectEqual(@as(usize, logo.len), lay.art.len);
+    try testing.expectEqualStrings(logo[2], lay.art[2]);
+    try testing.expectEqual(@as(u16, logo.len), head.h);
+    try testing.expectEqual(@as(u16, logo[0].len), head.w);
+    // Centred on the pane, the workspace line one blank row under it.
+    try testing.expectEqual(area.x + (area.w - head.w) / 2, head.x);
+    try testing.expectEqual(head.bottom() + 1, lay.title.?.y);
     try testing.expectEqual(@as(u16, 2), lay.columns);
     for (lay.lists) |r| try testing.expect(r != null);
     const ws = lay.lists[@intFromEnum(List.workspaces)].?;
@@ -855,11 +879,40 @@ test "start layout: 120x40 keeps the mark and every list in two columns" {
     try testing.expectEqual(@as(u16, 10), sc.h);
 }
 
+test "start layout: the logo from 32 rows, the mark at 30 and 31, no head under 30; every list still fits" {
+    try testing.expectEqual(@as(u16, 32), logo_min_rows);
+    const cases = [_]struct { h: u16, art: ?[]const []const u8 }{
+        .{ .h = 29, .art = null },
+        .{ .h = 30, .art = &mark },
+        .{ .h = 31, .art = &mark },
+        .{ .h = 32, .art = &logo },
+        .{ .h = 36, .art = &logo },
+    };
+    for (cases) |c| {
+        const area = Rect.init(31, 2, 89, c.h);
+        const lay = layout(area, typical);
+        try expectSound(area, lay);
+        if (c.art) |want| {
+            const head = lay.head.?;
+            try testing.expectEqual(want.len, lay.art.len);
+            try testing.expectEqualStrings(want[1], lay.art[1]);
+            try testing.expectEqual(@as(u16, @intCast(want.len)), head.h);
+            try testing.expectEqual(head.bottom() + 1, lay.title.?.y);
+        } else {
+            try testing.expect(lay.head == null);
+            try testing.expectEqual(@as(usize, 0), lay.art.len);
+        }
+        // The taller head costs no list its place.
+        for (lay.lists) |r| try testing.expect(r != null);
+        try testing.expect(lay.version != null);
+    }
+}
+
 test "start layout: 200x60 caps the columns and centres the block" {
     const area = gate_areas[2];
     const lay = layout(area, typical);
     try expectSound(area, lay);
-    try testing.expect(lay.mark != null);
+    try testing.expectEqual(@as(usize, logo.len), lay.art.len);
     const ws = lay.lists[@intFromEnum(List.workspaces)].?;
     const ss = lay.lists[@intFromEnum(List.sessions)].?;
     try testing.expectEqual(col_max, ws.w);
@@ -913,13 +966,15 @@ fn drawSample(f: *Fixture, st: *State, focused: bool) void {
     });
 }
 
-test "start surface: 89x36 paints the mark, the four lists and the version; every row is a hit inside its list" {
+test "start surface: 89x36 paints the logo, the four lists and the version; every row is a hit inside its list" {
     var f = try Fixture.init(89, 36);
     defer f.deinit();
     var st: State = .{};
     defer st.deinit(testing.allocator);
     drawSample(&f, &st, false);
-    try f.expectContains(mark[1]);
+    // The five-row logo, not the three-row mark.
+    for (logo[1..]) |line| try f.expectContains(line);
+    try f.expectLacks(mark[1]);
     try f.expectContains("workspace · ws  on main");
     try f.expectContains("WORKSPACES");
     try f.expectContains("RECENT FILES");
@@ -950,6 +1005,18 @@ test "start surface: 89x36 paints the mark, the four lists and the version; ever
     while (y < 36) : (y += 1) try testing.expect(std.mem.indexOf(u8, f.row(y, &buf), list_panel.marker_glyph) == null);
 }
 
+test "start surface: 100x31 has the rows for the mark but not the logo" {
+    var f = try Fixture.init(100, 31);
+    defer f.deinit();
+    var st: State = .{};
+    defer st.deinit(testing.allocator);
+    drawSample(&f, &st, false);
+    for (mark[1..]) |line| try f.expectContains(line);
+    try f.expectLacks(logo[2]);
+    for (lists) |l| try testing.expect(st.isShown(l));
+    try f.expectContains("mnml 0.3.0");
+}
+
 test "start surface: focused, the active list's row wears the marker and the others none" {
     var f = try Fixture.init(89, 36);
     defer f.deinit();
@@ -970,13 +1037,14 @@ test "start surface: focused, the active list's row wears the marker and the oth
     try testing.expectEqual(@as(usize, 1), hits);
 }
 
-test "start surface: 49x20 has no mark and no SHORTCUTS; the keys move off a list that did not paint" {
+test "start surface: 49x20 has no head art and no SHORTCUTS; the keys move off a list that did not paint" {
     var f = try Fixture.init(49, 20);
     defer f.deinit();
     var st: State = .{ .active = .shortcuts };
     defer st.deinit(testing.allocator);
     drawSample(&f, &st, true);
     try f.expectLacks(mark[1]);
+    try f.expectLacks(logo[2]);
     try f.expectLacks("SHORTCUTS");
     try f.expectContains("RECENT FILES");
     try testing.expect(!st.isShown(.shortcuts));
