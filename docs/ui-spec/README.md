@@ -227,6 +227,24 @@ branch, Rust `target/release`: esc 5 → 27, menu-plus 16 → 34 rows
 beyond the rail — the editor area's rows, which Rust fills with its
 logo and this build with the lists.
 
+## The start surface's logo (2026-09-25, branch `logofix`)
+
+The start surface heads with the five-row `mnml` logo — the minimal
+form's, and Rust's — from 32 rows of editor area (`logo_min_rows`),
+the three-row mark only at 30 and 31, nothing under 30. At 120x40 the
+editor area has 36, so the logo paints and the block sits a row lower
+(two rows taller, recentred). `esc`, `status`, `fonts`, `launchers`,
+`scripts`, `scripts-dev`, `scripts-marketplace`, `picker-preview`,
+`grep-preview` were re-cut through `tools/zig-spec.sh`, `search`
+through `tools/zig-spec-git.sh`, `integrations` through
+`tools/ui-diff.sh` on a private copy of the chrome fixture with its
+`.workspaces` list taken out. Beside the head, the rows moved only
+where main had moved since the last cut (the `Ctrl+K Ctrl+S
+cheatsheet` shortcut row, the version hash, the clock and coverage
+chip). `whichkey` was NOT re-cut: its steps now open the standard
+Ctrl+K menu where the committed dump shows the leader menu — drift from
+main, not from the logo, left for its own cut.
+
 ## The chrome walk (2026-09-14)
 
 `zig-esc-120x40.txt` (`steps-esc.jsonl`, the resting screen),

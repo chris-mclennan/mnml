@@ -4,11 +4,11 @@
    │  󰍉 / filter              │
  󰍉 │                          │
    │▌  Browser  first-party  │
- 󰊢 │▌   browser.open          │
-   │                          │
-  │  󱸀 Claude Code (hidden)  │                                _ __    _ _    _ __    _
-   │    not logged in         │                               | '  \  | ' \  | '  \  | |
-▌󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰊢 │▌   browser.open          │                                                            _
+   │                          │                            _ __ ___    _ __    _ __ ___   | |
+  │  󱸀 Claude Code (hidden)  │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │    not logged in         │                           | | | | | | | | | | | | | | | | | |
+▌󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │  󱸁 Codex (hidden)  first-│
  󰎒 │    not read yet          │                                workspace · ws  on main
    │                          │
@@ -19,22 +19,22 @@
   │                          │    No recent files yet                         No session to resume
    │                          │
  󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P        find a file
- 󰢱 │                          │                                                Ctrl+R        recent files
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
-   │                          │                                                Ctrl+K        which-key menu
-   │──────────────────────────│                                                Ctrl+,        settings
-   │ Integrations           ⋮ │                                                Ctrl+N        new file
-   │                          │                                                Ctrl+Q        quit
-   │ Installed integrations.  │
-   │ Enter fires the command. │                                mnml 0.3.0-dev+gf3dacda1
-   │ Right-click for          │
+   │                          │                                                Ctrl+P         find a file
+ 󰢱 │                          │                                                Ctrl+R         recent files
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │──────────────────────────│                                                Ctrl+K Ctrl+S  cheatsheet
+   │ Integrations           ⋮ │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │ Installed integrations.  │                                                Ctrl+Q         quit
+   │ Enter fires the command. │
+   │ Right-click for          │                                mnml 0.3.0-dev+g69cf5c14
    │ Configure / Uninstall.   │
    │                          │
    │                          │
   │                          │
    │                          │
- TREE   main  󰐙 2  [no file]                                         F 57% ▼1.6  󱼀 󰐎  WRAP    23:57  ws   —
+ TREE   main  󰐙 2  [no file]                                         C 78% ▲0.1  󱼀 󰐎  WRAP    02:44  ws   —
                                                            ⋯

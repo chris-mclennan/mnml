@@ -4,11 +4,11 @@
    │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
- 󰊢 │    JetBrainsMono Nerd F…│
-   │    MnmlSymbols  auto-ba…│
-  │    Symbols Nerd Font  v…│                                _ __    _ _    _ __    _
-   │                          │                               | '  \  | ' \  | '  \  | |
-▌󰐱 │▌ 󰫯  [installed] btop  ✓ O│                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰊢 │    JetBrainsMono Nerd F…│                                                            _
+   │    MnmlSymbols  auto-ba…│                            _ __ ___    _ __    _ __ ___   | |
+  │    Symbols Nerd Font  v…│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                           | | | | | | | | | | | | | | | | | |
+▌󰐱 │▌ 󰫯  [installed] btop  ✓ O│                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │▌   Resource monitor (cpu…│
  󰎒 │                          │                                     workspace · ws
    │  󱴀  [launcher] htop  ✓ Of│
@@ -20,21 +20,21 @@
    │    [launc│                                                                                        │
  󱘣 │    Visual │                                                                                        │
    │           │                                                                                        │
- 󰢱 │           └────────────────────────────────────────────────────────────────────────────────────────┘
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
-   │                          │                                                Ctrl+K        which-key menu
-   │                          │                                                Ctrl+,        settings
-   │                          │                                                Ctrl+N        new file
-   │                          │                                                Ctrl+Q        quit
-   │──────────────────────────│
-   │ Integrations           ⋮ │                                mnml 0.3.0-dev+gf3dacda1
-   │                          │
+ 󰢱 │           └────────────────────────────────────────────────────────────────────────────────────────┘s
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │──────────────────────────│                                                Ctrl+Q         quit
+   │ Integrations           ⋮ │
+   │                          │                                mnml 0.3.0-dev+g69cf5c14
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:54  ws   —
+ TREE  [no file]                                                              F 58% ▼0.8  󱼀 󰐎    02:27  ws   —
                                                            ⋯

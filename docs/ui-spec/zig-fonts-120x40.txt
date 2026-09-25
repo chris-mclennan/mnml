@@ -4,11 +4,11 @@
    │  󰍉 / filter              │
  󰍉 │                          │
    │  FONTS · latest Nerd Fon…│
- 󰊢 │    JetBrainsMono Nerd F…│
-   │    MnmlSymbols  auto-ba…│
-  │    Symbols Nerd Font  v…│                                _ __    _ _    _ __    _
-   │                          │                               | '  \  | ' \  | '  \  | |
-▌󰐱 │▌ 󰂨  [app] Bitbucket  0.2.│                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰊢 │    JetBrainsMono Nerd F…│                                                            _
+   │    MnmlSymbols  auto-ba…│                            _ __ ___    _ __    _ __ ___   | |
+  │    Symbols Nerd Font  v…│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                           | | | | | | | | | | | | | | | | | |
+▌󰐱 │▌ 󰂨  [app] Bitbucket  0.2.│                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │▌   Bitbucket: pull reque…│
  󰎒 │                          │                                     workspace · ws
    │  󰌃  [app] Jira  0.2.0  ✓ │
@@ -19,22 +19,22 @@
   │                          │    No recent files yet                         No session to resume
    │                          │
  󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P        find a file
- 󰢱 │                          │                                                Ctrl+R        recent files
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
-   │                          │                                                Ctrl+K        which-key menu
-   │                          │                                                Ctrl+,        settings
-   │                          │                                                Ctrl+N        new file
-   │                          │                                                Ctrl+Q        quit
-   │──────────────────────────│
-   │ Integrations           ⋮ │                                mnml 0.3.0-dev+gf3dacda1
-   │                          │
+   │                          │                                                Ctrl+P         find a file
+ 󰢱 │                          │                                                Ctrl+R         recent files
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │──────────────────────────│                                                Ctrl+Q         quit
+   │ Integrations           ⋮ │
+   │                          │                                mnml 0.3.0-dev+g69cf5c14
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  [no file]                                                           F 57% ▼1.6  󱼀 󰐎   1  23:54  ws   —
+ TREE  [no file]                                                           F 58% ▼0.8  󱼀 󰐎   1  02:27  ws   —
                                                            ⋯

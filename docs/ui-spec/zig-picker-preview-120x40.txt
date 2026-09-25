@@ -4,11 +4,11 @@
    │       ipc-zig          │
  󰍉 │     src                │
    │     󱼅  main.rs          │
- 󰊢 │      prog.dbg           │
-   │     󰂺 README.md          │
-  │                          │                                _ __    _ _    _ __    _
-   │         󰐙 Add workspace  │                               | '  \  | ' \  | '  \  | |
- 󰐱 │                          │                               |_|_|_| |_||_| |_|_|_| |_|
+ 󰊢 │      prog.dbg           │                                                            _
+   │     󰂺 README.md          │                            _ __ ___    _ __    _ __ ___   | |
+  │                          │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │         󰐙 Add workspace  │                           | | | | | | | | | | | | | | | | | |
+ 󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │                          │
  󰎒 │                          │                                     workspace · ws
    │                          │
@@ -21,20 +21,20 @@
  󱘣 ││                                                                 │   3                                        │
    ││                                                                 │   4 fn main() {                            │
  󰢱 │└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-   │                          │                                                Ctrl+Shift+E  the file tree
-   │                          │                                                Ctrl+B        toggle the tree
-   │                          │                                                Ctrl+Shift+P  command palette
-   │                          │                                                Ctrl+K        which-key menu
-   │                          │                                                Ctrl+,        settings
-   │                          │                                                Ctrl+N        new file
-   │                          │                                                Ctrl+Q        quit
-   │──────────────────────────│
-   │ Sidebar                ⋮ │                                mnml 0.3.0-dev+gf3dacda1
-   │                          │
+   │                          │                                                Ctrl+Shift+E   the file tree
+   │                          │                                                Ctrl+B         toggle the tree
+   │                          │                                                Ctrl+Shift+P   command palette
+   │                          │                                                Ctrl+K         which-key menu
+   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                Ctrl+,         settings
+   │                          │                                                Ctrl+N         new file
+   │──────────────────────────│                                                Ctrl+Q         quit
+   │ Sidebar                ⋮ │
+   │                          │                                mnml 0.3.0-dev+g69cf5c14
    │ Arrows or j/k walk rows. │
    │ Enter opens the          │
    │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  [no file]                                                              F 57% ▼1.6  󱼀 󰐎    23:55  ws   —
+ TREE  [no file]                                                              F 58% ▼0.8  󱼀 󰐎    02:27  ws   —
                                                            ⋯
