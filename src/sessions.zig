@@ -1220,9 +1220,9 @@ pub const SessionName = struct {
 ///     started for, and unlike the last prompt it does not change under
 ///     the user as the conversation moves on, so the name stays put and
 ///     can be found again;
-///  4. a live pane's CLI label (a fresh session has nothing better, and
-///     the tab then says what runs in it), else the id's first eight
-///     characters.
+///  4. a running pane's CLI label (a fresh session has nothing better,
+///     and the tab then says what runs in it), else the id's first eight
+///     characters — an exited pane's label is only the binary's name.
 /// `key` is what the alias is kept under (the session id, or
 /// `pane:<n>`); `pane` is the pane when the caller has it, else one
 /// holding `session_id` is looked up.
@@ -1250,7 +1250,9 @@ pub fn nameWith(app: *App, key: []const u8, pane: ?*const pty_pane.PtyPane, sess
         const line = std.mem.trimEnd(u8, trimmed[0 .. std.mem.indexOfAny(u8, trimmed, "\r\n") orelse trimmed.len], " \t");
         if (line.len > 0) return .{ .text = line, .from = .prompt };
     };
-    if (live) |p| return .{ .text = p.label, .from = .cli };
+    // The CLI label only while the child runs: an exited pane's label is
+    // the binary's name (`claude`), which names no session at all.
+    if (live) |p| if (p.exit == null) return .{ .text = p.label, .from = .cli };
     const id = session_id orelse key;
     return .{ .text = id[0..@min(id.len, 8)], .from = .id };
 }
@@ -2359,7 +2361,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
     var kind: Summary = .text;
     if (p == null or p.?.exit != null) {
         kind = .exited;
-        try lines.append(arena, .{ .text = "exited" });
+        try lines.append(arena, .{ .text = try exitWords(arena, p) });
     } else {
         const d = derive(app, c.pane);
         const thinking = if (d) |dd| dd.thinking else false;
@@ -2401,6 +2403,25 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
     };
 }
 
+/// What an exited card says, with the reason: `exited 1`, `killed by
+/// signal 9`, and `exited 1 · not found` for a resume the CLI found no
+/// conversation to continue (`PtyPane.resume_missing` — short enough
+/// for the card at the default sidebar width; the pane itself offers to
+/// start anew). A pane restored dormant never ran, and a card with no
+/// pane has no exit to report: `exited`.
+pub fn exitWords(arena: Allocator, p: ?*const pty_pane.PtyPane) Allocator.Error![]const u8 {
+    const pp = p orelse return "exited";
+    if (pp.dormant) return "exited";
+    const e = pp.exit orelse return "exited";
+    return switch (e) {
+        .code => |c| if (pp.resume_missing)
+            try std.fmt.allocPrint(arena, "exited {d} · not found", .{c})
+        else
+            try std.fmt.allocPrint(arena, "exited {d}", .{c}),
+        .signal => |sg| try std.fmt.allocPrint(arena, "killed by signal {d}", .{sg}),
+    };
+}
+
 /// The accent the card paints: the user's pick for its key, else the
 /// pane's own (a new session's auto slot).
 pub fn cardColor(app: *App, c: Card) ?[]const u8 {
@@ -2423,7 +2444,7 @@ pub fn hoverTip(app: *App, arena: Allocator, idx: u32) Allocator.Error!?@import(
     try lines.append(arena, try std.fmt.allocPrint(arena, "⌂ {s}", .{cardCwd(app, p)}));
     var content: std.ArrayListUnmanaged([]const u8) = .empty;
     if (p.exit != null) {
-        try content.append(arena, "exited");
+        try content.append(arena, try exitWords(arena, p));
     } else {
         const d = derive(app, c.pane);
         const thinking = if (d) |dd| dd.thinking else false;
@@ -3227,10 +3248,12 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     try testing.expectEqual(Summary.text, v_fresh.kind);
     try testing.expectEqual(@as(usize, 3), v_fresh.lines.len);
     try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0].text);
-    // The child gone: `exited` alone, red.
+    // The child gone: `exited` and its code, red.
     const v_gone = try cardView(app, app.frame.allocator(), f.cardAt(2));
     try testing.expectEqual(Summary.exited, v_gone.kind);
-    try testing.expectEqualStrings("exited", v_gone.lines[0].text);
+    try testing.expectEqualStrings("exited 0", v_gone.lines[0].text);
+    // Named by its id, not the binary: nothing better names it.
+    try testing.expectEqualStrings("exit-1", v_gone.name);
     try testing.expect(std.mem.indexOf(u8, txt, "exited") != null);
     // The owned transcript is no EXTERNAL row; the live unowned one is;
     // the ended ones: the fresh one listed under ENDED, the old one hidden.
@@ -3269,7 +3292,7 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     try testing.expectEqualStrings("you: fix the tests", tip.lines[3]);
     const tip_fresh = (try hoverTip(app, app.frame.allocator(), 1)).?;
     try testing.expectEqualStrings("Claude Code v9 (fake)", tip_fresh.lines[2]);
-    try testing.expectEqualStrings("exited", (try hoverTip(app, app.frame.allocator(), 2)).?.lines[2]);
+    try testing.expectEqualStrings("exited 0", (try hoverTip(app, app.frame.allocator(), 2)).?.lines[2]);
     try testing.expect((try hoverTip(app, app.frame.allocator(), 9)) == null);
 }
 
@@ -4434,7 +4457,8 @@ test "pins lead the list on either axis; p toggles and follows the card; the row
     // The card shows the pin; the menu offers Unpin first, Pin on another.
     const txt = try f.screen();
     defer testing.allocator.free(txt);
-    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0403} claude") != null);
+    // (Named by its id: an exited pane's label is only the binary's.)
+    try testing.expect(std.mem.indexOf(u8, txt, "\u{F0403} exit-3") != null);
     var row0: ?Rect = null;
     var new_chip: ?Rect = null;
     for (app.hits.items.items) |h| switch (h.target) {

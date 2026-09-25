@@ -897,12 +897,14 @@ test "named layouts: save → load round-trips every pane kind — editor, previ
         try t.expectEqualStrings(sub, shell.cwd.?);
         try t.expect(!shell.dormant);
         // A command line comes back RUNNING — a layout is loaded on
-        // purpose — and the AI session resumes its id.
+        // purpose — and the AI session comes back under its id: as
+        // `--session-id` again, since nothing was typed into it and it
+        // has no transcript to resume (`pty_pane.relaunchOf`).
         const sleeper = ptyWith(&app, "/bin/sh").?;
         try t.expect(!sleeper.dormant);
         const claude = ptyWith(&app, fake).?;
         try t.expect(!claude.dormant);
-        try t.expectEqualStrings("--resume", claude.argv[1]);
+        try t.expectEqualStrings("--session-id", claude.argv[1]);
         try t.expectEqualStrings("sid-7", claude.argv[2]);
         // Focus and zoom: the request pane, zoomed.
         try t.expectEqual(find(&app, .request).?, app.active.?);

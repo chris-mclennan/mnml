@@ -898,7 +898,9 @@ pub fn openSavedWith(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpt
 pub const TerminalRestore = union(enum) {
     /// Rule 1 — a plain shell: a fresh one, in the cwd it was saved in.
     shell,
-    /// Rule 2 — an AI session pane whose id was saved: `--resume <id>`.
+    /// Rule 2 — an AI session pane whose id was saved: `--resume <id>`
+    /// when the session has a transcript, else `--session-id <id>`
+    /// (`pty_pane.relaunchOf`).
     resumed: []const u8,
     /// Rule 3 — everything else: the tab, the title and
     /// `[exited] — any key restarts <name>`, starting nothing.
@@ -922,7 +924,11 @@ fn hasFlag(argv: []const []const u8, flag: []const u8) bool {
 ///  2. An AI session pane whose session id was saved RESUMES that
 ///     session — `claude --resume <id>`, `codex resume <id>`. Never a
 ///     NEW one: an id that did not survive the save is rule 3, not a
-///     fresh billed session started behind the user's back.
+///     fresh billed session started behind the user's back. A Claude
+///     session the user never typed into has no transcript to resume
+///     (`claude --resume` of it is a hard error), so it starts again
+///     under the same id — `--session-id <id>` — which is the session
+///     it was, not a new one (`pty_pane.relaunchOf`).
 ///     // changed (codex-resume): Codex is in this rule now. Its id is
 ///     not on its command line — `codex` names itself only in the
 ///     rollout it writes — so `paneSessionId` looks it up at save time
@@ -1121,15 +1127,18 @@ fn openSavedPane(app: *App, sp: Pane, opened: []const ?PaneId, opts: OpenOpts) O
                     if (launch_profiles.isProductArgv(app, sp.argv[0], .codex)) {
                         break :blk try cli.codexResumeArgv(app.frame.allocator(), sp.argv[0], id, sp.argv);
                     }
-                    // `capture` already spells a live `--session-id` as
-                    // `--resume`, so the saved line resumes as it stands
-                    // — and keeps whatever else was on it (`--model`).
-                    // A file written before it did gets the canonical
-                    // `claude --resume <id>` instead: a restore must
-                    // never start a SECOND billed session under an id
-                    // that already exists.
-                    if (hasFlag(sp.argv, "--resume")) break :blk sp.argv;
-                    break :blk try cli.claudeResumeArgv(app.frame.allocator(), id);
+                    // The saved line keeps whatever else was on it
+                    // (`--model`); its session flag is the relaunch
+                    // rule's (`pty_pane.relaunchOf`): `--resume <id>`
+                    // when Claude Code wrote a transcript for the id,
+                    // else `--session-id <id>` again — a session nobody
+                    // typed into has none, and resuming it is the CLI's
+                    // "No conversation found" and exit 1. A file written
+                    // before the line carried the id gets the canonical
+                    // `claude <flag> <id>`: a restore must never start a
+                    // SECOND session under an id that already exists.
+                    const line = if (hasFlag(sp.argv, "--resume") or hasFlag(sp.argv, "--session-id")) sp.argv else try cli.claudeResumeArgv(app.frame.allocator(), id);
+                    break :blk try pty_pane.relaunchArgv(app, app.frame.allocator(), line, sp.cwd);
                 },
             };
             const id = pty_pane.open(app, .{
@@ -1918,7 +1927,7 @@ test "session: a restore in a running instance closes the panes it replaces — 
     try t.expect(app.panes.get(dirty_id.?).?.dirty());
 }
 
-test "session: a Claude pane's id rides in the file, and the restored line resumes it rather than starting a second one" {
+test "session: a Claude pane's id rides in the file; the restored line resumes it when it has a transcript, and starts it again under the same id when it has none" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init();
     defer f.deinit();
@@ -1939,13 +1948,41 @@ test "session: a Claude pane's id rides in the file, and the restored line resum
     }
     const text = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
     defer t.allocator.free(text);
-    // The id is written down, and the line already spells the resume.
+    // The id is written down, spelled as the resume.
     try t.expect(std.mem.indexOf(u8, text, "sid-9") != null);
     try t.expect(std.mem.indexOf(u8, text, "--resume") != null);
     try t.expect(std.mem.indexOf(u8, text, "--session-id") == null);
+    // No transcript — nothing was typed into it: `claude --resume` of
+    // the id would be "No conversation found" and exit 1, so it starts
+    // again under the same id.
     {
         var app = try f.app();
         defer app.deinit();
+        app.sessions.home = try std.fs.path.join(t.allocator, &.{ f.root, "home" });
+        try restore(&app);
+        const p = solePty(&app) orelse return error.TestUnexpectedResult;
+        try t.expect(!p.dormant);
+        try t.expect(p.session != null);
+        try t.expectEqual(@as(usize, 3), p.argv.len);
+        try t.expectEqualStrings("--session-id", p.argv[1]);
+        try t.expectEqualStrings("sid-9", p.argv[2]);
+    }
+    // Claude wrote one (the first message): the restore resumes it.
+    const enc = try t.allocator.dupe(u8, f.root);
+    defer t.allocator.free(enc);
+    for (enc) |*c| if (c.* == '/' or c.* == '.') {
+        c.* = '-';
+    };
+    const dir = try std.fs.path.join(t.allocator, &.{ "home", ".claude", "projects", enc });
+    defer t.allocator.free(dir);
+    try f.tmp.dir.createDirPath(t.io, dir);
+    const file = try std.fs.path.join(t.allocator, &.{ dir, "sid-9.jsonl" });
+    defer t.allocator.free(file);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = file, .data = "{\"type\":\"user\"}\n" });
+    {
+        var app = try f.app();
+        defer app.deinit();
+        app.sessions.home = try std.fs.path.join(t.allocator, &.{ f.root, "home" });
         try restore(&app);
         const p = solePty(&app) orelse return error.TestUnexpectedResult;
         try t.expect(!p.dormant);

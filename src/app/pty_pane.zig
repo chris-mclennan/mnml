@@ -225,6 +225,12 @@ pub const PtyPane = struct {
     /// that identifies a session only narrows as later ones start — the
     /// first unambiguous answer is the one worth holding.
     codex_session_id: ?[]u8 = null,
+    /// The child was a resume (`claude --resume <id>`, `codex resume
+    /// <id>`) and exited saying there is no such conversation — a
+    /// transcript deleted since the save, or one the CLI cannot see.
+    /// The pane offers `Enter` = a new session in its place
+    /// (`startFresh`) instead of closing, and its card says why.
+    resume_missing: bool = false,
     /// The scrollback search (`pty_search.zig`): the query, its matches
     /// and the scan's place.
     search: pty_search.Search = .{},
@@ -280,11 +286,25 @@ pub const PtyPane = struct {
         return sessionIdOfArgv(self.argv);
     }
 
-    /// The exit just landed: run the follow-up, once.
+    /// The exit just landed: note a resume that found nothing, and run
+    /// the follow-up, once.
     fn noticeExit(self: *PtyPane, app: *App) void {
+        self.resume_missing = self.resumeFoundNothing(app);
         const follow = self.after_exit orelse return;
         self.after_exit = null;
         first_launch_install.afterExit(app, follow, self.exit.?);
+    }
+
+    /// A resume line that failed with the CLI's "no such session" on
+    /// screen (`resume_missing_marks`).
+    fn resumeFoundNothing(self: *const PtyPane, app: *App) bool {
+        const e = self.exit orelse return false;
+        if (e.ok() or !isResumeArgv(@ptrCast(self.argv))) return false;
+        const session = self.session orelse return false;
+        const text = session.terminal().plainString(app.gpa) catch return false;
+        defer app.gpa.free(text);
+        for (resume_missing_marks) |m| if (std.mem.indexOf(u8, text, m) != null) return true;
+        return false;
     }
 
     fn exitOf(e: ?pty.session.Exit) ?Exit {
@@ -618,6 +638,17 @@ pub fn place(app: *App, id: PaneId, placement: Placement) Allocator.Error!void {
 
 /// Replace the child with a fresh one running the same command line.
 pub fn restart(app: *App, id: PaneId) CommandError!void {
+    return restartWith(app, id, .relaunch);
+}
+
+/// `Enter` on a pane whose resume found no conversation
+/// (`PtyPane.resume_missing`): a NEW session in its place — Claude under
+/// the same id, Codex under the one it picks (`freshInPlace`).
+pub fn startFresh(app: *App, id: PaneId) CommandError!void {
+    return restartWith(app, id, .fresh);
+}
+
+fn restartWith(app: *App, id: PaneId, how: enum { relaunch, fresh }) CommandError!void {
     if (!supported) return error.Unsupported;
     const pane = app.panes.get(id) orelse return error.NoActivePane;
     const p = switch (pane.*) {
@@ -625,9 +656,14 @@ pub fn restart(app: *App, id: PaneId) CommandError!void {
         else => return error.NotAnEditor,
     };
     pty_search.onRestart(p);
-    // A Claude session started with `--session-id` cannot be started
-    // twice under that id: the restart resumes it.
-    try resumeInPlace(app.gpa, p.argv);
+    switch (how) {
+        // A Claude session started with `--session-id` cannot be
+        // started twice under that id once it has a transcript, and
+        // cannot be resumed before it has one: the relaunch rule picks.
+        .relaunch => try relaunchInPlace(app.gpa, p.argv, relaunchOf(app, @ptrCast(p.argv), p.cwd)),
+        .fresh => try freshInPlace(app.gpa, &p.argv),
+    }
+    p.resume_missing = false;
     // // changed (codex-resume): before the spawn, as in `open`.
     const started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
     var child_env = try pty_env.build(app, &.{}, p.argv.len == 0);
@@ -712,19 +748,135 @@ pub fn codexSessionIdOfArgv(argv: []const []const u8) ?[]const u8 {
     return id;
 }
 
-/// `--session-id` → `--resume` in place, so a saved or restarted Claude
-/// command line continues the session instead of failing to start a
-/// second one under the same id. The flag's cell is replaced on `gpa`.
-pub fn resumeInPlace(gpa: Allocator, argv: [][]u8) Allocator.Error!void {
-    for (argv) |*a| if (std.mem.eql(u8, a.*, "--session-id")) {
-        const fresh = try gpa.dupe(u8, "--resume");
+/// How a saved or restarted Claude session starts again.
+pub const Relaunch = enum {
+    /// `--resume <id>`: Claude Code wrote a transcript for the id.
+    resume_it,
+    /// `--session-id <id>` again: it never did — nothing was typed into
+    /// the session — so there is no conversation to resume, and the id
+    /// is still free to start under.
+    start_fresh,
+};
+
+/// The relaunch rule, the one place a saved or restarted AI session's
+/// command line is decided. A Claude line resumes (`--resume <id>`) only
+/// when a transcript for that id exists under the Claude data dir for
+/// the pane's cwd (`claudeTranscriptExists`); otherwise it starts again
+/// under the SAME id (`--session-id <id>`), so the card and the tab keep
+/// their identity. `claude --resume` of an id with no transcript is a
+/// hard error — `No conversation found with session ID` and exit 1 —
+/// which is what a session the user never typed into used to come back
+/// as. Any other line is left as it is.
+pub fn relaunchOf(app: *App, argv: []const []const u8, cwd: ?[]const u8) Relaunch {
+    const id = sessionIdOfArgv(argv) orelse return .resume_it;
+    if (argv.len == 0 or !launch_profiles.isProductArgv(app, argv[0], .claude)) return .resume_it;
+    return if (claudeTranscriptExists(app, id, cwd)) .resume_it else .start_fresh;
+}
+
+/// Whether Claude Code has a transcript for session `id` started in
+/// `cwd` (the workspace when null): `<home>/.claude/projects/<cwd
+/// encoded>/<id>.jsonl`, the file `claude --resume` looks for. The home
+/// is the SESSIONS scan's (`sessions.homeFor`); the cwd is tried
+/// resolved first — Claude names the directory for the cwd the OS
+/// reports — then as given, and each under the app's encoding
+/// (`ai.encodeWorkspace`, `/` and `.`) and Claude's own wider one
+/// (every character that is not a letter or a digit).
+pub fn claudeTranscriptExists(app: *App, id: []const u8, cwd: ?[]const u8) bool {
+    if (id.len == 0) return false;
+    // The scan already found it.
+    if (app.sessions.itemOf(id)) |it| if (it.source == .claude and it.transcript_path.len > 0) {
+        if (Io.Dir.cwd().statFile(app.io, it.transcript_path, .{})) |_| return true else |_| {}
+    };
+    const home = (sessions.homeFor(app) catch return false) orelse return false;
+    const arena = app.frame.allocator();
+    const dir = cwd orelse app.workspace;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const resolved: []const u8 = if (Io.Dir.cwd().realPathFile(app.io, dir, &buf)) |n| buf[0..n] else |_| dir;
+    const name = std.fmt.allocPrint(arena, "{s}.jsonl", .{id}) catch return false;
+    for ([_][]const u8{ resolved, dir }) |spelling| {
+        for ([_]bool{ false, true }) |wide| {
+            const enc = arena.dupe(u8, spelling) catch return false;
+            for (enc) |*c| {
+                const other = if (wide) !std.ascii.isAlphanumeric(c.*) else (c.* == '/' or c.* == '.');
+                if (other or c.* == '\\') c.* = '-';
+            }
+            const path = std.fs.path.join(arena, &.{ home, ".claude", "projects", enc, name }) catch return false;
+            if (Io.Dir.cwd().statFile(app.io, path, .{})) |_| return true else |_| {}
+        }
+    }
+    return false;
+}
+
+/// Spell the session flag of `argv` for `how`, in place — the flag's
+/// cell is replaced on `gpa`. A line without the flag is untouched.
+pub fn relaunchInPlace(gpa: Allocator, argv: [][]u8, how: Relaunch) Allocator.Error!void {
+    const want = switch (how) {
+        .resume_it => "--resume",
+        .start_fresh => "--session-id",
+    };
+    for (argv) |*a| if (std.mem.eql(u8, a.*, "--session-id") or std.mem.eql(u8, a.*, "--resume")) {
+        if (std.mem.eql(u8, a.*, want)) return;
+        const fresh = try gpa.dupe(u8, want);
         gpa.free(a.*);
         a.* = fresh;
+        return;
     };
 }
 
+/// `relaunchInPlace` on a copy: `argv` on `arena` with the flag the
+/// relaunch rule picks for a line started in `cwd`.
+pub fn relaunchArgv(app: *App, arena: Allocator, argv: []const []const u8, cwd: ?[]const u8) Allocator.Error![]const []const u8 {
+    const want: []const u8 = switch (relaunchOf(app, argv, cwd)) {
+        .resume_it => "--resume",
+        .start_fresh => "--session-id",
+    };
+    const out = try arena.alloc([]const u8, argv.len);
+    var done = false;
+    for (argv, 0..) |a, i| {
+        const flag = !done and (std.mem.eql(u8, a, "--session-id") or std.mem.eql(u8, a, "--resume"));
+        if (flag) done = true;
+        out[i] = if (flag) want else a;
+    }
+    return out;
+}
+
+/// A resume that found no conversation to continue: the CLI's own words
+/// for it — Claude Code's `No conversation found with session ID`, and
+/// Codex's `No saved session found with ID` — are on the pane's screen.
+pub const resume_missing_marks = [_][]const u8{ "No conversation found", "No saved session found" };
+
+/// Whether `argv` resumes a session: a Claude `--resume <id>`, or a
+/// Codex `resume <id>`.
+pub fn isResumeArgv(argv: []const []const u8) bool {
+    if (codexSessionIdOfArgv(argv) != null) return true;
+    var i: usize = 0;
+    while (i + 1 < argv.len) : (i += 1) if (std.mem.eql(u8, argv[i], "--resume")) return true;
+    return false;
+}
+
+/// The command line that starts a NEW session where a resume found
+/// nothing, on `gpa`, replacing `argv`'s cells: Claude's `--resume <id>`
+/// becomes `--session-id <id>` (the same id, so the card and the tab
+/// keep their identity); Codex's `resume <id>` is dropped, and Codex
+/// names the session it starts itself.
+pub fn freshInPlace(gpa: Allocator, argv: *[][]u8) Allocator.Error!void {
+    if (codexSessionIdOfArgv(argv.*) != null) {
+        const old = argv.*;
+        const out = try gpa.alloc([]u8, old.len - 2);
+        out[0] = old[0];
+        @memcpy(out[1..], old[3..]);
+        gpa.free(old[1]);
+        gpa.free(old[2]);
+        gpa.free(old);
+        argv.* = out;
+        return;
+    }
+    try relaunchInPlace(gpa, argv.*, .start_fresh);
+}
+
 /// `argv` with `--session-id` spelled `--resume`, on `arena` (the
-/// session file's copy).
+/// session file's copy). The spelling only: the restore decides the
+/// flag again against the transcripts it finds (`relaunchArgv`).
 pub fn resumeArgv(arena: Allocator, argv: []const []const u8) Allocator.Error![]const []const u8 {
     const out = try arena.alloc([]const u8, argv.len);
     for (argv, 0..) |a, i| out[i] = if (std.mem.eql(u8, a, "--session-id")) "--resume" else a;
@@ -1472,7 +1624,7 @@ test "mouse reports: SGR press/release/drag/wheel, modes gate motion, x10 bytes"
     try t.expectEqualStrings("\x1b[M\x23\x21\x21", encodeMouse(.{ .x = 0, .y = 0, .kind = .release, .button = .left }, 0, 0, x10, &buf));
 }
 
-test "sessionIdOfArgv reads --session-id and --resume; resumeArgv / resumeInPlace turn the first into the second" {
+test "sessionIdOfArgv reads --session-id and --resume; resumeArgv spells the first as the second; relaunchInPlace sets either; freshInPlace undoes a resume" {
     try t.expectEqualStrings("abc", sessionIdOfArgv(&.{ "claude", "--session-id", "abc" }).?);
     try t.expectEqualStrings("r1", sessionIdOfArgv(&.{ "claude", "--resume", "r1" }).?);
     try t.expect(sessionIdOfArgv(&.{"claude"}) == null);
@@ -1482,7 +1634,7 @@ test "sessionIdOfArgv reads --session-id and --resume; resumeArgv / resumeInPlac
     const saved = try resumeArgv(arena_state.allocator(), &.{ "claude", "--session-id", "abc" });
     try t.expectEqualStrings("--resume", saved[1]);
     try t.expectEqualStrings("abc", saved[2]);
-    const argv = try t.allocator.alloc([]u8, 3);
+    var argv = try t.allocator.alloc([]u8, 3);
     defer {
         for (argv) |a| t.allocator.free(a);
         t.allocator.free(argv);
@@ -1490,8 +1642,32 @@ test "sessionIdOfArgv reads --session-id and --resume; resumeArgv / resumeInPlac
     argv[0] = try t.allocator.dupe(u8, "claude");
     argv[1] = try t.allocator.dupe(u8, "--session-id");
     argv[2] = try t.allocator.dupe(u8, "abc");
-    try resumeInPlace(t.allocator, argv);
+    try relaunchInPlace(t.allocator, argv, .resume_it);
     try t.expectEqualStrings("--resume", argv[1]);
+    try t.expect(isResumeArgv(@ptrCast(argv)));
+    try relaunchInPlace(t.allocator, argv, .start_fresh);
+    try t.expectEqualStrings("--session-id", argv[1]);
+    try t.expectEqualStrings("abc", argv[2]);
+    try t.expect(!isResumeArgv(@ptrCast(argv)));
+    try relaunchInPlace(t.allocator, argv, .resume_it);
+    try freshInPlace(t.allocator, &argv);
+    try t.expectEqualStrings("--session-id", argv[1]);
+    try t.expectEqual(@as(usize, 3), argv.len);
+
+    // Codex: `resume <id>` is dropped; the options stay.
+    var cdx = try t.allocator.alloc([]u8, 5);
+    defer {
+        for (cdx) |a| t.allocator.free(a);
+        t.allocator.free(cdx);
+    }
+    for (cdx, [_][]const u8{ "codex", "resume", "cdx-1", "-m", "o4" }) |*c, v| c.* = try t.allocator.dupe(u8, v);
+    try t.expect(isResumeArgv(@ptrCast(cdx)));
+    try freshInPlace(t.allocator, &cdx);
+    try t.expectEqual(@as(usize, 3), cdx.len);
+    try t.expectEqualStrings("codex", cdx[0]);
+    try t.expectEqualStrings("-m", cdx[1]);
+    try t.expectEqualStrings("o4", cdx[2]);
+    try t.expect(!isResumeArgv(@ptrCast(cdx)));
 }
 
 test "childOwned: ctrl+c/d/z/l only" {
