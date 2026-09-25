@@ -31,7 +31,10 @@ tools/look.sh quit
 
 `look.sh` is a thin front on `tools/tour/` (stdlib Python) and
 `zig-out/bin/mnml-drive` (`zig build -Ddrive`, macOS + ghostty only; see
-`docs/DRIVE.md`). Every verb after `launch` acts on the window `launch`
+`docs/DRIVE.md`). `launch` rebuilds a driver older than its sources
+first (`mnml-drive version` against `tools/tour/stamp.py`;
+`MNML_DRIVE_NO_REBUILD=1` stops instead), and warns — only warns — when
+no `--exe` is given and `zig-out/bin/mnml-zig` is older than `src/`. Every verb after `launch` acts on the window `launch`
 recorded (`.verify/look/current`).
 
 ## The rules
@@ -95,5 +98,21 @@ only the left half of its cell; sample it at `FX 0.25`.
 | `tools/look.sh` | one real window, by hand | while fixing anything visual |
 | `tools/tour.sh` | the curated tour, 29 states, baselines + pixel asserts | after every green chain |
 | `tools/tour.sh sweep` | every `.test` through the real window | overnight |
+
+`tools/tour.sh` leads with one line — `N ok, M changed, K asserts ok` —
+before the per-shot lines, and exits 1 only on a CHANGED shot or a failed
+assert; a stale app binary, a missing baseline or a lingering toast is a
+note. Two things keep a shot about its state and nothing else:
+
+* **The workspace is always `.verify/tour-ws/ws`**, whatever `--out` says.
+  The sidebar header paints the workspace path abbreviated (`/Use…`), so a
+  workspace under `--out /private/tmp/…` painted `/pr…` and flagged every
+  shot with the tree open. `masks.zon` masks that cell too. One tour at a
+  time: a second refuses while the first holds `.verify/tour-ws.lock`.
+* **No toast in a shot.** Before each shot the tour waits (up to 6 s) for
+  `status.json` `toasts` to reach zero — a toast rides its own four-second
+  clock into whatever comes next. The note names the toast it waited out
+  (`waited 1796 ms for 1 toast(s) to go (`info panel: pinned — Sidebar`)`),
+  or `toast lingered: …` when one outlives the wait.
 
 `docs/TESTING-hermetic.md` → *The real-screen layer* says when each runs.

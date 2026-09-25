@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import imgdiff  # noqa: E402
+import stamp  # noqa: E402
 import zonlite  # noqa: E402
 from mnmlwin import REPO, DriveError, Window, hex_to_rgb, now_ms  # noqa: E402
 
@@ -26,7 +27,17 @@ SWEEP_BASELINE = os.path.join(TOUR_DIR, "sweep-baseline")
 MASKS = os.path.join(TOUR_DIR, "masks.zon")
 ASSERTS = os.path.join(TOUR_DIR, "asserts.zon")
 REVIEW = os.path.join(REPO, "tools", "tour-review.md")
+# The tour's workspace lives HERE, not under --out: the sidebar header
+# paints the workspace's path, abbreviated (`/Use…`), so a workspace
+# under `--out /private/tmp/x` painted `/pr…` and flagged every shot
+# with the tree open against baselines taken under the repo. The path
+# is the same whichever --out the shots go to. (masks.zon masks the
+# cell too, belt and braces.)
+TOUR_WS = os.path.join(REPO, ".verify", "tour-ws")
 COLS, ROWS = 120, 40
+# A toast lives four seconds (`app.zig` `toast_ttl_ms`); a shot waits
+# this long for the last one to go before it gives up and says so.
+TOAST_WAIT_MS = 6000
 
 
 def log(msg):
@@ -84,7 +95,11 @@ STATES = [
     ("which-key", "which-key on the standard leader Ctrl+K", [RESET, ("key", "ctrl+k"), ("wait", 1500)]),
     ("hover-help-focus", "the info panel holding the keys (help.focus)", [RESET, ("run", "help.focus"), ("wait", 300)]),
     ("hover-help-pinned", "the info panel pinned (help.pin_toggle)", [("run", "help.pin_toggle"), ("wait", 300)]),
-    ("sessions-table", "the sessions table", [RESET, ("run", "help.pin_toggle"), ("run", "sessions.table"), ("wait", 1500)]),
+    # No `help.pin_toggle` here: the reset's Esc leaves the HELP focus
+    # and that unpins (`app/info_view.zig`), so a toggle after it pinned
+    # the panel again — and its "info panel: pinned" toast was in the
+    # baseline.
+    ("sessions-table", "the sessions table", [RESET, ("run", "sessions.table"), ("wait", 1500)]),
     ("launcher-dock", "the launcher dock revealed (mode always)", [
         RESET, ("run", "view.dock_cycle_mode"), ("run", "view.dock_cycle_mode"), ("wait", 600),
     ]),
@@ -176,6 +191,36 @@ def play(win, steps, state_log):
                 win.click(at[0], at[1])
         else:
             raise ValueError(f"unknown step {st!r}")
+
+
+def wait_toasts_gone(win, state_log, timeout_ms=TOAST_WAIT_MS):
+    """Hold the shot until no toast is up (`status.json` `toasts`). A
+    toast raised by this state or the one before rides its own clock into
+    the next shot otherwise — the sessions table was baselined with the
+    previous toggle's "info panel: pinned" in its corner. Nothing is sent
+    to the app: a command would close the overlay some states shoot. A
+    toast that outlives the wait (a sticky progress line) is named in the
+    state's notes and the shot is taken anyway."""
+    st = win.status()
+    if "toasts" not in st:
+        state_log.append("status.json has no `toasts` count (an app older than the tour); not waited for")
+        return
+    if not st["toasts"]:
+        return
+    rows = win.screen().rstrip("\n").split("\n")
+    # The bottom row echoes the newest toast (under no overlay): its
+    # words go in the note, so a warning the wait kept out of the shot
+    # is still read by whoever reads the log.
+    echo = rows[-1].strip().rstrip("⋯").strip() if rows else ""
+    said = f" (`{echo}`)" if echo else ""
+    t0 = now_ms()
+    while now_ms() - t0 < timeout_ms:
+        time.sleep(0.05)
+        if not win.status().get("toasts"):
+            win.settle(quiet_ms=300, cap_ms=1500)
+            state_log.append(f"waited {int(now_ms() - t0)} ms for {st['toasts']} toast(s) to go{said}")
+            return
+    state_log.append(f"toast lingered: {win.status().get('toasts')} up after {timeout_ms} ms{said}")
 
 
 def find_text(screen, text, row=None):
@@ -293,13 +338,50 @@ def judge(a, got, sample):
 
 # ─── the tour ──────────────────────────────────────────────────────────
 
+def take_ws_lock():
+    """One tour at a time on TOUR_WS: a second run would rebuild the
+    workspace under the first one's window. Returns the lock path, or
+    None when a live tour holds it."""
+    os.makedirs(os.path.dirname(TOUR_WS), exist_ok=True)
+    lock = TOUR_WS + ".lock"
+    try:
+        with open(lock, encoding="utf-8") as f:
+            pid = int(f.read().strip() or 0)
+        if pid and pid != os.getpid():
+            os.kill(pid, 0)
+            return None
+    except (OSError, ValueError):
+        pass
+    with open(lock, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    return lock
+
+
 def cmd_run(args):
     out = os.path.abspath(args.out)
+    lock = take_ws_lock()
+    if lock is None:
+        log(f"tour.sh: another tour is running on {os.path.relpath(TOUR_WS, REPO)} — one at a time")
+        return 64
+    try:
+        return run_tour(args, out)
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+
+
+def run_tour(args, out):
+    if not args.exe:
+        stamp.warn_app("tour.sh")
     if os.path.exists(out) and not args.keep:
         shutil.rmtree(out)
     os.makedirs(out, exist_ok=True)
     run_dir = os.path.join(out, ".run")
-    ws = os.path.join(run_dir, "ws")
+    ws = os.path.join(TOUR_WS, "ws")
+    if os.path.exists(TOUR_WS):
+        shutil.rmtree(TOUR_WS)
     home = os.path.join(run_dir, "home")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import workspace
@@ -329,6 +411,7 @@ def cmd_run(args):
             try:
                 play(win, steps, state_log)
                 win.settle(quiet_ms=400, cap_ms=3000)
+                wait_toasts_gone(win, state_log)
                 png = os.path.join(out, f"{i:02d}-{name}.png")
                 win.shot(png)
                 check_asserts_live(win, name, asserts, assert_results)
@@ -357,17 +440,10 @@ def cmd_run(args):
         json.dump({"states": [{"name": n, "notes": l} for n, l in notes],
                    "asserts": [{"shot": s, "why": w, "ok": ok, "detail": d} for s, w, ok, d in assert_results]},
                   f, indent=2)
-    bad = 0
-    if assert_results:
-        log("asserts:")
-        for s, why, ok, detail in assert_results:
-            log(f"  {'ok  ' if ok else 'FAIL'} {s:22} {why} — {detail}")
-            bad += 0 if ok else 1
-    rc = 0 if bad == 0 else 1
+    results = None
     if not args.no_diff and os.path.isdir(BASELINE):
-        rc = max(rc, diff_dir(out, BASELINE, args))
-    summary(out)
-    return rc
+        results = diff_results(out, BASELINE, args)
+    return report(out, results, assert_results, args)
 
 
 def shot_name(png):
@@ -375,31 +451,89 @@ def shot_name(png):
     return re.sub(r"^\d+-", "", base)
 
 
-def diff_dir(out, baseline, args, names=None):
+def diff_results(out, baseline, args, names=None):
+    """Every fresh shot against its baseline, without printing: a dict of
+    the threshold, the tolerance and one (kind, name, pct, bbox, png) per
+    shot — kind `ok`, `CHANGED` or `new`. Writes flagged.txt."""
     masks = load_masks()
     thr = args.threshold if args.threshold is not None else float(masks.get("threshold_pct", 0.02))
     tol = args.tolerance if args.tolerance is not None else int(masks.get("tolerance", 24))
-    flagged = []
-    log(f"diff vs {os.path.relpath(baseline, REPO)} (threshold {thr}%, tolerance {tol}):")
-    fresh = sorted(p for p in os.listdir(out) if p.endswith(".png"))
+    rows = []
+    fresh = sorted(p for p in os.listdir(out) if p.endswith(".png")) if os.path.isdir(out) else []
     for p in fresh:
         name = shot_name(p)
         if names and name not in names:
             continue
         base = os.path.join(baseline, name + ".png")
+        png = os.path.join(out, p)
         if not os.path.exists(base):
-            log(f"  new      {name}  (no baseline — `tour.sh accept {name}`)")
+            rows.append(("new", name, 0.0, None, png))
             continue
-        pct, bbox, changed = compare(name, os.path.join(out, p), base, masks, thr, tol)
-        where = f"  cells {bbox[0]},{bbox[1]}–{bbox[2]},{bbox[3]}" if bbox else ""
-        if changed:
-            flagged.append(os.path.join(out, p))
-            log(f"  CHANGED {pct:7.3f}%  {name}{where}")
-        else:
-            log(f"  ok      {pct:7.3f}%  {name}")
+        pct, bbox, changed = compare(name, png, base, masks, thr, tol)
+        rows.append(("CHANGED" if changed else "ok", name, pct, bbox, png))
+    os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "flagged.txt"), "w", encoding="utf-8") as f:
-        f.write("".join(p + "\n" for p in flagged))
-    return 1 if flagged else 0
+        f.write("".join(r[4] + "\n" for r in rows if r[0] == "CHANGED"))
+    return {"baseline": baseline, "threshold": thr, "tolerance": tol, "rows": rows}
+
+
+def summary_line(results, assert_results):
+    """`N ok, M changed, K asserts ok` (plus the failed asserts and the
+    shots with no baseline, when there are any) — printed before the
+    per-shot lines so the verdict is the first thing read."""
+    rows = results["rows"] if results else []
+    ok = sum(1 for r in rows if r[0] == "ok")
+    changed = sum(1 for r in rows if r[0] == "CHANGED")
+    new = sum(1 for r in rows if r[0] == "new")
+    a_ok = sum(1 for a in assert_results if a[2])
+    a_bad = len(assert_results) - a_ok
+    line = f"{ok} ok, {changed} changed, {a_ok} asserts ok"
+    if a_bad:
+        line += f", {a_bad} asserts FAILED"
+    if new:
+        line += f", {new} new"
+    if results is None:
+        line += " (no diff)"
+    return line, changed + a_bad
+
+
+def report(out, results, assert_results, args):
+    """The summary line, then the asserts and the per-shot lines. Exit 1
+    on a CHANGED shot or a failed assert and on nothing else — a stale
+    app, a lingering toast or a missing baseline are notes, not
+    failures."""
+    line, bad = summary_line(results, assert_results)
+    log(line)
+    if assert_results:
+        log("asserts:")
+        for s, why, ok, detail in assert_results:
+            log(f"  {'ok  ' if ok else 'FAIL'} {s:22} {why} — {detail}")
+    if results is not None:
+        log(f"diff vs {os.path.relpath(results['baseline'], REPO)} "
+            f"(threshold {results['threshold']}%, tolerance {results['tolerance']}):")
+        for kind, name, pct, bbox, _png in results["rows"]:
+            if kind == "new":
+                log(f"  new      {name}  (no baseline — `tour.sh accept {name}`)")
+                continue
+            where = f"  cells {bbox[0]},{bbox[1]}–{bbox[2]},{bbox[3]}" if bbox else ""
+            if kind == "CHANGED":
+                log(f"  CHANGED {pct:7.3f}%  {name}{where}")
+            else:
+                log(f"  ok      {pct:7.3f}%  {name}")
+    summary(out)
+    return 1 if bad else 0
+
+
+def last_asserts(out, names=None):
+    """The asserts the last run recorded (tour.json), as check_asserts_live
+    returns them."""
+    try:
+        with open(os.path.join(out, "tour.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [(a["shot"], a.get("why", ""), a.get("ok", False), a.get("detail", ""))
+            for a in data.get("asserts", []) if not names or a.get("shot") in names]
 
 
 def summary(out):
@@ -414,9 +548,8 @@ def summary(out):
 def cmd_diff(args):
     out = os.path.abspath(args.out)
     names = set(args.names) if args.names else None
-    rc = diff_dir(out, BASELINE, args, names)
-    summary(out)
-    return rc
+    results = diff_results(out, BASELINE, args, names)
+    return report(out, results, last_asserts(out, names), args)
 
 
 def cmd_accept(args):

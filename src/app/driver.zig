@@ -315,6 +315,10 @@ pub const AppDriver = struct {
         // What the terminal itself was sent (a session notification):
         // headless has no terminal, so this is the only place it shows.
         st.host_escapes = try a.dupe([]const u8, app.host_log.items);
+        // Every toast still in the list paints (the stack, and the newest
+        // on the bottom row), so a host that shoots the window waits on
+        // this rather than on the four-second clock.
+        st.toasts = app.toasts.items.len;
         return st;
     }
 
@@ -567,6 +571,27 @@ test "driver: the headless loop's workspace is trusted only as the store says; t
         defer d.deinit();
         try t.expect(AppDriver.cast(d.ptr).app.workspace_trusted);
     }
+}
+
+test "driver: status counts the toasts up; toast.dismiss_all and the next tick bring it to zero" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var f: AppFactory = .{};
+    const d = try f.factory().make(t.allocator, t.io, .{ .workspace = root, .data_root = "", .cols = 80, .rows = 24 });
+    defer d.deinit();
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    try d.render();
+    const before = (try d.status(arena.allocator())).toasts;
+    // Pinning the info panel says so in a toast.
+    try d.command("help.pin_toggle");
+    try d.render();
+    try t.expectEqual(before + 1, (try d.status(arena.allocator())).toasts);
+    try d.command("toast.dismiss_all");
+    try d.tick();
+    try t.expectEqual(@as(usize, 0), (try d.status(arena.allocator())).toasts);
 }
 
 test "driver: open, type, status, dirty, title, rects, quit — the runner's contract" {

@@ -29,12 +29,12 @@
    │                          │▌
    │                          │▌ Current session
    │──────────────────────────│▌                                                              24% used
-   │ Sidebar              󰐃 ⋮ │▌   Resets 11:05pm
+   │ Claude Usage         󰐃 ⋮ │▌   Resets 11:05pm
    │                          │▌
-   │ Arrows or j/k walk rows. │▌ Current week (all models)
-   │ Enter opens the          │▌                                                              71% used
-   │ selection. Ctrl+Shift+P  │▌   Resets Sep 16 at 9am
-  │ opens the palette.       │▌
+   │                          │▌ Current week (all models)
+   │                          │▌                                                              71% used
+   │                          │▌   Resets Sep 16 at 9am
+  │                          │▌
    │                          │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:40  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  21:31  ws   —
                                                            ⋯

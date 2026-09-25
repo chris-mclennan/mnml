@@ -158,6 +158,12 @@ pub const Status = struct {
     /// and its bell, each whole, oldest first. Headless has no terminal
     /// to send them to, so a `.test` reads them here. Additive, last.
     host_escapes: []const []const u8 = &.{},
+    /// How many toasts are up (`App.toasts`: the stack in the corner,
+    /// the newest also echoed on the bottom row). A toast lives on its
+    /// own four-second clock, so a host that shoots the real window
+    /// (`tools/tour/`) waits for zero here instead of sleeping and
+    /// hoping the one the previous step raised has gone. Additive, last.
+    toasts: usize = 0,
 };
 
 pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
@@ -197,7 +203,7 @@ pub fn writeStatusJson(w: *Io.Writer, s: Status) Io.Writer.Error!void {
         if (i > 0) try w.writeByte(',');
         try jsonStr(w, e);
     }
-    try w.writeAll("]}");
+    try w.print("],\"toasts\":{d}}}", .{s.toasts});
 }
 
 pub fn statusJson(gpa: Allocator, s: Status) Allocator.Error![]u8 {
@@ -311,7 +317,7 @@ test "status.json matches the bytes mnml 0.2.21 writes, plus the cursor shape" {
     // are mnml-zig's own, appended in that order after Rust's last key
     // so every byte before them still matches Rust.
     const want =
-        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null,\"hostEscapes\":[]}";
+        "{\"focus\":\"tree\",\"activePane\":0,\"activeFile\":\"/tmp/ws/hello.txt\",\"cursor\":{\"line\":1,\"col\":1},\"mode\":\"none\",\"treeCursor\":2,\"treeSelection\":\"/tmp/ws/.gitignore\",\"treeVisible\":true,\"rightPanelVisible\":false,\"rightPanelPanes\":[],\"rightPanelActiveIdx\":0,\"panes\":[{\"title\":\"hello.txt\",\"dirty\":false,\"preview\":false}],\"quit\":false,\"cursorShape\":\"hidden\",\"cmdline\":false,\"ghost\":\"idle\",\"cols\":0,\"rows\":0,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null,\"hostEscapes\":[],\"toasts\":0}";
     const got = try statusJson(t.allocator, .{
         .focus = .tree,
         .active_pane = 0,
@@ -358,7 +364,7 @@ test "status.json: null activePane, several right-panel panes, a dirty pane" {
     });
     defer t.allocator.free(got);
     try t.expectEqualStrings(
-        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"ghost\":\"inflight\",\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19,\"settings\":null,\"hostEscapes\":[]}",
+        "{\"focus\":\"right_panel\",\"activePane\":null,\"activeFile\":\"\",\"cursor\":{\"line\":0,\"col\":0},\"mode\":\"insert\",\"treeCursor\":0,\"treeSelection\":\"\",\"treeVisible\":false,\"rightPanelVisible\":true,\"rightPanelPanes\":[1,3],\"rightPanelActiveIdx\":1,\"panes\":[{\"title\":\"a \\\"q\\\"\",\"dirty\":true,\"preview\":true},{\"title\":\"b\",\"dirty\":false,\"preview\":false}],\"quit\":true,\"cursorShape\":\"bar\",\"cmdline\":true,\"ghost\":\"inflight\",\"cols\":120,\"rows\":40,\"cellWidthPx\":9,\"cellHeightPx\":19,\"settings\":null,\"hostEscapes\":[],\"toasts\":0}",
         got,
     );
 }
@@ -384,7 +390,7 @@ test "status.json: the Settings list window is an object of four keys, and null 
         .settings = .{ .top = 1, .visible = 22, .at_top = true, .at_end = false },
     });
     defer t.allocator.free(open);
-    try t.expect(std.mem.endsWith(u8, open, ",\"settings\":{\"top\":1,\"visible\":22,\"atTop\":true,\"atEnd\":false},\"hostEscapes\":[]}"));
+    try t.expect(std.mem.endsWith(u8, open, ",\"settings\":{\"top\":1,\"visible\":22,\"atTop\":true,\"atEnd\":false},\"hostEscapes\":[],\"toasts\":0}"));
     // No number in it names the list's length — that is the whole point.
     try t.expect(std.mem.indexOf(u8, open, "98") == null);
 
@@ -405,7 +411,7 @@ test "status.json: the Settings list window is an object of four keys, and null 
         .quit = false,
     });
     defer t.allocator.free(shut);
-    try t.expect(std.mem.endsWith(u8, shut, ",\"settings\":null,\"hostEscapes\":[]}"));
+    try t.expect(std.mem.endsWith(u8, shut, ",\"settings\":null,\"hostEscapes\":[],\"toasts\":0}"));
 }
 
 test "jsonStr escapes exactly the dangerous characters" {
@@ -448,7 +454,7 @@ test "status.json: the terminal geometry is the last four keys, and zero when no
         .rows = 24,
     });
     defer t.allocator.free(headless);
-    try t.expect(std.mem.endsWith(u8, headless, ",\"cols\":80,\"rows\":24,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null,\"hostEscapes\":[]}"));
+    try t.expect(std.mem.endsWith(u8, headless, ",\"cols\":80,\"rows\":24,\"cellWidthPx\":0,\"cellHeightPx\":0,\"settings\":null,\"hostEscapes\":[],\"toasts\":0}"));
     // And the live terminal's, straight off vaxis: 1200 px over 120 cols.
     const live = try statusJson(t.allocator, .{
         .focus = .pane,
@@ -471,7 +477,7 @@ test "status.json: the terminal geometry is the last four keys, and zero when no
         .cell_h_px = 21,
     });
     defer t.allocator.free(live);
-    try t.expect(std.mem.endsWith(u8, live, ",\"cols\":120,\"rows\":40,\"cellWidthPx\":10,\"cellHeightPx\":21,\"settings\":null,\"hostEscapes\":[]}"));
+    try t.expect(std.mem.endsWith(u8, live, ",\"cols\":120,\"rows\":40,\"cellWidthPx\":10,\"cellHeightPx\":21,\"settings\":null,\"hostEscapes\":[],\"toasts\":0}"));
 }
 
 test "status.json carries the host escapes last, each a JSON string — an ESC and a BEL written as \\u00XX" {
@@ -493,5 +499,27 @@ test "status.json carries the host escapes last, each a JSON string — an ESC a
         .host_escapes = &.{ "\x1b]777;notify;mnml;a\x07", "\x07" },
     });
     defer t.allocator.free(esc);
-    try t.expect(std.mem.endsWith(u8, esc, ",\"settings\":null,\"hostEscapes\":[\"\\u001b]777;notify;mnml;a\\u0007\",\"\\u0007\"]}"));
+    try t.expect(std.mem.endsWith(u8, esc, ",\"settings\":null,\"hostEscapes\":[\"\\u001b]777;notify;mnml;a\\u0007\",\"\\u0007\"],\"toasts\":0}"));
+}
+
+test "status.json ends on the toast count: a host shooting the real window waits for zero" {
+    const up = try statusJson(t.allocator, .{
+        .focus = .tree,
+        .active_pane = null,
+        .active_file = "",
+        .cursor_line = 0,
+        .cursor_col = 0,
+        .mode = "none",
+        .tree_cursor = 0,
+        .tree_selection = "",
+        .tree_visible = true,
+        .right_panel_visible = false,
+        .right_panel_panes = &.{},
+        .right_panel_active_idx = 0,
+        .panes = &.{},
+        .quit = false,
+        .toasts = 2,
+    });
+    defer t.allocator.free(up);
+    try t.expect(std.mem.endsWith(u8, up, ",\"hostEscapes\":[],\"toasts\":2}"));
 }

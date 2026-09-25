@@ -583,6 +583,14 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .imports = &.{.{ .name = "key", .module = key_mod }},
         });
+        // The sources this binary was built from, hashed: `mnml-drive
+        // version` prints it and `tools/tour.sh` / `tools/look.sh` hash
+        // the checkout the same way, so a driver older than its sources
+        // (the one whose launch never wrote `allow_input`) is rebuilt
+        // before it can fail every state.
+        const drive_opts = b.addOptions();
+        drive_opts.addOption([]const u8, "source_hash", driveSourceHash(b));
+        drive_mod.addOptions("drive_build", drive_opts);
         drive_mod.linkFramework("CoreGraphics", .{});
         drive_mod.linkFramework("CoreFoundation", .{});
         drive_mod.linkFramework("ApplicationServices", .{});
@@ -1150,6 +1158,42 @@ fn deriveVersion(b: *std.Build) []const u8 {
     const status = b.runAllowFail(&version_git_status, &code, .ignore) catch "";
     const dirty = std.mem.trim(u8, status, " \t\r\n").len != 0;
     return b.fmt("{s}+g{s}{s}", .{ base, sha, if (dirty) "-dirty" else "" });
+}
+
+/// `mnml-drive`'s source stamp: SHA-256 over every `.zig` under
+/// `tools/drive/` plus `src/core/key.zig` (the one app file it imports),
+/// in path order, each as `path NUL contents NUL`; the first sixteen hex
+/// digits. `tools/tour/stamp.py` computes the same thing — change one,
+/// change both.
+fn driveSourceHash(b: *std.Build) []const u8 {
+    const io = b.graph.io;
+    const root = b.build_root.handle;
+    var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    paths.append(b.allocator, "src/core/key.zig") catch @panic("OOM");
+    var dir = root.openDir(io, "tools/drive", .{ .iterate = true }) catch @panic("tools/drive unreadable");
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch @panic("tools/drive unreadable")) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        paths.append(b.allocator, b.fmt("tools/drive/{s}", .{entry.name})) catch @panic("OOM");
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.order(u8, x, y) == .lt;
+        }
+    }.lt);
+    var h = std.crypto.hash.sha2.Sha256.init(.{});
+    for (paths.items) |rel| {
+        const text = root.readFileAlloc(io, rel, b.allocator, .limited(16 << 20)) catch @panic("a mnml-drive source is unreadable");
+        h.update(rel);
+        h.update(&.{0});
+        h.update(text);
+        h.update(&.{0});
+    }
+    var digest: [32]u8 = undefined;
+    h.final(&digest);
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    return b.dupe(hex[0..16]);
 }
 
 // ── lua ────────────────────────────────────────────────────────────────────

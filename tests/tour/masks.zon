@@ -21,6 +21,14 @@
             "\\d+\\.\\d+\\.\\d+-dev\\+g[0-9a-f]+(-dirty)?",
             // An integration pane's freshness ("as of 2s ago").
             "as of \\S+ ago",
+            // The tree header's workspace path, abbreviated to what the
+            // header's chips leave (`/Use…`): it is where the checkout
+            // lives, not what the tour shows. The tour keeps its
+            // workspace under the repo's .verify/tour-ws whatever --out
+            // says, so this is belt and braces. Anchored on the git dot
+            // (● dirty, ○ clean) that precedes it; stops at a box edge,
+            // so an overlay drawn across the row is not masked with it.
+            "(?<=[●○] )[/~][^\\s│┌─]*",
         },
         .rects = .{},
     },

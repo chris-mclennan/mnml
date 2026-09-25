@@ -39,6 +39,14 @@
 #      there), and that a failed merge leaves the installed face alone
 #      after backing it up.
 #
+#  10. tools/tour.sh / tools/look.sh on a copy of themselves: a driver
+#      whose `version` stamp is missing or disagrees with tools/drive is
+#      refused (MNML_DRIVE_NO_REBUILD=1) or rebuilt (a fake $MNML_ZIG);
+#      the stamp, not the mtime, decides; `diff` never checks, leads with
+#      its summary and exits 1 only on a CHANGED shot or a failed assert;
+#      an app binary older than src/ is a warning only;
+#      masks.zon hides the tree header's workspace path under either root.
+#
 #   tools/run-sh-check.sh            (needs zig-out/bin/mnml-zig; ~30 s)
 set -o pipefail
 
@@ -405,6 +413,138 @@ check "broker status: not the line an absent broker prints" '! echo "$out" | gre
 out=$("$MNML_BIN" broker status --service bitbucket 2>&1)
 check "broker status: an ordinary path still reports an absent broker" 'echo "$out" | grep -q "no broker at"' "$out"
 check "broker status: and says nothing about a length" '! echo "$out" | grep -q "socket path is"' "$out"
+
+# ── 10. tour.sh / look.sh and a stale harness ─────────────────────────
+# The first tour from main used an mnml-drive built the day before the
+# driver changed: its launch never wrote `allow_input`, and every state
+# failed with "the channel refused input". Both scripts now compare the
+# driver's `version` stamp (a hash of tools/drive/*.zig + src/core/key.zig,
+# build.zig `driveSourceHash`) against the checkout before they launch.
+# On a copy of the scripts and the driver's sources, with fake drivers
+# and a fake zig — nothing opens a window, nothing is compiled.
+TR="$TMP/tourrepo"
+mkdir -p "$TR/tools/tour" "$TR/tools/drive" "$TR/src/core" "$TR/zig-out/bin"
+cp "$ROOT/tools/tour.sh" "$ROOT/tools/look.sh" "$TR/tools/"
+cp "$ROOT"/tools/tour/*.py "$TR/tools/tour/"
+cp "$ROOT"/tools/drive/*.zig "$TR/tools/drive/"
+cp "$ROOT/src/core/key.zig" "$TR/src/core/"
+stamp_hash() { (cd "$1" && python3 -c 'import sys; sys.path.insert(0, "tools/tour"); import stamp; print(stamp.source_hash())'); }
+HASH=$(stamp_hash "$TR")
+DRV="$TR/zig-out/bin/mnml-drive"
+DRV_LOG="$TMP/drive.log"
+fake_drive() {  # $1: the stamp `version` prints ("" = a driver too old to know the verb)
+  if [ -n "$1" ]; then
+    printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$1" = version ] && { echo "source %s"; exit 0; }\nexit 2\n' "$DRV_LOG" "$1" > "$DRV"
+  else
+    printf '#!/bin/sh\necho "$*" >> "%s"\necho "mnml-drive usage"\nexit 2\n' "$DRV_LOG" > "$DRV"
+  fi
+  chmod +x "$DRV"
+}
+check "stamp: the checkout's hash is sixteen hex digits" 'echo "$HASH" | grep -Eq "^[0-9a-f]{16}$"' "$HASH"
+# The real driver, when there is one, prints a stamp of the same shape.
+if [ -x "$ROOT/zig-out/bin/mnml-drive" ]; then
+  real=$("$ROOT/zig-out/bin/mnml-drive" version 2>&1)
+  check "stamp: the built mnml-drive answers \`version\` with a source stamp" 'echo "$real" | grep -Eq "^source [0-9a-f]{16}$"' "$real"
+  # Built after its sources last changed, it must agree with stamp.py to
+  # the digit: build.zig and the script hash the same bytes the same way.
+  if [ -z "$(find "$ROOT/tools/drive" "$ROOT/src/core/key.zig" -name '*.zig' -newer "$ROOT/zig-out/bin/mnml-drive" 2>/dev/null)" ]; then
+    want="source $(stamp_hash "$ROOT")"
+    check "stamp: build.zig's driveSourceHash and stamp.py agree" '[ "$real" = "$want" ]' "$real vs $want"
+  fi
+fi
+# a) A driver too old to have `version`, rebuilds refused: tour.sh stops.
+fake_drive ""
+: > "$DRV_LOG"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" run --out "$TMP/tourout" 2>&1); rc=$?
+check "tour.sh: a driver too old to report its sources is refused (exit 64)" '[ $rc -eq 64 ]' "$out"
+check "tour.sh: in one line that names the rebuild" '[ "$(printf "%s\n" "$out" | wc -l | tr -d " ")" = 1 ] && echo "$out" | grep -q "mnml-drive is stale (too old to report its sources; tools/drive is $HASH) — rebuild: zig build -Ddrive"' "$out"
+check "tour.sh: nothing launched" '! grep -q launch "$DRV_LOG"' "$(cat "$DRV_LOG")"
+check "tour.sh: no workspace built" '[ ! -e "$TR/.verify/tour-ws" ] && [ ! -e "$TMP/tourout" ]' "$(ls -la "$TR/.verify" 2>&1)"
+# b) A driver built from other sources: look.sh launch refuses the same way.
+fake_drive "0123456789abcdef"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/look.sh" launch "$TMP/ws" 2>&1); rc=$?
+check "look.sh launch: a driver built from other sources is refused (exit 64)" '[ $rc -eq 64 ]' "$out"
+check "look.sh launch: names both stamps" 'echo "$out" | grep -q "built from 0123456789abcdef; tools/drive is $HASH"' "$out"
+# c) The mtime is not the test: a 1970 driver whose stamp matches is used…
+fake_drive "$HASH"
+touch -t 197001010000 "$DRV"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/look.sh" launch "$TMP/no-such-ws" 2>&1); rc=$?
+check "look.sh launch: a 1970 driver with the right stamp passes the check" '! echo "$out" | grep -q stale && echo "$out" | grep -q "no such workspace"' "$out"
+# …and one edit under tools/drive makes that same driver stale.
+echo "// touched by run-sh-check" >> "$TR/tools/drive/keys.zig"
+NEW=$(stamp_hash "$TR")
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/look.sh" launch "$TMP/no-such-ws" 2>&1); rc=$?
+check "look.sh launch: an edit under tools/drive makes the driver stale" '[ $rc -eq 64 ] && [ "$NEW" != "$HASH" ] && echo "$out" | grep -q "built from $HASH; tools/drive is $NEW"' "$out"
+# d) Rebuilds allowed: the fake zig "builds" a driver with the new stamp
+# and the verb goes on (to look.py's own no-such-workspace answer).
+TZ_LOG="$TMP/tourzig.log"
+{
+  echo '#!/bin/sh'
+  echo "echo \"\$*\" >> \"$TZ_LOG\""
+  echo "printf '#!/bin/sh\\n[ \"\$1\" = version ] && { echo \"source $NEW\"; exit 0; }\\nexit 2\\n' > \"$DRV\""
+  echo "chmod +x \"$DRV\""
+} > "$TMP/tourzig"
+chmod +x "$TMP/tourzig"
+out=$(MNML_ZIG="$TMP/tourzig" "$TR/tools/look.sh" launch "$TMP/no-such-ws" 2>&1); rc=$?
+check "look.sh launch: a stale driver is rebuilt with zig build -Ddrive" '[ "$(cat "$TZ_LOG" 2>/dev/null)" = "build -Ddrive" ]' "$out"
+check "look.sh launch: says it is rebuilding, then goes on" 'echo "$out" | grep -q "rebuilding: zig build -Ddrive" && echo "$out" | grep -q "no such workspace"' "$out"
+# e) A rebuild that fails stops, naming its log.
+fake_drive "0123456789abcdef"
+printf '#!/bin/sh\necho "compile error"\nexit 1\n' > "$TMP/badzig"; chmod +x "$TMP/badzig"
+out=$(MNML_ZIG="$TMP/badzig" "$TR/tools/tour.sh" run --out "$TMP/tourout" 2>&1); rc=$?
+check "tour.sh: a failed rebuild stops (exit 64) and names its log" '[ $rc -eq 64 ] && echo "$out" | grep -q "zig build -Ddrive failed (exit 1); see $TR/.verify/drive-rebuild.log"' "$out"
+# f) diff never launches, so a stale driver does not stop it; its first
+# line is the summary.
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TMP/tourout-empty" 2>&1); rc=$?
+check "tour.sh diff: skips the driver check and leads with the summary" '[ $rc -eq 0 ] && ! echo "$out" | grep -q stale && [ "$(echo "$out" | head -1)" = "0 ok, 0 changed, 0 asserts ok" ]' "$out"
+# f2) The exit is 1 on a CHANGED shot or a failed assert and on nothing
+# else: a shot with no baseline is a note. Tiny synthetic PNGs.
+(cd "$TR" && python3 -c '
+import os, sys
+sys.path.insert(0, "tools/tour")
+import imgdiff
+def solid(v):
+    return imgdiff.Image(240, 80, [bytes([v, v, v, 255]) * 240 for _ in range(80)], (0, 1, 2))
+os.makedirs("tests/tour/baseline", exist_ok=True)
+for d in ("x/same", "x/moved"):
+    os.makedirs(d, exist_ok=True)
+imgdiff.save_png(solid(0), "tests/tour/baseline/a.png")
+imgdiff.save_png(solid(0), "tests/tour/baseline/b.png")
+imgdiff.save_png(solid(0), "x/same/01-a.png")
+imgdiff.save_png(solid(0), "x/same/03-c.png")
+imgdiff.save_png(solid(0), "x/moved/01-a.png")
+imgdiff.save_png(solid(255), "x/moved/02-b.png")
+')
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/same" 2>&1); rc=$?
+check "tour.sh diff: a shot with no baseline is a note — exit 0" '[ $rc -eq 0 ] && [ "$(echo "$out" | head -1)" = "1 ok, 0 changed, 0 asserts ok, 1 new" ]' "$out"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/moved" 2>&1); rc=$?
+check "tour.sh diff: a CHANGED shot exits 1, counted first" '[ $rc -eq 1 ] && [ "$(echo "$out" | head -1)" = "1 ok, 1 changed, 0 asserts ok" ] && echo "$out" | grep -q "CHANGED 100.000%  b"' "$out"
+printf '{"states": [], "asserts": [{"shot": "a", "why": "w", "ok": false, "detail": "d"}, {"shot": "a", "why": "v", "ok": true, "detail": "e"}]}' > "$TR/x/same/tour.json"
+out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TR/x/same" 2>&1); rc=$?
+check "tour.sh diff: the last run's failed assert exits 1 and is counted" '[ $rc -eq 1 ] && [ "$(echo "$out" | head -1)" = "1 ok, 0 changed, 1 asserts ok, 1 asserts FAILED, 1 new" ]' "$out"
+# g) The app binary: warned about, never refused.
+mkdir -p "$TR/src/app"; echo "// a source" > "$TR/src/app/x.zig"
+printf '#!/bin/sh\n' > "$TR/zig-out/bin/mnml-zig"; chmod +x "$TR/zig-out/bin/mnml-zig"
+touch -t 197001010000 "$TR/zig-out/bin/mnml-zig"
+out=$(cd "$TR" && python3 tools/tour/stamp.py app 2>&1); rc=$?
+check "stamp app: a 1970 mnml-zig older than src/ is a warning, exit 0" '[ $rc -eq 0 ] && echo "$out" | grep -q "warning: zig-out/bin/mnml-zig is older than src/app/x.zig"' "$out"
+touch "$TR/zig-out/bin/mnml-zig"
+out=$(cd "$TR" && python3 tools/tour/stamp.py app 2>&1)
+check "stamp app: a fresh mnml-zig says nothing" '[ -z "$out" ]' "$out"
+# h) The tree header's workspace path is masked wherever the checkout
+# lives: `/Use…` under /Users, `/pr…` under /private/tmp.
+out=$(cd "$ROOT" && python3 -c '
+import sys
+sys.path.insert(0, "tools/tour")
+import tour
+m = tour.load_masks()
+for line in ("   │  ● /Use…            │ x", "   │  ● /pr…             │ x"):
+    got = [r for r in tour.masks_for("start", m, line) if r[1] == 0]
+    a, b = line.index("/"), line.index("\u2026") + 1  # the path cells
+    assert any(r[0] <= a and r[0] + r[2] >= b for r in got), (line, got)
+print("masked")
+' 2>&1)
+check "masks.zon: the tree header's path is masked under either root" '[ "$out" = masked ]' "$out"
 
 echo "run-sh-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

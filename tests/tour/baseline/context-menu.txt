@@ -29,12 +29,12 @@
    │                          │▌                                      │ 󰚩  Ask Claude…            │
    │                          │▌                                      │───────────────────────────│
    │──────────────────────────│▌                                      │   Save                   │
-   │ Sidebar              󰐃 ⋮ │▌                                      └───────────────────────────┘
+   │ util.zig  ·  ZIG  ·  󰐃 ⋮ │▌                                      └───────────────────────────┘
    │                          │▌
-   │ Arrows or j/k walk rows. │▌
-   │ Enter opens the          │▌
-   │ selection. Ctrl+Shift+P  │▌                                                                    ┌────────────── × ┐
-  │ opens the palette.       │▌                                                                    │ dock: auto_hide │
-   │                          │▌                                                                    └─────────────────┘
- EDIT  dev   main  󰐙 1…  util.zig  › sum   󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  20:40  ws   zig
+   │ [F12] Definition ·       │▌
+   │ [Shift+F12] References · │▌
+   │ [Ctrl+.] Code actions ·  │▌
+  │ [Ctrl+P] Files           │▌
+   │                          │▌
+ EDIT  dev   main  󰐙 1…  util.zig  › sum   󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  21:31  ws   zig
                                                            ⋯
