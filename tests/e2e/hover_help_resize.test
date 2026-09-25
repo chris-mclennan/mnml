@@ -1,0 +1,48 @@
+# width: 120
+# height: 40
+# The info view's top rule is a drag handle, as the column's right edge
+# is: at 120x40 the box's rule is row 30 and the column runs from row 1
+# to row 37. Dragging the rule to row 20 gives the box 18 rows
+# (`ui.hover_help_height`, the Settings row `Hover help rows`); the box
+# keeps at least 4 rows and leaves the section above at least 6; a
+# double-click on the rule puts back the default 8. Hovering the rule
+# says it drags.
+write a.txt "alpha\n"
+hover 10 30
+expect screen contains "Drag it up or down"
+drag 10 30 10 20
+command view.settings_search
+type "hover help rows"
+expect screen contains "Hover help rows:                   ‹ [18] ›"
+key esc
+key esc
+expect screen lacks "Hover help rows:"
+# The rule moved with the drag: row 20 is the handle now.
+hover 10 20
+expect screen contains "Drag it up or down"
+# Past the top: the section above keeps six rows, so the column (37
+# rows from row 1) gives the box 31 — the rule stops at row 7.
+drag 10 20 10 3
+command view.settings_search
+type "hover help rows"
+expect screen contains "Hover help rows:                   ‹ [31] ›"
+key esc
+key esc
+hover 10 7
+expect screen contains "Drag it up or down"
+# Past the bottom: four rows at least — the rule stops at row 34.
+drag 10 7 10 37
+command view.settings_search
+type "hover help rows"
+expect screen contains "Hover help rows:                   ‹ [4] ›"
+key esc
+key esc
+# A double-click on the rule: the default eight, the rule back on 30.
+doubleclick 10 34
+command view.settings_search
+type "hover help rows"
+expect screen contains "Hover help rows:                   ‹ [8] ›"
+key esc
+key esc
+hover 10 30
+expect screen contains "Drag it up or down"

@@ -17,6 +17,8 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const hit = @import("hit.zig");
+const pin_chip = @import("pin_chip.zig");
+const focus_cue = @import("focus_cue.zig");
 
 const Style = vaxis.Style;
 
@@ -89,13 +91,43 @@ pub const Props = struct {
     copy: Copy,
     /// The first content line shown; the painter clamps it.
     scroll: u16 = 0,
+    /// The entry is pinned: the title row's pin chip is lit.
+    pinned: bool = false,
+    /// The box has the keys (`help.focus`): its title lights as a
+    /// section's header does (`focus_cue.label`).
+    focused: bool = false,
+    /// The keyboard's row, counted over the shortcut rows then the
+    /// link rows; painted on the selection ground and scrolled into
+    /// view. Null paints no cursor.
+    cursor: ?usize = null,
+    /// The top rule as a drag handle: its hit (registered over the
+    /// whole row, after the box's, so it wins), and whether it is lit
+    /// — under the pointer or being dragged, as a divider lights.
+    rule: ?Rule = null,
+};
+
+pub const Rule = struct {
+    hit: hit.HitTarget,
+    /// Being dragged: lit whatever the pointer is over.
+    lit: bool = false,
+    /// A divider's lit style (the theme's accent).
+    lit_style: Style,
 };
 
 pub const Layout = struct {
     /// The last `scroll` that still fills the rows; 0 when it all fits.
     max_scroll: u16 = 0,
     kebab: ?Rect = null,
+    /// The pin chip's cells, when the title row had room for it.
+    pin: ?Rect = null,
+    /// The first line shown — `Props.scroll` clamped, and moved so the
+    /// keyboard's row is on screen.
+    scroll: u16 = 0,
 };
+
+/// The title row keeps at least this many cells for the title before
+/// the pin chip is dropped from it.
+pub const pin_min_title: u16 = 6;
 
 pub const kebab_glyph = "⋮";
 pub const kebab_ascii = ":";
@@ -105,6 +137,8 @@ const Line = struct {
     segs: []const vaxis.Segment,
     /// A `→ label` row: its index in `copy.try_it`.
     link: ?u8 = null,
+    /// A row the keyboard walks: shortcuts first, then links.
+    row: ?usize = null,
 };
 
 pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
@@ -116,22 +150,32 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     const title_bg = pal.bg2;
     ui.fill(area, Theme.onBg(t.fg, body_bg));
     ui.hit(area, .{ .info_view = .body });
-    // Row 0: the rule.
+    // Row 0: the rule — and, handed a hit, the handle that drags the
+    // box's height, lit like a divider under the pointer.
     var sep = Theme.onBg(Theme.withFg(t.fg, pal.comment), body_bg);
     sep.dim = true;
+    const rule_row = Rect.init(area.x, area.y, area.w, 1);
+    if (p.rule) |r| if (r.lit or ui.hovered(rule_row)) {
+        sep = Theme.onBg(Theme.withFg(t.fg, r.lit_style.fg), body_bg);
+    };
     ui.hrule(area.x, area.y, area.w, sep);
+    if (p.rule) |r| ui.hit(rule_row, r.hit);
     if (area.h <= 1) return out;
     // Row 1: the title band, from the second cell (the first keeps the
     // panel's ground so the band never touches the activity bar), the
     // kebab and a trailing cell at the right.
     const ty = area.y + 1;
     const kebab_cells: u16 = 2;
-    const title_avail = area.w -| kebab_cells -| 1;
-    var title_style = Theme.onBg(t.fg, title_bg);
+    // The pin sits left of the kebab when the title keeps room beside
+    // it; a narrower box has the kebab alone.
+    const with_pin = area.w >= kebab_cells + pin_chip.width + 1 + pin_min_title;
+    const title_avail = area.w -| kebab_cells -| 1 -| (if (with_pin) pin_chip.width else 0);
+    var title_style = focus_cue.label(t, ui.focus_cue, p.focused, Theme.onBg(t.fg, title_bg));
     title_style.bold = true;
     ui.fill(Rect.init(area.x + 1, ty, title_avail, 1), title_style);
-    // A long title is cut, not ellipsised (Rust), a cell short of the kebab.
-    _ = ui.putStr(area.x + 1, ty, title_avail -| 1, p.copy.title, title_style);
+    // A long title is cut, not ellipsised (Rust), a cell short of the
+    // kebab — or of the pin, whose own leading cell is that gap.
+    _ = ui.putStr(area.x + 1, ty, if (with_pin) title_avail else title_avail -| 1, p.copy.title, title_style);
     if (area.w >= 3) {
         const kx = area.right() - kebab_cells;
         ui.fill(Rect.init(kx, ty, kebab_cells, 1), Theme.onBg(t.fg, title_bg));
@@ -139,6 +183,11 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
         const kr = Rect.init(kx, ty, 1, 1);
         ui.hit(kr, .{ .info_view = .kebab });
         out.kebab = kr;
+        if (with_pin) {
+            const pr = Rect.init(kx - pin_chip.width, ty, pin_chip.width, 1);
+            pin_chip.draw(ui, pr, .{ .pinned = p.pinned, .bg = title_bg, .hit = .{ .info_view = .pin } });
+            out.pin = pr;
+        }
     }
     if (area.h <= 2) return out;
     // Rows 2..: the lines, wrapped to the width less the gutters — and
@@ -146,22 +195,29 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     // short of the bar.
     const body = Rect.init(area.x, area.y + 2, area.w, area.h -| 3);
     const cap: usize = body.h;
-    const max_body_rows: usize = area.h -| 3;
     var content_w = area.w -| 2;
-    var lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+    var lines = buildLines(ui, p, content_w) orelse return out;
     if (lines.items.len > cap and content_w > 1) {
         content_w -= 1;
-        lines = buildLines(ui, p, content_w, max_body_rows) orelse return out;
+        lines = buildLines(ui, p, content_w) orelse return out;
     }
     const total = lines.items.len;
     const overflow = total > cap;
     out.max_scroll = @intCast(total -| cap);
-    const scroll: usize = @min(p.scroll, out.max_scroll);
+    var scroll: usize = @min(p.scroll, out.max_scroll);
+    // The keyboard's row stays on screen.
+    if (p.cursor) |c| for (lines.items, 0..) |line, li| if (line.row != null and line.row.? == c) {
+        if (li < scroll) scroll = li else if (li >= scroll + cap) scroll = li + 1 - cap;
+        break;
+    };
+    out.scroll = @intCast(scroll);
     const text_w = body.w -| @as(u16, if (overflow) 2 else 0);
     for (lines.items[scroll..@min(total, scroll + cap)], 0..) |line, i| {
         const y: u16 = body.y + @as(u16, @intCast(i));
+        const on_cursor = p.cursor != null and line.row != null and line.row.? == p.cursor.?;
+        if (on_cursor) ui.fill(Rect.init(body.x, y, text_w, 1), Theme.onBg(t.fg, t.selection.bg));
         var lx = body.x + 1;
-        for (line.segs) |s| lx += ui.putStr(lx, y, (body.x + text_w) -| lx, s.text, s.style);
+        for (line.segs) |s| lx += ui.putStr(lx, y, (body.x + text_w) -| lx, s.text, if (on_cursor) Theme.onBg(s.style, t.selection.bg) else s.style);
         if (line.link) |li| ui.hit(Rect.init(body.x, y, text_w, 1), .{ .info_view = .{ .try_it = li } });
     }
     if (overflow) {
@@ -180,9 +236,12 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
 }
 
 /// The body's lines at `content_w`: a blank, the body and the aside
-/// wrapped, then the shortcuts and the try-it links as far as
-/// `max_body_rows` allows. Null on OOM.
-fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.ArrayListUnmanaged(Line) {
+/// wrapped, then every shortcut and every link after a spacer each.
+/// Nothing is dropped for want of rows — the box scrolls, so a link
+/// under a long body is a notch or two of the wheel away rather than
+/// gone (Rust cut the rows that did not fit on screen, and at the
+/// default height every link under a long body with them). Null on OOM.
+fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
     const arena = ui.arena;
     var lines: std.ArrayListUnmanaged(Line) = .empty;
     const t = ui.theme;
@@ -200,21 +259,19 @@ fn buildLines(ui: Ui, p: Props, content_w: u16, max_body_rows: usize) ?std.Array
     if (p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     for (wrapWords(arena, p.copy.body, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return null }) catch return null;
     if (!p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
-    var rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.shortcuts.len > 0) {
+    if (p.copy.shortcuts.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
-        for (p.copy.shortcuts[0..@min(p.copy.shortcuts.len, rows_left -| 1)]) |s| {
+        for (p.copy.shortcuts, 0..) |s, i| {
             const segs = arena.alloc(vaxis.Segment, 2) catch return null;
             segs[0] = .{ .text = ui.fmt("[{s}]", .{s.chord}), .style = chord_style };
             segs[1] = .{ .text = ui.fmt(" {s}", .{s.label}), .style = fg };
-            lines.append(arena, .{ .segs = segs }) catch return null;
+            lines.append(arena, .{ .segs = segs, .row = i }) catch return null;
         }
     }
-    rows_left = max_body_rows -| lines.items.len;
-    if (rows_left > 0 and p.copy.try_it.len > 0) {
+    if (p.copy.try_it.len > 0) {
         lines.append(arena, .{ .segs = &.{} }) catch return null;
-        for (p.copy.try_it[0..@min(p.copy.try_it.len, rows_left -| 1)], 0..) |l, i| {
-            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i) }) catch return null;
+        for (p.copy.try_it, 0..) |l, i| {
+            lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i), .row = p.copy.shortcuts.len + i }) catch return null;
         }
     }
     return lines;
@@ -295,7 +352,7 @@ test "the spec's rows 27..33 at 26x11: the rule, `Sidebar` with the kebab, a spa
     const l = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
     try f.expectRows(&.{
         "──────────────────────────",
-        " Sidebar                ⋮",
+        " Sidebar              󰐃 ⋮",
         "",
         " Arrows or j/k walk rows.",
         " Enter opens the",
@@ -309,6 +366,16 @@ test "the spec's rows 27..33 at 26x11: the rule, `Sidebar` with the kebab, a spa
     try testing.expectEqual(@as(u16, 0), l.max_scroll);
     try testing.expect(l.kebab.?.eql(Rect.init(24, 1, 1, 1)));
     try testing.expect(f.hits.at(24, 1).?.info_view == .kebab);
+    // The pin chip left of the kebab (`ui/pin_chip.zig`): its three
+    // cells are its hit, cold (dim) until pinned.
+    try testing.expect(l.pin.?.eql(Rect.init(21, 1, 3, 1)));
+    try testing.expect(f.hits.at(21, 1).?.info_view == .pin);
+    try testing.expect(f.hits.at(23, 1).?.info_view == .pin);
+    try testing.expect(f.style(22, 1).dim);
+    const lit = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .pinned = true });
+    try testing.expect(lit.pin != null);
+    try testing.expect(vaxis.Color.eql(f.style(22, 1).fg, f.theme.palette.yellow));
+    try testing.expect(f.style(22, 1).bold);
     try testing.expect(f.hits.at(5, 4).?.info_view == .body);
     try testing.expect(f.hits.at(0, 0).?.info_view == .body);
     // The title band from the second cell on bg2, the first cell on the panel ground.
@@ -330,16 +397,23 @@ test "shortcuts and links get their rows after a spacer; a link row is a hit by 
         .try_it = &.{.{ .label = "Run it" }},
     };
     _ = draw(f.ui(), f.full(), .{ .copy = copy });
-    try f.expectRow(1, " A title that is far too lo ⋮");
-    try f.expectRow(3, " Body.");
-    try f.expectRow(4, " An aside.");
-    try f.expectRow(5, "");
-    try f.expectRow(6, " [Enter] Open");
-    try f.expectRow(7, " [→ / ←] Expand / collapse");
-    // Only two rows were left: the links needed a spacer and a row.
+    try f.expectRow(1, " A title that is far too  󰐃 ⋮");
+    try f.expectRow(3, " Body.                       ┃");
+    try f.expectRow(4, " An aside.                   ┃");
+    try f.expectRow(5, "                             ┃");
+    try f.expectRow(6, " [Enter] Open                ┃");
+    try f.expectRow(7, " [→ / ←] Expand / collapse   ┃");
+    // Out of rows: the link is below the fold, not dropped — the bar
+    // says there is more, and scrolled it is a row with its hit.
     try f.expectLacks("Run it");
     try testing.expect(f.style(4, 4).italic);
     try testing.expect(vaxis.Color.eql(f.style(2, 6).fg, f.theme.palette.cyan));
+    var s = try Fixture.init(30, 10);
+    defer s.deinit();
+    const sl = draw(s.ui(), s.full(), .{ .copy = copy, .scroll = 99 });
+    try testing.expectEqual(@as(u16, 1), sl.max_scroll);
+    try s.expectRow(8, " → Run it                    ┃");
+    try testing.expectEqual(@as(u8, 0), s.hits.at(3, 8).?.info_view.try_it);
     var g = try Fixture.init(30, 14);
     defer g.deinit();
     _ = draw(g.ui(), g.full(), .{ .copy = copy });
@@ -391,6 +465,71 @@ test "wrapWords: greedy on whitespace, a long word broken, empty is one line" {
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy });
     try f.expectRow(0, "──────────");
+    // Too narrow for the pin and a title beside it: the kebab alone.
     try f.expectRow(1, " Sideba ⋮");
     _ = draw(f.ui(), Rect.empty, .{ .copy = sidebar_copy });
+}
+
+test "the keyboard's box: the title lights as a focused section's header, the cursor's row sits on the selection ground and is scrolled into view" {
+    var f = try Fixture.init(30, 10);
+    defer f.deinit();
+    const copy: Copy = .{
+        .title = "T",
+        .body = "Body.",
+        .aside = "An aside.",
+        .shortcuts = &.{ .{ .chord = "Enter", .label = "Open" }, .{ .chord = "→ / ←", .label = "Expand / collapse" } },
+        .try_it = &.{.{ .label = "Run it" }},
+    };
+    // Unfocused: the title keeps its own colour; no cursor painted.
+    _ = draw(f.ui(), f.full(), .{ .copy = copy });
+    const cold = f.style(1, 1);
+    try testing.expect(!vaxis.Color.eql(cold.fg, f.theme.accent.fg));
+    // Focused (the default `both` cue lights): the accent.
+    var l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 0 });
+    try testing.expect(vaxis.Color.eql(f.style(1, 1).fg, f.theme.accent.fg));
+    // Cursor 0 is the first shortcut row (row 6): the selection ground.
+    try testing.expect(f.bgEql(3, 6, .{ .bg = f.theme.selection.bg }));
+    try testing.expect(!f.bgEql(3, 7, .{ .bg = f.theme.selection.bg }));
+    try testing.expectEqual(@as(u16, 0), l.scroll);
+    // Cursor 2 is the link, below the fold at scroll 0: the view follows.
+    l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 2 });
+    try testing.expectEqual(@as(u16, 1), l.scroll);
+    try f.expectRow(8, " → Run it                    ┃");
+    try testing.expect(f.bgEql(3, 8, .{ .bg = f.theme.selection.bg }));
+    // Back up to row 0 from a scrolled view: it follows up again.
+    l = draw(f.ui(), f.full(), .{ .copy = copy, .focused = true, .cursor = 0, .scroll = 1 });
+    try testing.expectEqual(@as(u16, 1), l.scroll);
+    var g = try Fixture.init(30, 6);
+    defer g.deinit();
+    const tall = draw(g.ui(), g.full(), .{ .copy = copy, .focused = true, .cursor = 0, .scroll = 3 });
+    try testing.expect(tall.scroll <= 4);
+    try g.expectContains("[Enter] Open");
+}
+
+test "the rule as a handle: its hit over the whole top row wins over the box's, and it lights under the pointer or while dragged" {
+    var f = try Fixture.init(26, 11);
+    defer f.deinit();
+    const accent = f.theme.accent;
+    const rule: Rule = .{ .hit = .{ .divider = 7 }, .lit_style = accent };
+    _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .rule = rule });
+    try testing.expectEqual(@as(u32, 7), f.hits.at(0, 0).?.divider);
+    try testing.expectEqual(@as(u32, 7), f.hits.at(25, 0).?.divider);
+    try testing.expect(f.hits.at(5, 1).? == .info_view);
+    try testing.expect(f.style(3, 0).dim);
+    try testing.expect(!vaxis.Color.eql(f.style(3, 0).fg, accent.fg));
+    // Being dragged: lit, not dim.
+    _ = draw(f.ui(), f.full(), .{ .copy = sidebar_copy, .rule = .{ .hit = rule.hit, .lit = true, .lit_style = accent } });
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).fg, accent.fg));
+    try testing.expect(!f.style(3, 0).dim);
+    // Under the pointer: lit the same way.
+    var g = try Fixture.init(26, 11);
+    defer g.deinit();
+    g.hover = .{ .x = 12, .y = 0 };
+    _ = draw(g.ui(), g.full(), .{ .copy = sidebar_copy, .rule = rule });
+    try testing.expect(vaxis.Color.eql(g.style(3, 0).fg, accent.fg));
+    // No handle: the rule is the box's, as before.
+    var h = try Fixture.init(26, 11);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), .{ .copy = sidebar_copy });
+    try testing.expect(h.hits.at(0, 0).?.info_view == .body);
 }

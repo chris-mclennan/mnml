@@ -23,12 +23,40 @@
 //! (`info_view_copy.askPrompt`), built at press time from the state of
 //! that moment. Nothing from the frame arena is kept between frames.
 //!
+//! **The way to the box is safe.** The pointer leaving a target for
+//! the box crosses other targets on the way — the tree's rows, the
+//! empty space under them — and each used to take the box over, so a
+//! link was never reachable. Leaving a target starts a grace window
+//! (`ui.hover_help_grace_ms`): while it runs and the pointer keeps
+//! heading for the box — no farther from it than the step before, and
+//! inside the column (± `corridor_margin`) or the triangle from where it
+//! left toward the box's near edge (`inCorridor`) — the box keeps the
+//! entry it had. A step outside the corridor switches at once; the
+//! window running out while the pointer rests switches too (the tick's
+//! one deadline, `nextDeadlineMs`, not a timer of its own). On the box
+//! the entry is held until the pointer leaves it, whatever the event —
+//! a wheel notch or a press included.
+//!
+//! **The keys can have it too.** `help.focus` hands the box the keys
+//! (`FocusId.info_view`): the entry holds as it does under the pointer,
+//! Tab / Shift+Tab walk its `[chord] label` and link rows, Enter runs
+//! the one under the cursor, Esc gives the keys back to where they came
+//! from (and lets a pin go). The title lights as a focused section's
+//! header does.
+//!
+//! **A pin holds it outright.** The pin chip on the title row (and
+//! `help.pin_toggle`) freezes the entry the box shows — its words and
+//! what its links do, copied onto the gpa (`Pinned`), since the frame
+//! that resolved them is gone by the next paint — until the pin is
+//! pressed again or Esc is pressed in the box.
+//!
 //! The kebab's menu is the one row Rust has: turn the panel off.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
+const Key = app_mod.Key;
 const Mouse = @import("../core/key.zig").Mouse;
 const command = @import("../core/command.zig");
 const CommandId = command.CommandId;
@@ -43,12 +71,14 @@ const copy = @import("info_view_copy.zig");
 const settings_app = @import("settings.zig");
 const git_app = @import("git.zig");
 const docs = @import("docs.zig");
+const Rect = @import("../ui/rect.zig");
 
 pub const Copy = view.Copy;
 pub const Part = view.Part;
 pub const Entry = copy.Entry;
 
 pub const max_links = copy.max_links;
+pub const max_keys = copy.max_keys;
 
 /// The aside a fallback carries — the on-screen mark of a control
 /// without an entry.
@@ -72,7 +102,323 @@ pub const State = struct {
     hover_target: ?HitTarget = null,
     /// A hovered link's url, copied out of the dying frame.
     link_url: [512]u8 = undefined,
+    /// Where the box was painted last frame (null while it is not):
+    /// what the corridor heads for.
+    rect: ?Rect = null,
+    /// The left column the box sits at the foot of, last frame: what
+    /// dragging its rule measures against.
+    column: ?Rect = null,
+    /// The pointer at the previous snapshot — the corridor asks whether
+    /// the pointer is still closing on the box.
+    last_ptr: ?Pt = null,
+    /// The pointer was on the box at the previous snapshot: leaving the
+    /// box is not leaving a target, and starts no grace.
+    was_on_box: bool = false,
+    /// The entry held while the pointer travels to the box.
+    grace: ?Grace = null,
+    /// The hover target the last pick resolved its copy from, if any —
+    /// what a pin asks its `Ask` link about.
+    shown: ?HitTarget = null,
+    /// The pinned entry: while set, it is what the box says.
+    pinned: ?Pinned = null,
+    /// What the `[chord] label` rows run, by position (Enter in the box).
+    keys: [max_keys]?CommandId = @splat(null),
+    /// The copy's walkable rows: its shortcuts, then its links.
+    n_shortcuts: usize = 0,
+    n_links: usize = 0,
+    /// The keyboard's row while the box has the keys (`help.focus`).
+    cursor: usize = 0,
+    /// Where the keys go back to on Esc.
+    return_focus: ?app_mod.FocusId = null,
+
+    pub fn deinit(st: *State) void {
+        if (st.pinned) |*p| p.deinit();
+        st.pinned = null;
+    }
 };
+
+/// A pinned entry, owned: the copy and its link actions deep-copied off
+/// the frame arena, and the target it came from (never a `.link`, whose
+/// url is an arena slice) for an `Ask` link.
+pub const Pinned = struct {
+    arena: std.heap.ArenaAllocator,
+    copy: Copy,
+    links: [max_links]?copy.LinkAction,
+    keys: [max_keys]?CommandId,
+    target: ?HitTarget,
+
+    pub fn init(gpa: Allocator, c: Copy, links: [max_links]?copy.LinkAction, keys: [max_keys]?CommandId, target: ?HitTarget) Allocator.Error!Pinned {
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+        const shortcuts = try a.alloc(view.Shortcut, c.shortcuts.len);
+        for (c.shortcuts, shortcuts) |s, *d| d.* = .{ .chord = try a.dupe(u8, s.chord), .label = try a.dupe(u8, s.label) };
+        const try_it = try a.alloc(view.Link, c.try_it.len);
+        for (c.try_it, try_it) |l, *d| d.* = .{ .label = try a.dupe(u8, l.label), .kind = l.kind };
+        var owned: [max_links]?copy.LinkAction = @splat(null);
+        for (links, 0..) |l, i| owned[i] = if (l) |act| switch (act) {
+            .url => |u| .{ .url = try a.dupe(u8, u) },
+            .docs => |d| .{ .docs = .{ .doc = d.doc, .section = try a.dupe(u8, d.section) } },
+            else => act,
+        } else null;
+        return .{
+            .copy = .{
+                .title = try a.dupe(u8, c.title),
+                .body = try a.dupe(u8, c.body),
+                .aside = if (c.aside) |x| try a.dupe(u8, x) else null,
+                .aside_first = c.aside_first,
+                .shortcuts = shortcuts,
+                .try_it = try_it,
+            },
+            .links = owned,
+            .keys = keys,
+            .target = if (target) |tg| (if (tg == .link) null else tg) else null,
+            .arena = arena,
+        };
+    }
+
+    pub fn deinit(p: *Pinned) void {
+        p.arena.deinit();
+    }
+};
+
+// ─── the height: the rule is a drag handle ──────────────────────────────
+
+/// The rows the box gets in a column `column_h` tall when the config
+/// asks for `want`: clamped to `hover_help_height_min` and to what
+/// leaves the section above `hover_help_section_min`; null when the
+/// column cannot give both.
+pub fn boxRows(column_h: u16, want: u16) ?u16 {
+    const C = app_mod.Config;
+    if (column_h < C.hover_help_height_min + C.hover_help_section_min) return null;
+    return std.math.clamp(want, C.hover_help_height_min, @min(column_h - C.hover_help_section_min, C.hover_help_height_max));
+}
+
+/// A drag on the rule: the pointer's row is the rule's, so the box is
+/// every row from it to the column's foot, clamped (`boxRows`).
+pub fn dragTo(app: *App, y: u16) void {
+    const col = app.info_view.column orelse return;
+    const want: u16 = col.bottom() -| y;
+    app.cfg.ui.hover_help_height = boxRows(col.h, want) orelse return;
+    app.needs_render = true;
+}
+
+/// The drag let go: the height is written to the home config, as the
+/// Settings row writes it.
+pub fn dragEnd(app: *App) Allocator.Error!void {
+    _ = try settings_app.persist(app, .home, &.{ "ui", "hover_help_height" }, app.cfg.ui.hover_help_height);
+}
+
+/// A double-click on the rule: the default height, written.
+pub fn resetHeight(app: *App) Allocator.Error!void {
+    app.cfg.ui.hover_help_height = (app_mod.Config{}).ui.hover_help_height;
+    app.needs_render = true;
+    _ = try settings_app.persist(app, .home, &.{ "ui", "hover_help_height" }, app.cfg.ui.hover_help_height);
+}
+
+/// Pinned or not — what the title row's chip shows.
+pub fn isPinned(app: *const App) bool {
+    return app.info_view.pinned != null;
+}
+
+/// `help.pin_toggle` and the pin chip: freeze the entry the box shows,
+/// or let it go.
+pub fn togglePin(app: *App) Allocator.Error!void {
+    const st = &app.info_view;
+    app.needs_render = true;
+    if (st.pinned) |*p| {
+        p.deinit();
+        st.pinned = null;
+        app.toast("info panel: unpinned", .{});
+        return;
+    }
+    const c = try pickCopy(app, app.frame.allocator());
+    st.pinned = try Pinned.init(app.gpa, c, st.links, st.keys, st.shown);
+    app.toast("info panel: pinned \u{2014} {s}", .{st.pinned.?.copy.title});
+}
+
+/// Let a pinned entry go (Esc in the box); false when nothing was pinned.
+pub fn unpin(app: *App) bool {
+    const st = &app.info_view;
+    if (st.pinned) |*p| {
+        p.deinit();
+        st.pinned = null;
+        app.needs_render = true;
+        return true;
+    }
+    return false;
+}
+
+pub const table = .{
+    .@"help.pin_toggle" = &pinCommand,
+    .@"help.focus" = &focusCommand,
+};
+
+fn focusCommand(app: *App) command.CommandError!void {
+    try focusBox(app);
+}
+
+/// Where the keys go back to from the box: where they came from, else
+/// the active pane, else the tree.
+fn backFocus(app: *const App) app_mod.FocusId {
+    if (app.info_view.return_focus) |f| if (f != .info_view and f != .overlay) return f;
+    return if (app.active) |a| .{ .pane = a } else .tree;
+}
+
+/// `help.focus`: the box takes the keys, its cursor on the first row.
+pub fn focusBox(app: *App) Allocator.Error!void {
+    const st = &app.info_view;
+    if (st.rect == null) {
+        app.toast("info panel is not showing \u{2014} Settings \u{2192} UI \u{2192} Hover help, and the left column", .{});
+        return;
+    }
+    if (app.focus == .info_view) return;
+    st.return_focus = focusUnder(app);
+    if (app.activeBuffer()) |b| b.input.onBlur();
+    app.focus = .info_view;
+    st.cursor = 0;
+    app.needs_render = true;
+}
+
+/// The keys go back to where they came from.
+pub fn leave(app: *App) void {
+    if (app.focus != .info_view) return;
+    app.focus = backFocus(app);
+    app.info_view.return_focus = null;
+    app.needs_render = true;
+}
+
+/// The box's keys while it has them: Tab / Shift+Tab walk the rows,
+/// Enter runs the one under the cursor, Esc leaves (and unpins).
+/// Anything else is not the box's.
+pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
+    const st = &app.info_view;
+    const rows = st.n_shortcuts + st.n_links;
+    switch (k.code) {
+        .esc => {
+            _ = unpin(app);
+            leave(app);
+            return true;
+        },
+        .tab, .backtab => {
+            if (rows == 0) return true;
+            const back = k.code == .backtab or k.mods.shift;
+            st.cursor = if (back) (if (st.cursor == 0) rows - 1 else st.cursor - 1) else (st.cursor + 1) % rows;
+            app.needs_render = true;
+            return true;
+        },
+        .enter => {
+            if (rows == 0) return true;
+            const at = @min(st.cursor, rows - 1);
+            if (at < st.n_shortcuts) {
+                const id = (if (at < max_keys) st.keys[at] else null) orelse {
+                    app.toast("a gesture, not a command \u{2014} nothing to run", .{});
+                    return true;
+                };
+                leave(app);
+                command.run(app, .{ .static = id }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {},
+                };
+                return true;
+            }
+            const li = at - st.n_shortcuts;
+            const action = (if (li < max_links) st.links[li] else null) orelse return true;
+            leave(app);
+            try runLink(app, action);
+            return true;
+        },
+        else => return false,
+    }
+}
+
+fn pinCommand(app: *App) command.CommandError!void {
+    try togglePin(app);
+}
+
+pub const Pt = struct { x: u16, y: u16 };
+
+/// The entry the box keeps while the pointer heads for it: the target
+/// it came from, where the pointer left it, and when the window shuts.
+pub const Grace = struct {
+    target: HitTarget,
+    anchor: Pt,
+    until_ms: i64,
+};
+
+/// Cells either side of the column the pointer may stray and still be
+/// on its way down (or up) to the box.
+pub const corridor_margin: u16 = 2;
+
+/// Whether the pointer at `now` is still on its way to `box`: no
+/// farther from it on either axis than at `prev`, and inside the
+/// column's band (± `corridor_margin`) or the triangle from `anchor`
+/// (where it left its target) to the box's near edge, widened by the
+/// margin at the box's end.
+pub fn inCorridor(anchor: Pt, prev: Pt, now: Pt, box: Rect) bool {
+    if (box.isEmpty()) return false;
+    const dp = gap(prev, box);
+    const dn = gap(now, box);
+    if (dn.x > dp.x or dn.y > dp.y) return false;
+    if (now.x + corridor_margin >= box.x and now.x < box.right() + corridor_margin) return true;
+    // The near edge's two ends, widened by the margin.
+    const m: i32 = corridor_margin;
+    const bx0: i32 = @as(i32, box.x) - m;
+    const bx1: i32 = @as(i32, box.right()) - 1 + m;
+    const by0: i32 = @as(i32, box.y) - m;
+    const by1: i32 = @as(i32, box.bottom()) - 1 + m;
+    const ax: i32 = anchor.x;
+    const ay: i32 = anchor.y;
+    const c1, const c2 = if (ay < box.y)
+        .{ [2]i32{ bx0, box.y }, [2]i32{ bx1, box.y } }
+    else if (ay >= box.bottom())
+        .{ [2]i32{ bx0, @as(i32, box.bottom()) - 1 }, [2]i32{ bx1, @as(i32, box.bottom()) - 1 } }
+    else if (ax < box.x)
+        .{ [2]i32{ box.x, by0 }, [2]i32{ box.x, by1 } }
+    else
+        .{ [2]i32{ @as(i32, box.right()) - 1, by0 }, [2]i32{ @as(i32, box.right()) - 1, by1 } };
+    return inTriangle(.{ ax, ay }, c1, c2, .{ now.x, now.y });
+}
+
+/// The pointer's distance to `box` along each axis (0 inside its span).
+fn gap(p: Pt, box: Rect) Pt {
+    const dx: u16 = if (p.x < box.x) box.x - p.x else if (p.x >= box.right()) p.x - (box.right() - 1) else 0;
+    const dy: u16 = if (p.y < box.y) box.y - p.y else if (p.y >= box.bottom()) p.y - (box.bottom() - 1) else 0;
+    return .{ .x = dx, .y = dy };
+}
+
+/// `p` inside (or on an edge of) the triangle `a b c`.
+fn inTriangle(a: [2]i32, b: [2]i32, c: [2]i32, p: [2]i32) bool {
+    const d1 = cross(a, b, p);
+    const d2 = cross(b, c, p);
+    const d3 = cross(c, a, p);
+    const neg = d1 < 0 or d2 < 0 or d3 < 0;
+    const pos = d1 > 0 or d2 > 0 or d3 > 0;
+    return !(neg and pos);
+}
+
+fn cross(a: [2]i32, b: [2]i32, p: [2]i32) i64 {
+    return @as(i64, b[0] - a[0]) * (p[1] - a[1]) - @as(i64, b[1] - a[1]) * (p[0] - a[0]);
+}
+
+/// The grace window's end is a frame: the box switches to whatever the
+/// resting pointer is on. One deadline, read by `App.nextDeadlineMs`.
+pub fn nextDeadlineMs(app: *const App) ?i64 {
+    const g = app.info_view.grace orelse return null;
+    return g.until_ms;
+}
+
+/// `App.tick`: a grace window that ran out asks for the frame that
+/// shows what the pointer rests on now.
+pub fn tick(app: *App, now: i64) void {
+    const g = app.info_view.grace orelse return;
+    if (now < g.until_ms) return;
+    // The held entry is let go with the window: what the pointer rests
+    // on takes the box at the next frame.
+    app.info_view.grace = null;
+    app.info_view.sticky = null;
+    app.needs_render = true;
+}
 
 /// Read the previous frame's hits while they are still whole: what the
 /// pointer rests on, with the box's own cells resolving to the last
@@ -80,13 +426,49 @@ pub const State = struct {
 pub fn snapshotHover(app: *App) void {
     const st = &app.info_view;
     st.hover_target = null;
-    if (!app.hover_live) return;
-    const h = app.hover orelse return;
-    const target = app.hits.at(h.x, h.y) orelse return;
-    if (target == .info_view) {
+    const h = app.hover orelse {
+        st.grace = null;
+        st.last_ptr = null;
+        st.was_on_box = false;
+        return;
+    };
+    const ptr: Pt = .{ .x = h.x, .y = h.y };
+    // The keys are in the box: the entry holds wherever the pointer is.
+    if (app.focus == .info_view) {
+        st.last_ptr = ptr;
+        st.grace = null;
         st.hover_target = st.sticky;
         return;
     }
+    const prev = st.last_ptr;
+    const was_on_box = st.was_on_box;
+    st.last_ptr = ptr;
+    const under = app.hits.at(h.x, h.y);
+    // On the box, whatever brought the pointer there — a move, a wheel
+    // notch, a press on a link — the box holds what it had.
+    if (under != null and under.? == .info_view) {
+        st.was_on_box = true;
+        st.grace = null;
+        st.hover_target = st.sticky;
+        return;
+    }
+    st.was_on_box = false;
+    if (!app.hover_live) {
+        st.grace = null;
+        return;
+    }
+    // On the way to the box: the entry the pointer left stays while it
+    // keeps heading there and the window is open.
+    if (graceHolds(app, ptr, prev, was_on_box, under)) {
+        st.hover_target = st.sticky;
+        return;
+    }
+    // Over nothing, the entry is let go: a later step toward the box
+    // must not bring back one the pointer already left behind.
+    const target = under orelse {
+        st.sticky = null;
+        return;
+    };
     st.sticky = if (target == .link) null else target;
     // A link's url is an arena slice about to die: copy it into the
     // state's own buffer (a longer one is cut — the copy names it).
@@ -99,15 +481,63 @@ pub fn snapshotHover(app: *App) void {
     st.hover_target = target;
 }
 
+/// Whether the box keeps the entry it had while the pointer is at
+/// `ptr` over `under`: a grace window is open (or opens now, as the
+/// pointer leaves the target it had) and the pointer is still in the
+/// corridor to the box. A new target outside the corridor ends it.
+fn graceHolds(app: *App, ptr: Pt, prev: ?Pt, was_on_box: bool, under: ?HitTarget) bool {
+    const st = &app.info_view;
+    const box = st.rect orelse {
+        st.grace = null;
+        return false;
+    };
+    const kept = st.sticky orelse {
+        st.grace = null;
+        return false;
+    };
+    // Back on the target the box already shows: nothing to hold.
+    if (under) |u| if (sameTarget(u, kept)) {
+        st.grace = null;
+        return false;
+    };
+    const from = prev orelse return false;
+    if (st.grace == null) {
+        // A pointer that has not moved is resting, not travelling.
+        if (from.x == ptr.x and from.y == ptr.y) return false;
+        const ms = app.cfg.ui.hover_help_grace_ms;
+        // Leaving the box, or a pointer that was not resting on the
+        // entry's target, starts nothing.
+        if (ms == 0 or was_on_box) return false;
+        st.grace = .{ .target = kept, .anchor = from, .until_ms = app.now_ms + ms };
+    }
+    const g = st.grace.?;
+    if (app.now_ms >= g.until_ms or !inCorridor(g.anchor, from, ptr, box)) {
+        st.grace = null;
+        return false;
+    }
+    return true;
+}
+
+/// Two targets name the same thing (a `.link`'s url compared by text).
+fn sameTarget(a: HitTarget, b: HitTarget) bool {
+    if (a == .link or b == .link) return a == .link and b == .link and std.mem.eql(u8, a.link.url, b.link.url);
+    return std.meta.eql(a, b);
+}
+
 /// The copy for this frame — and the state it implies: the links the
 /// rows will run, the scroll reset when the topic changed.
 pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
     const c = try pickCopy(app, arena);
     const st = &app.info_view;
+    st.n_shortcuts = c.shortcuts.len;
+    st.n_links = c.try_it.len;
+    const rows = st.n_shortcuts + st.n_links;
+    st.cursor = if (rows == 0) 0 else @min(st.cursor, rows - 1);
     const topic = std.hash.Wyhash.hash(0, c.title);
     if (topic != st.topic) {
         st.topic = topic;
         st.scroll = 0;
+        st.cursor = 0;
     }
     return c;
 }
@@ -115,7 +545,18 @@ pub fn pick(app: *App, arena: Allocator) Allocator.Error!Copy {
 fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
     const st = &app.info_view;
     st.links = @splat(null);
-    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| return c;
+    st.keys = @splat(null);
+    st.shown = null;
+    if (st.pinned) |*p| {
+        st.links = p.links;
+        st.keys = p.keys;
+        st.shown = p.target;
+        return p.copy;
+    }
+    if (st.hover_target) |target| if (try hoverCopy(app, arena, target)) |c| {
+        st.shown = if (target == .link) null else target;
+        return c;
+    };
     if (try focusCopy(app, arena)) |c| return c;
     if (try activePaneCopy(app, arena)) |c| return c;
     return emptyCopy(app);
@@ -129,6 +570,7 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
     if (try copy.lookup(app, arena, target)) |entry| {
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
+        app.info_view.keys = m.keys;
         return m.copy;
     }
     // A menu row without an entry: the command's title and chord,
@@ -164,6 +606,8 @@ fn focusUnder(app: *const App) app_mod.FocusId {
             .menu => |m| m.return_focus,
             else => fallback,
         },
+        // The box with the keys says what it said before it had them.
+        .info_view => backFocus(app),
         else => app.focus,
     };
 }
@@ -322,6 +766,8 @@ fn emptyCopy(app: *App) Copy {
             .{ .title = "Editor", .body = "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette." },
         // The start surface (`app/welcome.zig`).
         .welcome => .{ .title = "Start", .body = "j/k walk a list, Tab moves to the next. Enter acts on the row. ? opens the cheatsheet; Esc gives the keys back to the tree." },
+        // A menu opened from the box with the keys goes back to it.
+        .info_view => .{ .title = "Info panel", .body = "Tab walks the rows, Enter runs one, Esc gives the keys back." },
         // `focusUnder` never says so: an overlay names its surface.
         .overlay => unreachable,
     };
@@ -338,6 +784,7 @@ pub fn treeRowCopy(arena: Allocator, label: []const u8, is_dir: bool) Allocator.
 pub fn chipCopy(app: *App, c: tree_view.Chip) Allocator.Error!Copy {
     const m = try copy.materialize(app, app.frame.allocator(), copy.tree.chip(c));
     app.info_view.links = m.actions;
+    app.info_view.keys = m.keys;
     return m.copy;
 }
 
@@ -357,6 +804,7 @@ pub fn mouse(app: *App, part: Part, m: Mouse, count: u16) Allocator.Error!void {
             if (m.button != .left) return;
             switch (part) {
                 .kebab => try openKebabMenu(app, m.x, m.y + 1),
+                .pin => try togglePin(app),
                 .try_it => |i| if (i < max_links) if (st.links[i]) |action| try runLink(app, action),
                 .body => {},
             }
@@ -377,7 +825,8 @@ fn runLink(app: *App, action: copy.LinkAction) Allocator.Error!void {
         .url => |url| git_app.openExternal(app, url),
         .docs => |d| _ = try docs.open(app, d.doc, d.section),
         .ask => {
-            const target = app.info_view.sticky orelse return;
+            // A pinned entry asks about what it was pinned from.
+            const target = (if (app.info_view.pinned) |p| p.target else app.info_view.sticky) orelse return;
             const arena = app.frame.allocator();
             const entry = (try copy.lookup(app, arena, target)) orelse return;
             try copy.ask(app, arena, target, entry);
@@ -412,7 +861,6 @@ pub fn openKebabMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
-const Key = app_mod.Key;
 
 fn realRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -704,4 +1152,290 @@ test "an AI answer pane's copy names its own keys — it has no prompt to type a
     try t.expect(std.mem.indexOf(u8, c.body, "bottom prompt") == null);
     for ([_][]const u8{ "r re-ask", "c cancel", "a apply", "p continue", "y copy", "q close" }) |k|
         try t.expect(std.mem.indexOf(u8, c.body, k) != null);
+}
+
+test "the corridor: closing on the box inside the column or the triangle holds; a step away, or wide of both, does not" {
+    const box = Rect.init(4, 30, 26, 8);
+    // Straight down the column.
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, box));
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 16, .y = 20 }, box));
+    // A step back up is a step away.
+    try t.expect(!inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 18, .y = 4 }, box));
+    // Sideways, still level and inside the column: no farther.
+    try t.expect(inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 28, .y = 5 }, box));
+    // Out of the column sideways is away from the box.
+    try t.expect(!inCorridor(.{ .x = 21, .y = 1 }, .{ .x = 18, .y = 5 }, .{ .x = 31, .y = 5 }, box));
+    // Right of the column past the margin, closing in: only the triangle
+    // from where it left (x 80) toward the box's top edge holds it.
+    try t.expect(inCorridor(.{ .x = 80, .y = 2 }, .{ .x = 80, .y = 2 }, .{ .x = 70, .y = 6 }, box));
+    try t.expect(!inCorridor(.{ .x = 80, .y = 2 }, .{ .x = 80, .y = 2 }, .{ .x = 79, .y = 25 }, box));
+    // From below (the statusline), heading up to the box's bottom edge.
+    try t.expect(inCorridor(.{ .x = 40, .y = 39 }, .{ .x = 40, .y = 39 }, .{ .x = 35, .y = 38 }, box));
+    try t.expect(!inCorridor(.{ .x = 40, .y = 39 }, .{ .x = 40, .y = 39 }, .{ .x = 41, .y = 39 }, box));
+    // No box, no corridor.
+    try t.expect(!inCorridor(.{ .x = 1, .y = 1 }, .{ .x = 1, .y = 1 }, .{ .x = 1, .y = 2 }, Rect.empty));
+}
+
+/// The cell of the first hit `pred` accepts, from the last paint.
+fn hitCell(app: *App, comptime pred: fn (HitTarget) bool) ?Pt {
+    for (app.hits.items.items) |e| if (pred(e.target)) return .{ .x = e.rect.x, .y = e.rect.y };
+    return null;
+}
+
+fn hoverAt(app: *App, p: Pt) !void {
+    app.hover = .{ .x = p.x, .y = p.y };
+    app.hover_live = true;
+    try app.render();
+}
+
+test "grace: the entry stays while the pointer crosses rows toward the box, switches on a step away, and lets go when the window runs out" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt" }) |n| try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    app.now_ms = 1000;
+    try app.render();
+    const chip = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .tree_chip and h.tree_chip == .new_file;
+        }
+    }.f).?;
+    const box = app.info_view.rect.?;
+    const row_a = app.tree.rowOf("a.txt").?;
+    const row_b = app.tree.rowOf("b.txt").?;
+    var a_cell: Pt = undefined;
+    var b_cell: Pt = undefined;
+    for (app.hits.items.items) |e| if (e.target == .tree_node) {
+        if (e.target.tree_node == row_a) a_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+        if (e.target.tree_node == row_b) b_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+    };
+    const arena = app.frame.allocator();
+    try hoverAt(&app, chip);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Down the column over b.txt's row, then the empty tree under it.
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try t.expect(app.info_view.grace != null);
+    try t.expectEqual(@as(?i64, 1000 + 900), nextDeadlineMs(&app));
+    try hoverAt(&app, .{ .x = b_cell.x, .y = box.y - 2 });
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Onto the box: held with no window running.
+    try hoverAt(&app, .{ .x = box.x + 2, .y = box.y + 3 });
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try t.expect(app.info_view.grace == null);
+    // A wheel notch over the box (no motion) keeps it too.
+    app.hover_live = false;
+    try app.render();
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // Back to the chip, then a step UP the column from b.txt to a.txt:
+    // away from the box, so a.txt's row takes the box at once.
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try hoverAt(&app, a_cell);
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    try t.expect(app.info_view.grace == null);
+    // The window running out while the pointer rests on a crossed row:
+    // the tick asks for the frame, and the row takes the box.
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    try app.tick(app.now_ms + 900);
+    try t.expect(app.info_view.grace == null);
+    try t.expect(app.needs_render);
+    try app.render();
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    // `ui.hover_help_grace_ms = 0`: every crossing switches at once.
+    app.cfg.ui.hover_help_grace_ms = 0;
+    try hoverAt(&app, chip);
+    try hoverAt(&app, b_cell);
+    try t.expect(!std.mem.eql(u8, "New file", (try pick(&app, arena)).title));
+    try t.expectEqual(@as(?i64, null), nextDeadlineMs(&app));
+}
+
+test "pin: the entry and its links outlive the frame and every hover until unpinned; a pin left on is freed with the app" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    for ([_][]const u8{ "a.txt", "b.txt" }) |n| try tmp.dir.writeFile(t.io, .{ .sub_path = n, .data = "x\n" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.tree.refresh(&app);
+    app.focus = .tree;
+    try app.render();
+    const chip = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .tree_chip and h.tree_chip == .new_file;
+        }
+    }.f).?;
+    const pin_at = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .info_view and h.info_view == .pin;
+        }
+    }.f).?;
+    const arena = app.frame.allocator();
+    try hoverAt(&app, chip);
+    try t.expectEqualStrings("New file", (try pick(&app, arena)).title);
+    // The chip's press pins it (through the box's own mouse handler).
+    try mouse(&app, .pin, .{ .x = pin_at.x, .y = pin_at.y, .kind = .press, .button = .left }, 1);
+    try t.expect(isPinned(&app));
+    try t.expect(app.info_view.pinned.?.target.? == .tree_chip);
+    // Frames go by and the pointer wanders — up the column, off it.
+    const a_row = app.tree.rowOf("a.txt").?;
+    var a_cell: Pt = undefined;
+    for (app.hits.items.items) |e| if (e.target == .tree_node and e.target.tree_node == a_row) {
+        a_cell = .{ .x = e.rect.x + 4, .y = e.rect.y };
+    };
+    try hoverAt(&app, a_cell);
+    try hoverAt(&app, .{ .x = 80, .y = 20 });
+    const held = try pick(&app, arena);
+    try t.expectEqualStrings("New file", held.title);
+    try t.expect(std.mem.startsWith(u8, held.body, "Creates an empty file"));
+    try t.expectEqual(command.CommandId.@"file.new", app.info_view.links[0].?.command);
+    // The link still runs what it named.
+    try mouse(&app, .{ .try_it = 0 }, .{ .x = 0, .y = 0, .kind = .press, .button = .left }, 1);
+    try t.expect(app.overlay == .prompt);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = .tree;
+    // The command unpins; the pointer's row takes the box.
+    try command.run(&app, .{ .static = .@"help.pin_toggle" });
+    try t.expect(!isPinned(&app));
+    try hoverAt(&app, a_cell);
+    try hoverAt(&app, a_cell);
+    try t.expectEqualStrings("a.txt — Plain text", (try pick(&app, arena)).title);
+    // Pinned again and left on: `App.deinit` frees it (the allocator
+    // is the leak-checking one).
+    try togglePin(&app);
+    try t.expectEqualStrings("a.txt — Plain text", app.info_view.pinned.?.copy.title);
+    try t.expect(unpin(&app));
+    try t.expect(!unpin(&app));
+    try togglePin(&app);
+}
+
+test "help.focus: the box takes the keys, Tab / Shift+Tab walk and wrap, Enter runs a shortcut's command or says a gesture runs nothing, Esc goes back and unpins" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.focus = .tree;
+    // No box painted yet: the command says why instead of moving.
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try t.expect(app.focus == .tree);
+    try app.render();
+    // The rail's Explorer icon: one command row, three links.
+    const ex = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .rail and h.rail == .section and h.rail.section == .explorer;
+        }
+    }.f) orelse hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .rail;
+        }
+    }.f).?;
+    try hoverAt(&app, ex);
+    try hoverAt(&app, ex);
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try t.expect(app.focus == .info_view);
+    try app.render();
+    const st = &app.info_view;
+    try t.expectEqual(@as(usize, 1), st.n_shortcuts);
+    try t.expectEqual(@as(usize, 3), st.n_links);
+    try t.expectEqual(command.CommandId.@"picker.files", st.keys[0].?);
+    // The pointer wanders; the entry holds while the box has the keys.
+    const title = try app.gpa.dupe(u8, (try pick(&app, app.frame.allocator())).title);
+    defer app.gpa.free(title);
+    try hoverAt(&app, .{ .x = 80, .y = 20 });
+    try t.expectEqualStrings(title, (try pick(&app, app.frame.allocator())).title);
+    // Tab walks and wraps; Shift+Tab (backtab) walks back and wraps.
+    try t.expect(try handleKey(&app, Key.named(.tab)));
+    try t.expectEqual(@as(usize, 1), st.cursor);
+    for (0..3) |_| _ = try handleKey(&app, Key.named(.tab));
+    try t.expectEqual(@as(usize, 0), st.cursor);
+    _ = try handleKey(&app, Key.named(.backtab));
+    try t.expectEqual(@as(usize, 3), st.cursor);
+    // A key the box does not use is not taken.
+    try t.expect(!try handleKey(&app, Key.char('x')));
+    // A gesture row (no command) runs nothing and keeps the keys.
+    st.keys[0] = null;
+    st.cursor = 0;
+    try t.expect(try handleKey(&app, Key.named(.enter)));
+    try t.expect(app.focus == .info_view);
+    // Esc: the keys back to the tree, and a pin let go.
+    try togglePin(&app);
+    try t.expect(isPinned(&app));
+    try t.expect(try handleKey(&app, Key.named(.esc)));
+    try t.expect(app.focus == .tree);
+    try t.expect(!isPinned(&app));
+    // Enter on a link row leaves first, then runs it: `→ Show the tree`.
+    try app.render();
+    try command.run(&app, .{ .static = .@"help.focus" });
+    try app.render();
+    st.cursor = 1;
+    try t.expect(try handleKey(&app, Key.named(.enter)));
+    try t.expect(app.focus != .info_view);
+}
+
+test "boxRows: at least four rows, six left for the section, no box in a column that cannot give both" {
+    try t.expectEqual(@as(?u16, 18), boxRows(37, 18));
+    try t.expectEqual(@as(?u16, 31), boxRows(37, 60));
+    try t.expectEqual(@as(?u16, 4), boxRows(37, 1));
+    try t.expectEqual(@as(?u16, 8), boxRows(37, 8));
+    try t.expectEqual(@as(?u16, 4), boxRows(10, 8));
+    try t.expectEqual(@as(?u16, null), boxRows(9, 8));
+}
+
+test "the rule drags the height: rows follow the pointer, clamped; the release writes the home config; a double-click puts back the default" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, "ws");
+    try tmp.dir.createDirPath(t.io, "data");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.focus = .tree;
+    try app.render();
+    const rule = hitCell(&app, struct {
+        fn f(h: HitTarget) bool {
+            return h == .divider and h.divider == @import("render.zig").info_divider_id;
+        }
+    }.f).?;
+    const col = app.info_view.column.?;
+    try t.expectEqual(col.bottom() - 8, rule.y);
+    // Press, drag, release through the app's own mouse dispatch.
+    const dispatch = @import("dispatch.zig");
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y, .kind = .press, .button = .left }, 1);
+    try t.expect(app.drag.? == .info_divider);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y - 10, .kind = .drag, .button = .left }, 1);
+    try t.expectEqual(@as(u16, 18), app.cfg.ui.hover_help_height);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = 0, .kind = .drag, .button = .left }, 1);
+    try t.expectEqual(col.h - 6, app.cfg.ui.hover_help_height);
+    try dispatch.mouse(&app, .{ .x = rule.x + 3, .y = rule.y - 10, .kind = .release, .button = .left }, 1);
+    try t.expect(app.drag == null);
+    try app.render();
+    try t.expectEqual(col.bottom() - (col.h - 6), app.info_view.rect.?.y);
+    // The release wrote it where the Settings row writes it.
+    const path = try std.fs.path.join(t.allocator, &.{ data, @import("../config/root.zig").data_root.config_file });
+    defer t.allocator.free(path);
+    var buf: [16 * 1024]u8 = undefined;
+    const text = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
+    try t.expect(std.mem.indexOf(u8, text, "hover_help_height = 31") != null);
+    // A double-click on the rule: back to eight, written too.
+    const y = app.info_view.rect.?.y;
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .press, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .release, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = 10, .y = y, .kind = .press, .button = .left }, 1);
+    try t.expectEqual(@as(u16, 8), app.cfg.ui.hover_help_height);
+    try t.expect(app.drag == null);
+    const text2 = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
+    try t.expect(std.mem.indexOf(u8, text2, "hover_help_height = 8") != null);
 }

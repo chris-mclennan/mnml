@@ -19,4 +19,8 @@ pub const FocusId = union(enum) {
     /// the layout is empty (`app/welcome.zig`). Its lists walk on
     /// j / k, Tab steps between them, Enter acts.
     welcome,
+    /// The sidebar's info view (`app/info_view.zig`, `help.focus`):
+    /// Tab walks its shortcut and link rows, Enter runs one, Esc gives
+    /// the keys back to where they came from.
+    info_view,
 };

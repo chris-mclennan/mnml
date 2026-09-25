@@ -244,6 +244,15 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
+    // The info view with the keys (`help.focus`): its rows walk; what
+    // it does not take goes on to the chords, the palette's included.
+    if (app.focus == .info_view) {
+        if (app.info_view.rect == null) info_view_app.leave(app) else {
+            if (try info_view_app.handleKey(app, k)) return;
+            _ = try chordChain(app, k);
+            return;
+        }
+    }
     if (app.focus == .tree and app.tree.visible) {
         if (try app.tree.handleKey(app, k)) return;
         _ = try chordChain(app, k);
@@ -2569,6 +2578,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .divider => |id| {
             if (m.kind != .press or m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
+            // The info view's rule: a double-click puts back the
+            // default height instead of starting a drag.
+            if (id == render.info_divider_id and clickCount(app, m) >= 2) return info_view_app.resetHeight(app);
             try beginDividerDrag(app, id);
         },
         // // changed (statusline-hover): a row of a figure's hover
@@ -3440,6 +3452,10 @@ fn beginDividerDrag(app: *App, id: u32) Allocator.Error!void {
         app.drag = .bottom_divider;
         return;
     }
+    if (id == render.info_divider_id) {
+        app.drag = .info_divider;
+        return;
+    }
     const rects = try app.layouts.current().computeRects(app.panes_area, app.frame.allocator());
     if (id >= rects.dividers.len) return;
     const d = rects.dividers[id];
@@ -3579,6 +3595,9 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         // so the dock keeps every row under it. `frameRects` clamps the
         // height to two thirds of the frame, so a drag past that stops.
         .bottom_divider => if (m.kind == .drag) bottom.dragTo(app, m.y),
+        // The info view's rule: rows while it moves, the home config
+        // once it is let go.
+        .info_divider => if (m.kind == .drag) info_view_app.dragTo(app, m.y) else if (m.kind == .release) try info_view_app.dragEnd(app),
         .graph_divider => |id| if (m.kind == .drag) git_app.dragGraphDivider(app, id, m.x),
         .diff_select => |ds| git_app.dragDiffSelect(app, ds.pane, ds.anchor, m),
         .pty_select => |id| if (app.panes.pty(id)) |p| {

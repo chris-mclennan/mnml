@@ -78,9 +78,10 @@ pub const DockPart = enum { body, title, kebab, close };
 pub const LauncherDockPart = union(enum) { item: u16, pin };
 
 /// The parts of the sidebar's info view (`ui/info_view.zig`): the kebab
-/// on its title row, a `→ label` link row by its index, and the rest,
-/// which swallows a press.
-pub const InfoPart = union(enum) { body, kebab, try_it: u8 };
+/// on its title row, the pin beside it (`ui/pin_chip.zig`), a
+/// `→ label` link row by its index, and the rest, which swallows a
+/// press.
+pub const InfoPart = union(enum) { body, kebab, pin, try_it: u8 };
 
 pub const Owner = union(enum) {
     pane: PaneId,

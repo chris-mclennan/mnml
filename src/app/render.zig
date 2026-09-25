@@ -168,6 +168,8 @@ pub const tree_divider_id: u32 = std.math.maxInt(u32);
 pub const right_divider_id: u32 = std.math.maxInt(u32) - 1;
 /// // changed (bottom-dock): the dock's own divider, the row above it.
 pub const bottom_divider_id: u32 = std.math.maxInt(u32) - 2;
+/// The info view's top rule (`ui/info_view.zig`): its height.
+pub const info_divider_id: u32 = std.math.maxInt(u32) - 3;
 /// // changed (bottom-dock): rows the frame's upper area needs before a
 /// dock is carved at all — Rust's `upper.height >= 6`.
 pub const bottom_upper_min: u16 = 6;
@@ -590,6 +592,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // Zen: the panes fill everything above the `:` line — no bar, no
     // tree, no right panel, no strips, no statusline (`zen.zig`).
     try drawPaletteBar(app, ui, fr.bar);
+    // The info view says where it is when it paints (the corridor).
+    app.info_view.rect = null;
     var panes_area = fr.body;
     if (!fr.sidebar.isEmpty()) {
         // ── rail ──
@@ -610,14 +614,25 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         }
         // ── left column ──
         // `ui.hover_help`: the column's bottom `hover_help_height` rows
-        // are the info view whenever the column has eight rows to spare
-        // (Rust `ui/mod.rs`); the section takes the rest.
+        // are the info view, clamped so the section above keeps six
+        // (`info_view.boxRows`); a column too short for four rows and
+        // the six has no box. The section takes the rest.
         var side = fr.sidebar;
-        if (help_copy) |copy| if (side.h >= app.cfg.ui.hover_help_height + 8) {
-            const parts = side.splitBottom(app.cfg.ui.hover_help_height);
+        if (help_copy) |copy| if (info_view_app.boxRows(side.h, app.cfg.ui.hover_help_height)) |rows| {
+            const parts = side.splitBottom(rows);
             side = parts.top;
-            const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll });
+            const focused = app.focus == .info_view;
+            // Its top rule is a divider like the column's edge: it
+            // lights under the pointer and while it is being dragged.
+            const dragging = if (app.drag) |d| d == .info_divider else false;
+            const l = info_view_ui.draw(ui, parts.rest, .{ .copy = copy, .scroll = app.info_view.scroll, .pinned = info_view_app.isPinned(app), .focused = focused, .cursor = if (focused) app.info_view.cursor else null, .rule = .{ .hit = .{ .divider = info_divider_id }, .lit = dragging, .lit_style = app.theme.accent } });
+            // The column the drag measures against.
+            app.info_view.column = fr.sidebar;
             app.info_view.max_scroll = l.max_scroll;
+            // The keyboard's row pulled the view along.
+            app.info_view.scroll = l.scroll;
+            // Where the box is, for the next frame's corridor.
+            app.info_view.rect = parts.rest;
         };
         if (side_mod.shown(app, .left)) |s| try drawColumn(app, ui, side, s);
         drawDivider(app, ui, fr.sidebar_divider, tree_divider_id);

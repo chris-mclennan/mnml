@@ -62,7 +62,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = try f.fmt(arena, "Pane: {s}", .{if (app.panes.get(id)) |p| p.title() else "?"}),
             .detail = "click focuses · right-click: the pane's menu",
         },
-        .divider => .{ .title = "Divider", .detail = "drag to resize" },
+        .divider => |id| if (id == render.info_divider_id)
+            .{ .title = "Info panel's edge", .detail = "drag to give the info panel more rows or fewer · double-click: the default height" }
+        else
+            .{ .title = "Divider", .detail = "drag to resize" },
         .tab_close => .{ .title = "Close tab", .detail = "click closes this pane" },
         .breadcrumb => |bc| blk: {
             const e = app.panes.editor(bc.pane) orelse break :blk null;
@@ -204,6 +207,7 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
         },
         .info_view => |part| switch (part) {
             .kebab => .{ .title = "Sidebar menu", .detail = "click: turn the info panel off" },
+            .pin => .{ .title = "Pin the entry", .detail = "click: hold what the panel shows wherever the pointer goes · again to unpin (help.pin_toggle)" },
             .try_it => .{ .title = "Try it", .detail = "click runs the command the panel names" },
             .body => .{ .title = "Info panel", .detail = "what the pointer or the focus is on · wheel scrolls · Settings → UI hides it" },
         },
@@ -652,7 +656,7 @@ pub const Category = enum(u8) {
             .bufferline_tabs => target == .tab,
             .diff_toolbar => target == .script_hit and target.script_hit.id >= git_toolbar.hit_base and target.script_hit.id < git_toolbar.hit_base + 0x100_0000,
             // The sidebar's and the right panel's dividers are chrome, not splits.
-            .split_dividers => target == .divider and target.divider != render.tree_divider_id and target.divider != render.right_divider_id,
+            .split_dividers => target == .divider and target.divider != render.tree_divider_id and target.divider != render.right_divider_id and target.divider != render.info_divider_id,
             .editor_gutter => target == .gutter,
             .rail_git_header, .fold_chips, .code_lens_chips => false,
         };

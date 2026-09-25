@@ -1,0 +1,58 @@
+# width: 120
+# height: 40
+# The info view keeps an entry while the pointer travels to it
+# (`ui.hover_help_grace_ms`, 900 by default): the pointer leaves the
+# tree header's New-file chip (21,1) and heads down the column toward
+# the box (rows 30..37 at 120x40), crossing the tree's rows and the
+# empty space under them — every one a target of its own — and the box
+# still says `New file`. On the box, the wheel scrolls that entry (it
+# used to fall back to the focus ladder the moment the pointer stopped
+# moving) until its `→ New file` link is under the pointer, and the
+# click runs it: the new-file prompt opens.
+write a.txt "alpha\n"
+write b.txt "beta\n"
+write c.txt "gamma\n"
+hover 21 1
+expect screen contains "New file"
+expect screen contains "Creates an empty file"
+# Two steps down the column, over the `Add workspace` row and the
+# empty tree.
+hover 18 5
+expect screen contains "Creates an empty file"
+hover 16 20
+expect screen contains "Creates an empty file"
+# Onto the box: the entry stays, and the wheel scrolls it to its link.
+hover 10 34
+expect screen contains "Creates an empty file"
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+expect screen contains "→ Run it"
+expect screen lacks "Arrows or j/k"
+# `→ Run it` is on row 35 now: the click runs `file.new`.
+click 8 35
+expect screen contains "New file (workspace-relative)"
+key esc
+# A step AWAY from the box switches at once: down onto b.txt's row
+# (row 3) holds `New file` (still scrolled to its links — the same
+# topic keeps its place), back up onto a.txt's (row 2) is a.txt's.
+hover 21 1
+expect screen contains "→ Run it"
+hover 18 3
+expect screen contains "→ Run it"
+hover 18 2
+expect screen contains "a.txt — Plain text"
+expect screen lacks "Creates an empty file"
+# The window running out while the pointer rests on a crossed row:
+# the row takes the box.
+hover 21 1
+hover 18 3
+expect screen contains "Creates an empty file"
+wait 1200
+expect screen contains "b.txt — Plain text"
+expect screen lacks "Creates an empty file"

@@ -229,7 +229,7 @@ pub fn sectionOfFocus(app: *const App) ?Section {
     return switch (app.focus) {
         .tree => .explorer,
         .panel => |p| sectionOfPanel(p),
-        .pane, .overlay, .welcome => null,
+        .pane, .overlay, .welcome, .info_view => null,
     };
 }
 

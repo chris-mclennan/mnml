@@ -12,6 +12,10 @@
 #
 # `.always`, as mnml ships: the words are up and there is nothing to
 # pin, so no chip is painted at all.
+#
+# The info view is off: its own pin chip (the same 󰐃) would answer
+# every `lacks` below, which are about the menu bar's.
+command view.toggle_hover_help
 expect screen contains " ❯_  mnml  File  Edit  » "
 expect screen lacks "󰐃"
 command view.menu_bar_cycle

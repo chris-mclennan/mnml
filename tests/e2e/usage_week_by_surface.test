@@ -31,7 +31,7 @@ expect screen lacks "Seven day breakdown"
 # The pointer on a surface row (`Claude Code`, row 15 at 120x40): the
 # info view carries its curated entry, not the account's.
 hover 40 15
-expect screen contains "This week by surface —"
+expect screen contains "This week by surface"
 expect screen contains "Where this account's"
 expect screen lacks "no help written yet"
 key G

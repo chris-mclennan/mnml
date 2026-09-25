@@ -81,7 +81,7 @@ pub fn takesKeys(app: *App) bool {
         .welcome => true,
         .tree => !app.tree.visible or !sidebar_auto.focusOnScreen(app, .tree),
         .pane => app.active == null,
-        .panel, .overlay => false,
+        .panel, .overlay, .info_view => false,
     };
 }
 

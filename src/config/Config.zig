@@ -479,8 +479,16 @@ pub const bottom_panel_height_max: u16 = 60;
 /// // changed (sidebar-autohide): the reveal / hide dwells, clamped on
 /// load. 0 is allowed — an instant reveal.
 pub const sidebar_dwell_ms_max: u16 = 5000;
-pub const hover_help_height_min: u16 = 3;
-pub const hover_help_height_max: u16 = 20;
+/// The info view's rows: at least a rule, a title and two lines of
+/// copy; at most what a tall column spares. The drag clamps further, to
+/// what the column can give while its section keeps
+/// `hover_help_section_min` rows.
+pub const hover_help_height_min: u16 = 4;
+pub const hover_help_height_max: u16 = 60;
+/// The rows the section above the info view keeps, whatever the box asks.
+pub const hover_help_section_min: u16 = 6;
+/// The info view's grace window's ceiling, clamped on load.
+pub const hover_help_grace_ms_max: u16 = 5000;
 /// The focus-follows-mouse dwell's ceiling, clamped on load.
 pub const focus_follows_mouse_delay_ms_max: u16 = 2000;
 
@@ -658,6 +666,10 @@ pub const Ui = struct {
     tab_indicator: TabIndicator = .block,
     /// Clamped to `hover_help_height_min..max` on load.
     hover_help_height: u16 = 8,
+    /// How long the info view keeps an entry while the pointer travels
+    /// from its target to the box, crossing other targets on the way
+    /// (ms; 0 switches at once; clamped to `hover_help_grace_ms_max`).
+    hover_help_grace_ms: u16 = 900,
     terminal_label: []const u8 = "terminal",
     /// How a terminal pane draws its child's cursor.
     pty_cursor: PtyCursor = .{},

@@ -263,7 +263,8 @@ pub const AppDriver = struct {
         var st: screen_mod.Status = .{
             // Rust's wire words: a left-column section is the sidebar.
             .focus = switch (app.focus) {
-                .tree => .tree,
+                // The info view sits at the foot of the left column.
+                .tree, .info_view => .tree,
                 .pane, .overlay, .welcome => .pane,
                 .panel => |pid| if (side.sideOf(app, side.sectionOfPanel(pid)) == .left) .tree else .right_panel,
             },

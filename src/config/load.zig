@@ -281,6 +281,7 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ai.cli_timeout_ms = std.math.clamp(cfg.ai.cli_timeout_ms, Config.cli_timeout_ms_min, Config.cli_timeout_ms_max);
     cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.focus_follows_mouse_delay_ms = @min(cfg.ui.focus_follows_mouse_delay_ms, Config.focus_follows_mouse_delay_ms_max);
+    cfg.ui.hover_help_grace_ms = @min(cfg.ui.hover_help_grace_ms, Config.hover_help_grace_ms_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
     cfg.ui.bottom_panel_height = std.math.clamp(cfg.ui.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
     // // changed (sidebar-autohide): the two dwells, and the width
@@ -504,7 +505,7 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     };
     try normalize(f.arena(), &cfg, &f.diags, "/home/u");
     try t.expectEqual(@as(u16, 80), cfg.ui.tree_width);
-    try t.expectEqual(@as(u16, 3), cfg.ui.hover_help_height);
+    try t.expectEqual(@as(u16, 4), cfg.ui.hover_help_height);
     try t.expectEqual(@as(u16, 100), cfg.editor.chord_timeout_ms);
     // Ghost text's clocks: a typo of `1` would spin a request per
     // keystroke and give it no time to answer.

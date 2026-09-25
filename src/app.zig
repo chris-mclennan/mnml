@@ -861,6 +861,8 @@ pub const Drag = union(enum) {
     right_divider,
     /// // changed (bottom-dock): the row above the dock.
     bottom_divider,
+    /// The rule above the info view: its height (`info_view.dragTo`).
+    info_divider,
     /// A tab off a leaf's strip. `moved` once the pointer has left
     /// the cell it pressed on — a press-and-release is a click.
     tab: struct { pane: PaneId, x: u16, y: u16, moved: bool = false },
@@ -1931,6 +1933,7 @@ pub const App = struct {
         self.debug_panel.deinit(gpa);
         self.sessions.deinit(gpa, self.io);
         self.welcome.deinit(gpa);
+        self.info_view.deinit();
         self.dock.deinit(gpa, self.io);
         self.bottom.deinit(gpa);
         self.http.deinit(gpa, self.io);
@@ -3392,6 +3395,7 @@ pub const App = struct {
         sidebar_auto.tick(self, now);
         launcher_dock_mod.tick(self, now);
         focus_follow.tick(self, now);
+        info_view_app.tick(self, now);
     }
 
     /// The next moment `tick` has something to do, or null when idle.
@@ -3433,6 +3437,7 @@ pub const App = struct {
         if (hover_zones.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sidebar_auto.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (focus_follow.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (info_view_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (launcher_dock_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (self.lua) |l| if (l.nextDeadlineMs()) |d| {
             next = @min(next orelse std.math.maxInt(i64), d);
