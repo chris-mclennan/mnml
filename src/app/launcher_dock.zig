@@ -1506,10 +1506,10 @@ test "a hidden chip is still on the dock: the strip reads installed-and-not-disa
     // `zeta_hid`: the chip is OFF the palette bar — hidden — and the
     // binary is there. `zeta_off`: the chip is DISABLED. `zeta_gone`:
     // the binary is nowhere.
-    const hid = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_hid\", .label = \"Zeta hid\", .binary = \"{s}\", .chip = .{{ .glyph = \"Z\", .fallback = \"Z\", .color = \"green\", .in_palette_bar = false }}, .commands = .{{ .{{ .id = \"zeta_hid.open\", .title = \"Zeta hid: open\" }} }} }}", .{tool});
+    const hid = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_hid\", .label = \"Zeta hid\", .binary = \"{f}\", .chip = .{{ .glyph = \"Z\", .fallback = \"Z\", .color = \"green\", .in_palette_bar = false }}, .commands = .{{ .{{ .id = \"zeta_hid.open\", .title = \"Zeta hid: open\" }} }} }}", .{std.zig.fmtString(tool)});
     defer t.allocator.free(hid);
     try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_hid.zon", .data = hid });
-    const off = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_off\", .label = \"Zeta off\", .binary = \"{s}\", .chip = .{{ .glyph = \"O\", .fallback = \"O\", .color = \"red\", .enabled = false }}, .commands = .{{ .{{ .id = \"zeta_off.open\", .title = \"Zeta off: open\" }} }} }}", .{tool});
+    const off = try std.fmt.allocPrint(t.allocator, ".{{ .id = \"zeta_off\", .label = \"Zeta off\", .binary = \"{f}\", .chip = .{{ .glyph = \"O\", .fallback = \"O\", .color = \"red\", .enabled = false }}, .commands = .{{ .{{ .id = \"zeta_off.open\", .title = \"Zeta off: open\" }} }} }}", .{std.zig.fmtString(tool)});
     defer t.allocator.free(off);
     try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_off.zon", .data = off });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "integrations/zeta_gone.zon", .data = ".{ .id = \"zeta_gone\", .label = \"Zeta gone\", .binary = \"/definitely/not/here/zeta\", .chip = .{ .glyph = \"G\", .fallback = \"G\", .color = \"blue\" }, .commands = .{ .{ .id = \"zeta_gone.open\", .title = \"Zeta gone: open\" } } }" });

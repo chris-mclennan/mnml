@@ -1105,8 +1105,8 @@ test "a mnml catalogue installs by linking the binary and running --install; the
 
     try tmp.dir.createDirPath(io, "cat");
     const cat_text = try std.fmt.allocPrint(gpa,
-        \\.{{ .entries = .{{ .{{ .id = "sample", .label = "Sample", .description = "The counter", .category = "sample", .version = "0.1.0", .binary = "{s}" }} }} }}
-    , .{exe});
+        \\.{{ .entries = .{{ .{{ .id = "sample", .label = "Sample", .description = "The counter", .category = "sample", .version = "0.1.0", .binary = "{f}" }} }} }}
+    , .{std.zig.fmtString(exe)});
     defer gpa.free(cat_text);
     try tmp.dir.writeFile(io, .{ .sub_path = "cat/marketplace.zon", .data = cat_text });
     const cat_path = try std.fs.path.join(gpa, &.{ root, "cat", "marketplace.zon" });
