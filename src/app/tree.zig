@@ -509,10 +509,14 @@ pub const Tree = struct {
             const is_dir = entry.kind == .directory or (link and linkIsDir(app, dir, entry.name));
             if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
+            // A row's `rel` joins with `/` on every platform: the
+            // `.gitignore` rules, the git status map and every prefix
+            // test in this file read it that way, and Windows opens a
+            // `/`-joined path as readily as a `\`-joined one.
+            const here_rel = if (here.len == 0) entry.name else try std.fmt.allocPrint(arena, "{s}/{s}", .{ here, entry.name });
             const ignored = under_ignored or (is_dir and self.artifactHidden(app, entry.name)) or ignores.ignored(here_rel, is_dir);
             if (ignored and !self.show_ignored) continue;
-            const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
+            const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel_dir, entry.name });
             errdefer gpa.free(rel);
             try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored, .link = link });
         }
