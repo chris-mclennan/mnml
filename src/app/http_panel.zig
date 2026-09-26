@@ -278,14 +278,23 @@ fn walkWorkspace(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8
             },
             .file => {
                 if (std.mem.endsWith(u8, entry.basename, ".mock.json")) {
-                    try mocks.append(arena, try arena.dupe(u8, entry.path));
+                    try mocks.append(arena, try slashRel(arena, entry.path));
                 } else if (parse.isRequestPath(entry.basename)) {
-                    try files.append(arena, try arena.dupe(u8, entry.path));
+                    try files.append(arena, try slashRel(arena, entry.path));
                 }
             },
             else => {},
         }
     }
+}
+
+/// A walked path with `/` between its parts on every platform: the
+/// folder grouping and the rows read a collection's path that way, and
+/// Windows' walker writes `\`.
+fn slashRel(arena: Allocator, path: []const u8) Allocator.Error![]u8 {
+    const out = try arena.dupe(u8, path);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }
 
 /// `.mnml/collections/<name>/**`: the hidden collections, which the
@@ -305,7 +314,7 @@ fn walkHidden(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8, f
         switch (entry.kind) {
             .directory => walker.enter(io, entry) catch {},
             .file => if (parse.isRequestPath(entry.basename)) {
-                try files.append(arena, try std.fs.path.join(arena, &.{ hidden_root, entry.path }));
+                try files.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ hidden_root, try slashRel(arena, entry.path) }));
             },
             else => {},
         }
