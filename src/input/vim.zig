@@ -2424,8 +2424,10 @@ pub const Vim = struct {
                     '<' => .outdent_to_first_non_blank,
                     else => .reindent,
                 };
-                if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });
-                return ops(arena, &.{ op, .select_clear });
+                // The selection is remembered before the op ends it, so
+                // `gv` has it back (`Vj>gv>`, `:help gv`).
+                if (linewise) return ops(arena, &.{ .normalize_linewise_selection, .remember_selection, op, .select_clear });
+                return ops(arena, &.{ .remember_selection, op, .select_clear });
             },
             'g' => {
                 self.prefix = .g;
@@ -2438,7 +2440,7 @@ pub const Vim = struct {
                     else => .toggle,
                 };
                 self.enterNormal();
-                return ops(arena, &.{ widen, .{ .transform_selection_case = kind }, .select_clear });
+                return ops(arena, &.{ widen, .remember_selection, .{ .transform_selection_case = kind }, .select_clear });
             },
             'r' => {
                 // Widen now; the replace prefix fills the selection next key.

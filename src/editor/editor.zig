@@ -216,6 +216,18 @@ pub const Editor = struct {
     /// tells every other view. Does not touch this view's cursor.
     pub fn splice(self: *Editor, start: usize, end: usize, new: []const u8) Allocator.Error!void {
         try self.doc.spliceBy(start, end, new, self);
+        // `gv` reselects the text the selection covered, moved with this
+        // view's own edits too (`Vj>gv>` indents the same lines again).
+        if (self.last_selection) |ls| {
+            const sh = struct {
+                fn f(p: usize, s: usize, e: usize, n: usize) usize {
+                    if (p <= s) return p;
+                    if (p >= e) return p - e + s + n;
+                    return s;
+                }
+            }.f;
+            self.last_selection = .{ sh(ls[0], start, end, new.len), sh(ls[1], start, end, new.len) };
+        }
     }
 
     pub fn pointAt(self: *const Editor, b: usize) Point {
