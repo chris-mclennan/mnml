@@ -823,25 +823,41 @@ pub fn expandEnv(app: *App, arena: Allocator, binary: []const u8) Allocator.Erro
 /// else `<data root>/bin/<name>` (what an install links), else the
 /// first PATH hit. Null when nowhere.
 pub fn resolveBinary(app: *App, arena: Allocator, binary_in: []const u8) ?[]const u8 {
-    const io = app.io;
     const binary = expandEnv(app, arena, binary_in) catch return null;
     if (std.fs.path.isAbsolute(binary) or std.mem.indexOfScalar(u8, binary, '/') != null) {
-        Io.Dir.cwd().access(io, binary, .{}) catch return null;
-        return binary;
+        return existingProgram(app.io, arena, binary);
     }
     if (app.data_root.len > 0) {
         const linked = std.fs.path.join(arena, &.{ app.data_root, "bin", binary }) catch return null;
-        if (Io.Dir.cwd().access(io, linked, .{})) |_| return linked else |_| {}
+        if (existingProgram(app.io, arena, linked)) |p| return p;
     }
     const path_var = app.env.get("PATH") orelse return null;
     var it = std.mem.splitScalar(u8, path_var, std.fs.path.delimiter);
-    while (it.next()) |dir| {
+    while (it.next()) |raw| {
+        // Windows' PATH may quote an entry that has a space in it.
+        const dir = std.mem.trim(u8, raw, "\"");
         if (dir.len == 0) continue;
         const full = std.fs.path.join(arena, &.{ dir, binary }) catch return null;
-        Io.Dir.cwd().access(io, full, .{}) catch continue;
-        return full;
+        if (existingProgram(app.io, arena, full)) |p| return p;
     }
     return null;
+}
+
+/// `path` when a program is there. On Windows the name a manifest gives
+/// (`mnml-sample`) is the file `mnml-sample.exe`, so a bare name is
+/// tried with `.exe` too; and a path Windows cannot name at all (a
+/// stray `"` or `*` from PATH) is nothing there, not a question for the
+/// filesystem — Zig 0.16's Debug build panics on OBJECT_NAME_INVALID.
+fn existingProgram(io: Io, arena: Allocator, path: []const u8) ?[]const u8 {
+    if (builtin.os.tag == .windows) {
+        const body = if (std.mem.startsWith(u8, path, "\\\\?\\")) path[4..] else path;
+        if (std.mem.indexOfAny(u8, body, "\"<>|?*") != null) return null;
+    }
+    if (Io.Dir.cwd().access(io, path, .{})) |_| return path else |_| {}
+    if (builtin.os.tag != .windows or std.fs.path.extension(path).len != 0) return null;
+    const exe = std.mem.concat(arena, u8, &.{ path, ".exe" }) catch return null;
+    Io.Dir.cwd().access(io, exe, .{}) catch return null;
+    return exe;
 }
 
 fn registerCommands(app: *App, arena: Allocator, inst: *Installed) Allocator.Error!void {
@@ -3484,7 +3500,7 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     try testing.expect(sdk_testing.pathContains(txt, "launchers/htop.zon"));
     // Nothing built: the built binary is the folder's zig-out.
     const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[2]);
-    try testing.expect(sdk_testing.pathEndsWith(built, "integrations/sample/zig-out/bin/mnml-sample"));
+    try testing.expect(sdk_testing.pathEndsWith(built, "integrations/sample/zig-out/bin/mnml-sample" ++ (if (builtin.os.tag == .windows) ".exe" else "")));
     // `i` on the launcher row: no build, no task pane — the file is
     // copied into the data root and the row says so.
     st.panel.cursor = 0;
