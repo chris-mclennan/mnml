@@ -1,6 +1,6 @@
 # Cutting a release
 
-One tag, one runner, ~20 assets. This is the sequence, then the two traps
+One tag, one runner, ~21 assets. This is the sequence, then the two traps
 that have each cost the Rust repo a version number.
 
 ## The sequence
@@ -23,9 +23,9 @@ What the tag push starts (`.github/workflows/`):
 
 | workflow | runs on | produces |
 |---|---|---|
-| `release.yml` `build` | ubuntu | 5 archives + 5 `.sha256`, `sha256.sum`, `mnml-installer.sh`, `mnml-installer.ps1`, `dist-manifest.json`; creates the release with the notes |
+| `release.yml` `build` | ubuntu | 5 archives + 5 `.sha256`, `sha256.sum`, `mnml-installer.sh`, `mnml-installer.ps1`, `dist-manifest.json`, `integrations.json` (the release index — see *Integrations*); creates the release with the notes |
 | `release.yml` `msi` | windows | `mnml-x86_64-pc-windows-gnu.msi` + `.sha256` (WiX 5, from the zip) |
-| `release.yml` `verify` | ubuntu | `dist-check.sh --min 16` — fails the run if the release is short |
+| `release.yml` `verify` | ubuntu | `dist-check.sh --min 17` — fails the run if the release is short |
 | `package-linux.yml` | ubuntu ×2 | `mnml-{x86_64,aarch64}-unknown-linux-gnu.{deb,rpm}` (nfpm) |
 | `bump-homebrew-tap.yml` | ubuntu | `Formula/mnml.rb` in chris-mclennan/homebrew-tap, from `dist/homebrew/mnml.rb` |
 | `winget-releaser.yml` | ubuntu | a PR to microsoft/winget-pkgs for `ChrisMcLennan.mnml` |
@@ -35,13 +35,81 @@ a release created with `GITHUB_TOKEN` inside a workflow does not emit the
 `published` event (GitHub's anti-loop rule). They also accept
 `workflow_dispatch` with a version, for a rerun.
 
-Twenty assets when everything has run — 5 archives + 5 `.sha256` (10),
-`sha256.sum` + two installers + `dist-manifest.json` (14), the MSI + its
-`.sha256` (16), then `.deb` + `.rpm` for two Linux arches (20).
-`scripts/dist-check.sh` carries that list by name and fails on the first
-missing one; `release.yml`'s own `verify` job runs it with `--min 16
---without-linux-packages`, because package-linux has not run yet at that
-point.
+Twenty-one assets when everything has run — 5 archives + 5 `.sha256`
+(10), `sha256.sum` + two installers + `dist-manifest.json` +
+`integrations.json` (15), the MSI + its `.sha256` (17), then `.deb` +
+`.rpm` for two Linux arches (21). `scripts/dist-check.sh` carries that
+list by name and fails on the first missing one; `release.yml`'s own
+`verify` job runs it with `--min 17 --without-linux-packages`, because
+package-linux has not run yet at that point.
+
+## Integrations
+
+Nothing is bundled in the mnml archive: it stays one binary per
+platform. Each integration in `integrations/` ships on its own tag, and
+every mnml release carries an index of the ones built for it.
+
+**One integration, one tag.** `git tag -a jira-v0.2.0 && git push origin
+jira-v0.2.0` runs `.github/workflows/release-integration.yml`: it builds
+`integrations/jira/` in its own folder (`-j2`, ReleaseSafe,
+`-Dcpu=baseline`) for the five targets and
+`scripts/package-integration.sh` packages each —
+
+| asset | what |
+|---|---|
+| `mnml-<id>-<rust-triple>.tar.xz` (`.zip` on Windows) | one directory, `mnml-<id>-<triple>/`, with the binary, the integration's README and the licenses |
+| `<archive>.sha256` | `<hash>  <file>` |
+| `sha256.sum` | every archive |
+| `integration.json` | the same as data: id, version, the SDK version it was built on (`sdk/mnml-sdk/build.zig.zon`), the binary, and per target the asset's URL and sha256 |
+
+Twelve assets; the workflow's `verify` job counts them. The tag's
+version must be the integration's manifest version
+(`integrations/<id>/manifest.zon`); `<version>-<pre>` (`sample-v0.1.0-test`)
+publishes a prerelease. An integration release is never marked
+*latest* — `releases/latest` is mnml's, and the installers read it.
+`gh workflow run release-integration.yml -f id=jira` is the dry run
+(`dry_run` defaults to true: the assets land on the workflow run, no
+release); a pull request that touches the workflow or the packaging
+script dry-runs `sample` on its own.
+
+**The index.** `integrations/index.zon` lists the id and version of
+each integration an mnml release offers (a unit test holds each version
+to the folder's manifest). `release.yml` downloads each row's
+`integration.json` from its `<id>-v<version>` release and
+`tools/integrations_index.zig` joins them — with the label,
+description, docs and chip from `data/marketplace.zon` — into
+`integrations.json`, uploaded beside the archives. A publishing run
+fails on a row whose release is missing, a release whose version is
+not the row's, and one built on an SDK this mnml would not offer (the
+same rule mnml applies: `mnml_sdk.compatible`, the same major and
+below 1.0 the same minor). So the order for a release is:
+
+```sh
+# bump integrations/<id>/manifest*.zon (and data/marketplace.zon,
+# integrations/index.zon) for each integration that changed, then:
+git tag -a jira-v0.2.0 -m jira-v0.2.0 && git push origin jira-v0.2.0
+git tag -a bitbucket-v0.2.0 -m bitbucket-v0.2.0 && git push origin bitbucket-v0.2.0
+# … wait for both Release-an-integration runs …
+scripts/release.sh v0.3.0 && git push origin v0.3.0
+```
+
+An integration whose code did not change keeps its row and its old
+release, as long as its SDK is still compatible.
+
+**What mnml does with it.** The Marketplace tab's default source is
+`https://github.com/chris-mclennan/mnml-zig/releases/download/v<its
+version>/integrations.json` (`Config.default_marketplace_sources`; a dev
+build has no release and skips it). A row is listed when its SDK is
+compatible and it has an asset for this platform. Install downloads
+the asset, refuses it unless its sha256 is the index's, writes the
+binary to `<data root>/integrations/<id>/bin/`, links
+`<data root>/bin/<binary>` at it and runs `<binary> --install`, which
+writes the manifests; a newer version in the index makes the row
+`update available`, and installing again is the update. The
+first-launch setup offers Jira and Bitbucket from the same listing
+(`docs/CONFIG.md`, "First launch"). `MNML_MARKETPLACE_INDEX=<url>`
+points a session at any index — how a dev build installs from a
+release.
 
 ## The symbols font
 
@@ -120,7 +188,7 @@ A workflow's conclusion says its jobs ran, not that the release has its
 files. After every release:
 
 ```sh
-gh release view vX.Y.Z --json assets --jq '.assets|length'   # want 20, not 1
+gh release view vX.Y.Z --json assets --jq '.assets|length'   # want 21, not 1
 scripts/dist-check.sh vX.Y.Z                                 # the same, by name
 ```
 

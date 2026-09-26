@@ -1030,21 +1030,41 @@ otherwise. Copy what you need; leave the rest out.
     .marketplace = .{
         .enabled = true,
         .cache_ttl_secs = 3600,
-        // Prepend mnml's own source: the `mnml` catalogue — the
-        // integrations mnml itself ships (Jira, Bitbucket, the SDK
-        // sample). It is one ZON file, `data/marketplace.zon` in the
-        // repo, packaged as `share/mnml/marketplace.zon` beside the
-        // binary, so the tab lists the shipped set out of the box with
-        // no config at all. Installing one of its rows runs
-        // `<binary> --install` and links `<data root>/bin/<name>` at
-        // the binary — PREFIX's copy after `run.sh install`, else this
-        // checkout's `zig-out/bin` — which is what keeps a manifest
-        // from ever hardcoding a repo path. A row says `installed`,
-        // `update available` (the catalogue is ahead of the installed
+        // Prepend mnml's own sources. First, this repo's releases: every
+        // mnml release carries `integrations.json`, the index of the
+        // integrations built for that version — each on its own
+        // `<id>-v<version>` tag, one archive per platform with its
+        // sha256. A row is listed only when its SDK is compatible with
+        // this mnml's and it was released for this platform. Install
+        // downloads the archive, refuses it unless the sha256 matches,
+        // writes the binary to `<data root>/integrations/<id>/bin/`,
+        // links `<data root>/bin/<name>` at it and runs
+        // `<binary> --install`. A dev build (a checkout, whose version
+        // has no release) skips the index. Nothing is bundled in the
+        // mnml archive; the first-launch setup offers Jira and Bitbucket
+        // from the same index.
+        //
+        // Second, the `mnml` catalogue — the integrations this checkout
+        // builds (Jira, Bitbucket, the SDK sample): `data/marketplace.zon`,
+        // also packaged as `share/mnml/marketplace.zon`. Installing one
+        // of its rows runs `<binary> --install` and links
+        // `<data root>/bin/<name>` at the binary — PREFIX's copy after
+        // `run.sh install`, else this checkout's `zig-out/bin` — which is
+        // what keeps a manifest from ever hardcoding a repo path. A
+        // catalogue row the release index also lists is dropped: the
+        // index's download is the install. A row says `installed`,
+        // `update available` (the source is ahead of the installed
         // manifest's version) or `not installed`.
-        // MNML_MARKETPLACE_CATALOGUE=<file> points at a different
-        // catalogue; see the three overrides below.
-        .use_defaults = true, // prepend mnml's own source: the shipped integration catalogue
+        //
+        // With no config at all, `<data root>/marketplace/local/` is
+        // listed too, as the `local` source with the Private badge:
+        // every *.zon in it a manifest, every folder with a build.zig
+        // and a manifest.zon an integration built in place — and a repo
+        // symlinked in whole lists its `integrations/<id>/` folders (up
+        // to three levels down; never its own build.zig.zon). Symlink a
+        // private integrations repo there and it shows up for its
+        // author, nowhere else.
+        .use_defaults = true, // prepend this mnml's release index and the checkout's catalogue
         .sources = .{
             .{ .crates_keyword = .{ .id = "crates.io", .keyword = "mnml-integration" } },
             .{ .github_launcher_folder = .{ .id = "me/launchers", .repo = "me/launchers", .path = "launchers" } },
@@ -1058,13 +1078,20 @@ otherwise. Copy what you need; leave the rest out.
             // The repo's own launchers/ lists as ✓ Official, not Private:
             // it is the official set.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
+            // A release index somewhere else — a mirror, or a fork's
+            // releases. `{version}` in the URL is this mnml's version; a
+            // dev build skips a URL that needs one.
+            .{ .release_index = .{ .id = "mirror", .url = "https://mirror.example/mnml/v{version}/integrations.json" } },
         },
-        // Three environment overrides, for a scripted run (the .test
+        // Four environment overrides, for a scripted run (the .test
         // corpus, the UI specs) and for pointing a session somewhere
         // without editing a config:
         //   MNML_MARKETPLACE_CATALOGUE=<file>   the `mnml` source reads
         //       this catalogue instead of the shipped one. Relative
         //       paths are workspace-relative; `~` expanded.
+        //   MNML_MARKETPLACE_INDEX=<url>        a release_index source
+        //       named `index` at that URL, and the ONLY source while it
+        //       is set — how a dev build installs from a release.
         //   MNML_MARKETPLACE_LOCAL=<folder>     a local_folder source,
         //       and the ONLY source while it is set.
         //   MNML_MARKETPLACE_GITHUB=<owner>/<repo>[:<apps dir>]
@@ -1072,8 +1099,9 @@ otherwise. Copy what you need; leave the rest out.
         //       `apps`), and likewise the only source. Pair it with
         //       MNML_MARKETPLACE_API=<base url> to point the fetch at
         //       a server other than api.github.com.
-        // LOCAL and GITHUB replace the configured sources entirely;
-        // CATALOGUE only changes which file the `mnml` source reads.
+        // INDEX, LOCAL and GITHUB replace the configured sources
+        // entirely; CATALOGUE only changes which file the `mnml` source
+        // reads.
         .show_dev_tab = false,
         // The Marketplace tab opens with a FONTS section: every Nerd
         // Font family installed (the platform font folders, read from
@@ -1837,6 +1865,18 @@ the pane, keeps its answers, and comes back when the pane ends — with
 the rows re-detected, and, for the font, a toast saying how to point
 your terminal at it (keyed off `TERM_PROGRAM`) that appears only when
 the pane exited 0.
+
+Section 8, Integrations, offers the first-party integrations — Jira and
+Bitbucket — as checkboxes, none checked, each with the version on offer
+and whether it is installed. `y` / `→` check the focused row, `Tab`
+moves to the next, a click toggles one. Space installs the checked ones
+on the spot, and Enter installs them on the way out: both go through
+the marketplace's own install (the release index for a released mnml,
+downloaded and sha256-checked; the checkout's build in a dev one), one
+after another, and the rows follow along (`queued`, `installing…`,
+`installed`). Nothing checked installs nothing, and Esc installs
+nothing whatever is checked. The rows come from the Marketplace tab's
+listing, which opening the wizard fetches.
 
 ## Coming from 0.2.x (TOML)
 
