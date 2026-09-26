@@ -4311,7 +4311,9 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
 
 // ── the `:` line ──
 
-const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "delete", "yank", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read", "dock", "sidebar" };
+/// The ex verbs `ex.run` answers, by their full Neovim names — what
+/// `:vs<Tab>` completes to (`getcompletion("vs", "cmdline")` = vsplit).
+const ex_names = [_][]const u8{ "abbreviate", "bdelete", "bfirst", "blast", "bnext", "bprevious", "buffer", "buffers", "bwipeout", "cclose", "changes", "cexpr", "cfirst", "clast", "clist", "close", "colorscheme", "command", "copen", "copy", "cnext", "cprevious", "cquit", "cwindow", "delcommand", "delete", "delmarks", "display", "dock", "echo", "edit", "enew", "exit", "global", "grep", "join", "jumps", "layout", "lclose", "lexpr", "lfirst", "llast", "lnext", "lopen", "lprevious", "marks", "messages", "move", "new", "nohlsearch", "normal", "only", "quit", "quitall", "read", "registers", "resize", "retab", "saveas", "set", "sidebar", "sort", "split", "substitute", "tabclose", "tabedit", "tabfirst", "tablast", "tabmove", "tabnew", "tabnext", "tabonly", "tabprevious", "tabs", "terminal", "unabbreviate", "update", "vertical", "vglobal", "vimgrep", "vnew", "vsplit", "wall", "wqall", "write", "wq", "xit", "yank" };
 const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "vs", "vsplit", "tabe", "tabedit", "r", "read", "cd", "saveas" };
 
 /// Tab on the `:` line: the ring for the text so far (built by the
@@ -4338,8 +4340,8 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
 /// and each string; empty when nothing matches). `<cmd> <partial>`
 /// completes what the command takes — `:set` its options, a path
 /// command the workspace's entries — spelled as whole lines
-/// (`e apple.md`); a lone token completes registry ids (prefix 300 /
-/// contains 200), the ex names (150) and the user's own `:command`s
+/// (`e apple.md`); a lone token completes the ex names (350), registry
+/// ids (prefix 300 / contains 200) and the user's own `:command`s
 /// (400), ties alphabetical.
 pub fn cmdlineCandidates(app: *App, gpa: Allocator, line: []const u8) Allocator.Error![][]u8 {
     var cands: std.ArrayListUnmanaged([]u8) = .empty;
@@ -4386,7 +4388,9 @@ pub fn cmdlineCandidates(app: *App, gpa: Allocator, line: []const u8) Allocator.
             try scored.append(gpa, .{ .name = id, .score = 200 });
         }
     }
-    for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
+    // An ex verb the text begins outranks every registry id: `:vs<Tab>`
+    // is `:vsplit` (Neovim), not `:http.fan_envs`, which only contains it.
+    for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 350 });
     // User `:command`s outrank the registry: they are the user's own words.
     for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
     std.mem.sort(Scored, scored.items, {}, struct {

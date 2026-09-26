@@ -1,0 +1,10 @@
+# `:vs<Tab>` completes the ex verb in Neovim (getcompletion("vs","cmdline")
+# = { "vsplit" }); mnml offers the registry id http.fan_envs first.
+write f.txt "x\n"
+open f.txt
+command editor.use_vim
+key :
+type vs
+key tab
+expect screen lacks ":http.fan_envs"
+expect screen contains ":vsplit"
