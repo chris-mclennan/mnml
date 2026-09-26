@@ -1,0 +1,12 @@
+# The standard profile's `:term` splits a pane off below the file: the
+# terminal's tab sits on its own strip, not beside the file's.
+write a.txt "alpha\n"
+open a.txt
+command view.toggle_tree
+command editor.use_standard
+ex term sleep 30
+expect pane sleep 30
+expect screen contains "sleep 30 󰅖"
+expect screen contains " 󰈙 a.txt 󰅖"
+expect screen lacks "a.txt 󰅖   󲀀 sleep 30"
+expect screen contains "alpha"

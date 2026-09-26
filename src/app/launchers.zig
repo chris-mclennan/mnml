@@ -46,7 +46,21 @@ pub fn fire(app: *App, line_in: []const u8) CommandError!void {
     if (termProgram(line)) |prog| if (!cmd_app.onPath(app, prog)) {
         return app.diag.fail(arena, "{s} is not on PATH — {s}{s}", .{ prog, cmd_app.installHintPrefix(), prog });
     };
+    // A tool's `term` line keeps its own placement: the vim profile's
+    // `:term` takes the current window, a tool still opens below.
+    if (termArgs(line)) |args| return @import("cmd_term.zig").termTool(app, args);
     return app.runEx(line);
+}
+
+/// What follows the verb of a `term …` / `terminal …` line (empty for a
+/// bare one); null when the line is some other ex command.
+pub fn termArgs(line_in: []const u8) ?[]const u8 {
+    var line = std.mem.trim(u8, line_in, " \t");
+    while (line.len > 0 and line[0] == ':') line = std.mem.trimStart(u8, line[1..], " \t");
+    const end = std.mem.indexOfAny(u8, line, " \t") orelse line.len;
+    const verb = line[0..end];
+    if (!std.mem.eql(u8, verb, "term") and !std.mem.eql(u8, verb, "terminal")) return null;
+    return std.mem.trim(u8, line[end..], " \t");
 }
 
 /// The program a `term <prog> …` line starts, when it is a bare name
