@@ -18,12 +18,19 @@ name: Release an integration
 # mnml's, and the installers read it.
 #
 # workflow_dispatch is the dry run: the same build and packaging for any
-# integration, the assets uploaded to the workflow run, no release.
+# integration, the assets uploaded to the workflow run, no release. A
+# pull request that touches this workflow or the packaging script runs
+# the same dry run for `sample`, so a broken release path shows up
+# before a tag finds it.
 
 on:
   push:
     tags:
       - "*-v*"
+  pull_request:
+    paths:
+      - .github/workflows/release-integration.yml
+      - scripts/package-integration.sh
   workflow_dispatch:
     inputs:
       id:
@@ -48,7 +55,7 @@ env:
 
 jobs:
   build:
-    name: build ${{ github.event.inputs.id || github.ref_name }} (five targets)
+    name: build ${{ github.event.inputs.id || (github.event_name == 'pull_request' && 'sample') || github.ref_name }} (five targets)
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.ver.outputs.id }}
@@ -72,7 +79,11 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            id=sample
+            v=
+            publishing=false
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             id="$INPUT_ID"
             v="${INPUT_VERSION#v}"
             if [ "$INPUT_DRY_RUN" = "false" ]; then
