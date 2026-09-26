@@ -1136,8 +1136,15 @@ fn talk(io: Io, path: []const u8, req: Request) ?Line {
     // broker used to listen — is "no broker", the same as a missing one.
     // Asked to connect to it the kernel answers ENOTSOCK, which a Debug
     // build's `Io.Threaded` treats as a programmer bug and aborts on.
-    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
-    if (st.kind != .unix_domain_socket) return null;
+    //
+    // Windows keeps an AF_UNIX socket as a reparse point: following it
+    // fails (IO_REPARSE_TAG_NOT_HANDLED), and `std` reports the point
+    // itself as `.unknown`, having no kind for that tag. A stale regular
+    // file there is still `.file`.
+    const windows = builtin.os.tag == .windows;
+    const socket_kind: Io.File.Kind = if (windows) .unknown else .unix_domain_socket;
+    const st = Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = !windows }) catch return null;
+    if (st.kind != socket_kind) return null;
     const addr = Io.net.UnixAddress.init(path) catch return null;
     const stream = addr.connect(io) catch return null;
     defer stream.close(io);
