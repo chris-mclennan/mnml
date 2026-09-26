@@ -4408,6 +4408,8 @@ test "lsp lend: a jump the running server answered is served by that server, wha
     const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
     defer gpa.free(a);
     const in_std = try std.fs.path.join(gpa, &.{ top, std_dir, "m.fk" });
+    // One spelling, as an opened path has on Windows (native throughout).
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, in_std, '/', '\\');
     defer gpa.free(in_std);
     const in_dep = try std.fs.path.join(gpa, &.{ top, "deps", "serde", "m.fk" });
     defer gpa.free(in_dep);
@@ -4449,6 +4451,8 @@ test "lsp lend: a file opened by hand under a toolchain's own marker (zls into l
     const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
     defer gpa.free(a);
     const in_std = try std.fs.path.join(gpa, &.{ top, "Cellar/zig/0.16.0/lib/zig/std", "m.fk" });
+    // One spelling, as an opened path has on Windows (native throughout).
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, in_std, '/', '\\');
     defer gpa.free(in_std);
     const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
     defer gpa.free(other_root);
