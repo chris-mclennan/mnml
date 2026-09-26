@@ -21,8 +21,8 @@
  󱘣 │                          │▌  space t n         Toggle line-number gutter                  view.toggle_line_numbers
    │                          │▌  space s o         Close all other panes (keep active; respects unsaved guards)
  󰢱 │                          │▌  ctrl+k w          Close all other panes (keep active; respects unsaved guards)
-   │                          │▌  space t w         Toggle line wrapping (vim :set wrap)               view.toggle_wrap
-   │                          │▌  alt+z             Toggle line wrapping (vim :set wrap)               view.toggle_wrap
+   │                          │▌  space t w         Toggle word wrap (vim :set wrap)                   view.toggle_wrap
+   │                          │▌  alt+z             Toggle word wrap (vim :set wrap)                   view.toggle_wrap
    │                          │▌  ctrl+k f12        Split + jump to definition (vim `Ctrl+W d`)view.split_goto_definiti
    │                          │▌  ctrl+k ctrl+m     Zoom the split / restore                           view.toggle_zoom
    │                          │▌  ctrl+k left       Move active split to the left of its parent (vim `Ctrl+W H`)

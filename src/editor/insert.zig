@@ -48,10 +48,13 @@ fn encode(c: u21, buf: *[4]u8) []const u8 {
 
 pub fn insertChar(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Error!void {
     // A deleted selection already pushed a checkpoint; ride it so the
-    // delete + this char undo together (VS Code coalesces).
+    // delete + this char — and the chars typed after it — undo together
+    // (VS Code coalesces). The run is this view's: without the owner the
+    // next char opened a group of its own and Ctrl+Z left the first one.
     if (try delete.deleteSelectionIfAny(ed, out)) {
         ed.doc.history.clearRedo();
         ed.in_insert_run = true;
+        ed.doc.insert_run_owner = ed;
     } else {
         try ed.checkpointInsertRun();
     }

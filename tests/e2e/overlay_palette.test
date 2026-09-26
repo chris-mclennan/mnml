@@ -9,7 +9,7 @@ expect screen contains "┌ Command palette "
 expect screen contains "editor  ·  Go to line… (1-based)  ·  editor.goto_line"
 expect screen contains " ctrl+g "
 type view.toggle_wrap
-expect screen contains "▌view  ·  Toggle line wrapping (vim :set wrap)  ·  view.toggle_wrap"
+expect screen contains "▌view  ·  Toggle word wrap (vim :set wrap)  ·  view.toggle_wrap"
 expect screen contains " of "
 key enter
 expect screen lacks "┌ Command palette "

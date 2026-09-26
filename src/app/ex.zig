@@ -498,6 +498,13 @@ fn searchLine(ed: *const Editor, re: *regex.Regex, from: usize, forward: bool) ?
 
 // ─── files ──────────────────────────────────────────────────────────────
 
+/// `:saveas {path}` for the active editor — the standard profile's Save
+/// As prompt lands here too: the buffer takes the new name and is saved
+/// through the one save path.
+pub fn saveAs(app: *App, path_arg: []const u8) CommandError!void {
+    return write(app, null, path_arg, false, true);
+}
+
 fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool, rename: bool) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":w");
@@ -1504,7 +1511,7 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
-        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.auto_pair") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
             try app.syncBufferPrefs();
         }
         app.needs_render = true;

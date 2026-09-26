@@ -1410,6 +1410,20 @@ pub fn promptNewFile(app: *App) CommandError!void {
     try openPathPrompt(app, "New file (workspace-relative)", .{ .new_file = dir }, dir);
 }
 
+/// `file.new` from anywhere but the tree: "New file in <dir>/", empty,
+/// as the Rust app asks — a bare name lands in `dir` (workspace root
+/// for ""), a path with `/` where it says.
+pub fn promptNewFileIn(app: *App, dir_in: []const u8) CommandError!void {
+    const dir = try app.gpa.dupe(u8, dir_in);
+    errdefer app.gpa.free(dir);
+    const title = try std.fmt.allocPrint(app.gpa, "New file in {s}/", .{dir});
+    errdefer app.gpa.free(title);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, title), .purpose = .{ .new_file = dir }, .title_owned = title } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
 fn newFolder(app: *App) CommandError!void {
     if (files_pane.focused(app) != null) return files_pane.newFolderCmd(app);
     const dir = try app.gpa.dupe(u8, dirBeside(app));

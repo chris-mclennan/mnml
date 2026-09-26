@@ -4068,6 +4068,8 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
     if (m.button != .left) return;
     app.needs_render = true;
     if (git_toolbar.actionOf(hit_id)) |action| {
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         // The git toolbar: each button is a `git.*` command; Refresh
         // re-reads this diff.
         const cmd: command.CommandId = switch (action) {
@@ -4573,6 +4575,14 @@ fn buildPlan(app: *App, g: *GraphPane, sel: []const usize) CommandError!Plan {
         at = indexOfSha(g, c.parents[0]) orelse break;
     }
     if (remaining != 0) return app.diag.fail(arena, "rebase: a selected commit is not on the current branch's first-parent line from HEAD", .{});
+    // A merge on the line would be replayed flat — `rebase -i` without
+    // `--rebase-merges` lists no merge, so the plan could not be laid on
+    // git's todo, and the attempt would already have autostashed and
+    // checked out. Refused here, before anything touches the tree.
+    for (chain.items) |ci| {
+        const c = g.commits[ci];
+        if (c.parents.len > 1) return app.diag.fail(arena, "rebase: {s} is a merge — rewriting history through a merge is not supported; choose commits above it", .{c.short()});
+    }
     var plan: Plan = .{};
     errdefer plan.deinit(gpa);
     const oldest = g.commits[chain.items[chain.items.len - 1]];
@@ -4998,6 +5008,8 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
     if (git_toolbar.actionOf(hit_id)) |action| {
         if (m.button != .left) return;
         g.wip_focused = false;
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         const cmd: command.CommandId = switch (action) {
             .undo => .@"git.undo",
             .redo => .@"git.redo",

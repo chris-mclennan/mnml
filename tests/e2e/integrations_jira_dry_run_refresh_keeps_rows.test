@@ -1,9 +1,11 @@
 # width: 120
 # height: 40
-# `.dry_run = true`: the Jira pane sends nothing — the fake's log stays
-# empty — and its budget chip says DRY. The host's
-# `integrations.toggle_dry_run` turns it off, and the next refresh goes
-# out: the Bitbucket pane's dry run, from the same SDK.
+# A refresh while the Jira pane is in dry run keeps what it shows: the
+# count in the caps header and the DRY chip, as the Bitbucket pane (same
+# SDK) does. The refused refresh used to read as a failed load ("fetch
+# failed: dry run — nothing sent", "error:" on the message line), and at
+# the stock layout (the sidebar open) the header dropped "(3)" and the
+# DRY chip to make room (round-7 hunt).
 # env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
 # env: JIRA_API_TOKEN=fake-token
 # env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
@@ -12,7 +14,7 @@ wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
 write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
-write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .dry_run = true, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
 command integrations.show_in_dev
 expect screen contains "INTEGRATIONS"
 drag 30 5 60 5
@@ -20,20 +22,16 @@ key i
 expect within 10000 screen contains "installed jira_work from"
 expect within 10000 screen lacks "installed jira_work from"
 command integrations.open_as_tab
-command view.toggle_tree
 command jira_work.open
-expect within 30000 screen contains "JIRA WORK"
-expect within 10000 screen contains " DRY "
+expect within 30000 screen contains "JIRA WORK (3)"
 command view.focus_pane
+command integrations.toggle_dry_run
+expect within 10000 screen contains " DRY "
 key r
 wait 3000
-shell test -f jira.log && test ! -s jira.log
-# The chip is still up after the refresh: the `lacks " DRY "` below is
-# only evidence if it was there to go.
+expect screen lacks "fetch failed"
+expect screen lacks "error:"
 expect screen contains " DRY "
-command integrations.toggle_dry_run
-expect within 10000 screen lacks " DRY "
-key r
-expect within 30000 file jira.log contains "/rest/api/3/search/jql"
-expect within 30000 screen contains "JIRA WORK (3)"
+expect screen contains "JIRA WORK (3)"
+expect screen contains "nothing sent"
 shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

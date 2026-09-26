@@ -160,7 +160,7 @@ pub const Client = struct {
         // out, and the pane keeps the rows it already shows.
         if (budget.isDry()) {
             c.note(arena, method, url, null, 0, Io.Timestamp.now(c.io, .real), .{ .ok = true }, reason, .{}, true);
-            return synthetic(arena, 0, "dry run — nothing sent; the pane keeps what it already shows");
+            return synthetic(arena, 0, dry_run_message);
         }
         // A 429 is answered the SDK's way, the way the Bitbucket pane
         // answers it: the budget pauses for what the site asked (else
@@ -192,6 +192,10 @@ pub const Client = struct {
         var clock: [8]u8 = undefined;
         return synthetic(arena, 429, try std.fmt.allocPrint(arena, "rate limited — paused until {s}", .{sdk.budget.clockText(&clock, snap.paused_until, snap.offset_secs)}));
     }
+
+    /// What a dry run answers every request with: nothing went out. The
+    /// pane reads it as a notice, not a failed fetch (`App.applyRefresh`).
+    pub const dry_run_message = "dry run — nothing sent; the pane keeps what it already shows";
 
     /// An answer that never came off the wire — a dry run, a pause —
     /// in Jira's own error shape, so `failureOf` reads its sentence.

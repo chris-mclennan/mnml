@@ -726,6 +726,10 @@ export MNML_PROFILE="${MNML_PROFILE:-dev}"
 EXTRA=()
 [ "$HEADLESS" = 1 ] && EXTRA+=(--headless)
 
+# The loop below catches `app.restart`'s exit 75 (rebuild + relaunch);
+# without this the app relaunches itself instead (src/main.zig).
+export MNML_RUN_LOOP=1
+
 force=""
 while true; do
   ensure_built $force || exit 1
