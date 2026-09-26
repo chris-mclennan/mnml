@@ -1683,8 +1683,27 @@ fn toggle(app: *App) CommandError!void {
 /// `view.focus_tree` (Ctrl+Shift+E / vim's `<leader>e`): the tree takes
 /// the keys, opened first when it was hidden — NvChad's `<leader>e`
 /// (`NvimTreeFocus`) — never hidden.
+/// `space e` / Ctrl+Shift+E: the tree takes the keys, on the active
+/// file's row — NvChad's nvim-tree `update_focused_file` and VS Code's
+/// `explorer.autoReveal`. A buffer with no file (or one outside every
+/// root) leaves the tree cursor where it was.
 fn focus(app: *App) CommandError!void {
     side.place(app, .explorer, true);
+    const id = app.active orelse return;
+    const p = app.panes.get(id) orelse return;
+    const path: []const u8 = switch (p.*) {
+        .editor => |*e| e.buf.doc.path orelse return,
+        .md_preview => |*m| m.path,
+        else => return,
+    };
+    const abs = try app.frame.allocator().dupe(u8, path);
+    app.tree.revealPath(app, abs) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            app.diag.clear();
+            side.place(app, .explorer, true);
+        },
+    };
 }
 
 fn toggleHidden(app: *App) CommandError!void {
