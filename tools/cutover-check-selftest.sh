@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/cutover-check-selftest.sh — proves every tools/cutover-check.sh
 # FAIL fires, on a throwaway repo, with a fake gh (MNML_GH) and a fake
-# zig (MNML_ZIG). No network, no build, ~5 s.
+# zig (MNML_ZIG). No network, no build, ~15 s.
 #
 # A good fake repo first: every item ok, exit 0. Then one breakage per
 # case, each on a fresh copy, each asserting its item's verdict and the
