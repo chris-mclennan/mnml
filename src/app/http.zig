@@ -1005,7 +1005,7 @@ fn findPreview(app: *App) ?PaneId {
 pub fn findSource(app: *App, path: []const u8, index: ?u32, block_name: ?[]const u8) ?PaneId {
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*p| switch (p.*) {
         .request => |*rp| if (rp.source_path) |sp| {
-            if (!std.mem.eql(u8, sp, path)) continue;
+            if (!@import("../core/os_path.zig").samePath(sp, path)) continue;
             if ((rp.block_index orelse 0) != (index orelse 0)) continue;
             const same_name = if (block_name) |b| (rp.block_name != null and std.mem.eql(u8, rp.block_name.?, b)) else rp.block_name == null;
             if (same_name) return @intCast(i);
