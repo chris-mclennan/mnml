@@ -221,6 +221,12 @@ pub const Vim = struct {
         return self.op != null or self.prefix != .none;
     }
 
+    /// An operator waits for its motion (`d`, `c`, `gU` …) — Neovim's
+    /// operator-pending mode, not a register or mark prefix.
+    pub fn isOperatorPending(self: *const Vim) bool {
+        return self.op != null and !self.cmdline_open;
+    }
+
     pub fn onBlur(self: *Vim) void {
         self.enterNormal();
     }

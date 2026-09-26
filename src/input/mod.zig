@@ -285,6 +285,13 @@ pub const InputHandler = union(enum) {
         };
     }
 
+    /// An operator waits for its motion — the cursor shape's `o` mode.
+    pub fn isOperatorPending(h: *const InputHandler) bool {
+        return switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "isOperatorPending")) impl.isOperatorPending() else false,
+        };
+    }
+
     pub fn onBlur(h: *InputHandler) void {
         switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "onBlur")) impl.onBlur(),

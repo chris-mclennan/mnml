@@ -2296,7 +2296,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .wrap = e.wrap orelse app.cfg.ui.wrap,
         .tab_width = app.cfg.editor.tab_width,
         .line_numbers = app.cfg.ui.line_numbers,
-        .cursor_shape = cursor_mod.forMode(mode),
+        .cursor_shape = cursor_mod.forModeOp(mode, e.buf.input.isOperatorPending()),
         .focused = focused,
         .visual_block = mode == .visual_block,
         .block_eol = e.buf.editor.block_eol,
