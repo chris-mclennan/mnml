@@ -517,13 +517,17 @@ otherwise. Copy what you need; leave the rest out.
     .terminal = .{
         .scrollback_lines = 10000, // lines kept above the screen per pane (Shift+PageUp, the wheel) — and what the terminal's search (`term.search`: `/` in terminal-normal, Ctrl+F under standard) reaches
         .osc52 = true, // a program in a pane may copy to the clipboard (OSC 52; neovim, tmux, ssh); reads are never answered
-        // A shell pane's zsh loads mnml's shell integration: OSC 133 marks
-        // around every prompt, command line and output, and OSC 7 for the
-        // directory — so a multi-line prompt (starship, powerlevel10k) is
-        // redrawn in place when the pane is resized, and prompt jumps
-        // work with any prompt. Loaded through ZDOTDIR, dotfiles untouched;
-        // stands aside when another integration already marks prompts.
-        // zsh only (bash and fish start as before). Off: exactly as before.
+        // A shell pane's zsh, bash or fish loads mnml's shell integration:
+        // OSC 133 marks around every prompt, command line and output, and
+        // OSC 7 for the directory — so a multi-line prompt (starship,
+        // powerlevel10k) is redrawn in place when the pane is resized, and
+        // prompt jumps work with any prompt. Dotfiles untouched: zsh through
+        // ZDOTDIR; bash as `bash --init-file`, which reads the login files
+        // (/etc/profile, ~/.bash_profile …) first — so the shell is not a
+        // login shell to `shopt login_shell`, `logout` or ~/.bash_logout;
+        // fish through `--init-command` (fish 4 marks its own prompts and is
+        // left to it). Each stands aside when another integration already
+        // marks prompts. Off: exactly as before.
         .shell_integration = true,
     },
 

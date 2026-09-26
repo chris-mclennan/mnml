@@ -822,7 +822,7 @@ const reviewed = [_]Reviewed{
     .{ .path = "ui.integration_icons[].command", .verdict = .{ .inert = "a command id the chip dispatches, resolved against the registry" } },
     .{ .path = "ui.integration_icons[].commands", .verdict = .{ .inert = "command ids and titles for the chip's menu" } },
     .{ .path = "ui.accent_defaults.shell", .verdict = .{ .inert = "the accent colour of a shell tab" } },
-    .{ .path = "terminal.shell_integration", .verdict = .{ .inert = "whether a shell pane's zsh sources the integration mnml ships in its own data root; no program or path is named" } },
+    .{ .path = "terminal.shell_integration", .verdict = .{ .inert = "whether a shell pane's zsh, bash or fish sources the integration mnml ships in its own data root; no program or path is named" } },
     .{ .path = "ui.ai_layout_mode", .verdict = .{ .inert = "grid or tabs for AI panes" } },
     .{ .path = "ui.first_launch_complete", .verdict = .{ .inert = "whether the first-launch wizard has run" } },
     .{ .path = "cloud_run.defaults.env_id", .verdict = .{ .inert = "an environment id sent to the cloud API" } },

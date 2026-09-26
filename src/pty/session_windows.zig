@@ -81,6 +81,10 @@ pub const Options = struct {
     env: *const std.process.Environ.Map,
     /// Program to run. `null` → `%COMSPEC%` (see `win_cmdline.defaultShell`).
     argv: ?[]const []const u8 = null,
+    /// Accepted for symmetry with the POSIX options: the shell
+    /// integrations are POSIX-only, so nothing sets them here.
+    shell_args: []const []const u8 = &.{},
+    shell_login: bool = true,
     cwd: ?[]const u8 = null,
     notify: Notify = .none,
     /// Ring size; must be a power of two.

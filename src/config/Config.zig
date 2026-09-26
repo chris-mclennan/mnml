@@ -835,7 +835,9 @@ pub const Terminal = struct {
     /// reports the directory (OSC 7) — so a prompt of several lines
     /// (starship, powerlevel10k) is redrawn in place when the pane is
     /// resized, and `term.prev_prompt` / `term.next_prompt` work with
-    /// any prompt. zsh only, loaded through `ZDOTDIR` without touching
+    /// any prompt. zsh (through `ZDOTDIR`), bash (`--init-file`, which
+    /// reads the login files first) and fish (`--init-command`; fish 4
+    /// marks its own prompts and is left to it), none of them touching
     /// the user's dotfiles (`app/shell_integration.zig`). Off: the shell
     /// starts exactly as it would in any terminal.
     shell_integration: bool = true,

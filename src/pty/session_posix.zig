@@ -110,6 +110,12 @@ pub const Options = struct {
     /// Program to run. `null` → the user's `$SHELL` as a login shell
     /// (argv0 prefixed with `-`, the POSIX convention every shell honours).
     argv: ?[]const []const u8 = null,
+    /// With `argv` null: what follows the shell's argv0 (a shell
+    /// integration's handoff, `app/shell_integration.zig`), and whether
+    /// argv0 carries the login `-` — bash reads `--init-file` only when
+    /// it is not a login shell.
+    shell_args: []const []const u8 = &.{},
+    shell_login: bool = true,
     cwd: ?[]const u8 = null,
     notify: Notify = .none,
     /// Ring size; must be a power of two.
@@ -255,8 +261,9 @@ pub const Session = struct {
             const shell = env.get("SHELL") orelse defaultShell();
             if (shell.len == 0) return error.NoShell;
             const base = std.fs.path.basename(shell);
-            const argv0 = try std.fmt.allocPrintSentinel(gpa, "-{s}", .{base}, 0);
+            const argv0 = try std.fmt.allocPrintSentinel(gpa, "{s}{s}", .{ if (opts.shell_login) "-" else "", base }, 0);
             try argv_buf.append(gpa, argv0);
+            for (opts.shell_args) |a| try argv_buf.append(gpa, try gpa.dupeZ(u8, a));
             exe = try gpa.dupeZ(u8, shell);
         }
         defer if (opts.argv == null) gpa.free(exe);
