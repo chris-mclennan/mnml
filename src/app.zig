@@ -2534,7 +2534,15 @@ pub const App = struct {
         return self.openPathOpts(path, .{});
     }
 
-    pub fn openPathOpts(self: *App, path: []const u8, opts: OpenOpts) !PaneId {
+    pub fn openPathOpts(self: *App, path_in: []const u8, opts: OpenOpts) !PaneId {
+        // One spelling per file on Windows, where `D:\ws\a` and
+        // `D:\ws/a` name the same one: the native separator throughout,
+        // so an open finds the pane the other spelling made.
+        const path = if (builtin.os.tag == .windows and std.mem.indexOfScalar(u8, path_in, '/') != null) blk: {
+            const own = try self.frame.allocator().dupe(u8, path_in);
+            std.mem.replaceScalar(u8, own, '/', '\\');
+            break :blk own;
+        } else path_in;
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a
         // file the parser cannot read falls through to the editor.
