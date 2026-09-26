@@ -299,9 +299,10 @@ gh run list --repo $MAIN --limit 6          # bump-homebrew-tap, winget-releaser
   --jq .content | base64 -d | grep -E 'version|download/'` shows `$V`
   and `$MAIN` URLs. On a Mac: `brew update && brew upgrade mnml && mnml
   --version` prints `$V`.
-- **winget.** `gh pr list --repo microsoft/winget-pkgs --search
-  "ChrisMcLennan.mnml $V"` shows the PR. It merges on Microsoft's time;
-  `winget show ChrisMcLennan.mnml` says `$V` after that.
+- **winget.** `WID=$(sed -n 's/^ *identifier: //p'
+  .github/workflows/winget-releaser.yml)`, then `gh pr list --repo
+  microsoft/winget-pkgs --search "$WID $V"` shows the PR. It merges on
+  Microsoft's time; `winget show "$WID"` says `$V` after that.
 - **Linux packages.** The four `.deb` / `.rpm` are among the 21 above.
   On a guest (`docs/INSTALL-CHECKLIST.md`): `sudo apt install
   ./mnml-x86_64-unknown-linux-gnu.deb && mnml --version`.
