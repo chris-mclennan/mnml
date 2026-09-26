@@ -533,6 +533,40 @@ pub fn zenRects(full: Rect) FrameRects {
     return .{ .bar = Rect.empty, .upper = s.top, .status = Rect.empty, .cmdline = s.rest, .body = s.top };
 }
 
+/// What the split tree is laid out in: the frame's body less the
+/// dock's inline strips (zen has none).
+pub fn panesAreaOf(app: *const App, fr: FrameRects) Rect {
+    if (app.zen) return fr.body;
+    return dock.bodyAfterStrips(fr.body, dock.strips(fr.body, app.dock.widgets.items, app.dock.hidden));
+}
+
+/// The rect the NEXT frame hands pane `id`'s content — its leaf in the
+/// page on screen, less the tab strip row, less the rail column — or
+/// null when no leaf of that page shows it. What `drawBody` and
+/// `drawPaneContent` do, asked before the frame: a terminal pane spawns
+/// its child at this size (`pty_pane.open`), so the first frame's
+/// `fit` has nothing to change and the shell is never resized under
+/// the prompt it has just printed.
+pub fn paneContentRect(app: *App, id: PaneId, arena: Allocator) Allocator.Error!?Rect {
+    const full = Rect.init(0, 0, app.screen.width, app.screen.height);
+    const body = panesAreaOf(app, if (app.zen) zenRects(full) else frameRects(full, chrome(app)));
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(id) orelse return null;
+    var rect: Rect = if (app.zoomedPane()) |z| (if (z == id) body else return null) else blk: {
+        const rects = try layout.computeRects(body, arena);
+        for (rects.panes) |pr| if (pr.leaf == lid) {
+            if (pr.pane != id) return null;
+            break :blk pr.rect;
+        };
+        return null;
+    };
+    if (rect.h >= 2 and !app.zen) rect = rect.splitTop(1).rest;
+    const pane = app.panes.get(id) orelse return null;
+    const rail = pane_accent.railColorOf(app, id, &app.theme) != null;
+    const shares_gutter = pane.* == .editor and app.cfg.ui.line_numbers;
+    return pane_rail.body(rect, rail and !shares_gutter);
+}
+
 /// The whole screen as a rect.
 fn screenRect(screen: *vaxis.Screen) Rect {
     return Rect.init(0, 0, screen.width, screen.height);
@@ -594,7 +628,6 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawPaletteBar(app, ui, fr.bar);
     // The info view says where it is when it paints (the corridor).
     app.info_view.rect = null;
-    var panes_area = fr.body;
     if (!fr.sidebar.isEmpty()) {
         // ── rail ──
         // The activity bar down the sidebar's left edge, and the `│`
@@ -662,8 +695,8 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     }
     // The dock's inline strips come off the body; its widgets paint
     // over whatever the panes drew.
-    const dock_area = panes_area;
-    if (!app.zen) panes_area = dock.bodyAfterStrips(dock_area, dock.strips(dock_area, app.dock.widgets.items, app.dock.hidden));
+    const dock_area = fr.body;
+    const panes_area = panesAreaOf(app, fr);
     app.panes_area = panes_area;
     try drawBody(app, ui, panes_area);
     if (app.zen) try drawFullscreenMark(app, ui, panes_area);

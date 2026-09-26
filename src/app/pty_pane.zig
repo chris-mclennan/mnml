@@ -18,7 +18,8 @@ const sessions = @import("../sessions.zig");
 const ai = @import("ai.zig");
 const std = @import("std");
 /// The one "does this pane have the keys" (`render.paneFocused`).
-const paneFocused = @import("render.zig").paneFocused;
+const render = @import("render.zig");
+const paneFocused = render.paneFocused;
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -415,61 +416,47 @@ pub const PtyPane = struct {
 pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     if (!supported) return error.Unsupported;
     const gpa = app.gpa;
+    // Once the pane is in the store, the store owns what these free:
+    // an error after that (the placement, the spawn) closes the pane.
+    var stored = false;
     const argv = try gpa.alloc([]u8, opts.argv.len);
     var filled: usize = 0;
-    errdefer {
+    errdefer if (!stored) {
         for (argv[0..filled]) |a| gpa.free(a);
         gpa.free(argv);
-    }
+    };
     for (opts.argv) |a| {
         argv[filled] = try gpa.dupe(u8, a);
         filled += 1;
     }
     const label = try labelFor(app, opts);
-    errdefer gpa.free(label);
+    errdefer if (!stored) gpa.free(label);
     const cwd: ?[]u8 = if (opts.cwd) |c| try gpa.dupe(u8, c) else null;
-    errdefer if (cwd) |c| gpa.free(c);
+    errdefer if (!stored) if (cwd) |c| gpa.free(c);
 
-    const size = initialSize(app, opts);
+    const guess = initialSize(app, opts);
     const id = app.panes.peekId();
     const wire = try gpa.create(Wire);
-    errdefer gpa.destroy(wire);
+    errdefer if (!stored) gpa.destroy(wire);
     wire.* = .{ .events = app.events, .io = app.io, .pane = id };
 
-    // The child's environment: the app's, the extras, and what it is
-    // told about the pane it runs in (`pty_env.zig`).
-    var child_env = try pty_env.build(app, opts.env_extra, opts.argv.len == 0);
-    defer child_env.deinit();
-    // // changed (codex-resume): read BEFORE the spawn. The child may
-    // open its Codex rollout before this call returns, and a rollout
-    // dated a second earlier than the pane would never match it.
-    const started_at_s: i64 = if (opts.dormant) 0 else Io.Timestamp.now(app.io, .real).toSeconds();
-    const session: ?*Session = if (opts.dormant) null else pty.Session.spawn(gpa, app.io, .{
-        .cols = size.cols,
-        .rows = size.rows,
-        .env = &child_env,
-        .argv = if (argv.len == 0) null else @ptrCast(argv),
-        .cwd = cwd orelse app.workspace,
-        .notify = .{ .ctx = wire, .fn_ptr = &Wire.readable },
-        .scrollback_lines = app.cfg.terminal.scrollback_lines,
-        .clipboard_write = app.cfg.terminal.osc52,
-    }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
-        else => return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ label, @errorName(err) }),
-    };
-    errdefer if (session) |sn| sn.deinit();
     // // changed (accent-defaults): a remembered colour first; else the
     // kind's default while nothing of the kind wears it; else null, and
     // `PaneStore.add` hands out the next free ladder slot.
     const remembered: ?[]const u8 = if (opts.accent_color) |c| accent_color.canonical(c) else null;
     const chosen: ?[]const u8 = remembered orelse pane_accent.defaultFor(app, pane_accent.kindOfArgv(app, argv));
     const accent: ?[]u8 = if (chosen) |name| try gpa.dupe(u8, name) else null;
-    errdefer if (accent) |c| gpa.free(c);
+    errdefer if (!stored) if (accent) |c| gpa.free(c);
 
+    // The pane goes into the store and the layout BEFORE its child
+    // starts, so the child starts at the size the layout gives it
+    // (`startChild`) rather than at a guess the first frame corrects:
+    // a resize right after the spawn lands while the shell prints its
+    // first prompt, and zsh's end-of-line `%` from the old width stays
+    // on screen above it.
     const got = try app.panes.add(.{
         .pty = .{
-            .session = session,
+            .session = null,
             .wire = wire,
             .label = label,
             .renamed = opts.renamed,
@@ -483,20 +470,58 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
             .dormant = opts.dormant,
             .after_exit = opts.after_exit,
             .accent_color = accent,
-            .cols = size.cols,
-            .rows = size.rows,
-            .started_at_s = started_at_s,
+            .cols = guess.cols,
+            .rows = guess.rows,
         },
     });
     std.debug.assert(got == id);
+    stored = true;
     place(app, id, opts.placement) catch |err| {
         app.panes.remove(id);
+        return err;
+    };
+    if (!opts.dormant) startChild(app, id, opts.env_extra) catch |err| {
+        app.forceClosePane(id) catch {};
         return err;
     };
     bornFocused(app, id);
     if (!opts.dormant and opts.record_changes) try session_changes.onSessionStart(app, id);
     app.needs_render = true;
     return id;
+}
+
+/// Spawn pane `id`'s child at the size the layout gives the pane
+/// (`render.paneContentRect`); a pane in no leaf on screen (`.detached`
+/// — its caller hangs it in the tree) keeps the guess it was added
+/// with.
+fn startChild(app: *App, id: PaneId, env_extra: []const []const u8) CommandError!void {
+    const p = app.panes.pty(id).?;
+    if (try render.paneContentRect(app, id, app.frame.allocator())) |r| if (r.w > 0 and r.h > 0) {
+        p.cols = r.w;
+        p.rows = r.h;
+    };
+    // The child's environment: the app's, the extras, and what it is
+    // told about the pane it runs in (`pty_env.zig`).
+    var child_env = try pty_env.build(app, env_extra, p.argv.len == 0);
+    defer child_env.deinit();
+    // // changed (codex-resume): read BEFORE the spawn. The child may
+    // open its Codex rollout before this call returns, and a rollout
+    // dated a second earlier than the pane would never match it.
+    p.started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
+    p.session = pty.Session.spawn(app.gpa, app.io, .{
+        .cols = p.cols,
+        .rows = p.rows,
+        .env = &child_env,
+        .argv = if (p.argv.len == 0) null else @ptrCast(p.argv),
+        .cwd = p.cwd orelse app.workspace,
+        .notify = .{ .ctx = p.wire, .fn_ptr = &Wire.readable },
+        .scrollback_lines = app.cfg.terminal.scrollback_lines,
+        .clipboard_write = app.cfg.terminal.osc52,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => return app.diag.fail(app.frame.allocator(), "{s}: {s}", .{ p.label, @errorName(err) }),
+    };
 }
 
 // ─── the accent (colors) ────────────────────────────────────────────────
@@ -578,8 +603,11 @@ fn labelFor(app: *App, opts: OpenOptions) Allocator.Error![]u8 {
     return std.mem.join(gpa, " ", opts.argv);
 }
 
-/// A guess at the pane's size before the first frame lays it out; the
-/// frame corrects it and the child gets one SIGWINCH.
+/// A guess at the pane's size, for a pane the layout does not place
+/// (`.detached`) and for a dormant one; `startChild` asks the layout
+/// for everything else. The guess counts no divider and the rail once,
+/// so a split is off by a column or more — the first frame's `fit`
+/// corrects it.
 fn initialSize(app: *App, opts: OpenOptions) struct { cols: u16, rows: u16 } {
     const placement = opts.placement;
     // // changed (pane-rail): the rail takes a column off the pane, so
@@ -2505,4 +2533,59 @@ test "two terminals in a split: one filled cursor on the focused pane, a hollow 
     try t.expect(!Theme.Color.eql(th.fg.fg, app.screen.readCell(cold.x, cold.y).?.style.bg));
     try t.expect(app.screen.cursor_vis);
     try t.expectEqual(cold.x, app.screen.cursor.col);
+}
+
+/// Open a child that prints the size its pty has, then waits.
+fn openSized(app: *App, placement: Placement) !PaneId {
+    return open(app, .{ .argv = &.{ "/bin/sh", "-c", "stty size; sleep 30" }, .label = "sized", .kind = .command, .placement = placement });
+}
+
+/// The pane's child was born at the size the first frame gives it: the
+/// frame's `fit` changes nothing, and the child's own `stty size` says
+/// the same.
+fn expectBornFitted(app: *App, id: PaneId, cols: u16, rows: u16) !void {
+    const p = app.panes.pty(id).?;
+    try t.expectEqual(cols, p.cols);
+    try t.expectEqual(rows, p.rows);
+    try app.render();
+    try t.expectEqual(cols, p.cols);
+    try t.expectEqual(rows, p.rows);
+    const r = rectsOf(app, id).pane orelse return error.TestUnexpectedResult;
+    // The hit covers the strip row and the rail column.
+    try t.expectEqual(cols + pane_rail.width, r.w);
+    try t.expectEqual(rows + 1, r.h);
+    var buf: [16]u8 = undefined;
+    try t.expect(try tickUntilScreen(app, try std.fmt.bufPrint(&buf, "{d} {d}", .{ rows, cols }), 5000));
+}
+
+test "a new terminal pane's child starts at the size the layout gives it: a right split, a down split, a split inside a split — the first frame resizes nothing" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    // 120x40 with the tree open: the panes get columns 31..119 (89)
+    // and rows 1..37 (37). Every pane wears a rail and a strip row.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.pane_rail = .all;
+    const first = try openSized(&app, .tab);
+    try expectBornFitted(&app, first, 88, 36);
+    // Right: 89 = 44 + the divider + 44, less the rail. The old guess
+    // halved the area less ONE rail and no divider: 44.
+    const right = try openSized(&app, .right);
+    try expectBornFitted(&app, right, 43, 36);
+    // Down, inside the right half: 37 = 18 + the divider + 18, less
+    // the strip row.
+    const down = try openSized(&app, .below);
+    try expectBornFitted(&app, down, 43, 17);
+    // Right again, inside that: 44 = 22 + the divider + 21.
+    const nested = try openSized(&app, .right);
+    try expectBornFitted(&app, nested, 20, 17);
+
+    // A down split of a lone pane.
+    var solo = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    defer solo.deinit();
+    solo.cfg.ui.pane_rail = .all;
+    _ = try openSized(&solo, .tab);
+    try solo.render();
+    const below = try openSized(&solo, .below);
+    try expectBornFitted(&solo, below, 88, 17);
 }
