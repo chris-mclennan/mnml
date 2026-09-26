@@ -368,10 +368,13 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     var rx = @max(left_end, right_edge -| right_w);
     var prev = ground;
     for (lanes.right) |s| {
-        // An arrow is the hand-off INTO its chip: with no cell left for
-        // the chip after it, the edge would end on a dangling arrow
-        // (the round-7 hunt's 80x24 row), so it goes with its chip.
-        if (rx + 1 >= right_edge) break;
+        // An arrow is the hand-off INTO its chip: when the edge would
+        // leave the chip nothing past its leading blanks, the row would
+        // end on a dangling arrow (the round-7 hunt's 80x24 row), so the
+        // arrow goes with its chip.
+        const lead: u16 = @intCast(std.mem.indexOfNone(u8, s.text, " ") orelse s.text.len);
+        const arrow_w: u16 = if (arrows and !Color.eql(prev, s.bg)) 1 else 0;
+        if (rx + arrow_w + @min(lead + 1, s.cols(ui)) > right_edge) break;
         if (arrows and !Color.eql(prev, s.bg)) {
             rx += ui.putStr(rx, y, right_edge -| rx, pl_left, .{ .fg = s.bg, .bg = prev });
         }
@@ -474,10 +477,29 @@ test "a right lane cut at the edge never ends on an arrow: the arrow goes with t
         var f = try Fixture.init(w, 1);
         defer f.deinit();
         draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
-        const last = f.cell(w - 1, 0).char.grapheme;
-        if (std.mem.eql(u8, last, pl_left_nerd)) {
-            std.debug.print("width {d} ends on an arrow\n", .{w});
-            cut_on_arrow_seen = true;
+        // The last arrow on the row must be followed by something
+        // other than blanks: an arrow then only its chip's padding
+        // reads as the same dangle.
+        var x: u16 = w;
+        var arrow_at: ?u16 = null;
+        while (x > 0) {
+            x -= 1;
+            if (std.mem.eql(u8, f.cell(x, 0).char.grapheme, pl_left_nerd)) {
+                arrow_at = x;
+                break;
+            }
+        }
+        if (arrow_at) |ax| {
+            var shown = false;
+            var k = ax + 1;
+            while (k < w) : (k += 1) {
+                const g = f.cell(k, 0).char.grapheme;
+                if (g.len > 0 and !std.mem.eql(u8, g, " ")) shown = true;
+            }
+            if (!shown) {
+                std.debug.print("width {d} ends on an arrow\n", .{w});
+                cut_on_arrow_seen = true;
+            }
         }
     }
     try testing.expect(!cut_on_arrow_seen);
@@ -578,11 +600,12 @@ test "at 60 columns the left lane is at its floor and the screen edge cuts the r
     try testing.expectEqual(seg_app_base + 1, f.hits.at(24, 0).?.statusline_seg);
     try testing.expectEqual(seg_app_base + 4, f.hits.at(58, 0).?.statusline_seg);
     // Narrower still: the right lane starts at the left lane's end and
-    // the edge takes the rest; then the row itself clips.
+    // the edge takes the rest — an arrow with no room for its chip goes
+    // with it rather than dangle; then the row itself clips.
     var g = try Fixture.init(24, 1);
     defer g.deinit();
     draw(g.ui(), g.full(), .{ .left = &spec_left, .right = &spec_right });
-    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file] " ++ pl_left_nerd);
+    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file]");
     var h = try Fixture.init(10, 1);
     defer h.deinit();
     draw(h.ui(), h.full(), .{ .left = &spec_left, .right = &spec_right });
