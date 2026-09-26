@@ -11,6 +11,8 @@ const isSpace = editor.isSpace;
 
 pub fn selectStart(ed: *Editor) void {
     ed.anchor = ed.cursor;
+    ed.op_start = null;
+    ed.op_goal = null;
     for (ed.extra_anchors.items, ed.extra_cursors.items) |*a, c| a.* = c;
 }
 
@@ -586,10 +588,14 @@ pub fn argument(ed: *Editor, around: bool) void {
 /// close_start, close_end }`. Self-closing and `<!…>` tags are skipped;
 /// same-name nesting is honoured.
 pub fn enclosingTagPair(ed: *const Editor) ?[4]usize {
-    const t = ed.bytes();
+    return tagPairAround(ed.bytes(), ed.cursor);
+}
+
+/// The innermost tag pair around byte `pos`: `[<open, >open, <close, >close]`.
+fn tagPairAround(t: []const u8, pos: usize) ?[4]usize {
     // A cursor ON a `<` counts as inside that tag, so the first search
     // window includes the cursor byte.
-    var search_from = @min(ed.cursor + 1, t.len);
+    var search_from = @min(pos + 1, t.len);
     // Walk opening tags backward from the cursor; the first one whose
     // matching closer lies past the cursor wins.
     while (true) {
@@ -602,7 +608,7 @@ pub fn enclosingTagPair(ed: *const Editor) ?[4]usize {
         const name = tagName(inner);
         if (name.len == 0) continue;
         if (findClose(t, gt + 1, name)) |close| {
-            if (ed.cursor < close[1]) return .{ lt, gt + 1, close[0], close[1] };
+            if (pos < close[1]) return .{ lt, gt + 1, close[0], close[1] };
         }
     }
 }
@@ -636,7 +642,17 @@ fn findClose(t: []const u8, from: usize, name: []const u8) ?[2]usize {
 }
 
 pub fn tag(ed: *Editor, around: bool) void {
-    const p = enclosingTagPair(ed) orelse return;
+    return tagCount(ed, around, 1);
+}
+
+/// `d2it` (`:help it`): the `count`-th enclosing tag pair.
+pub fn tagCount(ed: *Editor, around: bool, count: u32) void {
+    var p = enclosingTagPair(ed) orelse return;
+    var k: u32 = 1;
+    while (k < count) : (k += 1) {
+        if (p[0] == 0) return;
+        p = tagPairAround(ed.bytes(), p[0] - 1) orelse return;
+    }
     if (around) {
         ed.anchor = p[0];
         ed.cursor = p[3];
@@ -742,10 +758,11 @@ pub fn normalizeLinewiseSelection(ed: *Editor) void {
     const a = ed.anchor orelse return;
     const lo = @min(a, ed.cursor);
     const hi = @max(a, ed.cursor);
-    const lo_line = ed.lineOfByte(lo);
     // A cursor sitting exactly on a line start after a downward `V j`
-    // still belongs to that line.
-    const hi_line = ed.lineOfByte(hi);
+    // still belongs to that line. A closed fold at either end is taken
+    // whole (`:help fold-behavior`).
+    const lo_line = foldStart(ed, ed.lineOfByte(lo));
+    const hi_line = foldEnd(ed, ed.lineOfByte(hi));
     const end = ed.lineEnd(hi_line);
     ed.anchor = ed.lineStart(lo_line);
     ed.cursor = if (end < ed.len()) end + 1 else end;
@@ -757,11 +774,71 @@ pub fn normalizeLinewiseSelection(ed: *Editor) void {
 /// line where the lines were — the shape `cc` builds (`:help v_c`).
 pub fn normalizeLinewiseSelectionInner(ed: *Editor) void {
     const a = ed.anchor orelse return;
-    const lo_line = ed.lineOfByte(@min(a, ed.cursor));
-    const hi_line = ed.lineOfByte(@max(a, ed.cursor));
+    const lo_line = foldStart(ed, ed.lineOfByte(@min(a, ed.cursor)));
+    const hi_line = foldEnd(ed, ed.lineOfByte(@max(a, ed.cursor)));
     ed.anchor = ed.lineStart(lo_line);
     ed.cursor = ed.lineEnd(hi_line);
     ed.goal_col = null;
+}
+
+/// The first line of the closed fold holding `row`, else `row`.
+fn foldStart(ed: *const Editor, row: usize) usize {
+    for (ed.folds.keys(), ed.folds.values()) |s, e| if (e > s and row >= s and row <= e) return s;
+    return row;
+}
+
+/// The last line of the closed fold holding `row`, else `row`.
+fn foldEnd(ed: *const Editor, row: usize) usize {
+    for (ed.folds.keys(), ed.folds.values()) |s, e| if (e > s and row >= s and row <= e) return e;
+    return row;
+}
+
+/// `{count}cc`: `count` lines from the cursor's (clamped to the last),
+/// the `_inner` linewise shape.
+pub fn selectCountLines(ed: *Editor, count: u32) void {
+    const first = foldStart(ed, ed.currentLine());
+    var last = first;
+    var i: u32 = 1;
+    while (i < @max(count, 1) and foldEnd(ed, last) + 1 < ed.lineCount()) : (i += 1) last = foldEnd(ed, last) + 1;
+    last = foldEnd(ed, last);
+    ed.anchor = ed.lineStart(first);
+    ed.cursor = ed.lineEnd(last);
+    ed.goal_col = null;
+    ed.op_start = null;
+    ed.op_goal = null;
+}
+
+/// `exclusive_motion_rule` (`:help exclusive`): `d}` from a line's
+/// start is linewise, `` d`m `` onto a line's first column stops short
+/// of that line's break.
+pub fn exclusiveMotionRule(ed: *Editor) void {
+    ed.object_lines = false;
+    const a = ed.anchor orelse return;
+    const lo = @min(a, ed.cursor);
+    const hi = @max(a, ed.cursor);
+    const hi_line = ed.lineOfByte(hi);
+    const lo_line = ed.lineOfByte(lo);
+    if (hi_line <= lo_line or hi != ed.lineStart(hi_line)) return;
+    const new_hi = ed.lineEnd(hi_line - 1);
+    if (ed.cursor >= a) ed.cursor = new_hi else ed.anchor = new_hi;
+    ed.object_lines = lo <= ed.firstNonWs(lo_line);
+}
+
+/// `mark_operator_start`.
+pub fn markOperatorStart(ed: *Editor) void {
+    const a = ed.anchor orelse ed.cursor;
+    ed.op_goal = ed.goalCol();
+    ed.op_start = @min(a, ed.cursor);
+}
+
+/// `cursor_to_operator_start`: back to where the range began, the
+/// wanted column kept for the next `j` / `k`.
+pub fn cursorToOperatorStart(ed: *Editor) void {
+    const at = ed.op_start orelse return;
+    ed.cursor = ed.snapBoundary(@min(at, ed.len()));
+    ed.goal_col = ed.op_goal;
+    ed.op_start = null;
+    ed.op_goal = null;
 }
 
 pub fn continueInsertRun(ed: *Editor) void {

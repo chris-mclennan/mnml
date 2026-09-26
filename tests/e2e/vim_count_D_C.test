@@ -1,0 +1,19 @@
+# {count}D / {count}C reach count-1 more lines (l2C-<Esc> -> "a-" / "e f") (Neovim: l2D on a b/c d/e f
+# leaves "a" / "e f"). mnml only touches the cursor line.
+write f.txt "a b\nc d\ne f\n"
+open f.txt
+command editor.use_vim
+key l
+key 2
+key D
+ex w
+expect file f.txt contains "a\ne f\n"
+key u
+key 0
+key l
+key 2
+key C
+type -
+key esc
+ex w
+expect file f.txt contains "a-\ne f\n"

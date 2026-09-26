@@ -1,0 +1,15 @@
+# NvChad's <leader>n is `set nu!`; with relativenumber still set Neovim
+# keeps the gutter, counting from a 0 on the cursor line. mnml hid the
+# whole gutter.
+write f.txt "alpha\nbravo\ncharlie\n"
+open f.txt
+command editor.use_vim
+key j
+key space
+key r
+key n
+key space
+key n
+expect screen contains "0 bravo"
+expect screen contains "1 alpha"
+expect screen contains "1 charlie"

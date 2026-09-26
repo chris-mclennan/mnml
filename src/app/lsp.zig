@@ -2052,6 +2052,11 @@ fn gotoResult(app: *App, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Erro
 fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.Error!void {
     const path = try app.frame.allocator().dupe(u8, loc.path);
     const cur = app.active;
+    // The answer lands after the key that asked, so the key's own jump
+    // bookkeeping never saw it: `gd` records where it was pressed, the
+    // way Neovim's `vim.lsp.buf.definition` does, and `Ctrl-O` comes
+    // back. (A jump to another file is recorded by the open itself.)
+    const before = try @import("jumplist.zig").current(app);
     app.lsp.lender = lender: {
         const e = app.panes.editor(from orelse cur orelse break :lender null) orelse break :lender null;
         const s = serverFor(app, e.buf.doc.path orelse break :lender null) orelse break :lender null;
@@ -2076,6 +2081,10 @@ fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.
         e.buf.editor.anchor = null;
         e.buf.editor.setCursor(types.byteOf(e.buf.editor.bytes(), loc.range.start, enc));
         e.view.scroll_line = @intCast(e.buf.editor.currentLine() -| app.pane_rows / 2);
+        if (before) |b| if (std.mem.eql(u8, b.path, path)) {
+            const at = e.buf.editor.rowCol();
+            if (at.row != b.row or at.col != b.col) try @import("jumplist.zig").record(app, b);
+        };
     }
     app.needs_render = true;
 }

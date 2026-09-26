@@ -29,6 +29,10 @@ pub const EditOp = union(enum) {
     /// ends instead of crossing the `\n`.
     move_right_no_cross_line,
     move_left_no_cross_line,
+    /// vim `l` / `h` under NvChad's `whichwrap+=<>[]hl`: across line
+    /// ends without stopping past the last char (`motion.rightWrap`).
+    move_right_wrap,
+    move_left_wrap,
     move_word_end,
     /// `cw` / `cW` for `n` words (`:help cw`): the end of the current
     /// word — staying when already there — then `e` for the rest; on a
@@ -54,6 +58,12 @@ pub const EditOp = union(enum) {
     move_sentence: struct { forward: bool },
     move_line_end,
     move_line_last_char,
+    /// `%` (`:help %`): the matching bracket; none fails the list.
+    move_bracket_match,
+    /// `n` / `N` as an operator's motion: the start of the find match the
+    /// app seeded after / before the cursor, resolved when applied so `.`
+    /// finds the next one; none fails the list.
+    move_to_find_match: bool,
     /// Display-row motions; the payload is the wrap width (0 = no wrap).
     move_visual_down: usize,
     move_visual_up: usize,
@@ -128,6 +138,27 @@ pub const EditOp = union(enum) {
     /// of the op list is dropped — vim abandons the operator, so a failed
     /// `ci(` stays in Normal and records nothing for `.`.
     abort_unless_selection,
+    /// After an operator's motion: when the motion could not move at all
+    /// (`dj` on the last line, `d9k` on the first) the rest of the list
+    /// is dropped — vim fails the operator rather than running it on the
+    /// cursor's own line.
+    abort_unless_moved,
+    /// The start of an operator's range, before a linewise widening
+    /// loses it: `min(anchor, cursor)` and the column the cursor wants.
+    /// `cursor_to_operator_start` / `delete_selection_linewise` read it
+    /// (`yk` ends on the line above, `dk` keeps the column — `:help 'sol'`).
+    mark_operator_start,
+    cursor_to_operator_start,
+    /// `count` whole lines from the cursor's, clamped to the buffer's
+    /// last, as the `_inner` linewise shape (the last line's `\n` left
+    /// out) — `{count}cc` / `{count}S`; the count is `{count}.`'s.
+    select_count_lines: u32,
+    /// `:help exclusive`, after an exclusive motion under an operator:
+    /// a range that ends in column 1 of a later line ends at the previous
+    /// line's end instead, and when it also began at or before its line's
+    /// first non-blank it is linewise (`Editor.object_lines`, read by the
+    /// `if_lines_object` that follows).
+    exclusive_motion_rule,
     find_char_on_line: struct { ch: u21, forward: bool, before: bool, inclusive: bool, repeat: bool },
     /// vim `gn` / `gN`: select the find match the cursor is on, else the
     /// next (previous) one — resolved when the op is APPLIED, so `.`
@@ -186,6 +217,16 @@ pub const EditOp = union(enum) {
     delete_to_line_start_in_insert,
     delete_line,
     delete_selection,
+    /// A `normalize_linewise_selection`ed range deleted as whole lines:
+    /// the register is linewise (`:help linewise-register`), and the
+    /// cursor lands on the line that takes their place at the column
+    /// `mark_operator_start` kept (the line start without one).
+    delete_selection_linewise,
+    /// The selection's text written to the registers as a delete would
+    /// write it (`""`, `"1`… or the small-delete `"-`), the buffer
+    /// untouched — a change's text before `replace_selection` removes
+    /// it (`:help quote-`). `true`: linewise, a final `\n` added.
+    register_selection_delete: bool,
     replace_selection: []const u8,
     replace_char_at_cursor: u21,
     overwrite_char_and_advance: u21,
@@ -223,6 +264,10 @@ pub const EditOp = union(enum) {
     /// line break (the new line takes the indent); fewer than `n` left
     /// on the line and nothing changes.
     replace_chars_with_newline: u32,
+    /// vim's `{n}r<c>` (`:help r`): the `count` characters from the cursor
+    /// become `ch`, the cursor on the last of them; fewer than `count`
+    /// left on the line and nothing changes (the command fails).
+    replace_chars: struct { ch: u21, count: u32 },
     /// vim's `U` (`:help U`): the line the latest changes were made on
     /// back as it was before them — itself a change, so `U` again puts
     /// them back.
@@ -251,6 +296,10 @@ pub const EditOp = union(enum) {
     paste_after_indent,
     paste_before_indent,
     paste,
+    /// Visual `p` / `P` (`register.putOverSelection`): the register's
+    /// text replaces the selection; `swap` (`p`) puts the replaced text
+    /// in the registers. `linewise`: a V-LINE selection.
+    put_over_selection: struct { swap: bool, linewise: bool },
 
     // ── history / grouping ──
     undo,
@@ -259,7 +308,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 159);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 172);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -271,11 +320,11 @@ pub const EditOp = union(enum) {
             } else false,
             .if_lines_object => |c| anyOf(c.lines, isMutation) or anyOf(c.chars, isMutation),
             // motions
-            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_line_keep_col, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
+            .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_right_wrap, .move_left_wrap, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_bracket_match, .move_to_find_match, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_line_keep_col, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
-            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .find_char_on_line, .select_find_match => false,
+            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .abort_unless_moved, .mark_operator_start, .cursor_to_operator_start, .select_count_lines, .exclusive_motion_rule, .find_char_on_line, .select_find_match => false,
             .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .select_all_word_occurrences, .block_select_start, .block_select_clear, .block_eol, .yank_block, .block_other_end_of_row => false,
-            .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .undo, .redo, .replace_session_begin => false,
+            .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .register_selection_delete, .undo, .redo, .replace_session_begin => false,
             else => true,
         };
     }
@@ -283,7 +332,10 @@ pub const EditOp = union(enum) {
     /// Vertical motions keep the goal column; everything else resets it.
     pub fn preservesGoalCol(op: EditOp) bool {
         return switch (op) {
-            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws, .move_to_line_keep_col => true,
+            .move_up, .move_down, .page_up, .page_down, .half_page_up, .half_page_down, .move_visual_down, .move_visual_up, .move_down_first_non_ws, .move_up_first_non_ws, .move_to_line_keep_col, .cursor_to_operator_start => true,
+            // An operator's opening steps never move the cursor: `$dk`
+            // keeps `$`'s wanted column for the `k` (`:help curswant`).
+            .select_start, .abort_unless_moved, .mark_operator_start => true,
             .repeat => |r| r.inner.preservesGoalCol(),
             .atomic => |ops| for (ops) |o| {
                 if (!o.preservesGoalCol()) break false;
@@ -305,7 +357,7 @@ pub const EditOp = union(enum) {
     /// these with `set_register_hint` when a `"x` is pending.
     pub fn touchesClipboard(op: EditOp) bool {
         return switch (op) {
-            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent, .paste, .cut_selection, .delete_selection, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
+            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent, .paste, .put_over_selection, .cut_selection, .delete_selection, .delete_selection_linewise, .register_selection_delete, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
             .repeat => |r| r.inner.touchesClipboard(),
             .atomic => |ops| for (ops) |o| {
                 if (o.touchesClipboard()) break true;
@@ -344,7 +396,8 @@ pub const EditOp = union(enum) {
     pub fn countPtr(op: *EditOp) ?*u32 {
         return switch (op.*) {
             .repeat => |*r| &r.count,
-            .move_word_end_cw, .move_big_word_end_cw => |*n| n,
+            .move_word_end_cw, .move_big_word_end_cw, .select_count_lines => |*n| n,
+            .replace_chars => |*r| &r.count,
             else => null,
         };
     }
@@ -438,6 +491,9 @@ pub const EditOutcome = struct {
     text_edits: []const TextEdit = &.{},
     /// Byte range just yanked or deleted — the inc-yank flash.
     yanked_range: ?[2]usize = null,
+    /// Bytes a put just inserted — the `'[` / `']` marks and the edit
+    /// hint (the cursor no longer ends after them).
+    changed_range: ?[2]usize = null,
     /// `abort_unless_selection` found no selection: the ops after it in
     /// the same list are not applied.
     aborted: bool = false,

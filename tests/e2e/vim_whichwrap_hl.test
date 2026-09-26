@@ -1,0 +1,12 @@
+# NvChad sets whichwrap+=<>[]hl: $l goes to the next line (2:1) and 4l
+# from col 1 of "abc" lands on 2:2. mnml: $l stays, 4l lands on 2:1.
+write f.txt "abc\ndef\n"
+open f.txt
+command editor.use_vim
+key 4
+key l
+expect status contains "\"cursor\":{\"line\":2,\"col\":2}"
+key k
+key $
+key l
+expect status contains "\"cursor\":{\"line\":2,\"col\":1}"

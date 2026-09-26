@@ -252,24 +252,70 @@ pub fn moveLine(ed: *Editor, dir: i2, out: *EditOutcome) Allocator.Error!void {
 pub fn transformSelectionCase(ed: *Editor, kind: CaseTransform, out: *EditOutcome) Allocator.Error!void {
     const sel = ed.selection() orelse return;
     const src = ed.bytes()[sel[0]..sel[1]];
-    const buf = try ed.gpa.alloc(u8, src.len);
-    defer ed.gpa.free(buf);
-    var changed = false;
-    for (src, buf) |c, *o| {
-        o.* = switch (kind) {
-            .lower => std.ascii.toLower(c),
-            .upper => std.ascii.toUpper(c),
-            .toggle => if (std.ascii.isUpper(c)) std.ascii.toLower(c) else std.ascii.toUpper(c),
-        };
-        if (o.* != c) changed = true;
-    }
-    if (changed) {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ed.gpa);
+    try caseText(ed.gpa, &buf, src, kind);
+    if (!std.mem.eql(u8, buf.items, src)) {
         try ed.checkpoint();
-        try ed.splice(sel[0], sel[1], buf);
+        try ed.splice(sel[0], sel[1], buf.items);
         out.buffer_changed = true;
     }
     ed.cursor = sel[0];
     ed.anchor = null;
+}
+
+/// `src` with every letter's case changed — Latin-1, Latin Extended-A,
+/// Greek and Cyrillic as well as ASCII (Neovim: `~~` on `élan` ->
+/// `ÉLan`). Bytes that are not valid UTF-8 pass through.
+pub fn caseText(gpa: Allocator, out: *std.ArrayList(u8), src: []const u8, kind: CaseTransform) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < src.len) {
+        const n = std.unicode.utf8ByteSequenceLength(src[i]) catch 1;
+        if (i + n > src.len) {
+            try out.appendSlice(gpa, src[i..]);
+            return;
+        }
+        const c = std.unicode.utf8Decode(src[i .. i + n]) catch {
+            try out.append(gpa, src[i]);
+            i += 1;
+            continue;
+        };
+        const m = switch (kind) {
+            .lower => lowerCp(c),
+            .upper => upperCp(c),
+            .toggle => if (lowerCp(c) != c) lowerCp(c) else upperCp(c),
+        };
+        var enc: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(m, &enc) catch unreachable;
+        try out.appendSlice(gpa, enc[0..len]);
+        i += n;
+    }
+}
+
+/// The lowercase of an uppercase letter, else `c` itself.
+pub fn lowerCp(c: u21) u21 {
+    return switch (c) {
+        'A'...'Z', 0xC0...0xD6, 0xD8...0xDE, 0x391...0x3A1, 0x3A3...0x3AB, 0x410...0x42F => c + 0x20,
+        0x400...0x40F => c + 0x50,
+        0x178 => 0xFF,
+        0x1E9E => 0xDF,
+        0x100...0x12F, 0x132...0x137, 0x14A...0x177 => if (c % 2 == 0) c + 1 else c,
+        0x139...0x148, 0x179...0x17E => if (c % 2 == 1) c + 1 else c,
+        else => c,
+    };
+}
+
+/// The uppercase of a lowercase letter, else `c` itself.
+pub fn upperCp(c: u21) u21 {
+    return switch (c) {
+        'a'...'z', 0xE0...0xF6, 0xF8...0xFE, 0x3B1...0x3C1, 0x3C3...0x3CB, 0x430...0x44F => c - 0x20,
+        0x450...0x45F => c - 0x50,
+        0xFF => 0x178,
+        0xDF => 0x1E9E, // ß -> ẞ, as Neovim's gU does
+        0x100...0x12F, 0x132...0x137, 0x14A...0x177 => if (c % 2 == 1) c - 1 else c,
+        0x139...0x148, 0x179...0x17E => if (c % 2 == 0) c - 1 else c,
+        else => c,
+    };
 }
 
 /// `{n}r<CR>`: the `n` characters from the cursor become one line
@@ -281,6 +327,11 @@ pub fn replaceCharsWithNewline(ed: *Editor, n: u32, out: *EditOutcome) Allocator
         if (end >= eol) return; // fewer than `n` left: vim fails the whole `r`
         end = ed.nextBoundary(end);
     }
+    // vim's `r` is the primary cursor's, with no selection: extras and
+    // a stale anchor would not follow the cut (one past the new end
+    // panicked the line index and `insert_newline`'s selection read).
+    @import("multicursor.zig").clear(ed);
+    ed.anchor = null;
     // One undo step: the cut and the newline's own checkpoint.
     const tok = try ed.beginAtomic();
     defer ed.endAtomic(tok);
@@ -315,14 +366,19 @@ pub fn undoLine(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
 /// vim `~`: toggle the ASCII letter under the cursor and advance.
 pub fn toggleCaseChar(ed: *Editor, out: *EditOutcome) Allocator.Error!void {
     if (ed.cursor >= ed.len()) return;
-    const b = ed.bytes()[ed.cursor];
-    if (std.ascii.isAlphabetic(b)) {
+    const end = ed.nextBoundary(ed.cursor);
+    const src = ed.bytes()[ed.cursor..end];
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ed.gpa);
+    try caseText(ed.gpa, &buf, src, .toggle);
+    if (!std.mem.eql(u8, buf.items, src)) {
         try ed.checkpoint();
-        const t = [_]u8{if (std.ascii.isUpper(b)) std.ascii.toLower(b) else std.ascii.toUpper(b)};
-        try ed.splice(ed.cursor, ed.cursor + 1, &t);
+        try ed.splice(ed.cursor, end, buf.items);
         out.buffer_changed = true;
+        ed.cursor = ed.cursor + buf.items.len;
+        return;
     }
-    ed.cursor = ed.nextBoundary(ed.cursor);
+    ed.cursor = end;
 }
 
 // ─── comment / number / reflow / align ──────────────────────────────────
