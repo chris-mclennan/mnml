@@ -26,6 +26,7 @@ const Chord = key_mod.Chord;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const host = @import("../bridge/host.zig");
+const os_path = @import("../core/os_path.zig");
 const arrange = @import("arrange.zig");
 const broker_app = @import("broker.zig");
 const wire = @import("../bridge/wire.zig");
@@ -308,7 +309,7 @@ pub fn open(app: *App, opts: OpenOptions) CommandError!PaneId {
     next_id += 1;
     const id = app.panes.peekId();
     const ipc_dir = try preparedIpcDir(app);
-    const sock = try host.socketPath(gpa, ipc_dir, next_id);
+    const sock = try host.socketPath(gpa, ipc_dir, next_id, os_path.tempDir(&app.env, .native));
     defer gpa.free(sock);
     var env = try host.envFor(gpa, &app.env, .{
         .socket_path = sock,
@@ -1133,9 +1134,10 @@ test "the IPC channel an integration is told about exists even when the workspac
     _ = app.env.swapRemove("MNML_IPC_DIR");
     const dir = try preparedIpcDir(&app);
     // The socket leaves the workspace for `/tmp`…
-    const sock = try host.socketPath(testing.allocator, dir, 1);
+    const tmp_dir = os_path.tempDir(&app.env, .native);
+    const sock = try host.socketPath(testing.allocator, dir, 1, tmp_dir);
     defer testing.allocator.free(sock);
-    try testing.expect(sdk_testing.pathStartsWith(sock, "/tmp/"));
+    try testing.expect(std.mem.startsWith(u8, sock, if (@import("builtin").os.tag == .windows) tmp_dir else "/tmp/"));
     // …and the channel is there anyway.
     try Io.Dir.cwd().access(testing.io, dir, .{});
     try testing.expect(std.mem.startsWith(u8, dir, deep.items));
