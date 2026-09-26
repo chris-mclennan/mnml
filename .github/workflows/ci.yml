@@ -251,7 +251,10 @@ jobs:
             sleep $((i * 15))
           done
           exit 1
+      # -j1: one ReleaseSafe LLVM compile of the exe peaks at 9 GB for
+      # aarch64 (measured locally), and gate-build has six of that size;
+      # two at once is what the runner was shut down for at 12 minutes.
       - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
-        run: zig build -j2 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j1 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
       - name: What was built
         run: ls -la zig-out/gate/
