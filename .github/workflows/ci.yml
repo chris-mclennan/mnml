@@ -16,10 +16,11 @@ on:
         type: boolean
         default: false
 
-# A new push to a pull request supersedes the run on the old head; a
-# push to main keeps every run (each commit there gets its verdict).
+# A newer push supersedes its own branch's or pull request's run still
+# in flight — main included, which is pushed rarely. Stacked runs on the
+# shared runner queue starved every other branch's jobs for half an hour.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Checkout and build only; the token needs nothing but read.
