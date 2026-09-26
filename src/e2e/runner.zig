@@ -2056,13 +2056,52 @@ test "parse errors and unreadable files are outcomes, never panics" {
 test "wait ticks the driver while the clock runs" {
     var env = try TestEnv.init();
     defer env.deinit();
-    const path = try env.script("w.test", "wait 30\n");
+    const path = try env.script("w.test", "wait 100\n");
     defer t.allocator.free(path);
-    var sf: StubFactory = .{};
-    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, env.opts());
+    // Every tick is stamped. A `wait` that slept its whole clock and
+    // ticked once after would leave one gap as long as the wait; one that
+    // ticks between slices leaves no gap longer than a slice took. The
+    // assertion is relative to what the clock actually did, so a runner
+    // that oversleeps each 2 ms slice tenfold still passes, and only a
+    // single sleep swallowing half the file's span fails it.
+    const Stamped = struct {
+        var at: [4096]i64 = undefined;
+        var n: usize = 0;
+        fn create(_: *anyopaque, gpa: Allocator, _: Io, cfg: driver_mod.Config) anyerror!Driver {
+            const s = try gpa.create(driver_mod.Stub);
+            s.* = try driver_mod.Stub.init(gpa, cfg.cols, cfg.rows);
+            return .{ .ptr = s, .vtable = &stamped };
+        }
+        const stamped: Driver.VTable = blk: {
+            var v = @as(*const Driver.VTable, driver_mod.Stub.vtablePtr()).*;
+            v.tick = struct {
+                fn f(p: *anyopaque) driver_mod.Error!void {
+                    if (n < at.len) {
+                        at[n] = Io.Timestamp.now(std.testing.io, .awake).toMilliseconds();
+                        n += 1;
+                    }
+                    return driver_mod.Stub.vtablePtr().tick(p);
+                }
+            }.f;
+            break :blk v;
+        };
+    };
+    Stamped.n = 0;
+    var dummy: u8 = 0;
+    var o = runFile(t.allocator, t.io, .{ .ptr = &dummy, .create = Stamped.create }, path, content_size, env.opts());
     try expectPassed(&o);
-    // 30 ms in 2 ms slices: many ticks beyond the render cycles' four.
-    try t.expect(sf.stats.ticks > 8);
+    const stamps = Stamped.at[0..Stamped.n];
+    try t.expect(stamps.len >= 2);
+    const span = stamps[stamps.len - 1] - stamps[0];
+    // The clock ran: the ticks span the whole wait.
+    try t.expect(span >= 100);
+    var widest: i64 = 0;
+    for (stamps[1..], stamps[0 .. stamps.len - 1]) |b, a| widest = @max(widest, b - a);
+    // And it was ticked through: no single gap is half of it.
+    if (widest * 2 > span) {
+        std.debug.print("wait ticks: {d} over {d} ms, widest gap {d} ms\n", .{ stamps.len, span, widest });
+        return error.TestUnexpectedResult;
+    }
 }
 
 test "a leaking App fails the file" {
