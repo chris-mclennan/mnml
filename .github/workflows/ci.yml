@@ -1,5 +1,10 @@
 name: CI
 
+# Every `zig build` here runs with `-j2`: a hosted runner has 7 GB, and
+# the ReleaseSafe cross-builds at full parallelism were killed by the
+# memory killer after fifteen silent minutes (no error, just "Cleaning
+# up orphan processes"). Two concurrent compile jobs fit; it is slower,
+# and it finishes.
 on:
   push:
     branches: [main]
@@ -51,11 +56,11 @@ jobs:
       # not in its graph (build.zig, `pty_supported`).
       - name: zig build test (Debug)
         shell: bash
-        run: zig build test -Doptimize=Debug --summary failures
+        run: zig build -j2 test -Doptimize=Debug --summary failures
 
       - name: zig build test (ReleaseSafe — what ships)
         shell: bash
-        run: zig build test -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
 
       # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
       # files, and the corpus's timings are the shipped build's
@@ -65,7 +70,7 @@ jobs:
       # by the `zig build test -Doptimize=Debug` step above.
       - name: zig build (ReleaseSafe — the build the gate runs against)
         shell: bash
-        run: zig build -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
 
       # A string that dies at the next frame reaching a consumer that
       # outlives the frame (a menu label, a prompt title, a confirm
@@ -73,7 +78,7 @@ jobs:
       # same audit as a unit test; this step names the sites on failure.
       - name: zig build arena-audit (no frame-arena string outlives its frame)
         shell: bash
-        run: zig build arena-audit --summary failures
+        run: zig build -j2 arena-audit --summary failures
 
       # Chrome a component owns, drawn by hand somewhere else: a box
       # glyph as a whole literal outside the frame modules, an
@@ -81,13 +86,13 @@ jobs:
       # `zig build unit` runs the same walk; this step names the sites.
       - name: zig build chrome-audit (chrome is drawn through its component)
         shell: bash
-        run: zig build chrome-audit --summary failures
+        run: zig build -j2 chrome-audit --summary failures
 
       # Every spec id has a runner (D5): `-Dpartial=false` turns a missing
       # runner into a compile error.
       - name: zig build -Dpartial=false (every command id has a runner)
         shell: bash
-        run: zig build -Dpartial=false --summary failures
+        run: zig build -j2 -Dpartial=false --summary failures
 
       # The Phase-0 gate (tools/gate.txt) at three sizes: content asserts at
       # 120x40; 80x24 and 200x60 assert no panic, no leak, no rect outside
@@ -121,19 +126,19 @@ jobs:
           cache-key: linux-native
 
       - name: zig build
-        run: zig build --summary failures
+        run: zig build -j2 --summary failures
 
       - name: zig build -Dpartial=false
-        run: zig build -Dpartial=false --summary failures
+        run: zig build -j2 -Dpartial=false --summary failures
 
       - name: zig build glyph-audit
-        run: zig build glyph-audit
+        run: zig build -j2 glyph-audit
 
       - name: zig build test -Doptimize=ReleaseSafe
-        run: zig build test -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
 
       - name: zig build -Doptimize=ReleaseSafe
-        run: zig build -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
 
       - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
         env:
@@ -185,6 +190,6 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
           cache-key: cross-${{ matrix.target }}
       - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
-        run: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
       - name: What was built
         run: ls -la zig-out/gate/

@@ -1062,6 +1062,31 @@ pub fn build(b: *std.Build) void {
     // was added above.
     hermeticUnitEnv(b, unit_step);
     if (test_trace and !test_trace_live) traceReport(b, unit_step);
+    llvmForX86Debug(b, target, optimize);
+}
+
+/// Every x86_64 Debug compile goes through LLVM. Zig 0.16's own x86_64
+/// code generator, the Debug default on that arch, crashes on this tree
+/// ("TODO implement writeToPackedMemory for more types"; SEGV on the CI
+/// runners), and Debug is what the unit suite and the first `zig build`
+/// of every Linux / Windows job use. A graph walk from the top-level
+/// steps reaches every compile step, so a new artifact never needs to
+/// remember this. aarch64 Debug and every ReleaseSafe build are LLVM
+/// already or work as they are.
+fn llvmForX86Debug(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    if (optimize != .Debug or target.result.cpu.arch != .x86_64) return;
+    var seen: std.AutoHashMapUnmanaged(*std.Build.Step, void) = .empty;
+    var it = b.top_level_steps.iterator();
+    while (it.next()) |e| walkForLlvm(b, &e.value_ptr.*.step, &seen);
+}
+
+fn walkForLlvm(b: *std.Build, step: *std.Build.Step, seen: *std.AutoHashMapUnmanaged(*std.Build.Step, void)) void {
+    if (seen.contains(step)) return;
+    seen.put(b.allocator, step, {}) catch @panic("OOM");
+    if (step.cast(std.Build.Step.Compile)) |c| {
+        if (c.root_module.resolved_target.?.result.cpu.arch == .x86_64) c.use_llvm = true;
+    }
+    for (step.dependencies.items) |d| walkForLlvm(b, d, seen);
 }
 
 /// Under the trace runner, run the unit-test binaries in parallel, their

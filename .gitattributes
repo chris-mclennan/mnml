@@ -1,0 +1,9 @@
+# Every text file is LF in the repo and on every checkout: a Windows
+# runner's default autocrlf turned .zig files into CRLF and `zig fmt
+# --check` failed before anything ran. Binaries are marked so git never
+# touches them.
+* text=auto eol=lf
+*.png binary
+*.ttf binary
+*.gif binary
+*.bundle binary
