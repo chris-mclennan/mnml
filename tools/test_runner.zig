@@ -68,7 +68,7 @@ pub fn main(init: std.process.Init.Minimal) void {
         }
         // Anything else (`--listen=-`, `--cache-dir=`) is the build runner's; ignored.
     }
-    if (!child) return supervise(args);
+    if (!child) return supervise(init, args);
     runner_io = .init(std.heap.page_allocator, .{});
     const filter: ?[]const u8 = if (builtin.os.tag == .windows) null else init.environ.getPosix("MNML_TEST_FILTER");
     // The build runner hands `--seed=` only to a runner in its protocol
@@ -152,9 +152,12 @@ pub fn main(init: std.process.Init.Minimal) void {
 /// end. The child writes the number of the test it is about to run to a
 /// progress file beside the binary, which is how the parent knows where
 /// it died.
-fn supervise(args: []const [:0]const u8) void {
+fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
     const gpa = std.heap.page_allocator;
-    var threaded: Io.Threaded = .init(gpa, .{});
+    // The child's environment is this process's: an Io made without one
+    // spawns on Windows with an empty block — no PATH, so no `git`, no
+    // `cmd.exe`, in any test.
+    var threaded: Io.Threaded = .init(gpa, .{ .argv0 = .init(init.args), .environ = init.environ });
     defer threaded.deinit();
     const io = threaded.io();
     const test_fns = builtin.test_functions;
