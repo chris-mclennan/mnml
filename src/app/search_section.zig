@@ -1014,7 +1014,7 @@ test "keys: Esc clears the query then leaves it; ↓ and Enter open the hit at i
     try t.expect(st.query_focused);
     try app.handle(.{ .key = Key.named(.enter) });
     const e = app.activeEditor().?;
-    try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, st.hits.items[1].rel));
+    try t.expect(@import("mnml_sdk").testing.pathEndsWith(e.buf.doc.path.?, st.hits.items[1].rel));
     try t.expectEqual(@as(usize, st.hits.items[1].line - 1), e.buf.editor.currentLine());
     try t.expectEqual(@as(usize, st.hits.items[1].col), e.buf.editor.rowCol().col);
     try t.expect(app.focus == .pane);

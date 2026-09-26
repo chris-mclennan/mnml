@@ -955,6 +955,7 @@ pub fn toolAccept(app: *App, label: []const u8) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = app_mod.Key;
 
 const Fixture = struct {
@@ -1046,10 +1047,10 @@ test "npm run validates the script against the nearest package.json, walking up 
     try f.file("packages/app/src/index.ts", "export const x = 1;");
     try f.open("packages/app/src/index.ts");
     f.run(.@"npm.run");
-    try t.expectEqualStrings("npm.run: no `dev` script in package.json — available: test / build", f.toast());
+    try sdk_testing.expectPath("npm.run: no `dev` script in package.json — available: test / build", f.toast());
     try t.expect(!f.activeIsPty());
     f.run(.@"npm.lint");
-    try t.expectEqualStrings("npm.lint: no `lint` script in package.json — available: test / build", f.toast());
+    try sdk_testing.expectPath("npm.lint: no `lint` script in package.json — available: test / build", f.toast());
     if (!pty_pane.supported or !onPath(&f.app, "npm")) return;
     f.run(.@"npm.build");
     try t.expect(f.activeIsPty());
@@ -1057,10 +1058,10 @@ test "npm run validates the script against the nearest package.json, walking up 
     // The pane's cwd is the sub-package, and the context survives the
     // pty taking focus: a second runner still finds packages/app.
     const p = f.app.panes.pty(f.app.active.?).?;
-    try t.expect(std.mem.endsWith(u8, p.cwd.?, "packages/app"));
+    try t.expect(sdk_testing.pathEndsWith(p.cwd.?, "packages/app"));
     try t.expectEqualStrings("npm run build", f.app.runners.last_cmdline.?);
     f.run(.@"npm.run");
-    try t.expectEqualStrings("npm.run: no `dev` script in package.json — available: test / build", f.toast());
+    try sdk_testing.expectPath("npm.run: no `dev` script in package.json — available: test / build", f.toast());
 }
 
 test "pytest detection: a bare tests/ dir is not a project; test_*.py one level deep is; requirements.txt is" {
