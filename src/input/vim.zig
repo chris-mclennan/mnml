@@ -1012,6 +1012,16 @@ pub const Vim = struct {
         return b.finish();
     }
 
+    /// `{n}D` / `{n}C`: the operator over `$` with a count — from the
+    /// cursor to the end of the line `n - 1` below (`:help $`).
+    fn countedToLineEnd(self: *Vim, n: u32, op: PendingOp, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
+        var b = Builder.init(arena);
+        try b.push(.select_start);
+        try b.pushRepeated(.move_down, n - 1);
+        try b.push(.move_line_end);
+        return self.finishOperator(&b, op, ctx, false);
+    }
+
     /// `{count}cc` / `{count}S`: the lines go to the register whole and
     /// one line stays to type into, keeping the first one's indent
     /// (Neovim's `autoindent`: `  abc` + `ccX` → `  X`).
@@ -1559,11 +1569,24 @@ pub const Vim = struct {
                     },
                     'D' => {
                         self.resetPending();
-                        return ops(arena, &.{.delete_to_line_end});
+                        if (n == 1) return ops(arena, &.{.delete_to_line_end});
+                        // `{n}D` is `d$` with a count: to the end of the
+                        // line `n - 1` below (clamped); on the last line
+                        // it fails (`:help D`).
+                        if (ctx.line_idx + 1 >= ctx.line_count) return .consumed;
+                        return self.countedToLineEnd(n, .delete, ctx, arena);
                     },
                     'C' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.delete_to_line_end});
+                        if (n == 1) {
+                            self.enterInsert();
+                            return ops(arena, &.{.delete_to_line_end});
+                        }
+                        if (ctx.line_idx + 1 >= ctx.line_count) {
+                            self.resetPending();
+                            return .consumed;
+                        }
+                        self.resetPending();
+                        return self.countedToLineEnd(n, .change, ctx, arena);
                     },
                     's' => {
                         self.resetPending();
