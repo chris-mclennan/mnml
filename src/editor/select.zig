@@ -588,10 +588,14 @@ pub fn argument(ed: *Editor, around: bool) void {
 /// close_start, close_end }`. Self-closing and `<!…>` tags are skipped;
 /// same-name nesting is honoured.
 pub fn enclosingTagPair(ed: *const Editor) ?[4]usize {
-    const t = ed.bytes();
+    return tagPairAround(ed.bytes(), ed.cursor);
+}
+
+/// The innermost tag pair around byte `pos`: `[<open, >open, <close, >close]`.
+fn tagPairAround(t: []const u8, pos: usize) ?[4]usize {
     // A cursor ON a `<` counts as inside that tag, so the first search
     // window includes the cursor byte.
-    var search_from = @min(ed.cursor + 1, t.len);
+    var search_from = @min(pos + 1, t.len);
     // Walk opening tags backward from the cursor; the first one whose
     // matching closer lies past the cursor wins.
     while (true) {
@@ -604,7 +608,7 @@ pub fn enclosingTagPair(ed: *const Editor) ?[4]usize {
         const name = tagName(inner);
         if (name.len == 0) continue;
         if (findClose(t, gt + 1, name)) |close| {
-            if (ed.cursor < close[1]) return .{ lt, gt + 1, close[0], close[1] };
+            if (pos < close[1]) return .{ lt, gt + 1, close[0], close[1] };
         }
     }
 }
@@ -638,7 +642,17 @@ fn findClose(t: []const u8, from: usize, name: []const u8) ?[2]usize {
 }
 
 pub fn tag(ed: *Editor, around: bool) void {
-    const p = enclosingTagPair(ed) orelse return;
+    return tagCount(ed, around, 1);
+}
+
+/// `d2it` (`:help it`): the `count`-th enclosing tag pair.
+pub fn tagCount(ed: *Editor, around: bool, count: u32) void {
+    var p = enclosingTagPair(ed) orelse return;
+    var k: u32 = 1;
+    while (k < count) : (k += 1) {
+        if (p[0] == 0) return;
+        p = tagPairAround(ed.bytes(), p[0] - 1) orelse return;
+    }
     if (around) {
         ed.anchor = p[0];
         ed.cursor = p[3];

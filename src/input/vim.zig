@@ -1212,10 +1212,10 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 const linewise = select_op == .select_inner_paragraph or select_op == .select_around_paragraph;
-                const is_bracket = select_op == .select_inner_bracket or select_op == .select_around_bracket;
+                const counted = select_op == .select_inner_bracket or select_op == .select_around_bracket or select_op == .select_inner_tag or select_op == .select_around_tag;
                 var b = Builder.init(arena);
-                // `2di{`: the count-th enclosing pair (`:help i{`).
-                if (is_bracket and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
+                // `2di{` / `d2it`: the count-th enclosing pair (`:help i{`).
+                if (counted and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
                 // No object under the cursor (`ci(` outside parens): the
                 // operator is abandoned, not run on nothing.
                 try b.push(.abort_unless_selection);
@@ -2319,14 +2319,23 @@ pub const Vim = struct {
             },
             .text_object_inner, .text_object_around => {
                 const around = self.prefix == .text_object_around;
+                const n = self.count1();
                 self.resetPending();
                 const op = textObjectOp(key, around) orelse return .consumed;
                 self.visual_exact = true;
+                // `v2it` / `v2i(`: the count-th enclosing pair.
+                const counted = op == .select_inner_bracket or op == .select_around_bracket or op == .select_inner_tag or op == .select_around_tag;
+                if (counted and n > 1 and op != .select_inner_bracket) return repeated(arena, op, n);
                 // `vip` / `vap` make the selection linewise (`:help v_ip`).
                 if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
                 // `vi{` over a body on its own lines takes the last line's
                 // break too, so `vi{d` leaves no empty line (`:help v_i{`).
-                if (op == .select_inner_bracket) return ops(arena, &.{ op, .{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } } });
+                if (op == .select_inner_bracket) {
+                    var b = Builder.init(arena);
+                    if (n > 1) try b.pushRepeated(op, n) else try b.push(op);
+                    try b.push(.{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } });
+                    return b.finish();
+                }
                 return ops(arena, &.{op});
             },
             .register => {
@@ -2404,7 +2413,8 @@ pub const Vim = struct {
             return ops(arena, &.{.move_bracket_match});
         }
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
-        self.count = null;
+        // `v2it`: the count rides on to the text object.
+        if (!(ch == 'i' or ch == 'a')) self.count = null;
         if (key.code == .esc) {
             self.enterNormal();
             return ops(arena, &.{.select_clear});

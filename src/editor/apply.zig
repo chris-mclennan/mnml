@@ -34,6 +34,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             switch (r.inner.*) {
                 .select_inner_bracket => |b| return select.bracketCount(ed, b, false, r.count),
                 .select_around_bracket => |b| return select.bracketCount(ed, b, true, r.count),
+                // `d2it`: the second enclosing tag.
+                .select_inner_tag => return select.tagCount(ed, false, r.count),
+                .select_around_tag => return select.tagCount(ed, true, r.count),
                 // `5fx`: the fifth `x` or nowhere, never the last one found.
                 .find_char_on_line => |f| return motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat, r.count),
                 else => {},
