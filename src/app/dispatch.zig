@@ -4167,6 +4167,10 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         const typed = try app.frame.allocator().dupe(u8, ed.bytes()[r.start_byte .. r.start_byte + typed_len]);
         const line = ed.lineOfByte(r.start_byte);
         if (r.kind.opensLine()) {
+            // The cursor ends on the LAST copy, in its column (Neovim:
+            // `3ohi<Esc>` -> 4:2, `3Ohi<Esc>` -> 3:2).
+            const col = ed.cursor -| ed.lineStart(line);
+            defer if (r.count > 1) ed.setCursor(@min(ed.lineStart(line + r.count - 1) + col, ed.lineEnd(line + r.count - 1)));
             var i: u32 = 1;
             while (i < r.count) : (i += 1) {
                 if (r.kind == .open_above) {

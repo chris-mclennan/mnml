@@ -1016,8 +1016,22 @@ pub const Buffer = struct {
         }
         const tok = try self.editor.beginAtomic();
         var changed = false;
-        for (0..times) |_| {
-            if (try self.applyOps(d, clip, viewport_rows, arena)) changed = true;
+        // `3.` after `i1<Esc>` is `3i1<Esc>`: the copies follow one
+        // another, and only the last one's Esc steps back (Neovim:
+        // `1111aaa`, cursor 1:3) — not three inserts each stepping left.
+        // The move that entered Insert (`a`'s step right) runs once; an
+        // `o` / `O` record opens a line per copy, so it replays whole.
+        const esc_tail = d.len > 1 and std.meta.activeTag(d[d.len - 1]) == .move_left_no_cross_line;
+        var first_typed: usize = 0;
+        while (first_typed < d.len and !d[first_typed].isMutation()) first_typed += 1;
+        const opens_line = for (d) |o| {
+            if (o == .insert_newline_below or o == .insert_newline_above) break true;
+        } else false;
+        for (0..times) |i| {
+            const from = if (esc_tail and !opens_line and i > 0) first_typed else 0;
+            const to = if (esc_tail and i + 1 < times) d.len - 1 else d.len;
+            if (from >= to) continue;
+            if (try self.applyOps(d[from..to], clip, viewport_rows, arena)) changed = true;
         }
         self.editor.endAtomic(tok);
         if (!changed) self.editor.popCheckpoint();
