@@ -3094,7 +3094,9 @@ test "stream: http.cancel stops a stream where it is; a chunked body of any type
 
     // Chunked framing on a plain body streams too, counting bytes.
     const parts = [_][]const u8{ "{\"a\":", "1}" };
-    var server2 = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "application/json" }}, .chunks = &parts, .chunked = true, .chunk_delay_ms = 30 });
+    var server2 = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "application/json" }}, .chunks = &parts, .chunked = true, .chunk_delay_ms = 400 });
+    // 400 ms, not 30: the pane has to be seen mid-stream, and a slow
+    // runner's stall at 30 ms saw the stream already sealed.
     defer server2.stop(testing.io);
     const url2 = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/chunked", .{server2.port});
     defer testing.allocator.free(url2);
