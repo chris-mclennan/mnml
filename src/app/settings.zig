@@ -1365,7 +1365,7 @@ test "the overlay renders the sections and the footer names the target file" {
     };
     {
         const sub = (try footer(&app, app.frame.allocator(), try items(&app, app.frame.allocator()))).?;
-        try t.expectEqualStrings("→ ~/home/config.zon", sub);
+        try sdk_testing.expectPath("→ ~/home/config.zon", sub);
     }
     try app.render();
     const home_title = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);

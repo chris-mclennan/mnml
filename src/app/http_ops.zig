@@ -578,7 +578,7 @@ test "move: a block into another collection's file of the same name, a file into
     const dst = try f.read("smoke/r.http");
     defer testing.allocator.free(dst);
     try testing.expectEqualStrings("### ping\nGET https://x/ping\n\n### two\n# @tags smoke users\nPOST https://x/two\n\n{}\n", dst);
-    try testing.expectEqualStrings("moved block → smoke/r.http", f.app.lastToast().?);
+    try sdk_testing.expectPath("moved block → smoke/r.http", f.app.lastToast().?);
     // The file: into `api`, the open pane following.
     const loose = try std.fs.path.join(testing.allocator, &.{ f.root, "loose.http" });
     defer testing.allocator.free(loose);

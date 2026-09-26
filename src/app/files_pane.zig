@@ -1406,7 +1406,7 @@ test "marks are keyed by path: toggle advances, a range fills, invert and all re
     const paths = try f.actionPaths(arena_state.allocator());
     try t.expectEqual(@as(usize, 2), paths.len);
     try t.expect(sdk_testing.pathEndsWith(paths[0], "/src"));
-    try t.expect(std.mem.endsWith(u8, paths[1], "/README.md"));
+    try t.expect(sdk_testing.pathEndsWith(paths[1], "/README.md"));
     f.clearMarks();
     f.cursor = 0;
     const one = try f.actionPaths(arena_state.allocator());

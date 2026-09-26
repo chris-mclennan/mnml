@@ -630,6 +630,7 @@ pub fn acceptEmpty(app: *App, choice: usize) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const Env = struct {
     tmp: std.testing.TmpDir,
@@ -754,7 +755,7 @@ test "a trashed file with unsaved edits: the confirm says so and the trash keeps
     const eb = app.activeEditor().?;
     _ = try app.applyOps(eb, &.{.{ .insert_str = "EDIT" }});
     try confirmDelete(&app, &.{lib});
-    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "unsaved changes in lib/b.txt") != null);
+    try t.expect(sdk_testing.pathContains(app.overlay.confirm.state.message, "unsaved changes in lib/b.txt"));
     try app.handle(.{ .key = Key.char('d') });
     try t.expect(!exists(&app, lib));
     var d2 = try Io.Dir.cwd().openDir(t.io, td, .{ .iterate = true });

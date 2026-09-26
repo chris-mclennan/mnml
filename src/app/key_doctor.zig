@@ -345,7 +345,7 @@ test "applyGhosttyOptionAsAlt: writes the file (creating the directory), backs t
     try tmp.dir.createDirPath(io, "xdg/ghostty");
     try tmp.dir.writeFile(io, .{ .sub_path = "xdg/ghostty/config", .data = "" });
     try env.put("XDG_CONFIG_HOME", try std.fs.path.join(arena, &.{ root, "xdg" }));
-    try t.expect(std.mem.endsWith(u8, (try ghosttyConfigPath(arena, io, &env)).?, "xdg/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith((try ghosttyConfigPath(arena, io, &env)).?, "xdg/ghostty/config"));
 }
 
 test "fixNote: the sentence names what happened; a long path is cut with an ellipsis" {

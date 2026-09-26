@@ -91,7 +91,7 @@ test "no TMPDIR means /tmp; no USER means x; an empty value counts as unset" {
     try env.put("USER", "");
     const empty = try path(t.allocator, &env);
     defer t.allocator.free(empty);
-    try t.expectEqualStrings("/tmp/mnml-zig-running-x.workspace", empty);
+    try sdk_testing.expectPath("/tmp/mnml-zig-running-x.workspace", empty);
 }
 
 test "the dev profile has its own marker, so restart never reaches the other instance" {
@@ -109,7 +109,7 @@ test "the dev profile has its own marker, so restart never reaches the other ins
     defer t.allocator.free(stable);
     const want = try std.fmt.allocPrint(t.allocator, "/t/{s}chris.workspace", .{profile_mod.markerPrefix(.stable)});
     defer t.allocator.free(want);
-    try t.expectEqualStrings(want, stable);
+    try sdk_testing.expectPath(want, stable);
 }
 
 test "the Windows spellings fill in: TEMP for TMPDIR, USERNAME for USER" {

@@ -209,7 +209,7 @@ test "the config is found under XDG_CONFIG_HOME, then ~/.config, then the macOS 
     try tmp.dir.writeFile(io, .{ .sub_path = "xdg/ghostty/config", .data = "font-codepoint-map = U+EB40=Other\n" });
     try env.put("XDG_CONFIG_HOME", try std.fs.path.join(arena, &.{ root, "xdg" }));
     const xdg_map = try load(arena, io, &env);
-    try t.expect(std.mem.endsWith(u8, xdg_map.path.?, "xdg/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith(xdg_map.path.?, "xdg/ghostty/config"));
     try t.expect(xdg_map.routedFont(0xF1B0A) == null);
     try t.expectEqualStrings("Other", xdg_map.routedFont(0xEB40).?);
 }

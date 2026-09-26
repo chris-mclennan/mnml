@@ -324,7 +324,7 @@ test "audit_shadowed_binaries: a PATH copy that is not the linked binary is repo
     const text = e.buf.editor.bytes();
     try t.expect(std.mem.indexOf(u8, text, "mnml-named: PATH resolves ") != null);
     try t.expect(sdk_testing.pathContains(text, "/shadow/mnml-named · mnml uses "));
-    try t.expect(std.mem.indexOf(u8, text, "/bin/mnml-named\n") != null);
+    try t.expect(sdk_testing.pathContains(text, "/bin/mnml-named\n"));
     // The same file through a link is not a shadow.
     const link_dir = try std.fs.path.join(t.allocator, &.{ f.root, "linked" });
     defer t.allocator.free(link_dir);

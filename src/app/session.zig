@@ -1560,8 +1560,13 @@ test "session: the workspace compare is by realpath — a symlinked spelling on 
     try save(&via_link);
     const written = try f.tmp.dir.readFileAlloc(t.io, "ws/" ++ rel_path, t.allocator, .limited(1 << 20));
     defer t.allocator.free(written);
-    try t.expect(std.mem.indexOf(u8, written, ws) != null);
-    try t.expect(std.mem.indexOf(u8, written, link) == null);
+    // Looked for as ZON spells them — escaped, as Windows' `\` has to be.
+    const ws_zon = try std.fmt.allocPrint(t.allocator, "\"{f}\"", .{std.zig.fmtString(ws)});
+    defer t.allocator.free(ws_zon);
+    const link_zon = try std.fmt.allocPrint(t.allocator, "\"{f}\"", .{std.zig.fmtString(link)});
+    defer t.allocator.free(link_zon);
+    try t.expect(std.mem.indexOf(u8, written, ws_zon) != null);
+    try t.expect(std.mem.indexOf(u8, written, link_zon) == null);
 
     // A real directory that is not this workspace is still one toast.
     const by_other = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{f}\" }}", .{std.zig.fmtString(other)});
