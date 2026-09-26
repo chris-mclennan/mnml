@@ -211,7 +211,9 @@ pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) S
         defer gpa.free(head);
         try items.append(arena, .{
             .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - 3]),
-            .path = try std.fs.path.join(arena, &.{ dir_rel, entry.name }),
+            // `/`-joined on every platform: `isUnderDir` and the other
+            // workspace lists read a relative path that way.
+            .path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_rel, entry.name }),
             .title = try arena.dupe(u8, titleOf(head)),
             .mtime = st.mtime.toSeconds(),
             .bytes = st.size,
