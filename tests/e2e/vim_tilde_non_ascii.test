@@ -1,0 +1,8 @@
+# ~ toggles non-ASCII letters too (Neovim: ~~ on "élan" -> "ÉLan").
+write f.txt "élan\n"
+open f.txt
+command editor.use_vim
+key ~
+key ~
+ex w
+expect file f.txt contains "ÉLan"
