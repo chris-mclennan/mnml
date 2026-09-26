@@ -1099,6 +1099,29 @@ take its API away.
 .budget = .{ .shared_bucket = "~/buckets/bitbucket.json" },
 ```
 
+**The file this machine may already share.** `ratelimit`'s
+`<service>-ratelimit.json` — the one the Rust crate `mnml-ratelimit`
+and `bb_ratelimit.py` read and write — is the same bucket under older
+names, and `shared_bucket` reads it too:
+
+| `ratelimit`'s key | is read as |
+| --- | --- |
+| `ts` | `updated_at` |
+| `rate` | `rate_per_sec` |
+| `tokens` | `tokens` |
+| `cooldown_until` (`0` = none) | `cooldown_until` |
+| `last_429` (`0` = none) | `last_429_at` |
+| `throttles` | kept; a 429 adds one |
+
+That file carries no burst, so it stands for the service's own
+capacity (`ratelimit.Config`: 40 for Bitbucket, 60 for Jira). A file is
+written back in the names it was read in, so the processes already on
+it keep reading it. **On a machine that already shares one, pointing
+`budget.shared_bucket` at it is the expected setup** — every pane, the
+statusline poller and the fleet's scripts then draw on one allowance
+under one lock, rather than on two buckets that each think they are
+the whole budget.
+
 ## The warmer — pacing, one warmer per service, windows
 
 `mnml_sdk.warm` is the part `ratelimit` and `store` do not own: **when**

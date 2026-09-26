@@ -54,6 +54,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const request_log = @import("request_log.zig");
 const feed = @import("feed.zig");
+const ratelimit = @import("ratelimit.zig");
 
 pub const RateLimit = request_log.RateLimit;
 pub const Cache = request_log.Cache;
@@ -287,7 +288,16 @@ pub const Settings = struct {
 /// what was left at `updated_at` (epoch seconds, fractional); a
 /// `cooldown_until` in the future refuses every caller until then;
 /// `last_429_at` is when one last hit. Keys this SDK does not know are
-/// kept as they were. This code never creates the file: a missing one,
+/// kept as they were.
+///
+/// The file `ratelimit` already shares with the Rust crate and
+/// `bb_ratelimit.py` (`{"ts","tokens","rate","cooldown_until",
+/// "throttles","last_429"}`) is read too, as the same bucket under
+/// older names — `ts` is `updated_at`, `rate` is `rate_per_sec`,
+/// `last_429` is `last_429_at`, a `0` time is none — and written back
+/// in its own names, so the processes already on it keep reading it.
+/// That dialect carries no burst: the caller supplies one (the
+/// service's `ratelimit.Config.capacity`). This code never creates the file: a missing one,
 /// or one that does not parse, is no bucket at all, so a bad file can
 /// slow a pane but never take its API away.
 pub const Bucket = struct {
@@ -331,17 +341,45 @@ pub const Bucket = struct {
 
     pub const Outcome = struct { take: Take = .none, state: ?State = null };
 
+    /// Which names the file spells the bucket in; it is written back in
+    /// the same ones.
+    pub const Dialect = enum {
+        /// `rate_per_sec`, `burst`, `updated_at`, `last_429_at`.
+        spec,
+        /// `ratelimit`'s file: `rate`, `ts`, `last_429`, `throttles`.
+        legacy,
+    };
+
+    /// The burst a `.legacy` file stands for when the caller names none.
+    pub const default_legacy_burst: u32 = @intFromFloat(ratelimit.Config.bitbucket.capacity);
+
     /// The biggest file read. A bucket is a few hundred bytes.
     pub const max_bytes = 16 * 1024;
 
     /// Read `text` as a bucket; null when it is not one.
-    pub fn parse(a: Allocator, text: []const u8) ?struct { obj: std.json.ObjectMap, state: State } {
+    pub fn parse(a: Allocator, text: []const u8, legacy_burst: u32) ?struct { obj: std.json.ObjectMap, state: State, dialect: Dialect } {
         const v = std.json.parseFromSliceLeaky(std.json.Value, a, text, .{}) catch return null;
         const o = switch (v) {
             .object => |o| o,
             else => return null,
         };
         var st: State = .{};
+        if (o.get("rate_per_sec") == null and o.get("rate") != null) {
+            st.rate_per_sec = num(o.get("rate").?) orelse return null;
+            if (!(st.rate_per_sec >= 0)) return null;
+            st.burst = legacy_burst;
+            st.tokens = num(o.get("tokens") orelse return null) orelse return null;
+            st.updated_at = num(o.get("ts") orelse return null) orelse return null;
+            const zeroNone = struct {
+                fn f(x: ?std.json.Value) ?f64 {
+                    const n = num(x orelse return null) orelse return null;
+                    return if (n > 0) n else null;
+                }
+            }.f;
+            st.cooldown_until = zeroNone(o.get("cooldown_until"));
+            st.last_429_at = zeroNone(o.get("last_429"));
+            return .{ .obj = o, .state = st, .dialect = .legacy };
+        }
         st.rate_per_sec = num(o.get("rate_per_sec") orelse return null) orelse return null;
         const burst = num(o.get("burst") orelse return null) orelse return null;
         if (!(burst >= 0) or burst > 1e9 or !(st.rate_per_sec >= 0)) return null;
@@ -350,7 +388,7 @@ pub const Bucket = struct {
         st.updated_at = num(o.get("updated_at") orelse return null) orelse return null;
         st.cooldown_until = if (o.get("cooldown_until")) |c| num(c) else null;
         st.last_429_at = if (o.get("last_429_at")) |c| num(c) else null;
-        return .{ .obj = o, .state = st };
+        return .{ .obj = o, .state = st, .dialect = .spec };
     }
 
     fn num(v: std.json.Value) ?f64 {
@@ -364,6 +402,11 @@ pub const Bucket = struct {
     /// One read-modify-write under the file's exclusive lock. `now` is
     /// epoch seconds; `cooldown_secs` is a 429's pause (`penalize`).
     pub fn apply(io: Io, path: []const u8, op: Op, now: f64, cooldown_secs: f64) Outcome {
+        return applyWith(io, path, op, now, cooldown_secs, default_legacy_burst);
+    }
+
+    /// `apply`, naming the burst a `.legacy` file stands for.
+    pub fn applyWith(io: Io, path: []const u8, op: Op, now: f64, cooldown_secs: f64, legacy_burst: u32) Outcome {
         const file = Io.Dir.cwd().openFile(io, path, .{
             .mode = if (op == .peek) .read_only else .read_write,
             .lock = if (op == .peek) .shared else .exclusive,
@@ -377,7 +420,7 @@ pub const Bucket = struct {
         var heap: [64 * 1024]u8 = undefined;
         var fba: std.heap.FixedBufferAllocator = .init(&heap);
         const a = fba.allocator();
-        var got = parse(a, raw[0..n]) orelse return .{};
+        var got = parse(a, raw[0..n], legacy_burst) orelse return .{};
         var st = got.state;
         st.refill(now);
         var out: Outcome = .{ .state = st };
@@ -409,10 +452,22 @@ pub const Bucket = struct {
                 return true;
             }
         }.f;
-        if (!put(&got.obj, a, "tokens", .{ .float = st.tokens }) or
-            !put(&got.obj, a, "updated_at", .{ .float = st.updated_at }) or
-            !put(&got.obj, a, "cooldown_until", if (st.cooldown_until) |c| .{ .float = c } else .null) or
-            !put(&got.obj, a, "last_429_at", if (st.last_429_at) |c| .{ .float = c } else .null)) return out;
+        const ok = switch (got.dialect) {
+            .spec => put(&got.obj, a, "tokens", .{ .float = st.tokens }) and
+                put(&got.obj, a, "updated_at", .{ .float = st.updated_at }) and
+                put(&got.obj, a, "cooldown_until", if (st.cooldown_until) |c| .{ .float = c } else .null) and
+                put(&got.obj, a, "last_429_at", if (st.last_429_at) |c| .{ .float = c } else .null),
+            // Its own names, its own "none" (0), and its throttle count.
+            .legacy => blk: {
+                const throttles: i64 = if (got.obj.get("throttles")) |x| (if (x == .integer) x.integer else 0) else 0;
+                break :blk put(&got.obj, a, "ts", .{ .float = st.updated_at }) and
+                    put(&got.obj, a, "tokens", .{ .float = st.tokens }) and
+                    put(&got.obj, a, "cooldown_until", .{ .float = st.cooldown_until orelse 0 }) and
+                    put(&got.obj, a, "last_429", .{ .float = st.last_429_at orelse 0 }) and
+                    (op != .penalize or put(&got.obj, a, "throttles", .{ .integer = throttles + 1 }));
+            },
+        };
+        if (!ok) return out;
         var wbuf: [max_bytes]u8 = undefined;
         var w: Io.Writer = .fixed(&wbuf);
         std.json.Stringify.value(std.json.Value{ .object = got.obj }, .{}, &w) catch return out;
@@ -693,6 +748,9 @@ pub const Budget = struct {
     bucket_state: ?Bucket.State = null,
     bucket_seen_ms: i64 = 0,
     bucket_refused: u32 = 0,
+    /// The burst a bucket file in `ratelimit`'s dialect stands for:
+    /// this service's capacity.
+    bucket_legacy_burst: u32 = Bucket.default_legacy_burst,
     /// The feed seam's state, as the pane last set it (under `lock`).
     feed_state: ?feed.State = null,
 
@@ -706,6 +764,7 @@ pub const Budget = struct {
         b.dry_run.store(opts.dry_run, .release);
         b.tally_path_len = 0;
         b.bucket_path_len = 0;
+        b.bucket_legacy_burst = @intFromFloat(ratelimit.configFor(opts.service).capacity);
         if (opts.shared_bucket.len > 0 and opts.shared_bucket.len <= b.bucket_path_buf.len) {
             @memcpy(b.bucket_path_buf[0..opts.shared_bucket.len], opts.shared_bucket);
             b.bucket_path_len = opts.shared_bucket.len;
@@ -813,7 +872,7 @@ pub const Budget = struct {
         const prev = b.paused_until_ms.load(.acquire);
         if (until > prev) b.paused_until_ms.store(until, .release);
         // Every other caller on the machine honours it too.
-        if (b.bucketPath()) |p| b.noteBucket(Bucket.apply(b.io, p, .penalize, msSecs(now_ms), @floatFromInt(secs)), now_ms);
+        if (b.bucketPath()) |p| b.noteBucket(Bucket.applyWith(b.io, p, .penalize, msSecs(now_ms), @floatFromInt(secs), b.bucket_legacy_burst), now_ms);
         return secs;
     }
 
@@ -841,7 +900,7 @@ pub const Budget = struct {
     fn takeShared(b: *Budget) Gate {
         const p = b.bucketPath() orelse return .go;
         const now_ms = b.nowMs();
-        const out = Bucket.apply(b.io, p, .take, msSecs(now_ms), 0);
+        const out = Bucket.applyWith(b.io, p, .take, msSecs(now_ms), 0, b.bucket_legacy_burst);
         b.noteBucket(out, now_ms);
         return switch (out.take) {
             .go, .none => .go,
@@ -888,7 +947,7 @@ pub const Budget = struct {
         const seen = b.bucket_seen_ms;
         b.lock.unlock(b.io);
         if (now_ms - seen >= 2000) {
-            const out = Bucket.apply(b.io, p, .peek, msSecs(now_ms), 0);
+            const out = Bucket.applyWith(b.io, p, .peek, msSecs(now_ms), 0, b.bucket_legacy_burst);
             b.lock.lockUncancelable(b.io);
             b.bucket_state = out.state;
             b.bucket_seen_ms = now_ms;
@@ -1383,4 +1442,55 @@ test "the chip says feed while an event file is live and the interval while poll
     var tb: [8]u8 = undefined;
     try tst.expectEqualStrings("2m30s", secsText(&tb, 150));
     try tst.expectEqualStrings("1h", secsText(&tb, 3600));
+}
+
+test "the bucket file is read in either dialect and written back in the one it came in" {
+    var tmp = tst.tmpDir(.{});
+    defer tmp.cleanup();
+    var pb: [1100]u8 = undefined;
+    var rb: [1024]u8 = undefined;
+    // The spec's names.
+    const sp = try bucketFile(&tmp, &pb, "spec.json",
+        \\{"rate_per_sec":0,"burst":5,"tokens":2,"updated_at":1000,"cooldown_until":null,"last_429_at":null}
+    );
+    var out = Bucket.applyWith(tst.io, sp, .take, 1000, 0, 60);
+    try tst.expectEqual(Bucket.Take.go, out.take);
+    try tst.expectEqual(@as(u32, 5), out.state.?.burst);
+    var text = try tmp.dir.readFile(tst.io, "spec.json", &rb);
+    try tst.expect(std.mem.indexOf(u8, text, "\"updated_at\":1000") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "\"ts\"") == null);
+
+    // `ratelimit`'s names: the same bucket, its burst the caller's, a
+    // 0 time none, and every key written back as it was spelled.
+    var pb2: [1100]u8 = undefined;
+    const lg = try bucketFile(&tmp, &pb2, "legacy.json",
+        \\{"ts":1000,"tokens":100,"rate":0.5,"cooldown_until":0,"throttles":2,"last_429":0}
+    );
+    out = Bucket.applyWith(tst.io, lg, .take, 1004, 0, 60);
+    try tst.expectEqual(Bucket.Take.go, out.take);
+    // 100 is clamped to the burst of 60, then one taken.
+    try tst.expectEqual(@as(f64, 59), out.state.?.tokens);
+    try tst.expectEqual(@as(f64, 0.5), out.state.?.rate_per_sec);
+    text = try tmp.dir.readFile(tst.io, "legacy.json", &rb);
+    try tst.expect(std.mem.indexOf(u8, text, "\"ts\":1004") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "\"tokens\":59") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "\"cooldown_until\":0") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "updated_at") == null);
+    try tst.expect(std.mem.indexOf(u8, text, "last_429_at") == null);
+    // `ratelimit` itself still reads it, key for key.
+    const back = ratelimit.parseState(text).?;
+    try tst.expectEqual(@as(f64, 59), back.tokens);
+    try tst.expectEqual(@as(f64, 1004), back.ts);
+    // A 429 in that dialect: its cooldown, its last_429, its count.
+    out = Bucket.applyWith(tst.io, lg, .penalize, 1005, 30, 60);
+    try tst.expectEqual(Bucket.Take.cooldown, out.take);
+    text = try tmp.dir.readFile(tst.io, "legacy.json", &rb);
+    try tst.expect(std.mem.indexOf(u8, text, "\"cooldown_until\":1035") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "\"last_429\":1005") != null);
+    try tst.expect(std.mem.indexOf(u8, text, "\"throttles\":3") != null);
+    try tst.expectEqual(Bucket.Take.cooldown, Bucket.applyWith(tst.io, lg, .take, 1010, 0, 60).take);
+    // A Budget on the Jira service stands a legacy file for Jira's burst.
+    var b: Budget = .{};
+    b.configure(tst.io, .{ .label = "Jira", .service = "jira", .shared_bucket = lg });
+    try tst.expectEqual(@as(u32, 60), b.bucket_legacy_burst);
 }
