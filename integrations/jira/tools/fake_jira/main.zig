@@ -1642,6 +1642,9 @@ test "--life-secs is a real deadline: a server nobody talks to is gone when the 
 }
 
 test "--parent-pid: a server whose starter is gone leaves too, deadline or no deadline" {
+    // The orphan check is the POSIX liveness probe (`kill(pid, 0)`); on
+    // Windows `orphaned` is always false and the deadline alone applies.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     var store = try Store.init(testing.allocator);
     defer store.deinit();
