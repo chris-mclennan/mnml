@@ -77,12 +77,18 @@ jobs:
       # Leak = FAIL: every unit test runs on std.testing.allocator. Windows
       # runs the same command; the POSIX-gated pty / tui suites are simply
       # not in its graph (build.zig, `pty_supported`).
+      # Windows runs `unit` with every test's name streamed as it starts:
+      # the suite's first Windows runs sat silent for fifty minutes on a
+      # test nobody could name. The e2e gate that `test` adds runs as its
+      # own step below, where its lines stream too.
       - name: zig build test (Debug)
         shell: bash
-        run: zig build -j2 test -Doptimize=Debug --summary failures
+        timeout-minutes: 40
+        run: zig build -j2 ${{ matrix.os == 'windows-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
 
       - name: zig build test (ReleaseSafe — what ships)
         shell: bash
+        timeout-minutes: 40
         run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
 
       # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
@@ -122,6 +128,7 @@ jobs:
       # its parent. Each file runs on a DebugAllocator with safety on.
       - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
         shell: bash
+        timeout-minutes: 40
         env:
           MNML_E2E_ALLOW_SHELL: "1"
         run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
