@@ -7614,7 +7614,10 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     // Fenced at the tmp dir it never goes up into it.
     const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
     defer testing.allocator.free(fence);
-    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere:{s}/", .{fence});
+    // The platform's list separator: `;` on Windows, where `:` is in
+    // every drive-lettered path.
+    const sep = if (builtin.os.tag == .windows) ";" else ":";
+    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere" ++ sep ++ "{s}/", .{fence});
     defer testing.allocator.free(list);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
     try testing.expect((try repoAbove(&a, ws)) == null);
@@ -7625,7 +7628,7 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     try testing.expectEqualStrings(root, (try repoFor(&a, ws)).?);
     try testing.expectEqualStrings(root, (try repoFor(&a, root)).?);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
-    try testing.expect(isCeiling(testing.io, "/a:/b/", "/b"));
-    try testing.expect(!isCeiling(testing.io, "/a:/b", "/c"));
+    try testing.expect(isCeiling(testing.io, "/a" ++ sep ++ "/b/", "/b"));
+    try testing.expect(!isCeiling(testing.io, "/a" ++ sep ++ "/b", "/c"));
     try testing.expect(!isCeiling(testing.io, "", "/"));
 }
