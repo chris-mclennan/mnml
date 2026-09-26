@@ -2426,7 +2426,7 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     defer t.allocator.free(skip_line);
     const expected = try std.mem.concat(t.allocator, u8, &.{ "\u{25b6} e2e: alpha_one.test\n  ok   alpha_one.test\n", skip_line });
     defer t.allocator.free(expected);
-    try t.expectEqualStrings(expected, out.written());
+    try sdk_testing.expectPath(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
     try t.expectEqualStrings("notes", stemOf("notes"));
 }
@@ -2825,7 +2825,7 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try host.put("SHELL", "/opt/homebrew/bin/fish");
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
-    try t.expectEqualStrings("/run/home", env.get("HOME").?);
+    try sdk_testing.expectPath("/run/home", env.get("HOME").?);
     try t.expectEqualStrings("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
     try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
     try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);

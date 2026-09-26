@@ -611,7 +611,7 @@ test "find: one row per block of every file, `METHOD · name · file`, the tags 
     try testing.expect(f.app.overlay == .picker);
     const p = &f.app.overlay.picker;
     try testing.expectEqual(@as(usize, 4), p.labels.len);
-    try testing.expectEqualStrings("GET \u{00b7} one \u{00b7} api/r.http", p.labels[0]);
+    try sdk_testing.expectPath("GET \u{00b7} one \u{00b7} api/r.http", p.labels[0]);
     try testing.expectEqualStrings("POST \u{00b7} two \u{00b7} api/r.http", p.labels[1]);
     try testing.expectEqualStrings("#smoke #users", p.details[1]);
     try testing.expectEqualStrings("", p.details[0]);

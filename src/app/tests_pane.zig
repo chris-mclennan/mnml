@@ -2610,6 +2610,7 @@ pub fn scrollBy(p: *TestsPane, delta: i64) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 pub const fixture_report =
     \\{"suites":[{"title":"login.spec.ts","file":"login.spec.ts","specs":[],"suites":[{"title":"auth","file":"login.spec.ts","specs":[
@@ -2997,7 +2998,7 @@ test "locateSources (.zig): a passed row is found by its `test \"…\"` line; zi
         .{ .title = "nowhere", .suite_path = "shapes", .file = "", .line = 0, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
     };
     try locateSources(a, t.io, root, root, &tests, .zig);
-    try t.expectEqualStrings("src/shapes.zig", tests[0].file);
+    try sdk_testing.expectPath("src/shapes.zig", tests[0].file);
     try t.expectEqual(@as(u32, 3), tests[0].line);
     try t.expectEqualStrings("src/shapes.zig", tests[1].file);
     try t.expectEqual(@as(u32, 7), tests[1].line);
@@ -3184,7 +3185,7 @@ test "locateSources: a passed row is found by class and method in the project's 
         .{ .title = "Kept", .suite_path = "", .file = "x.cs", .line = 3, .status = .failed, .duration_ms = 1, .err = null, .trace_path = null },
     };
     try locateSources(a, t.io, root, root, &tests, .cs);
-    try t.expectEqualStrings("Tests/CalcTests.cs", tests[0].file);
+    try sdk_testing.expectPath("Tests/CalcTests.cs", tests[0].file);
     try t.expectEqual(@as(u32, 6), tests[0].line);
     try t.expectEqualStrings("Tests/CalcTests.cs", tests[1].file);
     try t.expectEqual(@as(u32, 12), tests[1].line);
@@ -3359,7 +3360,7 @@ test "parseJunit: pytest's xunit1 — parametrize ids, the class past the module
     try t.expectEqualStrings("collection failure", r.tests[4].err.?);
     // A run at a project below the workspace: the file is made workspace-relative.
     const deep = try parseJunit(a, fixture_junit, "/ws/py", "/ws", "");
-    try t.expectEqualStrings("py/tests/test_cli.py", deep.tests[0].file);
+    try sdk_testing.expectPath("py/tests/test_cli.py", deep.tests[0].file);
     // The re-run: node ids of the failures, the class in the middle.
     const ids = (try pytestFailedArgs(a, r)).?;
     try t.expectEqual(@as(usize, 1), ids.len);

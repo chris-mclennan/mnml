@@ -389,6 +389,7 @@ pub fn menuAction(app: *App, a: command.AiProfileAction) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const two_profiles = [_]Profile{
     .{ .name = "multi-repo", .binary = "/opt/bin/claude-multi.sh", .args = &.{ "--add-dir", "../lib" }, .env = &.{ "CLAUDE_CONFIG_DIR=/tmp/cfg", "MODEL=it's" }, .cwd_mode = .home },
@@ -410,7 +411,7 @@ test "shim text: env exported, args quoted, the caller's args appended; the Wind
     , posix);
     const win = try shimText(a, two_profiles[0], .windows);
     try t.expectEqualStrings("@echo off\r\nrem mnml launch profile \"multi-repo\" — written by mnml; change the profile in config.zon, not here.\r\nset CLAUDE_CONFIG_DIR=/tmp/cfg\r\nset MODEL=it's\r\n\"/opt/bin/claude-multi.sh\" \"--add-dir\" \"../lib\" %*\r\n", win);
-    try t.expectEqualStrings("/data/bin/mnml-ai-fast", try shimPath(a, "/data", "fast", .posix));
+    try sdk_testing.expectPath("/data/bin/mnml-ai-fast", try shimPath(a, "/data", "fast", .posix));
     try t.expectEqualStrings("/data/bin/mnml-ai-fast.cmd", try shimPath(a, "/data", "fast", .windows));
     try t.expect(validName("multi-repo"));
     try t.expect(!validName("../x"));

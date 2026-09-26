@@ -935,6 +935,7 @@ pub fn cancel(app: *App) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = app_mod.Key;
 
 test "// changed (quickopen-prefixes): only a LEADING > @ : ? switches quick open's mode" {
@@ -1074,7 +1075,7 @@ test "picker.files lists every file of a tree past 5000: the 5101st is found by 
     try t.expectEqual(@as(usize, 5101), app.overlay.picker.labels.len);
     for ("zz_target") |c| try app.handle(.{ .key = Key.char(c) });
     try t.expect(app.overlay.picker.filtered.items.len >= 1);
-    try t.expectEqualStrings("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try sdk_testing.expectPath("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
 }
 
 test "Ctrl+S saves from the palette and from the find bar; both stay open" {

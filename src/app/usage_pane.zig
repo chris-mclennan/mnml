@@ -1293,6 +1293,7 @@ pub fn codexSummary(app: *App, arena: Allocator) Allocator.Error![]const u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 /// An App whose environment names a fixture directory seeded with two
@@ -1522,7 +1523,7 @@ test "the 0.2.x [[ai.claude.accounts]] blocks, migrated verbatim under .ai.claud
     const cfg = try configured(&app, app.frame.allocator());
     try t.expectEqual(@as(usize, 2), cfg.len);
     try t.expectEqualStrings("personal", cfg[0].name);
-    try t.expectEqualStrings("/data/ai_token.personal", cfg[0].token_path);
+    try sdk_testing.expectPath("/data/ai_token.personal", cfg[0].token_path);
     try t.expect(!cfg[0].active and cfg[1].active);
     try t.expectEqualStrings("work", cfg[1].name);
     // The typed list wins when it is there.

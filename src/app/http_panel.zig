@@ -1372,7 +1372,7 @@ test "refresh lists every section; collections group by folder with the hidden o
     const st = &f.app.http_panel;
     var kb: [64]Kind = undefined;
     try testing.expectEqual(@as(usize, 4), st.files.len);
-    try testing.expectEqualStrings(".mnml/collections/smoke/ping.http", st.files[0]);
+    try sdk_testing.expectPath(".mnml/collections/smoke/ping.http", st.files[0]);
     try testing.expectEqual(@as(usize, 2), st.folders.len);
     try testing.expectEqualStrings("smoke", st.folders[0].name);
     try testing.expect(st.folders[0].hidden);

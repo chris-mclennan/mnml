@@ -270,7 +270,9 @@ test "parseCsproj: AssemblyName / TargetFramework(s) with defaults; launchBody n
     try t.expectEqualStrings("Lib", none.assembly_name);
     try t.expect(none.target_framework == null);
     const body = try launchBody(a, "/ws/src/App/App.csproj", plain);
-    try t.expectEqualStrings("{\"program\":\"/ws/src/App/bin/Debug/net9.0/App.dll\",\"cwd\":\"/ws/src/App\",\"stopAtEntry\":false}", body);
+    // The dll path is joined natively (`\` on Windows), JSON-escaped.
+    const dll = try std.fs.path.join(a, &.{ "/ws/src/App", "bin", "Debug", "net9.0", "App.dll" });
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{{\"program\":{f},\"cwd\":\"/ws/src/App\",\"stopAtEntry\":false}}", .{std.json.fmt(dll, .{})}), body);
     const defaulted = try launchBody(a, "/ws/Lib.csproj", "<Project/>");
     try t.expect(std.mem.indexOf(u8, defaulted, "/ws/bin/Debug/" ++ default_tfm ++ "/Lib.dll") != null);
 }

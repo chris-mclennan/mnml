@@ -1325,6 +1325,7 @@ pub fn tickerIndex(now: u64, n: usize) usize {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 /// The shape of a real `/api/oauth/usage` body (values invented).
 pub const usage_fixture =
@@ -1570,7 +1571,7 @@ test "accountsFromConfig: the default account, one active, ~ and relative paths"
     const none = try accountsFromConfig(a, &[_]E{}, "/data", "/home/me");
     try t.expectEqual(@as(usize, 1), none.len);
     try t.expectEqualStrings("default", none[0].name);
-    try t.expectEqualStrings("/data/ai_token", none[0].token_path);
+    try sdk_testing.expectPath("/data/ai_token", none[0].token_path);
     try t.expect(none[0].active);
     const three = try accountsFromConfig(a, &[_]E{
         .{ .name = "personal", .token_path = "ai_token.personal", .active = false },

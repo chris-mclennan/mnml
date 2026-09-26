@@ -652,6 +652,7 @@ pub fn acceptRemove(app: *App, path: []const u8, force: RemoveForce) CommandErro
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "validName: a directory name and a branch name at once" {
     try t.expect(validName("feat"));
@@ -679,7 +680,7 @@ test "rootFor: <repo>-worktrees beside the repo; the override with ~ expanded, r
     const a = arena_state.allocator();
     try t.expectEqualStrings("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
     try t.expectEqualStrings("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
-    try t.expectEqualStrings("/home/x/wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
+    try sdk_testing.expectPath("/home/x/wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
     try t.expectEqualStrings("/home/x", try rootFor(a, "/p/mnml-zig", "~", "/home/x"));
     try t.expectEqualStrings("/p/mnml-zig/.worktrees", try rootFor(a, "/p/mnml-zig", ".worktrees", "/home/x"));
     try t.expectEqualStrings("/srv/trees", try rootFor(a, "/p/mnml-zig", "/srv/trees", "/home/x"));

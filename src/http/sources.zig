@@ -165,7 +165,7 @@ test "parseText resolves relative url / out against the workspace; bad entries a
     const list = try parseText(arena.allocator(), "/ws", "[{\"name\":\"pets\",\"kind\":\"swagger\",\"url\":\"openapi/pets.yaml\"},{\"name\":\"remote\",\"kind\":\"swagger\",\"url\":\"https://x/spec.json\",\"out\":\"/abs/out\",\"base_url_override\":\"https://dev\"},{\"kind\":\"swagger\"}]");
     try testing.expectEqual(@as(usize, 2), list.len);
     try sdk_testing.expectPath("/ws/openapi/pets.yaml", list[0].url);
-    try testing.expectEqualStrings("/ws/.rqst/requests/pets", list[0].out);
+    try sdk_testing.expectPath("/ws/.rqst/requests/pets", list[0].out);
     try testing.expectEqualStrings("/abs/out", list[1].out);
     try testing.expectEqualStrings("https://dev", list[1].base_url.?);
     try testing.expectError(error.NotAnArray, parseText(arena.allocator(), "/ws", "{}"));
