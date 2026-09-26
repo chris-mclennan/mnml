@@ -24,6 +24,11 @@ binds the chord to something else; **missing** — mnml binds nothing there
 
 mnml's own chords (bound in mnml, defined by neither oracle): **251** in the vim
 profile, **157** in the standard profile — section (c).
+Section (d) lists what the three sections miss — **3** vim and **30**
+standard chords `src/commands/specs.zig` binds with no verdict yet.
+`tools/keymap-parity-check.sh` diffs this page against the specs both ways
+(every chord claimed here is bound to that id; every bound chord is named
+here) and exits non-zero on a mismatch.
 
 ## Applied on this branch (clear-cut: the command existed, the chord was free)
 
@@ -72,7 +77,7 @@ Each is one line and a recommendation; none was changed on this branch.
 - **`Ctrl+J`**: VS Code toggles the panel; mnml expands a snippet (standard). *Recommend* `view.toggle_bottom_panel` on `ctrl+j` and `snippet.expand` elsewhere.
 - **`Ctrl+Shift+B`**: VS Code runs the build task; mnml toggles the right column (now also `ctrl+alt+b`, VS Code's). *Recommend* moving `ctrl+shift+b` to `task.run`.
 - **`Ctrl+Shift+R` / `Ctrl+Shift+A`**: VS Code refactor / block comment; mnml's HTTP find-request / toast action. *Recommend* no change unless refactor lands.
-- **`Ctrl+Shift+\\`**: VS Code jump to bracket; mnml split down. *Recommend* no change (`ctrl+k ctrl+\\` also splits down now).
+- **`Ctrl+Shift+\`**: VS Code jump to bracket; mnml split down. *Recommend* no change (`ctrl+k ctrl+\` also splits down now).
 - **`Shift+Alt+Up/Down`, `Shift+Alt+Left/Right`**: VS Code (Linux) add cursor above / below and expand / shrink selection; mnml duplicates lines and selects by word (macOS VS Code's meanings). *Recommend* no change — the Linux meanings are on `ctrl+alt+up/down` and the LSP selection commands.
 - **`Ctrl+Alt+Left/Right`, `Ctrl+Shift+PageUp/Down`, `Shift+Alt+1/9`, `Alt+0`**: move editor between groups / within a group / open by index — mnml has no editor-to-group moves, and `alt+N` are tab pages. *Recommend* no change.
 - **`Ctrl+N`**: VS Code opens an unnamed buffer; mnml's `file.new` asks for a path. *Recommend* `scratch.new` on `ctrl+n` (VS Code's meaning, and `:w name` names it) with `file.new` palette- and tree-only.
@@ -129,7 +134,7 @@ Each is one line and a recommendation; none was changed on this branch.
 | `<leader>n` | toggle line number | same | `space n` |  |
 | `<leader>wK` | WhichKey (all keymaps) | same | `space w K` whichkey.leader | the tree shows `w → +which-key (1)` |
 | `<leader>wk` | WhichKey query lookup | missing | — | no "which key does X" prompt |
-| `<C-h> <C-j> <C-k> <C-l>` | switch window | same | view.focus_left / down / up / right |  |
+| `<C-h> <C-j> <C-k> <C-l>` | switch window | same | `ctrl+h` `ctrl+j` `ctrl+k` `ctrl+l` view.focus_left / down / up / right |  |
 | `<C-s>` | save | same | `ctrl+s` file.save |  |
 | `<C-c>` | copy whole file (`%y+`) | missing | — | no command; the handler ignores Ctrl-C in Normal |
 | `<Esc>` | clear highlights (`:noh`) | same | Esc | the search chip goes (checked in the headless harness) |
@@ -154,7 +159,7 @@ Each is one line and a recommendation; none was changed on this branch.
 | `gO` | document symbols | missing | — | `lsp.symbols` exists and `g O` is free in the handler, but `O` is a letter `mnml.operator` scripts may claim (`script_ops.reserved`) |
 | `gcc / gc{motion}` | toggle comment | same | the handler |  |
 | `gx` | open under cursor | same | editor.open_url_at_cursor |  |
-| `[d / ]d` | diagnostic prev / next | same | lsp.prev_diagnostic / next |  |
+| `[d / ]d` | diagnostic prev / next | same | `[ d` / `] d` lsp.prev_diagnostic / next |  |
 | `[D / ]D` | first / last diagnostic | missing | — |  |
 | `[q / ]q` | quickfix prev / next | same | qf.prev / qf.next |  |
 | `[Q / ]Q, [<C-Q> / ]<C-Q>` | quickfix first / last, file | missing | — |  |
@@ -315,7 +320,7 @@ resolved by hand from the same file.
 | `alt+z` | `editor.action.toggleWordWrap` | same | `view.toggle_wrap` |  |
 | `ctrl+,` | `workbench.action.openSettings` | same | `view.settings` |  |
 | `ctrl+0` | `workbench.action.focusSideBar` | same | `view.focus_tree` |  |
-| `ctrl+\` | `workbench.action.splitEditor` | same | `view.split_right` | id `$5` |
+| `ctrl+\` | `workbench.action.splitEditor` | same | `view.split_right` |  |
 | `ctrl+alt+b` | `workbench.action.toggleAuxiliaryBar` | same | `view.toggle_right_panel` |  |
 | `ctrl+alt+left` | `workbench.action.moveEditorToPreviousGroup` | different | `buffer.prev` | no mnml command |
 | `ctrl+alt+r` | `revealFileInOS` | missing | — | mnml has `view.reveal_active` on `ctrl+k r` |
@@ -366,9 +371,9 @@ resolved by hand from the same file.
 
 | VS Code chord | VS Code command | verdict | mnml (standard) | note |
 |---|---|---|---|---|
-| `ctrl+`` | `workbench.action.terminal.toggleTerminal` | same | `term.scratch_toggle` |  |
-| `ctrl+shift+5` | `workbench.action.terminal.split` | missing | — | mnml has `term.shell` on `ctrl+shift+``, `space a t` |
-| `ctrl+shift+`` | `workbench.action.terminal.new` | same | `term.shell` |  |
+| `` ctrl+` `` | `workbench.action.terminal.toggleTerminal` | same | `term.scratch_toggle` |  |
+| `ctrl+shift+5` | `workbench.action.terminal.split` | missing | — | mnml has `term.shell` on `` ctrl+shift+` ``, `space a t` |
+| `` ctrl+shift+` `` | `workbench.action.terminal.new` | same | `term.shell` |  |
 | `ctrl+shift+c` | `workbench.action.terminal.copySelection` | missing | — | mnml has `term.copy` (no standard chord) |
 | `ctrl+shift+v` | `workbench.action.terminal.paste` | missing | — | mnml has `term.paste` (no standard chord) |
 
@@ -448,7 +453,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `ctrl+;` | `app.command_line` |
 | `ctrl+\` | `view.split_right` |
 | `ctrl+]` | `editor.bracket_match` |
-| `ctrl+\`` | `term.scratch_toggle` |
+| `` ctrl+` `` | `term.scratch_toggle` |
 | `ctrl+alt+down` | `editor.add_cursor_below` |
 | `ctrl+alt+j` | `editor.add_cursor_below` |
 | `ctrl+alt+k` | `editor.add_cursor_above` |
@@ -464,7 +469,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `ctrl+shift+[` | `editor.toggle_fold` |
 | `ctrl+shift+\` | `view.split_down` |
 | `ctrl+shift+]` | `editor.unfold_all` |
-| `ctrl+shift+\`` | `term.shell` |
+| `` ctrl+shift+` `` | `term.shell` |
 | `ctrl+shift+a` | `toast.run_action` |
 | `ctrl+shift+b` | `view.toggle_right_panel` |
 | `ctrl+shift+d` | `view.activity_debug` |
@@ -832,3 +837,56 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `space t x` | `view.right_panel_close_tab` |
 
 </details>
+
+## (d) Bound in mnml, not yet placed in (a)–(c)
+
+Chords `src/commands/specs.zig` binds that the three sections above do not
+name — missed by the first cut of the ledger or bound after it (the help
+pane's `help.focus` / `help.pin_toggle`). Some are also oracle chords (VS
+Code's F3 / Shift+F3 find next / previous, for one) and move into (a) or
+(b) with a verdict the next time the oracles are read; until then they are
+listed here so `tools/keymap-parity-check.sh` can hold the doc to the
+specs in both directions.
+
+*vim profile — 3 chords*
+
+| chord | command |
+|---|---|
+| `space` | `whichkey.leader` |
+| `space shift+k` | `help.focus` |
+| `space t p` | `help.pin_toggle` |
+
+*standard profile — 30 chords*
+
+| chord | command |
+|---|---|
+| `alt+[` | `git.prev_repo` |
+| `alt+]` | `git.next_repo` |
+| `alt+enter` | `lsp.quick_fix` |
+| `alt+k` | `editor.move_line_up` |
+| `alt+r` | `find.toggle_regex` |
+| `ctrl+-` | `nav.back` |
+| `ctrl+1` | `view.focus_tab_1` |
+| `ctrl+9` | `view.focus_tab_last` |
+| `ctrl+alt+down` | `editor.add_cursor_below` |
+| `ctrl+alt+enter` | `script.run_selection` |
+| `ctrl+alt+j` | `editor.add_cursor_below` |
+| `ctrl+alt+k` | `editor.add_cursor_above` |
+| `ctrl+alt+n` | `sessions.next_waiting` |
+| `ctrl+alt+shift+left` | `view.focus_prev_split` |
+| `ctrl+alt+shift+right` | `view.focus_next_split` |
+| `ctrl+alt+up` | `editor.add_cursor_above` |
+| `ctrl+alt+w` | `view.right_panel_close_tab` |
+| `ctrl+k` | `whichkey.leader` |
+| `ctrl+k ctrl+b` | `view.sidebar_pin` |
+| `ctrl+k shift+h` | `help.pin_toggle` |
+| `ctrl+k t` | `theme.toggle` |
+| `ctrl+shift+j` | `view.toggle_bottom_panel` |
+| `ctrl+shift+x` | `view.activity_integrations` |
+| `ctrl+shift+z` | `editor.redo` |
+| `delete` | `file.delete` |
+| `f3` | `find.next` |
+| `shift+f1` | `help.focus` |
+| `shift+f10` | `view.context_menu_at_focus` |
+| `shift+f3` | `find.prev` |
+| `space` | `whichkey.leader` |
