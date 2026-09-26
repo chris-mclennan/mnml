@@ -307,7 +307,7 @@ pub const rows = [_]Row{
     } },
 
     // ── the clock chip: `Clock` ──
-    .{ .menu = "Clock", .label = "Local time", .entry = clockMode("Local time", "your machine's local time, `HH:MM` (UTC on Windows, which has no zone reader yet)", .@"clock.local") },
+    .{ .menu = "Clock", .label = "Local time", .entry = clockMode("Local time", "your machine's local time, `HH:MM`", .@"clock.local") },
     .{ .menu = "Clock", .label = "UTC", .entry = clockMode("UTC", "UTC with a `Z` after it, `HH:MMZ`", .@"clock.utc") },
     .{ .menu = "Clock", .label = "Hide the clock", .entry = .{
         .title = "Hide the clock",
