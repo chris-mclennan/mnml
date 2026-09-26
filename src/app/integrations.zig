@@ -3185,6 +3185,7 @@ pub fn loadSettings(app: *App) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const build_options = @import("build_options");
 const screen_mod = @import("../ipc/screen.zig");
 
@@ -3462,7 +3463,7 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     try testing.expectEqualStrings("htop", st.dev[0].id());
     try testing.expectEqualStrings("launchers", st.dev[0].root);
     try testing.expect(st.dev[0].launcher);
-    try testing.expect(std.mem.endsWith(u8, st.dev[0].key(), "launchers/htop.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(st.dev[0].key(), "launchers/htop.zon"));
     try testing.expectEqualStrings("other", st.dev[1].id());
     try testing.expectEqualStrings("elsewhere", st.dev[1].root);
     try testing.expectEqualStrings("sample", st.dev[2].id());

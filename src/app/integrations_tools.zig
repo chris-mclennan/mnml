@@ -170,6 +170,7 @@ fn auditShadowed(app: *App) CommandError!void {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const manifest_with_binary =
     \\.{
@@ -288,7 +289,7 @@ test "diag: one integration with a binary skips the picker; two offer one with f
     try t.expectEqualStrings("Hello  hello", f.app.overlay.picker.labels[0]);
     try t.expect(std.mem.endsWith(u8, f.app.overlay.picker.details[0], "· missing"));
     try t.expect(std.mem.indexOf(u8, f.app.overlay.picker.details[1], "found: ") != null);
-    try t.expect(std.mem.endsWith(u8, f.app.overlay.picker.details[1], "/bin/mnml-named"));
+    try t.expect(sdk_testing.pathEndsWith(f.app.overlay.picker.details[1], "/bin/mnml-named"));
     // Down + Enter picks the second: its detail pane, its toast.
     try f.app.handle(.{ .key = app_mod.Key.named(.down) });
     try f.app.handle(.{ .key = app_mod.Key.named(.enter) });
@@ -322,7 +323,7 @@ test "audit_shadowed_binaries: a PATH copy that is not the linked binary is repo
     const e = f.app.activeEditor().?;
     const text = e.buf.editor.bytes();
     try t.expect(std.mem.indexOf(u8, text, "mnml-named: PATH resolves ") != null);
-    try t.expect(std.mem.indexOf(u8, text, "/shadow/mnml-named · mnml uses ") != null);
+    try t.expect(sdk_testing.pathContains(text, "/shadow/mnml-named · mnml uses "));
     try t.expect(std.mem.indexOf(u8, text, "/bin/mnml-named\n") != null);
     // The same file through a link is not a shadow.
     const link_dir = try std.fs.path.join(t.allocator, &.{ f.root, "linked" });

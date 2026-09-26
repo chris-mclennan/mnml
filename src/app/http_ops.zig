@@ -415,6 +415,7 @@ pub fn acceptFind(app: *App, i: usize) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = @import("../core/key.zig").Key;
 
 const Fixture = struct {
@@ -478,7 +479,7 @@ test "rename: a block's ### line from the panel row (the open pane follows); a s
     try command.run(&f.app, .{ .static = .@"http.rename_request" });
     try testing.expect(f.app.overlay == .prompt);
     try testing.expectEqualStrings("two", f.app.overlay.prompt.state.text());
-    try testing.expect(std.mem.indexOf(u8, f.app.overlay.prompt.state.title, "block `two` of api/r.http") != null);
+    try testing.expect(sdk_testing.pathContains(f.app.overlay.prompt.state.title, "block `two` of api/r.http"));
     try f.app.handle(.{ .key = Key.char('d') });
     try f.app.handle(.{ .key = Key.char('u') });
     try f.app.handle(.{ .key = Key.char('o') });

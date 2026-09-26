@@ -1281,6 +1281,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const panel_ids = panel;
 
 const Fixture = struct {
@@ -1642,7 +1643,7 @@ test "clicks: a header chip acts (ENVS + opens the prompt, RECENT ✕ truncates 
     }.p).?;
     try f.app.handle(.{ .mouse = .{ .x = folder_new.x + 1, .y = folder_new.y, .kind = .press, .button = .left } });
     const rp = http.activeRequest(&f.app).?;
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/api/req-1.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/api/req-1.http"));
     try testing.expectEqualStrings("req-1.http", rp.title());
     // RECENT is below the first screenful: G scrolls the tail in.
     focusPanel(&f.app);
@@ -1707,7 +1708,7 @@ test "one left press on a request row opens it, as a tree file does; a folder ro
     try testing.expect(found);
     // No second press waited for: the pane is open and it is the row's.
     const rp = http.activeRequest(&f.app).?;
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/loose.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/loose.http"));
     try testing.expectEqual(item_idx, st.list.cursor);
 }
 

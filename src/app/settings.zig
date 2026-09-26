@@ -1070,6 +1070,7 @@ pub fn cancel(app: *App) Allocator.Error!void {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Fixture = @import("../ui/test_fixture.zig");
 
 fn readOrNull(dir: std.testing.TmpDir, rel: []const u8) !?[]u8 {
@@ -1191,7 +1192,7 @@ test "a row a later layer also sets says which file wins, and saving it says so 
     try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden by ") != null);
     try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "extra.zon"));
     app.overlay.settings.ui.cursor = theme_item.?;
-    try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "overridden by .mnml/config.zon"));
+    try t.expect(sdk_testing.pathEndsWith((try footer(&app, arena, list)).?, "overridden by .mnml/config.zon"));
     // …and a row nothing else sets does not claim one.
     app.overlay.settings.ui.cursor = dots_item.?;
     try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden") == null);
@@ -1343,7 +1344,7 @@ test "the overlay renders the sections and the footer names the target file" {
     try t.expect(std.mem.indexOf(u8, text, " Settings ") != null);
     try t.expect(std.mem.indexOf(u8, text, "── UI ──") != null);
     try t.expect(std.mem.indexOf(u8, text, "▸ Line numbers:") != null);
-    try t.expect(std.mem.indexOf(u8, text, " Settings · → .mnml/config.zon ") != null);
+    try t.expect(sdk_testing.pathContains(text, " Settings · → .mnml/config.zon "));
     // The box caps at ~70 % of the screen and UI is the longest section,
     // so no terminal this side of 90 rows shows a second header on open;
     // the section below UI has to be scrolled to before it renders.

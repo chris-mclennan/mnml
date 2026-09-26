@@ -157,13 +157,14 @@ fn appendFmt(a: Allocator, list: *std.ArrayListUnmanaged(u8), comptime fmt: []co
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "parseText resolves relative url / out against the workspace; bad entries are skipped" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const list = try parseText(arena.allocator(), "/ws", "[{\"name\":\"pets\",\"kind\":\"swagger\",\"url\":\"openapi/pets.yaml\"},{\"name\":\"remote\",\"kind\":\"swagger\",\"url\":\"https://x/spec.json\",\"out\":\"/abs/out\",\"base_url_override\":\"https://dev\"},{\"kind\":\"swagger\"}]");
     try testing.expectEqual(@as(usize, 2), list.len);
-    try testing.expectEqualStrings("/ws/openapi/pets.yaml", list[0].url);
+    try sdk_testing.expectPath("/ws/openapi/pets.yaml", list[0].url);
     try testing.expectEqualStrings("/ws/.rqst/requests/pets", list[0].out);
     try testing.expectEqualStrings("/abs/out", list[1].out);
     try testing.expectEqualStrings("https://dev", list[1].base_url.?);

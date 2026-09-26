@@ -1002,6 +1002,7 @@ fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const kw: []const []const u8 = &@import("config/Config.zig").default_todo_keywords;
 
@@ -1151,7 +1152,7 @@ test "scanInto finds markers across files, skips noisy dirs and binaries, record
             seen_a += 1;
             try testing.expect(it.line == 2 or it.line == 3);
         } else {
-            try testing.expectEqualStrings("docs/notes.md", it.path);
+            try sdk_testing.expectPath("docs/notes.md", it.path);
             try testing.expectEqualStrings("buy milk", it.title);
         }
     }

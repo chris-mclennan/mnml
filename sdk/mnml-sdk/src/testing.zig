@@ -131,6 +131,14 @@ pub fn pathEndsWith(got: []const u8, suffix: []const u8) bool {
     return std.mem.endsWith(u8, g, suffix);
 }
 
+/// `got` starts with `prefix`, spelled with `/`, read as `expectPath` reads.
+pub fn pathStartsWith(got: []const u8, prefix: []const u8) bool {
+    if (@import("builtin").os.tag != .windows) return std.mem.startsWith(u8, got, prefix);
+    const g = slashed(got) catch return false;
+    defer std.testing.allocator.free(g);
+    return std.mem.startsWith(u8, g, prefix);
+}
+
 /// `got` holds `needle`, spelled with `/`, read as `expectPath` reads.
 pub fn pathContains(got: []const u8, needle: []const u8) bool {
     if (@import("builtin").os.tag != .windows) return std.mem.indexOf(u8, got, needle) != null;
@@ -151,5 +159,6 @@ test "a path compares with its separators read as the platform writes them" {
     try expectPath("/data/ratelimit/x.json", joined);
     try std.testing.expect(pathEndsWith(joined, "/ratelimit/x.json"));
     try std.testing.expect(pathContains(joined, "/ratelimit/"));
+    try std.testing.expect(pathStartsWith(joined, "/data/ratelimit/"));
     try std.testing.expect(!pathEndsWith(joined, "/other.json"));
 }

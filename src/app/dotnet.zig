@@ -211,6 +211,7 @@ pub fn fileFilterArg(arena: Allocator, syms: []const structure.Symbol) Allocator
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "find: the nearest csproj and the sln above it; the sln builds, the csproj runs; nothing above the workspace" {
     var tmp = t.tmpDir(.{});
@@ -228,7 +229,7 @@ test "find: the nearest csproj and the sln above it; the sln builds, the csproj 
     try tmp.dir.writeFile(t.io, .{ .sub_path = "src/Tests/Tests.csproj", .data = "<Project/>" });
     const sub = try std.fs.path.join(a, &.{ root, "src", "App", "Sub" });
     const p = (try find(t.io, a, sub, root)).?;
-    try t.expect(std.mem.endsWith(u8, p.csproj.?, "src/App/App.csproj"));
+    try t.expect(sdk_testing.pathEndsWith(p.csproj.?, "src/App/App.csproj"));
     try t.expect(std.mem.endsWith(u8, p.sln.?, "All.sln"));
     try t.expectEqualStrings(root, p.buildRoot());
     try t.expect(std.mem.endsWith(u8, p.runRoot(), "src/App"));

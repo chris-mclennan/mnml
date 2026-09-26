@@ -356,6 +356,7 @@ fn gitCommonDir(gpa: Allocator, io: Io, workspace: []const u8) !?[]u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const TestWs = struct {
     tmp: std.testing.TmpDir,
@@ -404,7 +405,7 @@ test "init creates the channel, truncates a pre-queued command file, and reports
 
     var ch = try Channel.init(t.allocator, t.io, ws.path, .{});
     defer ch.deinit();
-    try t.expect(std.mem.endsWith(u8, ch.dirPath(), "/.mnml/ipc"));
+    try t.expect(sdk_testing.pathEndsWith(ch.dirPath(), "/.mnml/ipc"));
 
     const cmd = try ws.read(".mnml/ipc/command");
     defer t.allocator.free(cmd);
@@ -429,7 +430,7 @@ test "a subdir override and MNML_IPC_DIR both relocate the channel" {
     defer ws.deinit();
     var a = try Channel.init(t.allocator, t.io, ws.path, .{ .subdir = "ipc-zig" });
     defer a.deinit();
-    try t.expect(std.mem.endsWith(u8, a.dirPath(), "/.mnml/ipc-zig"));
+    try t.expect(sdk_testing.pathEndsWith(a.dirPath(), "/.mnml/ipc-zig"));
     a.appendEvent("{\"event\":\"exit\"}");
 
     const elsewhere = try std.fs.path.join(t.allocator, &.{ ws.path, "elsewhere" });

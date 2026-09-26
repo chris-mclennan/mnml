@@ -902,6 +902,7 @@ pub fn scrollbarMouse(app: *App, bar: Rect, m: Mouse) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 fn screenText(app: *App) ![]u8 {
@@ -1114,7 +1115,7 @@ test "SCRIPTS: a row's menu enables, disables, reloads and jumps to what the scr
     };
     try app.handle(.{ .key = Key.named(.esc) });
     try openRowIndex(&app, key);
-    try t.expect(std.mem.endsWith(u8, app.activeEditor().?.buf.doc.path.?, "data/scripts/hello/init.lua"));
+    try t.expect(sdk_testing.pathEndsWith(app.activeEditor().?.buf.doc.path.?, "data/scripts/hello/init.lua"));
     try t.expectEqual(@as(usize, 0), app.activeEditor().?.buf.editor.currentLine());
 }
 

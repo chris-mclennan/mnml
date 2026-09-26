@@ -1735,6 +1735,7 @@ test "expandEnv: a name and a braced name from the map, an unset name is empty, 
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const StubFactory = driver_mod.StubFactory;
 
 const fast: Timing = .{ .step_settle_ms = 1, .expect_budget_ms = 60, .expect_poll_ms = 5, .wait_slice_ms = 2 };
@@ -1865,7 +1866,7 @@ test "the step order and the driver calls are exactly the Rust runner's" {
     defer t.allocator.free(calls);
     const ws_open = std.mem.indexOf(u8, calls, "open ").?;
     const open_line_end = std.mem.indexOfScalarPos(u8, calls, ws_open, '\n').?;
-    try t.expect(std.mem.endsWith(u8, calls[ws_open..open_line_end], "/a.txt"));
+    try t.expect(sdk_testing.pathEndsWith(calls[ws_open..open_line_end], "/a.txt"));
     try t.expect(std.mem.indexOf(u8, calls[ws_open..open_line_end], "mnml-e2e-") != null);
     const before = calls[0..ws_open];
     const after = calls[open_line_end + 1 ..];
@@ -1938,7 +1939,7 @@ test "a missing file's expect file names the path" {
     defer o.deinit(t.allocator);
     try t.expect(!o.passed);
     try t.expect(std.mem.startsWith(u8, o.message.?, "line 1: can't read "));
-    try t.expect(std.mem.endsWith(u8, o.message.?, "/nope.txt: FileNotFound"));
+    try t.expect(sdk_testing.pathEndsWith(o.message.?, "/nope.txt: FileNotFound"));
 }
 
 test "step failures: unknown command, ghost without an editor, unsafe paths, refused shell" {
@@ -2238,7 +2239,7 @@ test "runPath: skips, sizes, names, and the ok/ok*/FAIL/N-M report" {
     try t.expectEqualStrings(expected[0..head], report[0..head]);
     const middle = expected[head + "SCREEN".len .. std.mem.indexOf(u8, expected, "SUITE").?];
     try t.expect(std.mem.indexOf(u8, report, middle) != null);
-    try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
+    try t.expect(sdk_testing.pathContains(report, "/suite/sub/c_net.test\n"));
     try t.expect(std.mem.indexOf(u8, report, "  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n") != null);
     // The tally keeps `N/M passed` as its first bytes — scripts grep for
     // it — and then says how much of M actually checked anything.

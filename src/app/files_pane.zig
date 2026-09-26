@@ -1285,6 +1285,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, f: *FilesPane, area: Rect) Allocator.
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 fn realRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1404,7 +1405,7 @@ test "marks are keyed by path: toggle advances, a range fills, invert and all re
     defer arena_state.deinit();
     const paths = try f.actionPaths(arena_state.allocator());
     try t.expectEqual(@as(usize, 2), paths.len);
-    try t.expect(std.mem.endsWith(u8, paths[0], "/src"));
+    try t.expect(sdk_testing.pathEndsWith(paths[0], "/src"));
     try t.expect(std.mem.endsWith(u8, paths[1], "/README.md"));
     f.clearMarks();
     f.cursor = 0;

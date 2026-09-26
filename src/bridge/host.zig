@@ -621,6 +621,7 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "grid: a full frame sets the shape; dirty rows patch in place; short and long rows are clipped" {
     const gpa = testing.allocator;
@@ -682,7 +683,7 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);
     try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
-    try testing.expect(std.mem.startsWith(u8, short, "/ws/.mnml/ipc-zig/mounts/"));
+    try testing.expect(sdk_testing.pathStartsWith(short, "/ws/.mnml/ipc-zig/mounts/"));
     const deep = "/" ++ "d" ** 120;
     const fallback = try socketPath(gpa, deep, 4);
     defer gpa.free(fallback);
