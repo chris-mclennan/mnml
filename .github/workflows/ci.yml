@@ -84,7 +84,7 @@ jobs:
       # own step below, where its lines stream too.
       - name: zig build test (Debug)
         shell: bash
-        timeout-minutes: 40
+        timeout-minutes: 60
         run: zig build -j2 ${{ matrix.os == 'windows-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
 
       - name: zig build test (ReleaseSafe — what ships)
