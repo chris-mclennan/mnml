@@ -1,0 +1,22 @@
+// The integrations an mnml release offers — what `release.yml` turns into
+// the release's `integrations.json`, the index the Marketplace tab's
+// default source and the first-launch setup read.
+//
+// One row per integration: its id (the folder under `integrations/`)
+// and the version whose `<id>-v<version>` release this mnml points at.
+// That release must exist before the mnml tag is pushed — cut the
+// integration tags first (docs/RELEASE.md, "Integrations"). The label,
+// description and chip come from `data/marketplace.zon`; the SDK
+// version, the binary and every asset's URL and sha256 come from the
+// integration release's own `integration.json`.
+//
+// A unit test in `src/app/marketplace_release.zig` holds every version
+// here to the folder's `manifest.zon`, so a bumped integration cannot
+// ship with a stale row.
+.{
+    .integrations = .{
+        .{ .id = "jira", .version = "0.2.0" },
+        .{ .id = "bitbucket", .version = "0.2.0" },
+        .{ .id = "sample", .version = "0.1.0" },
+    },
+}

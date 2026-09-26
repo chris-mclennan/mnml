@@ -3610,6 +3610,7 @@ test {
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");
     _ = @import("app/marketplace_catalogue.zig");
+    _ = @import("app/marketplace_release.zig");
     _ = @import("ui/mount_view.zig");
     _ = @import("bridge/wire.zig");
     _ = @import("bridge/host.zig");
