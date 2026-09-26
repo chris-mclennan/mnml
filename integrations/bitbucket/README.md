@@ -77,7 +77,7 @@ by name, so a TOML converts line for line:
 `kind` is one of `.workspace_open_prs`, `.workspace_merged_prs`,
 `.workspace_pipelines`, `.pull_requests`, `.pipelines`, `.branches`;
 `state` `.OPEN` / `.MERGED` / `.DECLINED` / `.SUPERSEDED`; `mode`
-`.mine` / `.reviewing` on a `pull_requests` tab. Five keys have no
+`.mine` / `.reviewing` on a `pull_requests` tab. Six keys have no
 TOML twin: `.base_url` (a test double; `$BITBUCKET_BASE_URL` wins,
 `@<path>` reads a file — one still missing after 5 s is the setup
 screen and a failing `--check`, never a fall back to
@@ -167,7 +167,7 @@ can drift from what a key does. The keys are the reference's:
 | `o` · `y` | open on the web · copy the URL |
 | `d` · `^d` `^u` | the pull request's detail · scroll it (PR tabs) |
 | `a` | approve / withdraw (a PR tab, with the detail open) |
-| `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on the cursor's row, when it is wide enough |
+| `M` · `[ Open ]` `[ Merge ]` | merge this PR through Claude Code (only when it may) · the same two on every PR row (glyphs only when narrow) |
 | `S` `U` `T` `A` | on a PR tab: the Status picker · the Author picker · the Target-branch picker · show: all → reviewing → awaiting me |
 | `U` `B` `P` `S` `T` | on a pipelines tab: Run by · Branch · Pipeline type · Status · Trigger type — each a picker |
 | `m` · `Tab` `Shift+Tab` · `1`–`9` | open ↔ merged (PR tabs) · next / previous tab · a tab |
@@ -213,13 +213,11 @@ to know to ask.
 
 ## Merging — and why the button is usually dim
 
-The row under the cursor carries `[ Open ]` and, on an open pull
-request, `[ Merge ]` — only that row, and only when the title column
-can give up their cells and still say something (a title clipped to
-`Rede` is worse than no button, so below about 140 columns they are
-not offered). `M` merges the focused pull request at any width, and the
-row's right-click menu carries it too: the inline button is the
-convenience, the key is the guarantee.
+Every pull-request row carries `[ Open ]` and, on an open pull request,
+`[ Merge ]`; where the title column is too narrow for the words they
+shrink to their glyphs (the word on hover) rather than disappear. `M`
+merges the focused pull request too, and the row's right-click menu
+carries it.
 
 `[ Merge ]` is **dim and not a click target** until the pull request can
 actually merge. Five conditions, in the order a reader thinks about
