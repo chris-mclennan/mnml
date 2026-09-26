@@ -73,7 +73,7 @@ fn nonEmpty(env: *const Map, key: []const u8) ?[]const u8 {
 
 fn trimSep(p: []const u8) []const u8 {
     var s = p;
-    while (s.len > 1 and s[s.len - 1] == '/') s = s[0 .. s.len - 1];
+    while (s.len > 1 and std.fs.path.isSep(s[s.len - 1])) s = s[0 .. s.len - 1];
     return s;
 }
 
@@ -84,7 +84,9 @@ pub fn isUnder(path: []const u8, parent: []const u8) bool {
     const root = trimSep(parent);
     if (root.len == 0) return false;
     if (std.mem.eql(u8, root, "/")) return p.len > 1 and p[0] == '/';
-    return p.len > root.len + 1 and std.mem.startsWith(u8, p, root) and p[root.len] == '/';
+    // Either separator on Windows: the sandbox's own paths are joined
+    // there with `\`.
+    return p.len > root.len + 1 and std.mem.startsWith(u8, p, root) and std.fs.path.isSep(p[root.len]);
 }
 
 /// The probe: `home` is a sandbox tempdir — strictly under the temp root
