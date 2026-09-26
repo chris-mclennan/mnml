@@ -1,0 +1,14 @@
+# :ju[mps], :changes and :dis[play] (Neovim: the jumplist, the change
+# list, the registers). mnml answered "unknown command" for all three.
+write f.txt "a\nb\nc\nd\n"
+open f.txt
+command editor.use_vim
+key G
+key x
+ex ju
+expect screen contains ":jumps ·"
+expect screen contains "f.txt:1:1  >"
+ex changes
+expect screen contains ":changes · 4:1"
+ex dis
+expect screen lacks "unknown command"
