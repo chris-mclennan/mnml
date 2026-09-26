@@ -3037,9 +3037,15 @@ pub const App = struct {
     }
 
     /// `<workspace>/<rel>` on the frame arena; absolute input passes through.
+    /// On Windows the result takes the native separator throughout: the
+    /// workspace-relative names the lists keep are `/`-joined, and a
+    /// mixed `D:\ws\lib/bb.txt` compares unequal to the buffer's own
+    /// `D:\ws\lib\bb.txt` (a delete then left the buffer open).
     pub fn absPath(self: *App, rel: []const u8) Allocator.Error![]const u8 {
         if (std.fs.path.isAbsolute(rel)) return rel;
-        return std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+        const joined = try std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+        if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, joined, '/', '\\');
+        return joined;
     }
 
     /// `ui.auto_equalize_splits`: a split just opened or closed — even

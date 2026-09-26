@@ -306,10 +306,10 @@ pub const Tree = struct {
             rel = try rowRel(arena, r);
         } else {
             var found = false;
-            for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs)) |below| {
+            for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs) != null) {
                 root = @intCast(i + 1);
-                // An extra root's rows are its own path, then `/`-joined parts.
-                rel = try std.fmt.allocPrint(arena, "{s}/{s}", .{ r.path, try rowRel(arena, below) });
+                // An extra root's rows are native absolute paths.
+                rel = try nativeRel(arena, abs);
                 base = r.path;
                 found = true;
                 break;
@@ -489,7 +489,9 @@ pub const Tree = struct {
         try self.noteDirStamp(app, abs);
         // This directory's `.gitignore` joins the stack while its
         // entries are read; the rules name paths relative to the root.
-        const here = self.rootRel(app, rel_dir, root);
+        // Root-relative and `/`-joined: what a `.gitignore` rule reads
+        // (an extra root's rows are native absolute paths).
+        const here = try rowRel(arena, self.rootRel(app, rel_dir, root));
         var pushed = false;
         if (dir.readFileAlloc(app.io, ".gitignore", gpa, .limited(256 * 1024))) |text| {
             defer gpa.free(text);
@@ -518,7 +520,15 @@ pub const Tree = struct {
             const here_rel = if (here.len == 0) entry.name else try std.fmt.allocPrint(arena, "{s}/{s}", .{ here, entry.name });
             const ignored = under_ignored or (is_dir and self.artifactHidden(app, entry.name)) or ignores.ignored(here_rel, is_dir);
             if (ignored and !self.show_ignored) continue;
-            const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel_dir, entry.name });
+            // Under an extra root the row is its absolute path, joined
+            // natively like any other absolute path; under the workspace
+            // it is `/`-joined.
+            const rel = if (rel_dir.len == 0)
+                try gpa.dupe(u8, entry.name)
+            else if (std.fs.path.isAbsolute(rel_dir))
+                try std.fs.path.join(gpa, &.{ rel_dir, entry.name })
+            else
+                try std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel_dir, entry.name });
             errdefer gpa.free(rel);
             try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored, .link = link });
         }
@@ -1156,6 +1166,14 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
 pub fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and std.fs.path.isSep(path[base.len])) return path[base.len + 1 ..];
     return null;
+}
+
+/// `path` with Windows' own separator throughout (itself elsewhere).
+fn nativeRel(arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    if (builtin.os.tag != .windows or std.mem.indexOfScalar(u8, path, '/') == null) return path;
+    const out = try arena.dupe(u8, path);
+    std.mem.replaceScalar(u8, out, '/', '\\');
+    return out;
 }
 
 /// `rel` spelled as a row spells it: `/` between the parts (Windows'
