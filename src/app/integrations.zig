@@ -781,15 +781,24 @@ pub fn chipGlyph(arena: Allocator, chip: ?manifest_mod.Chip) Allocator.Error![]c
 /// absolute path while the manifest `--install` wrote names the bare
 /// `mnml-sample`, and those are the same program.
 pub fn catalogueState(app: *App, arena: Allocator, binary: []const u8, version: []const u8) Allocator.Error!catalogue.State {
-    const want = std.fs.path.basename(try expandEnv(app, arena, binary));
+    const want = programName(try expandEnv(app, arena, binary));
     var state: catalogue.State = .not_installed;
     for (app.integrations.list) |*inst| {
-        const have = std.fs.path.basename(try expandEnv(app, arena, inst.manifest.binary));
+        const have = programName(try expandEnv(app, arena, inst.manifest.binary));
         if (!std.mem.eql(u8, have, want)) continue;
         if (catalogue.olderThan(inst.manifest.version, version)) return .update;
         state = .installed;
     }
     return state;
+}
+
+/// The program a binary names: its file name, and on Windows without
+/// the `.exe` — a catalogue names `…\mnml-sample.exe` where the
+/// manifest its `--install` wrote says `mnml-sample`.
+fn programName(binary: []const u8) []const u8 {
+    const base = std.fs.path.basename(binary);
+    if (builtin.os.tag == .windows and std.ascii.endsWithIgnoreCase(base, ".exe")) return base[0 .. base.len - 4];
+    return base;
 }
 
 /// Whether any manifest OTHER than `except` still names `binary` —
