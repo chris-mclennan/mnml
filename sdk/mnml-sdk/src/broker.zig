@@ -1679,6 +1679,20 @@ const Got = struct {
     served_ms: i64 = 0,
 };
 
+/// Until `n` clients have joined the queue (or been served from it),
+/// for at most five seconds.
+fn waitJoined(shared: *Shared, n: usize) !void {
+    var waited: u32 = 0;
+    while (waited < 5000) : (waited += 2) {
+        shared.mu.lockUncancelable(shared.io);
+        const queued = shared.queue.items().len;
+        shared.mu.unlock(shared.io);
+        if (queued + shared.served.load(.monotonic) >= n) return;
+        try shared.io.sleep(.fromMilliseconds(2), .awake);
+    }
+    return error.@"a client never joined the queue";
+}
+
 fn oneClient(io: Io, path: []const u8, g: *Got, timeout_ms: u32) void {
     g.reply = ask(io, path, .{
         .op = .acquire,
@@ -1693,10 +1707,11 @@ fn oneClient(io: Io, path: []const u8, g: *Got, timeout_ms: u32) void {
 
 test "a real broker on a private socket serves the pane before the batch script that queued first" {
     if (!supported) return error.SkipZigTest;
-    // A bucket with nothing in it that refills ten times a second, so
-    // the order is decided by the queue and the test takes under a
-    // second rather than three minutes.
-    var h = try Harness.init("bitbucket", .{ .rate = 4.0, .capacity = 6.0, .max_block_secs = 20.0 }, 0);
+    // A bucket with nothing in it that refills once a second, so the
+    // order is decided by the queue: all four are queued well before the
+    // first token lands, even on a runner that stalls for a few hundred
+    // milliseconds, and the test takes four seconds, not three minutes.
+    var h = try Harness.init("bitbucket", .{ .rate = 1.0, .capacity = 6.0, .max_block_secs = 20.0 }, 0);
     defer h.deinit();
     const io = t.io;
     const path = h.server.path();
@@ -1711,13 +1726,17 @@ test "a real broker on a private socket serves the pane before the batch script 
     };
     var group: Io.Group = .init;
     defer group.cancel(io);
-    for (&gots) |*g| {
+    for (&gots, 1..) |*g, n| {
         try group.concurrent(io, oneClient, .{ io, path, g, @as(u32, 8000) });
-        // Enough to be sure each has joined the queue before the next
-        // does: the tie-break inside a class is arrival order, and
+        // Each has joined the queue before the next connects — watched,
+        // not slept on: a fixed pause lost the order on a slow macOS
+        // runner. The tie-break inside a class is arrival order, and
         // this test is about the order BETWEEN classes.
-        try io.sleep(.fromMilliseconds(30), .awake);
+        try waitJoined(&h.server.shared, n);
     }
+    // The order is only the queue's if nobody was served before the
+    // last one joined.
+    try t.expectEqual(@as(u64, 0), h.server.shared.served.load(.monotonic));
     try group.await(io);
 
     for (&gots) |*g| {
