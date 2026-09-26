@@ -393,6 +393,7 @@ pub const Session = struct {
         var handler = self.term.vtHandler();
         handler.effects = .readonly;
         handler.effects.write_pty = onWritePty;
+        handler.effects.device_attributes = common.deviceAttributes;
         if (opts.clipboard_write) handler.effects.clipboard_write = onClipboardWrite;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 

@@ -329,6 +329,7 @@ pub const Session = struct {
         var handler = self.term.vtHandler();
         handler.effects = .readonly;
         handler.effects.write_pty = onWritePty;
+        handler.effects.device_attributes = common.deviceAttributes;
         if (opts.clipboard_write) handler.effects.clipboard_write = onClipboardWrite;
         self.stream = .init(.{ .handler = handler, .allocator = gpa });
 
@@ -880,6 +881,29 @@ test "a cursor position report is answered back through the pty" {
     var it = std.mem.tokenizeAny(u8, text, " \n\r");
     while (it.next()) |tok| try squeezed.appendSlice(testing.allocator, tok);
     try testing.expect(std.mem.indexOf(u8, squeezed.items, "033[1;1R") != null);
+}
+
+test "a device-attributes query (CSI c) is answered back through the pty" {
+    // fish 4 asks this at every start and waits for the reply; unanswered,
+    // it waited ten seconds in every pane.
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 60,
+        .rows = 4,
+        .env = &env,
+        .argv = &.{ "/bin/sh", "-c", "stty raw -echo; printf '\\033[c'; dd bs=1 count=9 2>/dev/null | od -An -c" },
+    });
+    defer s.deinit();
+    _ = pumpUntilExit(s, 5000) orelse return error.ChildDidNotExit;
+
+    const text = try s.terminal().plainString(testing.allocator);
+    defer testing.allocator.free(text);
+    var squeezed: std.ArrayList(u8) = .empty;
+    defer squeezed.deinit(testing.allocator);
+    var it = std.mem.tokenizeAny(u8, text, " \n\r");
+    while (it.next()) |tok| try squeezed.appendSlice(testing.allocator, tok);
+    try testing.expect(std.mem.indexOf(u8, squeezed.items, "033[?62;22c") != null);
 }
 
 test "resize reaches the child as a new window size" {
