@@ -391,6 +391,7 @@ pub fn replaceChars(ed: *Editor, c: u21, count: u32, out: *EditOutcome) Allocato
     }
     // The primary cursor's alone, like `{n}r<CR>`.
     mc.clear(ed);
+    ed.anchor = null;
     try ed.checkpoint();
     var new = std.ArrayList(u8).empty;
     defer new.deinit(ed.gpa);

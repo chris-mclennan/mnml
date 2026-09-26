@@ -304,12 +304,14 @@ test "Tab on the app's : line cycles the same list the popup shows, and a click 
     try t.expect(showing(&app));
     const l = (try list(&app, app.frame.allocator())).?;
     try dispatch.key(&app, Key.named(.tab));
-    try t.expectEqualStrings("tab.close", app.cmdline.?.text.items);
+    // The ex verbs the text begins lead the registry ids (`:ta<Tab>` is
+    // `:tabclose`, as in Neovim), alphabetical within each.
+    try t.expectEqualStrings("tabclose", app.cmdline.?.text.items);
     try dispatch.key(&app, Key.named(.tab));
-    try t.expectEqualStrings("tab.first", app.cmdline.?.text.items);
+    try t.expectEqualStrings("tabedit", app.cmdline.?.text.items);
     // Shift+Tab goes back; from the typed text it lands on the last.
     try dispatch.key(&app, Key.named(.backtab));
-    try t.expectEqualStrings("tab.close", app.cmdline.?.text.items);
+    try t.expectEqualStrings("tabclose", app.cmdline.?.text.items);
     try click(&app, l.labels.len - 1);
     try t.expectEqualStrings(l.labels[l.labels.len - 1], app.cmdline.?.text.items);
     try t.expect(showing(&app));
