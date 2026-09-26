@@ -868,6 +868,11 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
 }
 
 test "a trash delete the trash cannot take is not removed: the box asks again, naming why" {
+    // The fixture blocks the trash with a FILE where its directory goes.
+    // Windows answers a rename through a file with INVALID_PARAMETER,
+    // which Zig 0.16's Debug build panics on as a "programmer bug"
+    // rather than returning; the refusal cannot be staged there.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var env = try Env.init();
     defer env.deinit();
     var app = try env.app();

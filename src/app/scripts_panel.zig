@@ -1005,7 +1005,7 @@ test "SCRIPTS: three tabs — Installed lists init.lua and each script, Marketpl
     try t.expect(app.overlay == .confirm);
     try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "tidy 0.9.0") != null);
     try app.handle(.{ .key = Key.char('i') });
-    const installed = app.scripts.find("tidy").?;
+    const installed = app.scripts.find("tidy") orelse return notInstalled(&app, "tidy");
     try t.expectEqual(manifest_mod.Source.marketplace, installed.source);
     try t.expect(app.dyn_commands.get("user.tidy") != null);
     // And the Marketplace row now says it is installed: dimmed, with
@@ -1189,4 +1189,11 @@ test "SCRIPTS: a script that tripped the budget wears a ⏱ N chip, at the shipp
         try t.expect(std.mem.indexOf(u8, txt, view.budget_glyph ++ " 2") != null);
         try t.expect(std.mem.indexOf(u8, txt, "Community") != null);
     }
+}
+
+/// A script the test expected installed is not: name what the app said
+/// last, rather than panicking on the missing entry.
+fn notInstalled(app: *App, name: []const u8) error{TestUnexpectedResult} {
+    std.debug.print("script {s} is not installed; last toast: {s}\n", .{ name, app.lastToast() orelse "(none)" });
+    return error.TestUnexpectedResult;
 }
