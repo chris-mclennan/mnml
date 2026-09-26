@@ -35,8 +35,9 @@
 #                 script itself, against a fake gh — not grepped)
 #   secrets       every secrets.NAME a workflow reads exists on
 #                 --gh-repo (GITHUB_TOKEN aside)            needs gh
-#   readme        README and the installers point at --final-repo, and
-#                 nothing ships naming --old-repo
+#   readme        README's install lines download from --final-repo
+#   old-repo      nothing that ships (src/, dist/, data/, the installers,
+#                 README, workflows, …) still names --old-repo
 #   targets       `zig build gate-targets` builds           needs --build
 #   version-build a fresh ReleaseSafe build's --version prints the tag
 #                                                           needs --tag --build
@@ -336,23 +337,27 @@ else
     fi
 fi
 
-# ── readme ─────────────────────────────────────────────────────────────
-ship_files="README.md dist/install.sh dist/install.ps1 dist/msi/mnml.wxs dist/homebrew/mnml.rb nfpm/mnml.yaml"
-present=
-for f in $ship_files; do [ -f "$REPO/$f" ] && present="$present $f"; done
+# ── readme / old-repo ──────────────────────────────────────────────────
 if [ ! -f "$REPO/README.md" ]; then
     record readme FAIL "README.md is missing"
 else
-    old_hits=$(cd "$REPO" && grep -nF "$OLD_REPO" $present 2>/dev/null | grep -vF "$OLD_REPO-" | cut -c1-150)
     final_install=$(grep -cE "github\.com/$FINAL_REPO/releases/(latest/)?download/" "$REPO/README.md")
-    if [ -n "$old_hits" ]; then
-        record readme FAIL "$(printf '%s\n' "$old_hits" | wc -l | tr -d ' ') line(s) still name $OLD_REPO — the installers would fetch from the old repo:
-$(printf '%s\n' "$old_hits" | head -n 10)"
-    elif [ "$final_install" -lt 1 ]; then
+    if [ "$final_install" -lt 1 ]; then
         record readme FAIL "README.md has no install line downloading from github.com/$FINAL_REPO/releases"
     else
-        record readme ok "$final_install README install line(s) point at $FINAL_REPO; none of$present names $OLD_REPO"
+        record readme ok "$final_install README install line(s) download from github.com/$FINAL_REPO/releases"
     fi
+fi
+# Everything that ships or runs: a URL baked into the binary, an
+# installer's default repo, the marketplace index URL, a workflow. docs/
+# and tools/ are history and tooling, not shipped.
+SHIPPED="README.md CHANGELOG.md dist nfpm data src scripts sdk integrations lua themes .github"
+old_hits=$(cd "$REPO" && git grep -nF "$OLD_REPO" -- $SHIPPED 2>/dev/null | grep -vF "$OLD_REPO-" | cut -c1-150)
+if [ -n "$old_hits" ]; then
+    record old-repo FAIL "$(printf '%s\n' "$old_hits" | wc -l | tr -d ' ') shipped line(s) still name $OLD_REPO (installers, links and index URLs would point at the old repo):
+$(printf '%s\n' "$old_hits" | head -n 12)"
+else
+    record old-repo ok "nothing under $(echo $SHIPPED | tr ' ' ',') names $OLD_REPO"
 fi
 
 # ── targets / version-build ────────────────────────────────────────────

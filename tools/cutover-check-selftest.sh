@@ -21,8 +21,9 @@
 #   secrets       a secret the workflows read that the repo lacks
 #   gh            unauthenticated / --offline → the network items are
 #                 todo, the exit stays 0
-#   readme        an installer still defaulting to the old repo; no
-#                 install line for the final repo
+#   readme        no install line for the final repo
+#   old-repo      an installer defaulting to the old repo; a URL in src/;
+#                 (and docs/ history naming it stays ok)
 #   --build       gate-targets failing; a --version that does not print
 #                 the tag
 #   --json        parses, carries ok=false and the failing item
@@ -175,7 +176,7 @@ fresh; run --tag v0.3.0 --build
 if [ "$RC" = 0 ] && ! printf '%s\n' "$OUT" | grep -qE '^(FAIL|todo) '; then
     ok "good repo: every item ok, exit 0 ($(printf '%s\n' "$OUT" | grep -c '^ok ') items)"
 else bad "good repo: not all ok (exit $RC)" "$OUT"; fi
-for id in tree work-data scrub parity version changelog integrations dist-check secrets readme targets version-build; do
+for id in tree work-data scrub parity version changelog integrations dist-check secrets readme old-repo targets version-build; do
     [ "$(state $id)" = ok ] || bad "good repo: $id is not ok" "$OUT"
 done
 run
@@ -255,7 +256,11 @@ expect "--offline: integrations → todo, exit 0" integrations todo 0
 
 # ── 9. readme ──────────────────────────────────────────────────────────
 fresh; printf 'repo=${MNML_REPO:-chris-mclennan/mnml-zig}\n' > "$R/dist/install.sh"; commit r1; run
-expect "readme: an installer defaulting to the old repo → FAIL" readme FAIL 1
+expect "old-repo: an installer defaulting to the old repo → FAIL" old-repo FAIL 1
+fresh; mkdir -p "$R/src"; printf 'const url = "https://github.com/chris-mclennan/mnml-zig/issues";\n' > "$R/src/a.zig"; (cd "$R" && git add src/a.zig); commit r3; run
+expect "old-repo: a URL baked into src/ → FAIL" old-repo FAIL 1
+fresh; mkdir -p "$R/docs"; printf 'history: chris-mclennan/mnml-zig\n' > "$R/docs/h.md"; (cd "$R" && git add docs/h.md); commit r4; run
+expect "old-repo: docs/ history naming it is not shipped → ok" old-repo ok 0
 fresh; printf '# mnml\n\nNo install line.\n' > "$R/README.md"; commit r2; run
 expect "readme: no install line for the final repo → FAIL" readme FAIL 1
 
