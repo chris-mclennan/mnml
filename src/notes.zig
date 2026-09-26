@@ -300,6 +300,15 @@ pub fn refilter(app: *App) Allocator.Error!void {
     if (st.list.cursor >= st.filtered.items.len) st.list.cursor = st.filtered.items.len -| 1;
 }
 
+/// The user chose `sort` — the chip's click or a row of its
+/// right-click menu, the one path for both: the list re-sorts and
+/// `ui.notes_sort` is persisted, so the panel opens in that order next time.
+pub fn pickSort(app: *App, sort: ListSort) Allocator.Error!void {
+    try setSort(app, sort);
+    app.cfg.ui.notes_sort = app.notes.sort.toConfig();
+    _ = try settings.persist(app, .workspace, &.{ "ui", "notes_sort" }, app.cfg.ui.notes_sort);
+}
+
 pub fn setSort(app: *App, sort: ListSort) Allocator.Error!void {
     const st = &app.notes;
     st.sort = sort;
@@ -316,9 +325,7 @@ fn refreshCmd(app: *App) CommandError!void {
 
 /// The chip's click: the next mode, persisted as `ui.notes_sort`.
 fn sortCmd(app: *App) CommandError!void {
-    try setSort(app, app.notes.sort.next());
-    app.cfg.ui.notes_sort = app.notes.sort.toConfig();
-    _ = try settings.persist(app, .workspace, &.{ "ui", "notes_sort" }, app.cfg.ui.notes_sort);
+    try pickSort(app, app.notes.sort.next());
     app.toast("notes: {s}", .{app.notes.sort.label()});
 }
 

@@ -550,7 +550,16 @@ fn rebase(app: *App) CommandError!void {
 /// and pushes, one that has never been pushed is offered `Publish
 /// branch (set upstream)` (`git.push` sets it on a first push) and no
 /// pull.
+/// `git.branch_menu` from the palette or the statusline's branch chip:
+/// the menu rises from the bottom-left, over the chip.
 fn branchMenu(app: *App) CommandError!void {
+    return branchMenuAt(app, 2, @intCast(app.screen.height -| 3));
+}
+
+/// The branch menu with its corner at (`x`, `y`) — the git toolbar's
+/// Branch button drops it under the button, as the button's neighbours'
+/// menus do, instead of at the far bottom-left.
+pub fn branchMenuAt(app: *App, x: u16, y: u16) CommandError!void {
     _ = try git.requireRepo(app);
     const published = if (app.git.status) |s| s.upstream != null or s.branch == null else true;
     const sync: []const command.MenuItem = if (published) &.{
@@ -572,8 +581,6 @@ fn branchMenu(app: *App) CommandError!void {
     };
     const items = try std.mem.concat(app.gpa, command.MenuItem, &.{ &head, sync, &tail });
     errdefer app.gpa.free(items);
-    const x: u16 = 2;
-    const y: u16 = @intCast(app.screen.height -| 3);
     try app.openMenu("Branch", items, x, y);
 }
 

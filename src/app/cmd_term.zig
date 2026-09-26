@@ -163,6 +163,10 @@ fn scratchToggle(app: *App) CommandError!void {
         const layout = app.layouts.current();
         const shown = layout.leafOf(id) != null;
         if (shown and paneFocused(app, id)) {
+            if (layout.leafOf(id)) |leaf| if (layout.parentOf(leaf)) |p| switch (layout.node(p).*) {
+                .split => |sp| app.scratch_ratio = sp.ratio,
+                else => {},
+            };
             const next = layout.removePane(id);
             app.afterSplitChange();
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
@@ -176,6 +180,11 @@ fn scratchToggle(app: *App) CommandError!void {
         }
         if (app.active) |a| app.setActive(a);
         try pty_pane.place(app, id, .below);
+        // Back at the height it was dragged to.
+        if (app.scratch_ratio) |r| if (layout.leafOf(id)) |leaf| if (layout.parentOf(leaf)) |p| {
+            layout.setRatio(p, r);
+            app.afterSplitChange();
+        };
         return;
     }
     const id = try pty_pane.open(app, .{ .placement = .below, .kind = .scratch, .label = "scratch" });

@@ -179,6 +179,9 @@ pub const Doc = struct {
     /// The gutter counts from the cursor line (vim `relativenumber`);
     /// the cursor line itself keeps its absolute number.
     relative_numbers: bool = false,
+    /// With `relative_numbers`: the cursor line shows `0`, not its
+    /// absolute number — vim's `nonumber relativenumber`.
+    relative_only: bool = false,
     /// The cursor line's band (`ui.cursor_line`).
     cursor_line_band: bool = true,
     /// The debugger's current line (0-based): its row wears the band
@@ -1090,7 +1093,7 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                         _ = ui.putStr(area.x + 1, y, num_w, ui.clipStr(label, num_w), Theme.onBg(t.muted, row_style.bg));
                     } else {
                         // ── ui toggles ── relative numbers count from the cursor line
-                        const shown: u32 = if (doc.relative_numbers and !is_cursor_line) (if (line > cursor_line) line - cursor_line else cursor_line - line) else line + 1;
+                        const shown: u32 = if (doc.relative_numbers and (!is_cursor_line or doc.relative_only)) (if (line > cursor_line) line - cursor_line else cursor_line - line) else line + 1;
                         const num = ui.fmt("{d}", .{shown});
                         _ = ui.putStrRight(area.x + 1 + num_w, y, num_w, num, gstyle);
                     }

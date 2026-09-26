@@ -1443,6 +1443,9 @@ test "the pane's states: fetching, not linked, needs re-auth with the guided ste
     try t.expect(std.mem.indexOf(u8, txt, "2. press R to capture it from the keychain") != null);
     try t.expect(std.mem.indexOf(u8, txt, "the keychain login is other@example.com") != null);
     try t.expect(std.mem.indexOf(u8, txt, "(active) locked") != null);
+    // Nothing was ever read: no bar claims "0% used" (round-7 hunt).
+    try t.expect(std.mem.indexOf(u8, txt, "% used") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "Current session") == null);
 }
 
 test "the chip reads the same accounts: single, compact and ticker, the detail and the countdown" {

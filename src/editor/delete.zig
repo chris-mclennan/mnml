@@ -260,6 +260,68 @@ pub fn deleteSelection(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocat
     _ = try deleteSelectionIfAny(ed, out);
 }
 
+/// `dj` / `Vjd` / `dip` after `normalize_linewise_selection`: the lines
+/// go to the register linewise and leave the buffer; the cursor takes
+/// the line now at their place, at the column `mark_operator_start`
+/// kept (vim's `nostartofline`, `:help 'sol'`), else its start. A range
+/// that runs to the end of a buffer with no final `\n` takes the line
+/// break before it too, so no empty line is left behind (`Gdd`).
+pub fn deleteSelectionLinewise(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    if (mc.hasExtras(ed)) return deleteSelection(ed, clip, out);
+    const sel = ed.selection() orelse return;
+    const goal = ed.op_goal;
+    ed.op_start = null;
+    ed.op_goal = null;
+    var start = sel[0];
+    const end = sel[1];
+    const body = ed.bytes()[start..end];
+    if (body.len > 0 and body[body.len - 1] == '\n') {
+        try clip.pushDelete(body, true);
+    } else {
+        const s = try std.mem.concat(ed.gpa, u8, &.{ body, "\n" });
+        defer ed.gpa.free(s);
+        try clip.pushDelete(s, true);
+    }
+    out.clipboard_set = clip.lastWritten();
+    out.clipboard_linewise = true;
+    ed.rememberSelection();
+    // A closed fold inside the lines goes with them (the widening took
+    // it whole); `Buffer.applyOps` shifts the ones after.
+    const lo_line = ed.lineOfByte(start);
+    const hi_line = ed.lineOfByte(if (end > start) end - 1 else start);
+    var fi: usize = 0;
+    while (fi < ed.folds.count()) {
+        const fs = ed.folds.keys()[fi];
+        if (fs >= lo_line and fs <= hi_line) ed.folds.orderedRemoveAt(fi) else fi += 1;
+    }
+    try ed.folds.reIndex(ed.gpa);
+    ed.cursor = start;
+    ed.anchor = null;
+    try ed.checkpoint();
+    if (end >= ed.len() and start > 0 and (end == start or ed.bytes()[end - 1] != '\n')) start = ed.prevBoundary(start);
+    try ed.splice(start, end, "");
+    ed.cursor = @min(start, ed.len());
+    clampOffPhantomLine(ed);
+    const line = ed.currentLine();
+    ed.cursor = if (goal) |g| ed.byteAtVcol(line, g) else ed.lineStart(line);
+    out.buffer_changed = true;
+}
+
+/// A change's text into the registers, as its delete would put it
+/// there (`register_selection_delete`).
+pub fn registerSelectionDelete(ed: *Editor, linewise: bool, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
+    const sel = ed.selection() orelse return;
+    const body = ed.bytes()[sel[0]..sel[1]];
+    if (!linewise and body.len == 0) return;
+    if (linewise and (body.len == 0 or body[body.len - 1] != '\n')) {
+        const s = try std.mem.concat(ed.gpa, u8, &.{ body, "\n" });
+        defer ed.gpa.free(s);
+        try clip.pushDelete(s, true);
+    } else try clip.pushDelete(body, linewise);
+    out.clipboard_set = clip.lastWritten();
+    out.clipboard_linewise = linewise;
+}
+
 pub fn replaceSelection(ed: *Editor, s: []const u8, out: *EditOutcome) Allocator.Error!void {
     if (mc.hasExtras(ed)) {
         try ed.checkpoint();
@@ -313,6 +375,32 @@ pub fn replaceCharAtCursor(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Err
     const end = ed.nextBoundary(ed.cursor);
     try ed.splice(ed.cursor, end, s);
     out.buffer_changed = true;
+}
+
+/// `{n}r<c>`: false (and nothing changed) when fewer than `count`
+/// characters are left on the line from the cursor.
+pub fn replaceChars(ed: *Editor, c: u21, count: u32, out: *EditOutcome) Allocator.Error!bool {
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(c, &buf) catch return false;
+    const eol = ed.lineEnd(ed.currentLine());
+    var end = ed.cursor;
+    var i: u32 = 0;
+    while (i < @max(count, 1)) : (i += 1) {
+        if (end >= eol) return false;
+        end = ed.nextBoundary(end);
+    }
+    // The primary cursor's alone, like `{n}r<CR>`.
+    mc.clear(ed);
+    ed.anchor = null;
+    try ed.checkpoint();
+    var new = std.ArrayList(u8).empty;
+    defer new.deinit(ed.gpa);
+    for (0..@max(count, 1)) |_| try new.appendSlice(ed.gpa, buf[0..n]);
+    const start = ed.cursor;
+    try ed.splice(start, end, new.items);
+    ed.cursor = start + new.items.len - n;
+    out.buffer_changed = true;
+    return true;
 }
 
 pub fn replaceRange(ed: *Editor, start_in: usize, end_in: usize, text: []const u8, out: *EditOutcome) Allocator.Error!void {

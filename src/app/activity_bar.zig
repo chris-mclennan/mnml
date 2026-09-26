@@ -262,13 +262,26 @@ pub fn active(app: *App) Section {
     switch (app.focus) {
         .tree => return .explorer,
         .panel => |p| if (onRail(side.sectionOfPanel(p))) |s| return s,
-        .pane => |id| if (sectionOfPane(app, id)) |s| return s,
+        // A pane that belongs to a section (a grep results pane is
+        // Search's) takes the mark only while no column shows another
+        // section: the rail and the column must not disagree about
+        // what is up (round-7 hunt: Ctrl+Shift+F lit Search over the
+        // Explorer tree).
+        .pane => |id| if (sectionOfPane(app, id)) |s| {
+            if (shownOnRail(app) == null) return s;
+        },
         .overlay, .welcome, .info_view => {},
     }
-    if (side.shown(app, .right)) |s| if (onRail(s)) |r| return r;
+    if (shownOnRail(app)) |s| return s;
     if (app.active) |id| if (sectionOfPane(app, id)) |s| return s;
-    if (side.shown(app, .left)) |s| if (onRail(s)) |r| return r;
     return .explorer;
+}
+
+/// A rail section a column shows, the right one first.
+fn shownOnRail(app: *App) ?Section {
+    if (side.shown(app, .right)) |s| if (onRail(s)) |r| return r;
+    if (side.shown(app, .left)) |s| if (onRail(s)) |r| return r;
+    return null;
 }
 
 /// The hidden sections (the outline, the diagnostics — Rust's

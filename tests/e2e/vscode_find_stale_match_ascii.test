@@ -1,0 +1,15 @@
+# The ASCII face of the stale-match bug (round-7 hunt): with no
+# multi-byte text to trip over, Shift+F3 selected the old bytes 0..3 —
+# three of the four indent spaces — and typing replaced them, leaving
+# "Z abchello". The match is found again at its new offset first.
+write f.txt "hello\n"
+open f.txt
+type abc
+key ctrl+f
+type abc
+key ctrl+]
+key shift+f3
+key esc
+type Z
+key ctrl+s
+expect file f.txt contains "    Zhello"

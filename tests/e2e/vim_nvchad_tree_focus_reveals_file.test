@@ -1,0 +1,9 @@
+# NvChad nvim-tree has update_focused_file.enable = true: <leader>e lands
+# on the current buffer's row. mnml leaves the tree cursor on row 0.
+write src/deep/x.txt "x\n"
+write a.txt "a\n"
+open src/deep/x.txt
+command editor.use_vim
+key space
+key e
+expect status contains "/src/deep/x.txt\",\"treeVisible"

@@ -106,6 +106,13 @@ pub fn decscusr(shape: Shape, blink: bool) vaxis.Cell.CursorShape {
     };
 }
 
+/// The editor's shape while an operator waits for its motion: Neovim's
+/// default `guicursor` has `o:hor20` (NvChad keeps it) — an underline.
+pub fn forModeOp(mode: EditingMode, operator_pending: bool) Shape {
+    if (operator_pending) return .underline;
+    return forMode(mode);
+}
+
 /// The editor's shape for an editing mode. Modeless (`none`) editing is
 /// an insert caret the whole time, so it is a bar.
 pub fn forMode(mode: EditingMode) Shape {

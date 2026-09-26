@@ -238,6 +238,8 @@ pub const PromptPurpose = union(enum) {
     /// the directory it is created in (owned).
     new_file: []u8,
     new_folder: []u8,
+    /// `file.save_as`: the editor pane the typed path is saved from.
+    save_as: PaneId,
     /// A note / finding name typed into the seeded prompt; the payload
     /// is the panel's directory, workspace-relative (owned).
     new_note: []u8,
@@ -804,6 +806,9 @@ pub const FindBarState = struct {
     snapshot_cursor: usize,
     /// vim `?`: the accept lands on the closest match before the cursor.
     reverse: bool = false,
+    /// `d/pat<CR>`: the bar is a pending operator's motion; Enter hands
+    /// the match to the operator, Esc (or no match) drops it.
+    operator: bool = false,
     /// Enter chains straight into the replace prompt (VS Code `Ctrl+H`).
     chain_to_replace: bool = false,
     /// An Enter (or a step) has put the cursor on a match of this
@@ -1225,6 +1230,9 @@ pub const App = struct {
     /// The workspace's one scratch terminal (`term.scratch_toggle`),
     /// alive while hidden; null until the first toggle or once closed.
     scratch_pty: ?PaneId = null,
+    /// The split ratio the scratch terminal had when Ctrl+` hid it — a
+    /// dragged divider comes back where it was, as VS Code's panel does.
+    scratch_ratio: ?u16 = null,
     tasks: tasks_mod.State = .{},
     http: http_app.State,
     http_panel: http_panel.State,
@@ -1880,6 +1888,7 @@ pub const App = struct {
         buf.doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
         buf.doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
         buf.doc.auto_indent = self.cfg.editor.auto_indent;
+        buf.doc.auto_pair = self.cfg.editor.auto_pair;
         const path = buf.doc.path orelse return;
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
@@ -2462,7 +2471,7 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     /// `editor.auto_indent` changed (`:set ai`, the settings row): every
     /// open buffer follows.
-    /// The per-buffer copies of `editor.auto_indent`,
+    /// The per-buffer copies of `editor.auto_indent`, `auto_pair`,
     /// `trim_trailing_ws_on_save` and `ensure_trailing_newline` follow
     /// the config when it changes (`:set`, Settings, a reload), so the
     /// file already open obeys the toast — a file's `.editorconfig`
@@ -2474,6 +2483,7 @@ pub const App = struct {
             .editor => |*e| {
                 const doc = e.buf.doc;
                 doc.auto_indent = self.cfg.editor.auto_indent;
+                doc.auto_pair = self.cfg.editor.auto_pair;
                 doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
                 doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
                 const path = doc.path orelse continue;
@@ -3122,6 +3132,8 @@ pub const App = struct {
         const fb = &(self.find_bar orelse return);
         // A terminal's bar leaves its selection on the current match.
         if (self.panes.pty(fb.pane)) |p| @import("app/pty_search.zig").barClosed(self, p, restore);
+        // A pending operator whose search was cancelled goes too.
+        if (fb.operator) if (self.panes.editor(fb.pane)) |e| if (e.buf.input.isOpPending()) e.buf.input.onBlur();
         if (fb.snapshot) |*snap| {
             if (restore) {
                 if (self.panes.editor(fb.pane)) |e| {
