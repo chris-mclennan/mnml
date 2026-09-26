@@ -4516,8 +4516,11 @@ test "a python server starts with the project's .venv interpreter in its setting
         var pbuf: [std.fs.max_path_bytes]u8 = undefined;
         const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
         try tmp.dir.createDirPath(io, ".mnml");
-        try tmp.dir.createDirPath(io, ".venv/bin");
-        try tmp.dir.writeFile(io, .{ .sub_path = ".venv/bin/python", .data = "" });
+        // The platform's own venv layout: `Scripts\python.exe` on Windows.
+        const venv_dir = if (builtin.os.tag == .windows) ".venv/Scripts" else ".venv/bin";
+        const venv_py = if (builtin.os.tag == .windows) ".venv/Scripts/python.exe" else ".venv/bin/python";
+        try tmp.dir.createDirPath(io, venv_dir);
+        try tmp.dir.writeFile(io, .{ .sub_path = venv_py, .data = "" });
         try tmp.dir.writeFile(io, .{ .sub_path = "m.py", .data = "import black\n" });
         try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = if (configured)
             ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" }, .settings = .{ .python = .{ .pythonPath = \"/opt/mine/python\" } } } } }"
@@ -4545,7 +4548,12 @@ test "a python server starts with the project's .venv interpreter in its setting
         if (configured) {
             try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/opt/mine/python\"}}", settings);
         } else {
-            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":\"{s}/.venv/bin/python\"}}}}", .{ws});
+            const py = if (builtin.os.tag == .windows)
+                try std.fs.path.join(gpa, &.{ ws, ".venv", "Scripts", "python.exe" })
+            else
+                try std.fs.path.join(gpa, &.{ ws, ".venv", "bin", "python" });
+            defer gpa.free(py);
+            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":{f}}}}}", .{std.json.fmt(py, .{})});
             defer gpa.free(want);
             try testing.expectEqualStrings(want, settings);
         }
