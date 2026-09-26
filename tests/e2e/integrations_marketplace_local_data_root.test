@@ -1,0 +1,14 @@
+# `<data root>/marketplace/local/` lists in the Marketplace tab with no
+# config at all: the private source, named `local`, every row wearing the
+# Private badge. A loose manifest there is a launcher row; a folder with
+# a build.zig and a manifest.zon is an app row — and a repo symlinked in
+# whole lists its integrations/<id>/ folders, never its own build.zig.zon.
+shell mkdir -p "$MNML_DATA_ROOT/marketplace/local" && printf '.{ .id = "secret", .label = "Secret", .version = "0.1.0", .binary = "mnml-secret", .description = "A private launcher" }\n' > "$MNML_DATA_ROOT/marketplace/local/secret.zon"
+shell mkdir -p privrepo/integrations/hush && printf '.{ .name = .privrepo }\n' > privrepo/build.zig.zon && : > privrepo/integrations/hush/build.zig && printf '.{ .id = "hush", .label = "Hush", .version = "0.2.0", .binary = "mnml-hush", .description = "From a symlinked private repo" }\n' > privrepo/integrations/hush/manifest.zon && ln -s "$PWD/privrepo" "$MNML_DATA_ROOT/marketplace/local/privrepo"
+command integrations.show_marketplace
+drag 30 5 75 5
+expect within 5000 screen contains "[launcher] Secret  Private  (local)"
+expect screen contains "A private launcher"
+expect screen contains "[app] Hush  Private  (local)"
+expect screen contains "From a symlinked private repo"
+expect screen lacks "privrepo"

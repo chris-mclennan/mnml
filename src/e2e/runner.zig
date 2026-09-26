@@ -701,6 +701,9 @@ const Run = struct {
     /// as one late chunk with no length (a server that never finishes,
     /// for a timeout to trip on). The text `@echo` makes the body the
     /// request as it arrived, so a test can read what went on the wire.
+    /// The text `@file <relpath>` makes the body that workspace file's
+    /// bytes as they are when the step runs — an archive, or a JSON an
+    /// earlier `shell` step wrote with a hash in it.
     fn serve(self: *Run, sv: @FieldType(parser.Step, "serve")) ?[]u8 {
         const gpa = self.gpa;
         if (self.serve_arena == null) self.serve_arena = std.heap.ArenaAllocator.init(gpa);
@@ -708,7 +711,15 @@ const Run = struct {
         const HeaderT = std.meta.Child(@FieldType(mock.Canned, "headers"));
         var headers: std.ArrayListUnmanaged(HeaderT) = .empty;
         var body: []const u8 = sv.text;
-        if (std.mem.indexOf(u8, sv.text, "\n\n")) |blank| {
+        const file_prefix = "@file ";
+        const trimmed = std.mem.trim(u8, sv.text, " \t\r\n");
+        if (std.mem.startsWith(u8, trimmed, file_prefix)) {
+            const rel = std.mem.trim(u8, trimmed[file_prefix.len..], " \t");
+            if (rejectUnsafePath(gpa, rel, "serve @file")) |m| return m;
+            const full = std.fs.path.join(a, &.{ self.workspace, rel }) catch return null;
+            body = Io.Dir.cwd().readFileAlloc(self.io, full, a, .limited(64 * 1024 * 1024)) catch |e|
+                return std.fmt.allocPrint(gpa, "serve @file {s}: {s}", .{ rel, @errorName(e) }) catch null;
+        } else if (std.mem.indexOf(u8, sv.text, "\n\n")) |blank| {
             body = sv.text[blank + 2 ..];
             var lines = std.mem.splitScalar(u8, sv.text[0..blank], '\n');
             while (lines.next()) |l| {
