@@ -1475,7 +1475,10 @@ test "the AI section: the ghost-text row writes the token and the runtime overri
     try setRow(&app, rowId("ai.suggest_backend"), 2);
     try t.expectEqual(suggest.Backend.claude_api, app.ai.backend_override.?);
     try t.expectEqual(@as(usize, 2), rowIndex(&app, "ai.suggest_backend"));
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".suggest_backend = \"claude-api\"") != null);
@@ -1540,7 +1543,10 @@ test "the UI section's Terminal icon row: three choices, the ghost the shipped o
     try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.terminal_glyph"));
     try setRow(&app, rowId("ui.terminal_glyph"), 1);
     try t.expectEqual(Config.TerminalGlyph.terminal, app.cfg.ui.terminal_glyph);
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".terminal_glyph = .terminal") != null);
@@ -1566,7 +1572,10 @@ test "the UI section's Claude icon row: three choices, the figure the shipped on
     try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.claude_mark"));
     try setRow(&app, rowId("ui.claude_mark"), 1);
     try t.expectEqual(Config.ClaudeMark.spark, app.cfg.ui.claude_mark);
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".claude_mark = .spark") != null);

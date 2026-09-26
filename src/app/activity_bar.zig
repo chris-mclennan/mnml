@@ -595,7 +595,10 @@ test "ui.activity_bar: hidden gives the tree the columns back; auto paints the r
     try t.expectEqual(Config.ActivityBar.hidden, app.cfg.ui.activity_bar);
     try command.run(&app, .{ .static = .@"view.activity_bar_cycle" });
     try t.expectEqual(Config.ActivityBar.always, app.cfg.ui.activity_bar);
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".activity_bar = .always") != null);
@@ -635,7 +638,10 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     try t.expect(app.hits.at(1, findings_y) == null or app.hits.at(1, findings_y).? != .rail or app.hits.at(1, findings_y).?.rail != .section or app.hits.at(1, findings_y).?.rail.section != .todos);
     for (app.hits.items.items) |e| if (e.target == .rail and e.target.rail == .section) try t.expect(e.target.rail.section != .todos);
     // Persisted home, and a fresh App on the same root reads it back.
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".hidden = ") != null);
@@ -759,7 +765,10 @@ test "pinned icons: pinning an installed launcher paints its chip after the sect
     try command.run(&app, .{ .static = .@"integrations.pin_to_activity_bar" });
     try t.expectEqual(@as(usize, 1), app.cfg.ui.activity_bar_pinned_integrations.len);
     try t.expectEqualStrings("htop", app.cfg.ui.activity_bar_pinned_integrations[0]);
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".activity_bar_pinned_integrations = .{\"htop\"}") != null);

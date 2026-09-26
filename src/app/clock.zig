@@ -172,7 +172,10 @@ test "the clock: on by default beside the bell; utc / hide / local switch it, th
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     try t.expect(nextDeadlineMs(&app) == null);
     try t.expect(!app.cfg.ui.clock);
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".clock = false") != null);
