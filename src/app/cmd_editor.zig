@@ -64,6 +64,7 @@ pub const table = .{
     .@"vim.macro_replay" = &macroReplay,
     .@"vim.go_to_last_insert" = &goToLastInsert,
     .@"editor.repeat_last_substitute" = &repeatLastSubstitute,
+    .@"editor.repeat_last_substitute_all" = &repeatLastSubstituteAll,
     .@"editor.insert_alt_filename" = &insertAltFilename,
     .@"editor.insert_last_search" = &insertLastSearch,
     .@"editor.insert_last_inserted" = &insertLastInserted,
@@ -708,8 +709,18 @@ fn goToLastInsert(app: *App) CommandError!void {
 }
 
 /// `&`: the last `:s` again on the cursor's line.
+/// vim `&`: Neovim maps it to `:&&` — the last `:s` on this line with
+/// its flags kept (`:help &`, Neovim's default mappings).
 fn repeatLastSubstitute(app: *App) CommandError!void {
-    return ex_verbs.ampersand(app, null, "", false);
+    return ex_verbs.ampersand(app, null, "&&", false);
+}
+
+/// vim `g&` (`:help g&`): the last `:s` again on every line, flags kept
+/// (`:%s//~/&`; the pattern is the last substitute's, which a `:s` also
+/// makes the last search's).
+fn repeatLastSubstituteAll(app: *App) CommandError!void {
+    const e = try app.requireEditor();
+    return ex_verbs.ampersand(app, .{ .first = 0, .last = e.buf.editor.lineCount() - 1 }, "&&", true);
 }
 
 // ─── insert-mode `Ctrl+R #` / `/` / `.` ─────────────────────────────────

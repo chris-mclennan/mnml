@@ -283,6 +283,7 @@ pub const specs = [_]Spec{
     .{ .id = "find.select_match_forward", .title = "Select next find match (vim `gn`)", .group = "find" },
     .{ .id = "find.select_match_backward", .title = "Select previous find match (vim `gN`)", .group = "find" },
     .{ .id = "editor.repeat_last_substitute", .title = "Repeat last :s on current line (vim `&`)", .group = "editor" },
+    .{ .id = "editor.repeat_last_substitute_all", .title = "Repeat last :s on every line (vim `g&`)", .group = "editor" },
     .{ .id = "editor.file_stats", .title = "File stats: lines / words / chars / bytes / cursor position (vim `g Ctrl+G`)", .group = "editor" },
     .{ .id = "editor.char_info", .title = "Toast char info: dec / hex / U+XXXX (vim `ga`)", .group = "editor" },
     .{ .id = "editor.char_utf8", .title = "Toast UTF-8 byte sequence of char under cursor (vim `g8`)", .group = "editor" },

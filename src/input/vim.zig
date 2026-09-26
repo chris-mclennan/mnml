@@ -1849,6 +1849,7 @@ pub const Vim = struct {
             ';' => return runCmd(.@"editor.jump_prev_edit"),
             ',' => return runCmd(.@"editor.jump_next_edit"),
             'J' => return repeated(arena, .{ .join_lines = .{ .keep_space = false } }, @max(n -| 1, 1)),
+            '&' => return runCmd(.@"editor.repeat_last_substitute_all"),
             '_' => return ops(arena, &.{.move_line_last_non_ws}),
             'e' => return repeated(arena, .move_word_end_back, n),
             'E' => return repeated(arena, .move_big_word_end_back, n),
