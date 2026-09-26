@@ -484,10 +484,17 @@ fn sortItems(st: *State) void {
             switch (ctx.sort) {
                 .newest => if (a.mtime != b.mtime) return a.mtime > b.mtime,
                 .oldest => if (a.mtime != b.mtime) return a.mtime < b.mtime,
-                .name, .name_desc => {},
+                // Name is what the row reads first — the marker's text,
+                // not the file it sits in — and Z–A is its exact
+                // reverse. The place stays the tiebreak, ascending both
+                // ways, so equal titles read top to bottom.
+                .name, .name_desc => {
+                    const by_title = std.ascii.orderIgnoreCase(a.title, b.title);
+                    if (by_title != .eq) return if (ctx.sort == .name_desc) by_title == .gt else by_title == .lt;
+                },
             }
             const by_path = std.mem.order(u8, a.path, b.path);
-            if (by_path != .eq) return if (ctx.sort == .name_desc) by_path == .gt else by_path == .lt;
+            if (by_path != .eq) return by_path == .lt;
             return a.line < b.line;
         }
     };
@@ -1190,7 +1197,7 @@ test "handle adopts a matching generation, drops a stale one, and frees both" {
     try testing.expectEqualStrings("a.zig", st.items[0].path);
 }
 
-test "sort modes order files and keep a file's lines ascending; the filter is case-insensitive over marker, title and path" {
+test "sort modes: newest / oldest order files and keep a file's lines ascending; name orders the titles, Z–A exactly reversed; the filter is case-insensitive over marker, title and path" {
     var f = try Fixture.init(80, 20);
     defer f.deinit();
     const st = &f.app.todos;
@@ -1211,14 +1218,13 @@ test "sort modes order files and keep a file's lines ascending; the filter is ca
     try setSort(&f.app, .oldest);
     try testing.expectEqualStrings("docs/c.md", st.items[0].path);
     try testing.expectEqual(@as(u32, 2), st.items[1].line);
+    // name: alpha, Beta, delta, Gamma — the titles, case folded.
     try setSort(&f.app, .name);
-    try testing.expectEqualStrings("docs/c.md", st.items[0].path);
-    try testing.expectEqualStrings("src/a.zig", st.items[1].path);
-    try testing.expectEqual(@as(u32, 2), st.items[2].line);
+    for ([_][]const u8{ "alpha", "Beta", "delta", "Gamma" }, 0..) |want, i| try testing.expectEqualStrings(want, st.items[i].title);
+    // Z–A: the same list upside down (the round-7 hunt found it sorted
+    // the files backwards with each file's lines still ascending).
     try setSort(&f.app, .name_desc);
-    try testing.expectEqualStrings("src/b.zig", st.items[0].path);
-    try testing.expectEqual(@as(u32, 2), st.items[0].line);
-    try testing.expectEqualStrings("docs/c.md", st.items[3].path);
+    for ([_][]const u8{ "Gamma", "delta", "Beta", "alpha" }, 0..) |want, i| try testing.expectEqualStrings(want, st.items[i].title);
 
     try st.list.filter.appendSlice(testing.allocator, "ALPHA");
     try refilter(&f.app);
@@ -1436,7 +1442,8 @@ test "mark done rewrites the file and the row disappears on the rescan; the row 
     try testing.expectEqual(@as(usize, 3), f.app.todos.items.len);
     try command.run(&f.app, .{ .static = .@"todos.sort" }); // → oldest
     try setSort(&f.app, .name);
-    // name: e2e/login.spec.ts first, then src/a.zig:1, :2
+    // name: "first", "login flakes", "second" — the login row is second.
+    f.app.todos.list.cursor = 1;
     try testing.expectEqualStrings("fixme", f.app.todos.selected().?.marker);
     try command.run(&f.app, .{ .static = .@"todos.mark_done" });
     const spec = try f.tmp.dir.readFileAlloc(testing.io, "e2e/login.spec.ts", testing.allocator, .limited(4096));
@@ -1444,6 +1451,7 @@ test "mark done rewrites the file and the row disappears on the rescan; the row 
     try testing.expectEqualStrings("test('login flakes', async () => {});\n", spec);
     try f.settle(2000);
     try testing.expectEqual(@as(usize, 2), f.app.todos.items.len);
+    f.app.todos.list.cursor = 0;
     try command.run(&f.app, .{ .static = .@"todos.mark_done" });
     const a = try f.tmp.dir.readFileAlloc(testing.io, "src/a.zig", testing.allocator, .limited(4096));
     defer testing.allocator.free(a);
