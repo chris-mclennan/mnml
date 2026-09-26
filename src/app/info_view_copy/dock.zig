@@ -73,9 +73,9 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
         },
         .pin => .{
             .title = "Pinned command",
-            .body = "A palette command pinned onto the dock (`dock.pins` in the session, pinned from the palette's row menu) — any command, with its title as the label. Click runs it; right-click unpins. The strip clips a long title; the tooltip carries the whole one.",
+            .body = "A command pinned onto the dock — `ui.dock.pins` in the home config, which *Pin to dock* on a chip's right-click menu and *Show on dock instead* on an activity-bar row write, and where any command id can be listed by hand — with its title as the label. Click runs it; right-click unpins. The strip clips a long title; the tooltip carries the whole one.",
             .keys = &.{.{ .command = .palette, .label = "The command palette" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.dock_unpin_item", .label = "Unpin it" } }, .{ .command = .{ .id = .palette, .label = "Pin another from the palette" } } },
+            .links = &.{ .{ .command = .{ .id = .@"view.dock_unpin_item", .label = "Unpin it" } }, .{ .command = .{ .id = .@"integrations.pin_to_dock", .label = "Pin an integration to the dock" } } },
         },
     };
 }
