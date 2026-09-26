@@ -429,7 +429,10 @@ const InstallRig = struct {
         errdefer env.deinit();
         try tmp.dir.createDirPath(t.io, "tools");
         try tmp.dir.createDirPath(t.io, "installed");
-        const path = try std.fmt.allocPrint(t.allocator, "{s}/tools:{s}/installed:/bin:/usr/bin", .{ root, root });
+        // The platform's PATH delimiter: `;` on Windows, where a drive
+        // letter's `:` would split the entries.
+        const d = [1]u8{std.fs.path.delimiter};
+        const path = try std.fmt.allocPrint(t.allocator, "{s}/tools" ++ d ++ "{s}/installed" ++ d ++ "/bin" ++ d ++ "/usr/bin", .{ root, root });
         defer t.allocator.free(path);
         try env.put("PATH", path);
         const fake_bin = try std.fmt.allocPrint(t.allocator, "{s}/installed", .{root});
