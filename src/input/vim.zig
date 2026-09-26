@@ -791,7 +791,15 @@ pub const Vim = struct {
                 'w' => return ops(arena, &.{.delete_word_left_in_insert}),
                 'u' => return ops(arena, &.{.delete_to_line_start_in_insert}),
                 'h' => return ops(arena, &.{.backspace}),
-                't' => return ops(arena, &.{.indent}),
+                // `i_CTRL-T`: the line gains an indent and the cursor
+                // stays on the same text (`:help i_CTRL-T`) — `indent`
+                // keeps the (row, col), so step over what it added.
+                't' => {
+                    const step = try arena.create(EditOp);
+                    step.* = .move_right;
+                    const width: u32 = if (self.use_tabs) 1 else @intCast(self.tab_width);
+                    return ops(arena, &.{ .indent, .{ .repeat = .{ .count = width, .inner = step } } });
+                },
                 'd' => return ops(arena, &.{.outdent}),
                 'v', 'q' => {
                     self.insert_literal_next = true;
