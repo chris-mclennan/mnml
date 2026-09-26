@@ -74,6 +74,7 @@ pub const Failure = struct {
     /// The reference's short row label: `429 · retry in 30s`, `auth
     /// failed`, `no such repo`, `HTTP 400 · <why>`, `network error`.
     pub fn shortLabel(self: Failure, buf: []u8) []const u8 {
+        if (sdk.budget.isBucketRefusal(self.message)) return fit(buf, "waiting on the shared bucket");
         const status = self.status orelse return fit(buf, "network error");
         return switch (status) {
             429 => if (self.retry_after_secs) |s|
@@ -288,6 +289,10 @@ pub const Client = struct {
                 .go => {},
                 .paused => return pausedFailure(gpa, budget),
                 .cancelled => return .{ .failed = .{ .status = 429, .message = try gpa.dupe(u8, "stopped waiting out the rate limit") } },
+                // The machine's shared bucket file is empty or cooling
+                // down: this round is skipped, nothing goes out, and
+                // the pane says it is waiting rather than failing.
+                .bucket_empty, .bucket_cooldown => |g| return .{ .failed = .{ .status = null, .message = try gpa.dupe(u8, sdk.Budget.refusalText(g)) } },
             }
             // Spacing, before the bucket. A reader waits for nothing;
             // a warm sweep waits its turn (`mnml_sdk.warm.Gate`).
