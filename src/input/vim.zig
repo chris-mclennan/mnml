@@ -1453,9 +1453,13 @@ pub const Vim = struct {
             return repeated(arena, m, n);
         }
         if (!ctrl) {
-            if (motion(key.code)) |m| {
+            if (motion(key.code)) |m0| {
                 const n = self.count1();
                 self.resetPending();
+                // Insert's one-shot `Ctrl-O $` goes past the last char:
+                // the cursor is back in Insert, where that is a place
+                // (`:help i_CTRL-O`).
+                const m: EditOp = if (self.insert_oneshot_normal and m0 == .move_line_last_char) .move_line_end else m0;
                 return repeated(arena, m, n);
             }
         }
