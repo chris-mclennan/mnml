@@ -750,8 +750,14 @@ const Ctx = struct {
         const b = try c.open(backend);
         const arena = b.arena.allocator();
         const win = windowLine(text, col, len);
+        // The absolute path in the one spelling an open buffer has: on
+        // Windows the native separator throughout (the backends join a
+        // `/`-relative name onto the root), so the replace finds the
+        // buffer that has the file open.
+        const own_path = try arena.dupe(u8, path);
+        if (@import("builtin").os.tag == .windows) std.mem.replaceScalar(u8, own_path, '/', '\\');
         try b.hits.append(arena, .{
-            .path = try arena.dupe(u8, path),
+            .path = own_path,
             .rel = try arena.dupe(u8, rel),
             .line = line,
             .col = col,
