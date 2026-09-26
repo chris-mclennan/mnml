@@ -1,0 +1,226 @@
+name: Release an integration
+
+# An `<id>-v<version>` tag (`jira-v0.2.0`, `bitbucket-v0.2.0`,
+# `sample-v0.1.0`) builds `integrations/<id>/` for the five shipped
+# targets and publishes one small release: an archive per target
+# (`mnml-<id>-<rust-triple>.tar.xz`, `.zip` on Windows), a `.sha256` per
+# archive, `sha256.sum`, and `integration.json` — the same facts as data,
+# which `release.yml` folds into the mnml release's `integrations.json`.
+#
+# The mnml archive bundles none of this. mnml's marketplace reads the
+# index, downloads the archive for its platform, checks the sha256 and
+# installs the binary (docs/RELEASE.md, "Integrations").
+#
+# The tag's version must be the integration's manifest version
+# (`integrations/<id>/manifest.zon`), or that version with a prerelease
+# suffix (`sample-v0.1.0-test`), which publishes a prerelease. An
+# integration release is never marked "latest": `releases/latest` is
+# mnml's, and the installers read it.
+#
+# workflow_dispatch is the dry run: the same build and packaging for any
+# integration, the assets uploaded to the workflow run, no release.
+
+on:
+  push:
+    tags:
+      - "*-v*"
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "Integration id (a folder under integrations/)"
+        required: true
+        default: sample
+      version:
+        description: "Version (no leading v). Empty: the manifest's own."
+        required: false
+        default: ""
+      dry_run:
+        description: "Build and package only; create no release"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  build:
+    name: build ${{ github.event.inputs.id || github.ref_name }} (five targets)
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.ver.outputs.id }}
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      publishing: ${{ steps.ver.outputs.skip != 'true' && steps.ver.outputs.publishing || 'false' }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve the integration and its version
+        id: ver
+        # Values from the event go through env, never straight into the
+        # script: a ref name may contain shell metacharacters.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_ID: ${{ github.event.inputs.id }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            id="$INPUT_ID"
+            v="${INPUT_VERSION#v}"
+            if [ "$INPUT_DRY_RUN" = "false" ]; then
+              echo "::error::a published integration release comes from its tag (<id>-v<version>), not a dispatch"
+              exit 1
+            fi
+            publishing=false
+          else
+            case "$REF_NAME" in
+              v[0-9]*)
+                # mnml's own prerelease tag (`v0.3.0-verify`) can match
+                # `*-v*`; release.yml owns it.
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                echo "$REF_NAME is an mnml tag — nothing to do here"
+                exit 0 ;;
+            esac
+            id="${REF_NAME%%-v*}"
+            v="${REF_NAME#"$id"-v}"
+            publishing=true
+          fi
+          case "$id" in
+            ''|*[!a-z0-9_-]*) echo "::error::'$id' is not an integration id"; exit 1 ;;
+          esac
+          manifest="integrations/$id/manifest.zon"
+          if [ ! -f "$manifest" ]; then
+            # A `v*` tag is mnml's own (release.yml); anything else that
+            # matched `*-v*` without a folder is a typo.
+            echo "::error::no $manifest — '$REF_NAME' names no integration"
+            exit 1
+          fi
+          want=$(sed -n 's/^ *\.version = "\([^"]*\)".*/\1/p' "$manifest" | head -1)
+          binary=$(sed -n 's/^ *\.binary = "\([^"]*\)".*/\1/p' "$manifest" | head -1)
+          sdk=$(sed -n 's/^ *\.version = "\([^"]*\)".*/\1/p' sdk/mnml-sdk/build.zig.zon | head -1)
+          [ -n "$v" ] || v="$want"
+          case "$v" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$v' is not a version (want major.minor.patch[-pre])"; exit 1 ;;
+          esac
+          base="${v%%-*}"
+          if [ "$base" != "$want" ]; then
+            echo "::error::$id is $want in $manifest; the tag says $v"
+            exit 1
+          fi
+          case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          [ -n "$binary" ] || { echo "::error::$manifest names no binary"; exit 1; }
+          [ -n "$sdk" ] || { echo "::error::no .version in sdk/mnml-sdk/build.zig.zon"; exit 1; }
+          {
+            echo "id=$id"
+            echo "version=$v"
+            echo "tag=$id-v$v"
+            echo "binary=$binary"
+            echo "sdk=$sdk"
+            echo "publishing=$publishing"
+            echo "prerelease=$pre"
+          } >> "$GITHUB_OUTPUT"
+          echo "$id $v (binary $binary, sdk $sdk, tag $id-v$v, publishing=$publishing, prerelease=$pre)"
+
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        if: steps.ver.outputs.skip != 'true'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: release-integration
+
+      # One `zig build` per target in the integration's own folder — the
+      # stand-alone build a third party's integration has too. -j2: a
+      # hosted runner has 7 GB, and a ReleaseSafe cross build of a large
+      # integration at full parallelism is what gets OOM-killed.
+      - name: Build the five targets
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          ID: ${{ steps.ver.outputs.id }}
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/rel"
+          for pair in \
+              aarch64-macos:aarch64-apple-darwin \
+              x86_64-macos:x86_64-apple-darwin \
+              x86_64-linux-gnu:x86_64-unknown-linux-gnu \
+              aarch64-linux-gnu:aarch64-unknown-linux-gnu \
+              x86_64-windows-gnu:x86_64-pc-windows-gnu; do
+            zt="${pair%%:*}"
+            triple="${pair#*:}"
+            echo "── $ID for $zt ($triple) ──"
+            (cd "integrations/$ID" && zig build -j2 -Dtarget="$zt" -Dcpu=baseline -Doptimize=ReleaseSafe --prefix "$out/$triple" --summary failures)
+          done
+          ls -la "$out"/*/bin
+
+      - name: Package
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          ID: ${{ steps.ver.outputs.id }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          BINARY: ${{ steps.ver.outputs.binary }}
+          SDK: ${{ steps.ver.outputs.sdk }}
+          REPO: ${{ github.repository }}
+        run: |
+          sh scripts/package-integration.sh \
+            --id "$ID" --version "$VERSION" --binary "$BINARY" --sdk "$SDK" \
+            --release-dir "$RUNNER_TEMP/rel" --out "$RUNNER_TEMP/dist" \
+            --url-base "https://github.com/$REPO/releases/download/$TAG"
+          ls -la "$RUNNER_TEMP/dist"
+          cat "$RUNNER_TEMP/dist/sha256.sum"
+          cat "$RUNNER_TEMP/dist/integration.json"
+          # The index reader refuses a malformed file; refuse it here first.
+          python3 -m json.tool "$RUNNER_TEMP/dist/integration.json" > /dev/null
+
+      - name: Upload workflow artifacts
+        if: steps.ver.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-${{ steps.ver.outputs.id }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+      - name: Create the GitHub release
+        if: steps.ver.outputs.skip != 'true' && steps.ver.outputs.publishing == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ID: ${{ steps.ver.outputs.id }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease == 'true' && '--prerelease' || '' }}
+        run: |
+          printf 'The `%s` integration, %s, for the five platforms mnml ships on.\n\nInstall it from mnml: the INTEGRATIONS section'"'"'s Marketplace tab, or the first-launch setup. Each archive'"'"'s sha256 is beside it and in `sha256.sum`; `integration.json` carries the same facts as data.\n' "$ID" "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" \
+            --verify-tag \
+            --latest=false \
+            --title "mnml-$ID $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            $PRERELEASE \
+            "$RUNNER_TEMP"/dist/*
+
+  # Five archives, five .sha256, sha256.sum, integration.json.
+  verify:
+    name: Count the assets
+    needs: build
+    if: needs.build.outputs.publishing == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          n=$(gh release view "$TAG" --json assets --jq '.assets|length')
+          echo "$TAG carries $n asset(s)"
+          [ "$n" -ge 12 ] || { echo "::error::$TAG carries $n assets, want 12"; exit 1; }
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx integration.json \
+            || { echo "::error::$TAG has no integration.json"; exit 1; }
