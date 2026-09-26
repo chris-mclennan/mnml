@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # dist-check.sh — after a release, prove the assets are really there.
 #
-#   scripts/dist-check.sh v0.3.0                       # the full set: 20 assets
-#   scripts/dist-check.sh v0.3.0 --min 16 --without-linux-packages
+#   scripts/dist-check.sh v0.3.0                       # the full set: 21 assets
+#   scripts/dist-check.sh v0.3.0 --min 17 --without-linux-packages
 #                                                      # release.yml's own check,
 #                                                      # before package-linux runs
 #
@@ -43,7 +43,7 @@ for t in "${triples[@]}"; do
         *) expected+=("mnml-$t.tar.xz" "mnml-$t.tar.xz.sha256") ;;
     esac
 done
-expected+=(sha256.sum mnml-installer.sh mnml-installer.ps1 dist-manifest.json)
+expected+=(sha256.sum mnml-installer.sh mnml-installer.ps1 dist-manifest.json integrations.json)
 expected+=(mnml-x86_64-pc-windows-gnu.msi mnml-x86_64-pc-windows-gnu.msi.sha256)
 if [ "$with_linux" = 1 ]; then
     expected+=(mnml-x86_64-unknown-linux-gnu.deb mnml-x86_64-unknown-linux-gnu.rpm

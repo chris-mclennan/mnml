@@ -233,6 +233,11 @@ pub fn build(b: *std.Build) void {
     // both the tested root and a runner's import.
     const test_retry_mod = b.createModule(.{ .root_source_file = b.path("tools/test_retry.zig"), .target = target, .optimize = optimize });
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .name = "test-retry-tests", .root_module = test_retry_mod, .filters = test_filters })).step);
+    // `tools/integrations_index.zig` writes a release's
+    // `integrations.json` (`release.yml` runs it with `zig run`); its
+    // join and its refusals are tested with the unit suite.
+    const integrations_index_mod = b.createModule(.{ .root_source_file = b.path("tools/integrations_index.zig"), .target = target, .optimize = optimize });
+    unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .name = "integrations-index-tests", .root_module = integrations_index_mod, .filters = test_filters })).step);
     const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters, .test_runner = test_runner });
     const tests_run = b.addRunArtifact(tests);
     unit_step.dependOn(&tests_run.step);
