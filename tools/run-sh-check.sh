@@ -39,6 +39,10 @@
 #      there), and that a failed merge leaves the installed face alone
 #      after backing it up.
 #
+#   7b. tools/cutover-check-selftest.sh: every cutover-check FAIL fires
+#      on a fake repo (dirty tree, a key-shaped changelog line, a missing
+#      integration release, …) and the self-test says 0 failed.
+#
 #  10. tools/tour.sh / tools/look.sh on a copy of themselves: a driver
 #      whose `version` stamp is missing or disagrees with tools/drive is
 #      refused (MNML_DRIVE_NO_REBUILD=1) or rebuilt (a fake $MNML_ZIG);
@@ -227,6 +231,16 @@ fi
 check "break-check: --help exits 0" '[ $rc -eq 0 ]'
 "$ROOT/tools/break-check.sh" >/dev/null 2>&1; rc=$?
 check "break-check: no arguments exits 64" '[ $rc -eq 64 ]'
+
+# ── 7b. the cutover checklist ──────────────────────────────────────────
+# tools/cutover-check.sh is read once, on cutover day, so a FAIL that
+# silently stopped firing would first be noticed after the swap. Its
+# self-test proves each one on a fake repo with a fake gh and zig — no
+# network, no build.
+out=$(bash "$ROOT/tools/cutover-check-selftest.sh" 2>&1); rc=$?
+check "cutover-check: the self-test passes (every FAIL fires on its fake repo)" '[ $rc -eq 0 ] && echo "$out" | tail -1 | grep -q ", 0 failed\$"' "$(echo "$out" | grep -E '^  FAIL' | head -5)"
+"$ROOT/tools/cutover-check.sh" --help >/dev/null 2>&1; rc=$?
+check "cutover-check: --help exits 0" '[ $rc -eq 0 ]'
 
 # ── 8. install ─────────────────────────────────────────────────────────
 # `install` is run against a throwaway repo — a copy of run.sh, a couple
