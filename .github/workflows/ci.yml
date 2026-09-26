@@ -49,7 +49,7 @@ jobs:
 
       - name: zig fmt --check
         shell: bash
-        run: zig fmt --check build.zig build -j2.zig.zon src themes tools integrations sdk
+        run: zig fmt --check build.zig build.zig.zon src themes tools integrations sdk
 
       # Leak = FAIL: every unit test runs on std.testing.allocator. Windows
       # runs the same command; the POSIX-gated pty / tui suites are simply
