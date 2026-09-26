@@ -64,6 +64,9 @@ by name, so a TOML converts line for line:
 | `workspace = "…"` | `.workspace = "…"` |
 | `account_id = "…"` | `.account_id = "…"` (skips `/2.0/user`) |
 | `refresh_interval_secs = 60` | `.refresh_interval_secs = 60` |
+| — | `.poll_max_secs = 120` (the adaptive poller's cap — see Polling below) |
+| — | `.feed = .{ .file = "", .stale_secs = 300, .sweep_secs = 600 }` (an event file; empty is off) |
+| — | `.budget = .{ .shared_bucket = "" }` (a machine-wide bucket file; empty is none) |
 | `scope = "recent"` | `.scope = .recent` (`.all` / `.explicit`) |
 | `recent_window_days = 14` | `.recent_window_days = 14` |
 | `explicit_repos = [...]` | `.explicit_repos = .{ … }` |
@@ -478,6 +481,48 @@ session; `.dry_run = true` starts the pane in it. Nothing is sent: a GET
 answers with the body already held for it (the ETag store), anything
 else says `dry run`, and the request log still gets the line
 (`"dry":true`, no status) so you can see what WOULD have gone out.
+
+### Polling, the event feed and the shared bucket
+
+**The poller backs off while nothing changes.** `refresh_interval_secs`
+is the base; every auto-refresh that comes back the same as the last
+one (every GET answered `304`, or a body identical to the last) doubles the interval, up to `poll_max_secs` (120; at or
+below the base the interval stays fixed): `5 s → 10 → 20 → 40 → 80 →
+120`. A change, a key, a click, the wheel, a paste, the pane taking
+focus, or `r` puts it straight back to the base. The budget chip adds
+the interval in force (`37/h · 40s`); its hover says the base, the cap
+and how many quiet polls in a row got it there.
+
+**An event feed**, when something on the machine knows what changed:
+
+```zig
+.feed = .{ .file = "~/feeds/bitbucket.jsonl", .stale_secs = 300, .sweep_secs = 600 },
+```
+
+Anything may append one JSON line per change —
+`{"kind":"pr","key":"api#1234","at":1790000000,"source":"relay"}` — and the pane fetches only that pull request (its row is replaced in place; one that has left the listing, or joined it, costs one conditional GET of the listing instead), once however many lines
+name it, through the same budget as everything else. While the file is
+live the chip says `· feed` and the listing is only swept every
+`sweep_secs`, in case a line was lost. If the file goes missing, or has
+had no line (an event or a `{"kind":"heartbeat",…}`) for `stale_secs`,
+the pane goes back to adaptive polling and the hover says why. A
+relative path is taken against this config's directory. The format is
+a public contract: `docs/SDK.md` → "The event line".
+
+**A shared bucket file**, when several tools on the machine must share
+one allowance:
+
+```zig
+.budget = .{ .shared_bucket = "~/buckets/bitbucket.json" },
+```
+
+Every request takes one token from it under an exclusive file lock; an
+empty bucket skips the round (nothing is sent, the hint line says
+`waiting on the shared rate-limit bucket`) and a 429 is written into it
+as a cooldown every other reader honours. A missing or unparsable file
+is no bucket — it can slow the pane, never take its API away. The
+chip's hover shows its tokens and any cooldown. The format:
+`docs/SDK.md` → "The shared bucket file".
 
 ## Testing
 

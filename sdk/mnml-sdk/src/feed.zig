@@ -132,8 +132,12 @@ pub const Schedule = struct {
     /// Is a poll due at `now_ms`? Never before the first `started`:
     /// the pane's own first load is not the poller's to make.
     pub fn due(s: *const Schedule, now_ms: i64) bool {
-        if (!s.enabled() or s.last_ms == 0) return false;
-        return now_ms - s.last_ms >= s.intervalMs();
+        if (s.last_ms == 0) return false;
+        // The safety sweep runs even with the poller itself off: an
+        // event feed that lost a line must not leave a row wrong.
+        if (s.override_ms) |o| return now_ms - s.last_ms >= o;
+        if (!s.enabled()) return false;
+        return now_ms - s.last_ms >= s.current_ms;
     }
 
     pub fn started(s: *Schedule, now_ms: i64) void {

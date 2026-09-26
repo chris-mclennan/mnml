@@ -429,8 +429,10 @@ pub const Bucket = struct {
 pub const bucket_empty_text = "the shared rate-limit bucket is empty — skipped this round";
 pub const bucket_cooldown_text = "the shared rate-limit bucket is cooling down after a 429 — skipped this round";
 
+/// Does `msg` — a failure's text, however a pane has wrapped it — say
+/// the shared bucket refused?
 pub fn isBucketRefusal(msg: []const u8) bool {
-    return std.mem.startsWith(u8, msg, "the shared rate-limit bucket");
+    return std.mem.indexOf(u8, msg, "the shared rate-limit bucket") != null;
 }
 
 /// What the chip's hover says about the shared bucket.
@@ -857,6 +859,16 @@ pub const Budget = struct {
             .cancelled => "stopped waiting out the rate limit",
             .go => "",
         };
+    }
+
+    /// Requests this process skipped because the shared bucket was
+    /// empty or cooling down. A worker reads it before and after a job
+    /// to tell a skipped round from a failed one.
+    pub fn refusedCount(b: *Budget) u32 {
+        if (!b.configured) return 0;
+        b.lock.lockUncancelable(b.io);
+        defer b.lock.unlock(b.io);
+        return b.bucket_refused;
     }
 
     /// Set by the pane from its feed seam, once per tick.

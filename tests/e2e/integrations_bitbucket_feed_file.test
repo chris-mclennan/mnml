@@ -1,0 +1,63 @@
+# width: 120
+# height: 40
+# The forge pane on an event feed (`sdk.feed.FileFeed`): a JSONL file
+# any process may append "this pull request changed" to. While it is
+# live the listing is not polled — only swept every `sweep_secs` — and a
+# line naming a pull request costs exactly one GET, for that pull
+# request, however many lines name it. When the file goes, the pane
+# goes back to polling on its own.
+#
+# The fake's `POST /__retitle/<id>` moves a pull request the way a
+# colleague would; the assertions are on the wire (`--log-file`) and on
+# the row.
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+# The feed file is relative to the config's own directory. A heartbeat
+# in it now makes it live from the pane's first look.
+write feed.jsonl "{\"kind\":\"heartbeat\",\"at\":1,\"source\":\"e2e\"}\n"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 1, .poll_max_secs = 1, .feed = .{ .file = \"feed.jsonl\", .stale_secs = 120, .sweep_secs = 600 }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 30000 screen contains "(2 repos · 3 PRs)"
+expect screen contains "Fix the login redir"
+# The chip says the feed is what is answering.
+expect within 5000 screen contains "· feed"
+
+# Five seconds with a one-second poller configured: no listing is asked
+# for, because the feed is live.
+shell : > wire.jsonl
+wait 5000
+expect file wire.jsonl lacks "acme/api/pullrequests\""
+expect file wire.jsonl lacks "acme/web/pullrequests\""
+
+# Somebody moves api#1234; the relay says so three times, with an issue
+# line (not this pane's) between.
+shell curl -s -o /dev/null -X POST --data-binary 'Relogin v2' "$(cat bb.url | sed 's#/2.0$##')/__retitle/1234"
+shell : > wire.jsonl
+shell printf '%s\n' '{"kind":"pr","key":"api#1234","at":1790000000,"source":"e2e"}' '{"kind":"issue","key":"ENG-1","at":1790000001}' '{"kind":"pr","key":"acme/api#1234","at":1790000002,"source":"e2e"}' '{"kind":"pr","key":"api#1234","at":1790000003,"source":"e2e"}' >> feed.jsonl
+expect within 10000 screen contains "Relogin v2"
+wait 2000
+# Exactly one request, for that pull request, and no listing.
+shell n=$(grep -c . wire.jsonl); one=$(grep -c '"path":"/2.0/repositories/acme/api/pullrequests/1234"' wire.jsonl); echo "requests=$n for-1234=$one"; test "$n" -eq 1 && test "$one" -eq 1
+expect screen contains "updated from the event feed"
+
+# The file goes: the pane is back on its one-second poller.
+shell rm feed.jsonl
+shell : > wire.jsonl
+expect within 10000 file wire.jsonl contains "acme/api/pullrequests\""
+expect within 5000 screen contains "· 1s"
+
+key q
+wait 500

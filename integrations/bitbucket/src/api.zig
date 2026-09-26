@@ -185,6 +185,10 @@ pub const Client = struct {
     /// Requests actually sent, retries included — the diagnostics and
     /// the rate-limit tests both read it.
     sent: u32 = 0,
+    /// Where a listing refresh folds every GET's answer, to learn
+    /// whether the listing moved (`sdk.feed`'s adaptive poller). Null
+    /// outside one.
+    digest: ?*std.hash.Wyhash = null,
     /// The pane's API budget (`mnml_sdk.budget`): the headers, the
     /// 429 pause, the hit ratio, the tally, dry run. Null — a one-shot
     /// command-line run — gets a budget of its own per request, so a
@@ -232,8 +236,25 @@ pub const Client = struct {
     }
 
     /// One request, gated and retried. `path` starts with `/` and
-    /// already carries its query.
+    /// already carries its query. Every GET's answer — a body off the
+    /// wire, a 304's held one, a cache's — is folded into `digest` when
+    /// one is set, so a listing refresh can say whether anything moved.
     pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+        const reply = try self.sendUnhashed(gpa, method, path, payload, side);
+        if (method == .GET) if (self.digest) |d| {
+            d.update(path);
+            switch (reply) {
+                .ok => |b| d.update(b.bytes),
+                .failed => |f| {
+                    d.update("\x00failed");
+                    d.update(f.message);
+                },
+            }
+        };
+        return reply;
+    }
+
+    fn sendUnhashed(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
         const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
         defer gpa.free(url);
         var own_budget: sdk.Budget = .{};

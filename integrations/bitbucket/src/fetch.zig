@@ -83,6 +83,9 @@ pub const Job = struct {
             known_build: ?bool = null,
         },
         values: struct { scope: ScopeInputs, stale_after_days: u32, excluded_branch_patterns: []const []const u8 },
+        /// One pull request an event feed said moved (`sdk.feed`): the
+        /// one GET for it, and the row is replaced in place.
+        pr_changed: struct { tab: usize, key: PrKey },
     };
 
     pub fn deinit(job: *Job) void {
@@ -101,6 +104,7 @@ pub const Job = struct {
             .approve => .user,
             .readiness => .readiness,
             .values => .poll,
+            .pr_changed => .delta,
         };
     }
 };
@@ -134,6 +138,20 @@ pub const RefreshResult = struct {
     /// The API states the listing was fetched with — what the Status
     /// chip compares its ask against before deciding a refetch is due.
     states: filters.ApiStates = .{},
+    /// Every GET's answer folded together: the same listing is the same
+    /// digest, which is how the adaptive poller knows nothing moved.
+    digest: u64 = 0,
+    /// The shared bucket refused at least one request in this refresh:
+    /// a skipped round, not a failure.
+    refused: bool = false,
+};
+
+pub const PrChangedResult = struct {
+    tab: usize,
+    key: PrKey,
+    pr: ?model.PullRequest = null,
+    error_text: []const u8 = "",
+    refused: bool = false,
 };
 
 pub const DetailResult = struct { key: PrKey, pr: ?model.PullRequest = null, comments: []const model.Comment = &.{}, error_text: []const u8 = "" };
@@ -222,6 +240,7 @@ pub const Result = struct {
         approve: ApproveResult,
         readiness: ReadinessResult,
         values: ValuesResult,
+        pr_changed: PrChangedResult,
     };
 
     pub fn deinit(r: *Result) void {
@@ -300,7 +319,19 @@ pub const Worker = struct {
         w.client.conditional = !job.full;
         const payload: Result.Payload = switch (job.kind) {
             .whoami => .{ .whoami = try w.whoami(a) },
-            .refresh => |r| .{ .refresh = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs) },
+            .refresh => |r| blk: {
+                // Everything the refresh reads, folded into one digest,
+                // and whether the shared bucket skipped any of it.
+                var h = std.hash.Wyhash.init(0);
+                w.client.digest = &h;
+                defer w.client.digest = null;
+                const refused_before = w.refusedCount();
+                var res = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs);
+                res.digest = h.final();
+                res.refused = w.refusedCount() != refused_before;
+                break :blk .{ .refresh = res };
+            },
+            .pr_changed => |c| .{ .pr_changed = try w.prChanged(a, c.tab, c.key) },
             .detail => |k| .{ .detail = try w.detail(a, k) },
             .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash, p.updated_on) },
             .approve => |ap| .{ .approve = try w.approve(a, ap.key, ap.withdraw) },
@@ -706,6 +737,27 @@ pub const Worker = struct {
         return std.mem.order(u8, x.newestPipeline(), y.newestPipeline()) == .gt;
     }
 
+    fn refusedCount(w: *Worker) u32 {
+        return if (w.client.budget) |b| b.refusedCount() else 0;
+    }
+
+    /// One pull request, asked for because an event feed named it.
+    fn prChanged(w: *Worker, a: Allocator, tab: usize, key: PrKey) Allocator.Error!PrChangedResult {
+        const k: PrKey = .{ .workspace = try a.dupe(u8, key.workspace), .repo = try a.dupe(u8, key.repo), .id = key.id };
+        var reply = try w.client.prDetail(w.gpa, key.workspace, key.repo, key.id);
+        defer reply.deinit(w.gpa);
+        switch (reply) {
+            .ok => |body| {
+                const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch return .{ .tab = tab, .key = k, .error_text = "the pull request is not JSON" };
+                return .{ .tab = tab, .key = k, .pr = try model.parsePullRequest(a, v) };
+            },
+            .failed => |f| {
+                var buf: [256]u8 = undefined;
+                return .{ .tab = tab, .key = k, .error_text = try std.fmt.allocPrint(a, "{s}#{d}: {s}", .{ key.repo, key.id, f.describe(&buf) }), .refused = sdk.budget.isBucketRefusal(f.message) };
+            },
+        }
+    }
+
     // ─── the detail, the merged PR's pipeline, approve ───────────────
 
     fn detail(w: *Worker, a: Allocator, key: PrKey) Allocator.Error!DetailResult {
@@ -1040,6 +1092,7 @@ pub fn makeJobFor(gpa: Allocator, now_secs: i64, kind: Job.Kind, reason: ?api.Re
             .known_build = r.known_build,
         } },
         .values => |v| .{ .values = .{ .scope = try dupeScope(a, v.scope), .stale_after_days = v.stale_after_days, .excluded_branch_patterns = try dupeList(a, v.excluded_branch_patterns) } },
+        .pr_changed => |c| .{ .pr_changed = .{ .tab = c.tab, .key = try dupeKey(a, c.key) } },
     };
     return .{ .arena = arena, .kind = copied, .now_secs = now_secs, .reason = reason };
 }
