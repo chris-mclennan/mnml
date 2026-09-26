@@ -40,7 +40,7 @@
             .category = "sample",
             .version = "0.1.0",
             .binary = "mnml-sample",
-            .docs = "https://github.com/chris-mclennan/mnml-zig/tree/main/sdk",
+            .docs = "https://github.com/chris-mclennan/mnml-zig/tree/main/integrations/sample",
             .chip = .{ .glyph = "\u{f0c3}", .fallback = "S", .color = "teal" }, // nf-fa-flask
         },
     },
