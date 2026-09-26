@@ -2373,7 +2373,9 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
             // A catalogue row is one binary, not one manifest, so what
             // counts as installed is read off the binary
             // (`catalogueState`) rather than looked up by the row's id.
-            const state: ?catalogue.State = if (e.kind == .builtin) try catalogueState(app, arena, e.binary, e.version) else null;
+            // A release-index row is one binary too.
+            const by_binary = e.kind == .builtin or e.kind == .release;
+            const state: ?catalogue.State = if (by_binary) try catalogueState(app, arena, e.binary, e.version) else null;
             const installed = if (state) |s2| s2 != .not_installed else st.find(e.id) != null;
             return .{
                 .glyph = e.glyph,
@@ -2384,7 +2386,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                     // A catalogue row IS an app — one mnml ships — so
                     // it wears the same `[app]` tag; the `✓ Official`
                     // badge and the `(mnml)` source say where from.
-                    .app, .builtin => .app,
+                    .app, .builtin, .release => .app,
                 },
                 .label = e.label,
                 .badge = if (e.private) .private else if (e.official) .official else .community,
@@ -2393,7 +2395,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                 // land, which is what `update available` is read
                 // against; the other sources' rows keep the label
                 // alone.
-                .version = if (e.kind == .builtin) e.version else "",
+                .version = if (by_binary) e.version else "",
                 .source = e.source,
                 .line2 = if (e.description.len > 0) e.description else "(no description)",
                 .dim = installed,

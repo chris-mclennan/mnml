@@ -1299,6 +1299,14 @@ pub const MarketplaceSource = union(enum) {
     /// integration to build and install. Relative to the workspace,
     /// `~` expanded.
     local_folder: struct { id: []const u8 = "", path: []const u8 = "" },
+    /// A release index — `integrations.json`, the file every mnml
+    /// release carries: per integration its version, the SDK it was
+    /// built on, and per platform an archive URL and its sha256.
+    /// Install downloads the archive for this platform, checks the
+    /// sum, and installs the binary under the data root. `{version}`
+    /// in the URL is this mnml's version; a dev build (no release of
+    /// its own) skips a URL that needs one.
+    release_index: struct { id: []const u8 = "", url: []const u8 = "" },
 };
 
 pub const Marketplace = struct {
@@ -1310,13 +1318,18 @@ pub const Marketplace = struct {
     show_dev_tab: bool = false,
 };
 
-/// The sources mnml ships with when `.marketplace.use_defaults` is on.
-/// None yet: the 0.2 sources (the crates.io keyword, the launchers
-/// folder and the apps monorepo) list integrations built on the old
-/// bridge, which this host cannot mount, so they are gone. The official
-/// set is this repo's `integrations/` folder, served here as a
-/// `github_monorepo_apps` source once jira and bitbucket are in it.
-pub const default_marketplace_sources = [_]MarketplaceSource{};
+/// The sources mnml ships with when `.marketplace.use_defaults` is on:
+/// this repo's releases. Every mnml release carries `integrations.json`
+/// — the integrations built for that version, each on its own
+/// `<id>-v<version>` tag — and this is its URL for the running mnml's
+/// own version. A dev build has no release, so it skips this source and
+/// lists the checkout's catalogue instead (`app/marketplace.zig`).
+pub const default_marketplace_sources = [_]MarketplaceSource{
+    .{ .release_index = .{ .id = "mnml", .url = default_index_url } },
+};
+
+/// The index URL for an mnml release, `{version}` being its version.
+pub const default_index_url = "https://github.com/chris-mclennan/mnml-zig/releases/download/v{version}/integrations.json";
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
@@ -1432,7 +1445,8 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(@as(u32, 3600), c.marketplace.cache_ttl_secs);
     try std.testing.expect(c.marketplace.use_defaults);
     try std.testing.expectEqual(@as(usize, 0), c.marketplace.sources.len);
-    try std.testing.expectEqual(@as(usize, 0), default_marketplace_sources.len);
+    try std.testing.expectEqual(@as(usize, 1), default_marketplace_sources.len);
+    try std.testing.expect(default_marketplace_sources[0] == .release_index);
     try std.testing.expectEqual(@as(usize, 0), c.lsp.count());
     try std.testing.expectEqual(@as(usize, 0), c.keys.global.count());
     try std.testing.expect(c.tools.isEmpty());
