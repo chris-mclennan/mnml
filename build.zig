@@ -1563,6 +1563,10 @@ fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
     for (unit_step.dependencies.items) |dep| {
         const run = dep.cast(std.Build.Step.Run) orelse continue;
         run.setEnvironmentVariable("HOME", home);
+        // The machine's system git config stays out too: Git for Windows
+        // ships `core.autocrlf=true` there, which checked the fixtures'
+        // files out with CRLF and failed every test that reads one back.
+        run.setEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         for ([_][]const u8{
             "MNML_IPC_DIR",    "MNML_WORKSPACE", "MNML_DATA_ROOT", "MNML_BROKER",           "MNML_SESSIONS_HOME",
             "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "TATTLE_ARTIFACTS_ROOT", "CLAUDECODE",
