@@ -1171,6 +1171,7 @@ pub fn clientName(buf: []u8, program: []const u8, pid: i32) []const u8 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "the classes are declared front to back, so the enum's own order is the priority" {
     try t.expectEqual(@as(u2, 0), @intFromEnum(Class.interactive));
@@ -1421,10 +1422,10 @@ test "the socket sits beside the bucket it fronts, and the environment can name 
     {
         const p = try socketPath(t.allocator, t.io, &env, "bitbucket");
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.sock", p);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.sock", p);
         const lock = try lockPath(t.allocator, p);
         defer t.allocator.free(lock);
-        try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.lock", lock);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.lock", lock);
     }
     // The shared interop directory: beside the file the Rust crate and
     // the Python script already agree about.
@@ -1432,7 +1433,7 @@ test "the socket sits beside the bucket it fronts, and the environment can name 
     {
         const p = try socketPath(t.allocator, t.io, &env, "jira");
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/shared/jira-broker.sock", p);
+        try sdk_testing.expectPath("/shared/jira-broker.sock", p);
     }
     try env.put("JIRA_BROKER_SOCKET", "/tmp/x.sock");
     {

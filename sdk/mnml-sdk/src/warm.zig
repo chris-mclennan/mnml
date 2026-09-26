@@ -650,6 +650,7 @@ fn parseHolder(text: []const u8, name_out: []u8) ?Lock.Holder {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "the gap is the bucket's own rate, widened — and a nonsense rate is a second, not a crash" {
     // Bitbucket's 0.22/s is 4.55 s between requests; the margin makes
@@ -841,7 +842,7 @@ test "one warmer per service: the second process reads the cache, and a dead hol
     defer t.allocator.free(state);
     const path = try Lock.pathFor(t.allocator, state, "bitbucket");
     defer t.allocator.free(path);
-    try t.expect(std.mem.endsWith(u8, path, "/bitbucket-warm.lock"));
+    try t.expect(sdk_testing.pathEndsWith(path, "/bitbucket-warm.lock"));
 
     // This process: a lock whose pid is alive is a lock that is held,
     // and only a real pid proves that.
