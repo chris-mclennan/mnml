@@ -605,9 +605,38 @@ pub fn matchBackward(text: []const u8, close_byte: usize, open: u8, close: u8) ?
 /// `n` / `N` as a motion: to the start of the find match the app seeded
 /// after (`forward`) or before the cursor (`Editor.find_after` /
 /// `find_before`). False when there is none.
-pub fn toFindMatch(ed: *Editor, forward: bool) bool {
+pub fn toFindMatch(ed: *Editor, forward: bool, count: u32) bool {
     const at = (if (forward) ed.find_after else ed.find_before) orelse return false;
-    ed.cursor = ed.snapBoundary(@min(at, ed.len()));
+    const starts = ed.find_starts.items;
+    if (count <= 1 or starts.len == 0) {
+        ed.cursor = ed.snapBoundary(@min(at, ed.len()));
+        return true;
+    }
+    // `{count}n`: the `count`th match on from the cursor, wrapping
+    // (Neovim: `0d5n` over three matches stops at the second).
+    const len = starts.len;
+    const step = (count - 1) % len;
+    var i: usize = 0;
+    if (forward) {
+        i = 0;
+        for (starts, 0..) |s, k| if (s > ed.cursor) {
+            i = k;
+            break;
+        };
+        i = (i + step) % len;
+    } else {
+        i = len - 1;
+        var k = len;
+        while (k > 0) {
+            k -= 1;
+            if (starts[k] < ed.cursor) {
+                i = k;
+                break;
+            }
+        }
+        i = (i + len - step) % len;
+    }
+    ed.cursor = ed.snapBoundary(@min(starts[i], ed.len()));
     return true;
 }
 

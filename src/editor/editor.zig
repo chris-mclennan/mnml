@@ -118,6 +118,9 @@ pub const Editor = struct {
     /// wrapping (`:help n`). Seeded with `find_next`; `move_to_find_match`.
     find_after: ?usize = null,
     find_before: ?usize = null,
+    /// Every match's start, in order, seeded with `find_after`: a counted
+    /// `n` as a motion (`d2n`) steps through them.
+    find_starts: std.ArrayList(usize) = .empty,
     /// The last bracket object chose whole lines (`select.bracketCount`);
     /// `if_lines_object` reads it.
     object_lines: bool = false,
@@ -189,6 +192,7 @@ pub const Editor = struct {
         self.folds.deinit(gpa);
         self.line_shifts.deinit(gpa);
         self.uline_text.deinit(gpa);
+        self.find_starts.deinit(gpa);
         self.doc.detachView(self);
         gpa.destroy(self);
     }

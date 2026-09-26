@@ -140,7 +140,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_bracket_match => if (!motion.bracketMatch(ed)) {
             out.aborted = true;
         },
-        .move_to_find_match => |fwd| if (!motion.toFindMatch(ed, fwd)) {
+        .move_to_find_match => |m| if (!motion.toFindMatch(ed, m.forward, m.count)) {
             out.aborted = true;
         },
         .move_line_last_char => {
@@ -453,7 +453,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
         .undo_line,                                                             .abort_unless_moved,                                    .mark_operator_start,                                                                                            .cursor_to_operator_start,
         .{ .select_count_lines = 2 },                                           .move_right_wrap,                                       .move_left_wrap,                                                                                                 .{ .put_over_selection = .{ .swap = true, .linewise = false } },
-        .{ .replace_chars = .{ .ch = 'x', .count = 2 } },                       .move_bracket_match,                                    .{ .move_to_find_match = true },                                                                                 .exclusive_motion_rule,
+        .{ .replace_chars = .{ .ch = 'x', .count = 2 } },                       .move_bracket_match,                                    .{ .move_to_find_match = .{ .forward = true } },                                                                 .exclusive_motion_rule,
         .delete_selection_linewise,                                             .{ .register_selection_delete = true },                 .{ .register_selection_delete = false },
     };
     for (0..3000) |_| {

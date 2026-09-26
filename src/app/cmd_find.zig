@@ -387,7 +387,7 @@ fn acceptAndClose(app: *App) Allocator.Error!void {
         fb.operator = false;
         app.closeFindBar(false);
         const e = tg.editor;
-        try @import("dispatch.zig").runBufferApp(app, pane, e, .{ .operator_motion = .{ .motion = &.{.{ .move_to_find_match = !reverse }}, .linewise = false } });
+        try @import("dispatch.zig").runBufferApp(app, pane, e, .{ .operator_motion = .{ .motion = &.{.{ .move_to_find_match = .{ .forward = !reverse } }}, .linewise = false } });
         return;
     }
     jumplist.noteJumpMotion(app);
@@ -438,8 +438,17 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     // Without a current match (a cleared cursor jump), step from the cursor.
     const from = tg.cursor();
     const fresh = f.current == null;
+    // A step with a count (`{count}n`) takes the nearest match first,
+    // then `count - 1` more.
+    const rest: i32 = if (delta > 0) delta - 1 else delta + 1;
     if (f.current == null) {
         f.current = if (delta > 0) f.indexAtOrAfter(from) else f.indexBefore(from);
+        if (rest != 0) _ = f.step(rest);
+    } else if (tg == .editor) {
+        // From the cursor, not the match last landed on: the cursor may
+        // have moved since (`/foo<CR>0n` takes the first `foo`, `:help n`).
+        f.current = if (delta > 0) f.indexAtOrAfter(from + 1) else f.indexBefore(from);
+        if (rest != 0) _ = f.step(rest);
     } else {
         _ = f.step(delta);
     }
@@ -770,8 +779,11 @@ pub fn seedCtxMatches(e: *EditorPane) Allocator.Error!void {
     e.buf.editor.find_prev = null;
     e.buf.editor.find_after = null;
     e.buf.editor.find_before = null;
+    e.buf.editor.find_starts.clearRetainingCapacity();
     const ms = e.find.matches.items;
     if (ms.len == 0) return;
+    try e.buf.editor.find_starts.ensureTotalCapacity(e.buf.editor.gpa, ms.len);
+    for (ms) |m| e.buf.editor.find_starts.appendAssumeCapacity(m.start);
     // `n` / `N` as motions (`dn`) step off a match the cursor is on.
     e.buf.editor.find_after = ms[0].start;
     for (ms) |m| if (m.start > cur) {

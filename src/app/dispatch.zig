@@ -3933,6 +3933,10 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
         .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
         .tab_page => |tp| cmd_tab.gotoPage(app, tp.count, tp.back),
+        .find_step => |fs| {
+            const d: i32 = @intCast(@min(fs.count, std.math.maxInt(i32)));
+            try cmd_find.stepFind(app, if (fs.forward) d else -d);
+        },
         .split_resize => |r| cmd_view.resizeByCells(app, r.width, r.cells) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
