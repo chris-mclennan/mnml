@@ -6902,6 +6902,24 @@ test "push and start PR: the remote and the forge page come off the rail, a remo
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no remote") != null);
     app.diag.clear();
     app.git.rail_remotes = &remotes;
+    app.git.rail_branches = &.{};
+    app.git.rail_remotes = &.{};
+}
+
+test "push and start PR: the page opens only once the push landed" {
+    // Windows reaches a named browser through `cmd /c start`, and
+    // `start` answers a browser that is not there with a modal dialog
+    // nobody on a CI runner can close: the first Windows run sat on it
+    // until the step's timeout.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const app = &f.app;
 
     // The page opens on the push's own result, never before it. A
     // browser that cannot start says so — which is the proof it was
@@ -6916,8 +6934,6 @@ test "push and start PR: the remote and the forge page come off the rail, a remo
     landed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = true, .url = "https://github.com/acme/widget/compare/main?expand=1" } };
     try handle(app, landed);
     try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", app.lastToast().?);
-    app.git.rail_branches = &.{};
-    app.git.rail_remotes = &.{};
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {
