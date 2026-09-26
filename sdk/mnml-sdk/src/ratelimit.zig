@@ -1277,7 +1277,7 @@ test "the state path follows the Rust crate's resolution order, per service" {
     }) |case| {
         const p = try statePath(t.allocator, t.io, &env, case[0]);
         defer t.allocator.free(p);
-        try t.expectEqualStrings(case[1], p);
+        try sdk_testing.expectPath(case[1], p);
     }
     // The per-service override wins, and only for its own service.
     try env.put("JIRA_RATELIMIT_STATE", "/tmp/j.json");
