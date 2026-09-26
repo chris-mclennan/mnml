@@ -221,7 +221,12 @@ jobs:
           - aarch64-linux-gnu
           - x86_64-windows-gnu
           - x86_64-macos
-          - aarch64-macos
+          # aarch64-macos is not cross-built here: on the 7 GB ubuntu
+          # runner that entry was killed for memory after 23 silent
+          # minutes even at -j2, and it would only repeat work the
+          # `check` job on macos-latest (arm64) already does natively —
+          # its ReleaseSafe `zig build test` and `zig build` compile the
+          # exe and every test binary gate-build installs.
     steps:
       - uses: actions/checkout@v7
       - name: Install zig ${{ env.ZIG_VERSION }}
