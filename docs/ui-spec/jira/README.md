@@ -34,7 +34,14 @@ last message is the only clue: `Recently Done · 12 issues`).
 
 ## Screen by screen
 
-Every file is `rust-<family>-<screen>-120x40.txt`. "Keys" are what
+Every file is `rust-<family>-<screen>-120x40.txt`. None of them is in
+this repository: they were read off the reference's own screens when this
+inventory was written and are kept by nobody (see the rule above), so a
+name below is a label for the screen, not a path. The offline equivalents
+are what `tools/jira-diff.sh` cuts — `<out>/rust-<family>/<snap>.txt` for
+the reference, `<out>/zig-<family>.txt` for the port, the snap names in
+`tools/jira-diff/rust-*.steps`. The `steps-*.txt` and `rust-cli-*.txt`
+files named further down are labels in the same way. "Keys" are what
 reaches the screen from the family's list view; the status line's last
 segment is the hint strip the app paints for that mode.
 
