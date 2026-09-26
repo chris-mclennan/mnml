@@ -2000,6 +2000,9 @@ test "shell steps run in the workspace when allowed, and a non-zero exit fails w
 }
 
 test "each file persists into its own data root, so one that leaves something installed cannot reach the next" {
+    // Its files are `shell` steps, and `shell` is `/bin/sh -c`: POSIX,
+    // as the shell-step tests above.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var env = try TestEnv.init();
     defer env.deinit();
     var opts = env.opts();
@@ -2826,7 +2829,8 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
     try sdk_testing.expectPath("/run/home", env.get("HOME").?);
-    try sdk_testing.expectPath("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
+    // The shims go first, joined with the platform's PATH delimiter.
+    try sdk_testing.expectPath("/repo/tools/shims/ai" ++ [1]u8{std.fs.path.delimiter} ++ "/usr/bin:/bin", env.get("PATH").?);
     try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
     try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
     try sdk_testing.expectPath("/repo/tools/shims", env.get("MNML_SHIMS").?);
