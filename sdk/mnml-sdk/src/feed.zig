@@ -634,7 +634,8 @@ test "a line is read for its kind, key, time and source; anything else is not a 
 }
 
 fn appendTo(dir: Io.Dir, name: []const u8, text: []const u8) !void {
-    const file = try dir.createFile(t.io, name, .{ .truncate = false });
+    // `.read`: Windows will not stat a handle opened write-only.
+    const file = try dir.createFile(t.io, name, .{ .truncate = false, .read = true });
     defer file.close(t.io);
     const end = try file.length(t.io);
     try file.writePositionalAll(t.io, text, end);
