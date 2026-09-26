@@ -1227,6 +1227,9 @@ pub const App = struct {
     /// The workspace's one scratch terminal (`term.scratch_toggle`),
     /// alive while hidden; null until the first toggle or once closed.
     scratch_pty: ?PaneId = null,
+    /// The split ratio the scratch terminal had when Ctrl+` hid it — a
+    /// dragged divider comes back where it was, as VS Code's panel does.
+    scratch_ratio: ?u16 = null,
     tasks: tasks_mod.State = .{},
     http: http_app.State,
     http_panel: http_panel.State,
