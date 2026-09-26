@@ -95,8 +95,59 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
 /// the word between the next chars).
 pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
     const one = clip.text();
+    return putText(ed, one, clip.isLinewise(), clip.isBlockwise(), where, land, times, out);
+}
+
+/// Visual `p` / `P` (`:help v_p`): the register's text replaces the
+/// selection. `swap` (`p`): the replaced text then goes to the registers
+/// as a delete would put it, so `yiw` … `viwp` … `p` swaps two words;
+/// `P` leaves the registers alone. `linewise`: the selection is whole
+/// lines (V-LINE, already widened).
+pub fn putOverSelection(ed: *Editor, clip: *Clipboard, swap: bool, linewise: bool, out: *EditOutcome) Allocator.Error!void {
+    const sel = ed.selection() orelse return;
+    const one = try ed.gpa.dupe(u8, clip.text());
+    defer ed.gpa.free(one);
+    const lw = clip.isLinewise();
+    const bw = clip.isBlockwise();
+    if (one.len == 0) {
+        ed.anchor = null;
+        return;
+    }
+    if (swap and sel[1] > sel[0]) {
+        const body = ed.bytes()[sel[0]..sel[1]];
+        try clip.pushDelete(body, linewise);
+        out.clipboard_set = clip.lastWritten();
+    }
+    // Undo lands where the selection began, with none live (vim's `u`
+    // after `viwp`).
+    ed.rememberSelection();
+    ed.cursor = sel[0];
+    ed.anchor = null;
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
+    try ed.checkpoint();
+    try ed.splice(sel[0], sel[1], "");
+    if (linewise) delete.clampOffPhantomLine(ed);
+    out.buffer_changed = true;
+    if (linewise and !lw and !bw) {
+        // Charwise text over whole lines is a line of its own (Neovim:
+        // `yiwjVp` on a/b/c -> a/a/c).
+        const as_line = try std.mem.concat(ed.gpa, u8, &.{ one, "\n" });
+        defer ed.gpa.free(as_line);
+        return putText(ed, as_line, true, false, .before, .start, 1, out);
+    }
+    if (!linewise and lw) {
+        // Lines over a charwise selection split its line there and go
+        // between the halves (Neovim: `yyjviwp` on `a b`/`c` -> a b, , a b, ).
+        try ed.splice(ed.cursor, ed.cursor, "\n");
+        ed.cursor += 1;
+    }
+    try putText(ed, one, lw, bw, .before, .start, 1, out);
+}
+
+fn putText(ed: *Editor, one: []const u8, linewise: bool, blockwise: bool, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
     if (one.len == 0 or times == 0) return;
-    if (clip.isBlockwise() and !mc.hasExtras(ed)) return putBlock(ed, one, where, land, times, out);
+    if (blockwise and !mc.hasExtras(ed)) return putBlock(ed, one, where, land, times, out);
     const repeated: ?[]u8 = if (times > 1) blk: {
         const buf = try ed.gpa.alloc(u8, one.len * times);
         for (0..times) |i| @memcpy(buf[i * one.len ..][0..one.len], one);
@@ -110,7 +161,7 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
         out.buffer_changed = true;
         return;
     }
-    if (clip.isLinewise()) {
+    if (linewise) {
         const r = try putLines(ed, s, where, land);
         out.changed_range = r.range;
     } else {

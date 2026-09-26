@@ -292,6 +292,10 @@ pub const EditOp = union(enum) {
     paste_after_indent,
     paste_before_indent,
     paste,
+    /// Visual `p` / `P` (`register.putOverSelection`): the register's
+    /// text replaces the selection; `swap` (`p`) puts the replaced text
+    /// in the registers. `linewise`: a V-LINE selection.
+    put_over_selection: struct { swap: bool, linewise: bool },
 
     // ── history / grouping ──
     undo,
@@ -300,7 +304,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 169);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 170);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -349,7 +353,7 @@ pub const EditOp = union(enum) {
     /// these with `set_register_hint` when a `"x` is pending.
     pub fn touchesClipboard(op: EditOp) bool {
         return switch (op) {
-            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent, .paste, .cut_selection, .delete_selection, .delete_selection_linewise, .register_selection_delete, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
+            .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .yank_block, .paste_after, .paste_before, .paste_after_end, .paste_before_end, .paste_after_indent, .paste_before_indent, .paste, .put_over_selection, .cut_selection, .delete_selection, .delete_selection_linewise, .register_selection_delete, .delete_line, .delete_forward, .delete_word_left, .delete_word_right, .delete_to_line_start, .delete_to_line_end, .delete_block => true,
             .repeat => |r| r.inner.touchesClipboard(),
             .atomic => |ops| for (ops) |o| {
                 if (o.touchesClipboard()) break true;

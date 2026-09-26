@@ -2301,6 +2301,15 @@ pub const Vim = struct {
                 if (op == .select_inner_bracket) return ops(arena, &.{ op, .{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } } });
                 return ops(arena, &.{op});
             },
+            .register => {
+                // `"ap` / `"+y` over a selection (`:help v_p`).
+                self.prefix = .none;
+                if (ch) |c| {
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '.';
+                    if (valid) self.pending_register = c;
+                }
+                return .consumed;
+            },
             .align_char_wait => {
                 self.enterNormal();
                 const c = ch orelse return ops(arena, &.{.select_clear});
@@ -2464,10 +2473,14 @@ pub const Vim = struct {
                 self.enterNormal();
                 // Nothing to put: nothing is deleted either (Vim: E353).
                 if (ctx.register_empty and self.pending_register == null) return ops(arena, &.{.select_clear});
-                return ops(arena, &.{ widen, .{ .replace_selection = "" }, .paste_before });
+                return ops(arena, &.{ widen, .{ .put_over_selection = .{ .swap = c == 'p', .linewise = linewise } } });
             },
             '\'', '`' => {
                 self.prefix = if (c == '\'') .mark_jump_line else .mark_jump_exact;
+                return .consumed;
+            },
+            '"' => {
+                self.prefix = .register;
                 return .consumed;
             },
             '*' => {
