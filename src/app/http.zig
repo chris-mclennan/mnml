@@ -2893,7 +2893,11 @@ test "stream: an event-stream lands event by event, live, then seals into the Do
     const root = try realRoot(&tmp, testing.allocator);
     defer testing.allocator.free(root);
     const chunks = [_][]const u8{ "event: a\ndata: one\n\n", "data: two\n\n", "event: c\ndata: three\n\n" };
-    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 60 });
+    var server = try mock.Server.start(testing.allocator, testing.io, .{ .headers = &.{.{ .name = "content-type", .value = "text/event-stream" }}, .chunks = &chunks, .chunk_delay_ms = 400 });
+    // 400 ms between events: "the second is visible before the third
+    // exists" needs a tick to land between two chunks, and at 60 ms a
+    // slow macOS runner's stall let two land in one tick (events went
+    // 1 → 3). The waits below are tick counts (≥ 10 ms each), well past it.
     defer server.stop(testing.io);
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
     defer app.deinit();
