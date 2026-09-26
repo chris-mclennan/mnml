@@ -1013,6 +1013,8 @@ fn runWalk(c: *Ctx, root: []const u8, p: *Pattern) WorkerError!void {
     defer walker.deinit();
     var path_buf: std.ArrayListUnmanaged(u8) = .empty;
     defer path_buf.deinit(gpa);
+    var rel_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer rel_buf.deinit(gpa);
     while (true) {
         const entry = walker.next(io) catch |err| {
             if (err == error.Canceled) return error.Canceled;
@@ -1021,32 +1023,40 @@ fn runWalk(c: *Ctx, root: []const u8, p: *Pattern) WorkerError!void {
         } orelse break;
         if (c.stale()) return;
         if (c.truncated) break;
-        ignores.popBelow(std.fs.path.dirname(entry.path) orelse "");
+        // The walked path with `/` between its parts on every platform:
+        // what `.gitignore` patterns are written against, and the `rel`
+        // git grep and rg hand back. Windows' walker writes `\`, which
+        // no ignore pattern matched.
+        rel_buf.clearRetainingCapacity();
+        try rel_buf.appendSlice(gpa, entry.path);
+        std.mem.replaceScalar(u8, rel_buf.items, '\\', '/');
+        const rel = rel_buf.items;
+        ignores.popBelow(std.fs.path.dirnamePosix(rel) orelse "");
         switch (entry.kind) {
             .directory => {
                 if (entry.basename.len > 0 and entry.basename[0] == '.') continue;
                 if (isArtifactDir(entry.basename)) continue;
-                if (ignores.ignored(entry.path, true)) continue;
+                if (ignores.ignored(rel, true)) continue;
                 walker.enter(io, entry) catch |err| {
                     if (err == error.Canceled) return error.Canceled;
                     continue;
                 };
                 var sub = entry.dir.openDir(io, entry.basename, .{}) catch continue;
                 defer sub.close(io);
-                try loadIgnore(&ignores, io, gpa, sub, entry.path);
+                try loadIgnore(&ignores, io, gpa, sub, rel);
             },
             .file => {
                 // Hidden files are skipped as hidden directories are —
                 // rg's default — so `.env` is not read while `.github/`
                 // is passed over.
                 if (entry.basename.len > 0 and entry.basename[0] == '.') continue;
-                if (ignores.ignored(entry.path, false)) continue;
+                if (ignores.ignored(rel, false)) continue;
                 try io.checkCancel();
                 path_buf.clearRetainingCapacity();
                 try path_buf.appendSlice(gpa, root);
                 try path_buf.append(gpa, '/');
-                try path_buf.appendSlice(gpa, entry.path);
-                try grepFile(c, re, entry.dir, entry.basename, entry.path, path_buf.items);
+                try path_buf.appendSlice(gpa, rel);
+                try grepFile(c, re, entry.dir, entry.basename, rel, path_buf.items);
             },
             else => {},
         }
