@@ -939,6 +939,9 @@ const sdk_testing = @import("mnml_sdk").testing;
 const Key = app_mod.Key;
 
 test "// changed (quickopen-prefixes): only a LEADING > @ : ? switches quick open's mode" {
+    // The fixture is a file named `a>b.txt` — the point is a `>` that is
+    // not leading — and Windows allows no `>` in a file name.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     const root = try realRoot(&tmp, t.allocator);
