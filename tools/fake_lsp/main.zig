@@ -1059,6 +1059,16 @@ fn resultOf(v: Value) Value {
 
 const sample = "fn foo() {\n  let x = 1;  \n  foo(x); // TODO later\n}\nfn bar() { foo(); }\n";
 
+/// `path` as the `file://` uri an editor sends: forward slashes, and on
+/// Windows a `/` before the drive (`file:///C:/…`). A realPath spliced
+/// in as-is put `\` escapes into the JSON the tests send.
+fn fileUri(a: Allocator, path: []const u8) Allocator.Error![]u8 {
+    const lead: []const u8 = if (path.len > 1 and path[1] == ':') "/" else "";
+    const out = try std.fmt.allocPrint(a, "file://{s}{s}", .{ lead, path });
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
+}
+
 test "initialize answers the capabilities and complains once without a Cargo.toml; a crate root is quiet" {
     var h: Harness = undefined;
     h.init();
@@ -1080,7 +1090,9 @@ test "initialize answers the capabilities and complains once without a Cargo.tom
     var g: Harness = undefined;
     g.init();
     defer g.deinit();
-    const params = try std.fmt.allocPrint(t.allocator, "{{\"rootUri\":\"file://{s}\",\"capabilities\":{{}}}}", .{root});
+    const root_uri = try fileUri(t.allocator, root);
+    defer t.allocator.free(root_uri);
+    const params = try std.fmt.allocPrint(t.allocator, "{{\"rootUri\":\"{s}\",\"capabilities\":{{}}}}", .{root_uri});
     defer t.allocator.free(params);
     const quiet = try g.send(1, "initialize", params);
     defer t.allocator.free(quiet);
@@ -1265,10 +1277,12 @@ test "rename reaches a sibling file of the same extension: an open one from its 
     try tmp.dir.writeFile(t.io, .{ .sub_path = "closed.fk", .data = "foo();\nlet foo = 1; // foo\n" });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "unrelated.fk", .data = "bar();\n" });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "other.txt", .data = "foo\n" });
+    const root_uri = try fileUri(t.allocator, root);
+    defer t.allocator.free(root_uri);
     var h: Harness = undefined;
     h.init();
     defer h.deinit();
-    const a_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/a.fk", .{root});
+    const a_uri = try std.fmt.allocPrint(t.allocator, "{s}/a.fk", .{root_uri});
     defer t.allocator.free(a_uri);
     const open_params = try std.fmt.allocPrint(t.allocator, "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"fk\",\"version\":1,\"text\":\"fn foo() {{}}\\nfoo();\\n\"}}}}", .{a_uri});
     defer t.allocator.free(open_params);
@@ -1276,7 +1290,7 @@ test "rename reaches a sibling file of the same extension: an open one from its 
     defer t.allocator.free(open);
     // A second open document in the directory whose synced text differs
     // from the disk's (the disk holds `foo`, the buffer does not).
-    const b_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/b.fk", .{root});
+    const b_uri = try std.fmt.allocPrint(t.allocator, "{s}/b.fk", .{root_uri});
     defer t.allocator.free(b_uri);
     try tmp.dir.writeFile(t.io, .{ .sub_path = "b.fk", .data = "foo();\n" });
     const open_b_params = try std.fmt.allocPrint(t.allocator, "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"fk\",\"version\":1,\"text\":\"baz();\\n\"}}}}", .{b_uri});
@@ -1290,7 +1304,7 @@ test "rename reaches a sibling file of the same extension: an open one from its 
     const changes = getObj(resultOf(ren[0]), "changes").?;
     try t.expectEqual(@as(usize, 2), changes.object.count());
     try t.expectEqual(@as(usize, 2), getArr(changes, a_uri).?.len);
-    const closed_uri = try std.fmt.allocPrint(t.allocator, "file://{s}/closed.fk", .{root});
+    const closed_uri = try std.fmt.allocPrint(t.allocator, "{s}/closed.fk", .{root_uri});
     defer t.allocator.free(closed_uri);
     const closed = getArr(changes, closed_uri).?;
     try t.expectEqual(@as(usize, 3), closed.len);
