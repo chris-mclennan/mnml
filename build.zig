@@ -5,7 +5,7 @@ const std = @import("std");
 const symbols_font_name = "MnmlSymbols.ttf";
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    const target = windowsGnu(b, b.standardTargetOptions(.{}));
     const optimize = b.standardOptimizeOption(.{});
 
     // ── terminal core: ghostty-vt ──
@@ -1063,6 +1063,19 @@ pub fn build(b: *std.Build) void {
     hermeticUnitEnv(b, unit_step);
     if (test_trace and !test_trace_live) traceReport(b, unit_step);
     llvmForX86Debug(b, target, optimize);
+}
+
+/// A Windows target with no ABI named is `-gnu`, said out loud. ghostty's
+/// build turns an unnamed Windows ABI into msvc, so a plain `zig build` on
+/// a Windows host compiled ghostty-vt (and its translate-c'd wuffs header)
+/// for msvc while everything else, libc included, was mingw: the C import
+/// then failed on mingw's own headers. Naming gnu here hands ghostty the
+/// ABI the shipped Windows build already uses (`release_targets`).
+fn windowsGnu(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.ResolvedTarget {
+    if (target.result.os.tag != .windows or target.query.abi != null) return target;
+    var query = target.query;
+    query.abi = .gnu;
+    return b.resolveTargetQuery(query);
 }
 
 /// Every x86_64 Debug compile goes through LLVM. Zig 0.16's own x86_64
