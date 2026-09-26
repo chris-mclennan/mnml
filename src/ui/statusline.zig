@@ -368,6 +368,10 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     var rx = @max(left_end, right_edge -| right_w);
     var prev = ground;
     for (lanes.right) |s| {
+        // An arrow is the hand-off INTO its chip: with no cell left for
+        // the chip after it, the edge would end on a dangling arrow
+        // (the round-7 hunt's 80x24 row), so it goes with its chip.
+        if (rx + 1 >= right_edge) break;
         if (arrows and !Color.eql(prev, s.bg)) {
             rx += ui.putStr(rx, y, right_edge -| rx, pl_left, .{ .fg = s.bg, .bg = prev });
         }
@@ -453,6 +457,30 @@ test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand th
     const ui = g.ui();
     draw(ui, g.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
     try g.expectRow(0, row_left ++ " " ** 39 ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
+}
+
+test "a right lane cut at the edge never ends on an arrow: the arrow goes with the chip it leads into" {
+    // Round-7 hunt, 80x24: the cut landed just before the language chip
+    // and the row ended on its arrow. Every width that cuts the lane.
+    const right = [_]Seg{
+        Seg.init(" 17:50 ", P.comment, P.bg2),
+        Seg.init(folder_glyph ++ " ws ", P.blue, P.bg3).strong(),
+        Seg.init(" zig ", P.bg_darker, P.blue).strong(),
+    };
+    const left = [_]Seg{Seg.init(" EDIT ", P.bg_darker, P.green).strong()};
+    var cut_on_arrow_seen = false;
+    var w: u16 = 12;
+    while (w < 40) : (w += 1) {
+        var f = try Fixture.init(w, 1);
+        defer f.deinit();
+        draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+        const last = f.cell(w - 1, 0).char.grapheme;
+        if (std.mem.eql(u8, last, pl_left_nerd)) {
+            std.debug.print("width {d} ends on an arrow\n", .{w});
+            cut_on_arrow_seen = true;
+        }
+    }
+    try testing.expect(!cut_on_arrow_seen);
 }
 
 test "every chip is a hit over exactly its cells; arrows and the gap are not" {
