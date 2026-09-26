@@ -281,6 +281,9 @@ pub fn replaceCharsWithNewline(ed: *Editor, n: u32, out: *EditOutcome) Allocator
         if (end >= eol) return; // fewer than `n` left: vim fails the whole `r`
         end = ed.nextBoundary(end);
     }
+    // vim's `r` is the primary cursor's: extras would not follow the
+    // cut (and one past the new end panicked the line index).
+    @import("multicursor.zig").clear(ed);
     // One undo step: the cut and the newline's own checkpoint.
     const tok = try ed.beginAtomic();
     defer ed.endAtomic(tok);

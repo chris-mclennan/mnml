@@ -483,6 +483,9 @@ pub const EditOutcome = struct {
     text_edits: []const TextEdit = &.{},
     /// Byte range just yanked or deleted — the inc-yank flash.
     yanked_range: ?[2]usize = null,
+    /// Bytes a put just inserted — the `'[` / `']` marks and the edit
+    /// hint (the cursor no longer ends after them).
+    changed_range: ?[2]usize = null,
     /// `abort_unless_selection` found no selection: the ops after it in
     /// the same list are not applied.
     aborted: bool = false,

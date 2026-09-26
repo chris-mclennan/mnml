@@ -586,8 +586,15 @@ pub const Editor = struct {
         // line's last character (`:help $`, curswant = MAXCOL).
         if (op == .move_line_last_char) self.goal_col = std.math.maxInt(usize);
 
+        // `'[` / `']` (`:help '[`): the text a put inserted or a yank
+        // took, else a single-extent change's new text.
+        const bracket_range: ?[2]usize = out.changed_range orelse if (!out.buffer_changed) out.yanked_range else null;
+        if (bracket_range) |r| {
+            try self.doc.marks.put(self.gpa, '[', @min(r[0], self.len()));
+            try self.doc.marks.put(self.gpa, ']', @min(if (r[1] > r[0]) self.prevBoundary(r[1]) else r[0], self.len()));
+        }
         if (out.buffer_changed and !had_multi and self.extra_cursors.items.len == 0 and out.text_edits.len == 0) {
-            const edit: ?TextEdit = if (replace_range_info) |r| blk: {
+            const edit: ?TextEdit = if (out.changed_range) |r| .{ .start_byte = r[0], .old_end_byte = r[0], .new_end_byte = r[1] } else if (replace_range_info) |r| blk: {
                 const n = self.doc.text.items.len;
                 const s = @min(r[0], n);
                 const e = @max(@min(r[1], n), s);

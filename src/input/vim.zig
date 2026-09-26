@@ -1155,12 +1155,15 @@ pub const Vim = struct {
                 const exact = self.prefix == .mark_jump_exact;
                 const op = self.op;
                 self.resetPending();
-                if (asciiLetter(ch)) |c| {
+                // `'[` / `']`: the first / last line of the text last put,
+                // yanked or changed (`:help '[`), a buffer mark like `a`.
+                const bracket_mark: ?u8 = if (ch == '[' or ch == ']') @intCast(ch.?) else null;
+                if (bracket_mark orelse asciiLetter(ch)) |c| {
                     // `d'a` / `` y`a `` / `c'a`: a mark is a motion (`:help
                     // '`). The buffer holds the mark, so it builds the
                     // range; only the buffer-local marks are targets.
                     if (op) |o| {
-                        if (c < 'a' or c > 'z') return .consumed;
+                        if ((c < 'a' or c > 'z') and bracket_mark == null) return .consumed;
                         // The operator stays pending: the buffer finds
                         // the mark and hands it back as the motion's end
                         // (`finishPendingMotion`), so every operator

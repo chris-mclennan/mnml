@@ -389,6 +389,8 @@ pub fn replaceChars(ed: *Editor, c: u21, count: u32, out: *EditOutcome) Allocato
         if (end >= eol) return false;
         end = ed.nextBoundary(end);
     }
+    // The primary cursor's alone, like `{n}r<CR>`.
+    mc.clear(ed);
     try ed.checkpoint();
     var new = std.ArrayList(u8).empty;
     defer new.deinit(ed.gpa);

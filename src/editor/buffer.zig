@@ -1646,11 +1646,11 @@ test "vim registers, yank and put" {
     try vim("yljp", "|ab\n\nc", "ab\n|a\nc"); // charwise p on an empty line puts on that line
     try vim("yljP", "|ab\n\nc", "ab\n|a\nc");
     try vim("2yyGp", "|a\nb\nc", "a\nb\nc\n|a\nb");
-    try vim("ywP", "|ab cd", "ab |ab cd");
+    try vim("ywP", "|ab cd", "ab| ab cd"); // on the put text's last char (`:help p`)
     try vim("yw$p", "|ab cd", "ab cdab| "); // `p` ends on the put text's last char
     try vim("yiwwviwp", "|ab cd", "ab a|b");
     try vim("ddp", "|a\nb", "b\n|a");
-    try vim("dwwP", "|a b c", "b a |c");
+    try vim("dwwP", "|a b c", "b a| c"); // Neovim 1:4
     try vim("\"ayyj\"ap", "|a\nb", "a\nb\n|a");
     try vim("\"ayyj\"Ayy\"ap", "|a\nb", "a\nb\n|a\nb");
     try vim("\"_dd", "|a\nb", "|b");
@@ -1744,7 +1744,7 @@ test "closed folds are one line to j / k and to dd / yy" {
 test "round two: count p, ci\" forward, dd at EOF, Visual Ctrl-A, gv linewise, d'a, marks follow edits" {
     // `[count]p` puts the text count times in a row (`:help p`).
     try vim("yy3p", "|a\nb", "a\n|a\na\na\nb");
-    try vim("yiw3p", "|ab", "aababab|b"); // the put leaves the cursor after the text
+    try vim("yiw3p", "|ab", "aababa|bb"); // on the put text's last char (`:help p`)
     // `ci"` before the first quote takes the first quoted string after it.
     try vim("0ci\"X<esc>", "|x = \"y\"", "x = \"|X\"");
     // `dd` on the last line lands on the new last line, never past it.
@@ -1813,7 +1813,7 @@ test "vim marks, macros and visual mode" {
     try vim("vjJ", "|a\nb", "a| b");
     try vim("vlrX", "|abc", "|XXc");
     try vim("vlp", "|abc", "a|bc"); // nothing to put: nothing deleted (Vim: E353); Rust dropped the selection
-    try vim("ylvlp", "|abc", "a|c");
+    try vim("ylvlp", "|abc", "|ac"); // Neovim 1:1: on the put char
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");
     try vim("vv", "|abc", "|abc");
