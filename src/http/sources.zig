@@ -138,8 +138,11 @@ pub fn check(gpa: Allocator, io: Io, workspace: []const u8, normalize: bool) ![]
         defer walker.deinit();
         while (walker.next(io) catch null) |entry| {
             if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".curl")) continue;
-            if (seen.get(entry.path) == null) {
-                try appendFmt(a, &trace, "  - {s}\n", .{entry.path});
+            // The stubs' names are `/`-joined; Windows' walker writes `\`.
+            const rel = try a.dupe(u8, entry.path);
+            std.mem.replaceScalar(u8, rel, '\\', '/');
+            if (seen.get(rel) == null) {
+                try appendFmt(a, &trace, "  - {s}\n", .{rel});
                 drift += 1;
             }
         }
