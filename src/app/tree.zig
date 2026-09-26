@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
@@ -302,12 +303,13 @@ pub const Tree = struct {
         var rel: []const u8 = undefined;
         var base: []const u8 = app.workspace;
         if (underRoot(app.workspace, abs)) |r| {
-            rel = r;
+            rel = try rowRel(arena, r);
         } else {
             var found = false;
-            for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs) != null) {
+            for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs)) |below| {
                 root = @intCast(i + 1);
-                rel = abs;
+                // An extra root's rows are its own path, then `/`-joined parts.
+                rel = try std.fmt.allocPrint(arena, "{s}/{s}", .{ r.path, try rowRel(arena, below) });
                 base = r.path;
                 found = true;
                 break;
@@ -473,7 +475,7 @@ pub const Tree = struct {
         if (root == 0) return rel_dir;
         const base = self.roots.items[root - 1].path;
         _ = app;
-        if (std.mem.startsWith(u8, rel_dir, base) and rel_dir.len > base.len and rel_dir[base.len] == '/') return rel_dir[base.len + 1 ..];
+        if (std.mem.startsWith(u8, rel_dir, base) and rel_dir.len > base.len and std.fs.path.isSep(rel_dir[base.len])) return rel_dir[base.len + 1 ..];
         return "";
     }
 
@@ -1152,8 +1154,17 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
 
 /// `path` below `base`, relative to it; null when it is not under it.
 pub fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
-    if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
+    if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and std.fs.path.isSep(path[base.len])) return path[base.len + 1 ..];
     return null;
+}
+
+/// `rel` spelled as a row spells it: `/` between the parts (Windows'
+/// own paths come in with `\`). On the frame arena when it had to change.
+fn rowRel(arena: Allocator, rel: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, rel, '\\') == null or builtin.os.tag != .windows) return rel;
+    const out = try arena.dupe(u8, rel);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }
 
 /// `name` in `dir` is a link whose target is a directory.
@@ -1486,7 +1497,7 @@ pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize, copy: bool) Allo
     const from = app.tree.rows.items[from_idx];
     const into = app.tree.rows.items[into_idx];
     if (!into.is_dir or from_idx == into_idx) return;
-    if (std.mem.startsWith(u8, into.rel, from.rel) and (into.rel.len == from.rel.len or into.rel[from.rel.len] == '/')) return;
+    if (std.mem.startsWith(u8, into.rel, from.rel) and (into.rel.len == from.rel.len or std.fs.path.isSep(into.rel[from.rel.len]))) return;
     const from_rel = try app.gpa.dupe(u8, from.rel);
     errdefer app.gpa.free(from_rel);
     const into_rel = try app.gpa.dupe(u8, into.rel);
@@ -1640,7 +1651,7 @@ pub fn retargetBuffers(app: *App, from_abs: []const u8, to_abs: []const u8) Allo
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
         if (std.mem.eql(u8, bp, from_abs)) {
             try e.buf.setPath(to_abs);
-        } else if (std.mem.startsWith(u8, bp, from_abs) and bp.len > from_abs.len and bp[from_abs.len] == '/') {
+        } else if (std.mem.startsWith(u8, bp, from_abs) and bp.len > from_abs.len and std.fs.path.isSep(bp[from_abs.len])) {
             const moved = try std.fs.path.join(app.frame.allocator(), &.{ to_abs, bp[from_abs.len + 1 ..] });
             try e.buf.setPath(moved);
         }

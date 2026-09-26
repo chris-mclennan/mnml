@@ -827,7 +827,7 @@ pub fn acceptMoveTo(app: *App, paths: []const []const u8, text: []const u8) Allo
         if (name.len == 0) continue;
         const dst = try std.fs.path.join(arena, &.{ dir, name });
         if (std.mem.eql(u8, dst, src)) continue;
-        if (std.mem.startsWith(u8, dst, src) and dst.len > src.len and dst[src.len] == '/') {
+        if (std.mem.startsWith(u8, dst, src) and dst.len > src.len and std.fs.path.isSep(dst[src.len])) {
             app.toast("cannot move {s} into itself", .{name});
             continue;
         }
@@ -1180,7 +1180,7 @@ fn openSortMenu(app: *App, f: *FilesPane, x: u16, y: u16) Allocator.Error!void {
 const Crumbs = struct { labels: []const []const u8, paths: []const []const u8 };
 
 fn under(path: []const u8, root: []const u8) bool {
-    return std.mem.eql(u8, path, root) or (std.mem.startsWith(u8, path, root) and path.len > root.len and path[root.len] == '/');
+    return std.mem.eql(u8, path, root) or (std.mem.startsWith(u8, path, root) and path.len > root.len and std.fs.path.isSep(path[root.len]));
 }
 
 /// The path as crumbs: the workspace name then the relative segments

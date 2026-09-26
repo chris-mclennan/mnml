@@ -165,7 +165,7 @@ fn pushFile(gpa: Allocator, labels: *std.ArrayListUnmanaged([]u8), details: *std
 }
 
 fn inWorkspace(app: *App, path: []const u8) bool {
-    return std.mem.startsWith(u8, path, app.workspace) and path.len > app.workspace.len and path[app.workspace.len] == '/';
+    return std.mem.startsWith(u8, path, app.workspace) and path.len > app.workspace.len and std.fs.path.isSep(path[app.workspace.len]);
 }
 
 fn exists(app: *App, path: []const u8) bool {

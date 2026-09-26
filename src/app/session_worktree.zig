@@ -422,7 +422,7 @@ pub fn livePaneIn(app: *App, e: Entry) ?app_mod.PaneId {
         if (p.exit != null) continue;
         const cwd = p.cwd orelse continue;
         if (!std.mem.startsWith(u8, cwd, tree)) continue;
-        if (cwd.len == tree.len or cwd[tree.len] == '/') return pid;
+        if (cwd.len == tree.len or std.fs.path.isSep(cwd[tree.len])) return pid;
     }
     return null;
 }

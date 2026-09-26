@@ -506,7 +506,7 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
 /// Is `path` `dir` or somewhere below it?
 fn pathUnder(path: []const u8, dir: []const u8) bool {
     if (!std.mem.startsWith(u8, path, dir)) return false;
-    return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+    return path.len == dir.len or std.fs.path.isSep(path[dir.len]) or (dir.len > 0 and dir[dir.len - 1] == '/');
 }
 
 /// Is `path` inside a toolchain's, a package manager's or an

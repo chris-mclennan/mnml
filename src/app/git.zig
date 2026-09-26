@@ -1052,7 +1052,7 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
     var best: ?usize = null;
     var best_len: usize = 0;
     for (st.repos.items, 0..) |r, i| {
-        if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and abs[r.path.len] == '/' and r.path.len > best_len) {
+        if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and std.fs.path.isSep(abs[r.path.len]) and r.path.len > best_len) {
             best = i;
             best_len = r.path.len;
         }

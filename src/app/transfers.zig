@@ -242,7 +242,7 @@ pub fn clash(app: *App, items: []const Item) ?[]const u8 {
 
 fn under(path: []const u8, dir: []const u8) bool {
     if (std.mem.eql(u8, dir, "/")) return true;
-    return std.mem.startsWith(u8, path, dir) and path.len > dir.len and path[dir.len] == '/';
+    return std.mem.startsWith(u8, path, dir) and path.len > dir.len and std.fs.path.isSep(path[dir.len]);
 }
 
 // ─── the worker ─────────────────────────────────────────────────────────
