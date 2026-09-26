@@ -1,7 +1,8 @@
-//! First-launch wizard — one box, seven sections walked top to bottom:
+//! First-launch wizard — one box, eight sections walked top to bottom:
 //! Nerd Font · Keyboard · Input style · Claude Code + Codex · AI billing
-//! preference · AI ghost-text · VSCode `code` shim. The focused section
-//! carries the `▸`; ↑↓ move between sections, 1–7 jump, ←→ (h l) change
+//! preference · AI ghost-text · VSCode `code` shim · Integrations. The
+//! focused section carries the `▸`; ↑↓ move between sections, 1–8
+//! jump, ←→ (h l) change
 //! the focused section's answer, y / n answer a yes-no outright, Space
 //! runs the section's action (an install) where it has one and cycles
 //! the answer where it does not, Enter finishes, Esc is "ask me later".
@@ -32,6 +33,7 @@ pub const Section = enum(u8) {
     ai_routing,
     ai_ghost_text,
     vscode_shim,
+    integrations,
 
     pub const count = @typeInfo(Section).@"enum".fields.len;
 
@@ -44,6 +46,7 @@ pub const Section = enum(u8) {
             .ai_routing => "AI billing preference",
             .ai_ghost_text => "AI ghost-text",
             .vscode_shim => "VSCode `code` shim",
+            .integrations => "Integrations",
         };
     }
 };
@@ -63,6 +66,41 @@ pub const probes = [_]Probe{
 pub const keyboard_space_hint = "  Space — fix Option-as-Alt: ghostty gets its config written, others the steps.";
 
 pub const Route = enum { auto, sub, api, off };
+
+/// One first-party integration on the Integrations section: a checkbox
+/// and what the marketplace says about it.
+pub const IntegrationRow = struct {
+    label: []const u8,
+    checked: bool = false,
+    /// The version the install would land; empty when not listed.
+    version: []const u8 = "",
+    status: Status = .available,
+
+    pub const Status = enum {
+        available,
+        installed,
+        update,
+        queued,
+        installing,
+        /// The marketplace is still fetching its listing.
+        checking,
+        /// Not in the marketplace this mnml reads (a dev build without
+        /// the catalogue, or no release for this platform).
+        unavailable,
+
+        pub fn text(s: Status, ascii: bool) []const u8 {
+            return switch (s) {
+                .available => "not installed",
+                .installed => if (ascii) "[+ installed]" else "[✓ installed]",
+                .update => "update available",
+                .queued => "queued",
+                .installing => if (ascii) "installing..." else "installing…",
+                .checking => if (ascii) "checking..." else "checking…",
+                .unavailable => "not offered for this mnml",
+            };
+        }
+    };
+};
 pub const route_labels = [_][]const u8{ "Auto", "Sub", "API", "Off" };
 
 /// Everything the box paints, as values.
@@ -89,6 +127,9 @@ pub const Model = struct {
     /// What Space did on the Keyboard section (`key_doctor.fixNote`);
     /// empty until it is pressed.
     keyboard_note: []const u8 = "",
+    /// The Integrations section's rows, and which one ←→ / y / n toggle.
+    integrations: []const IntegrationRow = &.{},
+    integration_row: u8 = 0,
 };
 
 pub const State = struct {
@@ -166,6 +207,9 @@ pub fn handleKey(s: *State, key: Key) Outcome {
     }
     return .consumed;
 }
+
+/// The Integrations section's key line.
+pub const integrations_hint = "  y / → check · Tab next row · Space installs the checked now · Enter too";
 
 pub const title = "First-launch setup";
 pub const hint_text = "[↑↓] section · [←→] choose · [Space] install · [Enter] Finish · [Esc] Ask me later";
@@ -263,6 +307,18 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                 lines.append(ui.arena, .{ .text = badge(ui, "`code` on PATH", m.code_shim_ok), .style = if (m.code_shim_ok) good else body, .hit = chipHit(sec, 0) }) catch return;
                 noteLines(ui, &lines, m.code_shim_note, muted) catch return;
             },
+            .integrations => {
+                for (m.integrations, 0..) |row, i| {
+                    const here = focused and m.integration_row == i;
+                    const mark = if (here) (if (ui.ascii) "> " else "▸ ") else "  ";
+                    const box = if (row.checked) "[x]" else "[ ]";
+                    const text = ui.fmt("  {s}{s} {s:<12}{s:<8}  {s}", .{ mark, box, row.label, row.version, row.status.text(ui.ascii) });
+                    const style = if (row.status == .installed) good else body;
+                    lines.append(ui.arena, .{ .text = text, .style = style, .hit = chipHit(sec, i) }) catch return;
+                }
+                lines.append(ui.arena, .{ .text = integrations_hint, .style = muted }) catch return;
+                lines.append(ui.arena, .{ .text = "  Nothing checked, nothing installed. More in INTEGRATIONS → Marketplace.", .style = muted }) catch return;
+            },
         }
         lines.append(ui.arena, .{ .text = "", .style = body }) catch return;
     }
@@ -320,7 +376,7 @@ fn routeRow(ui: Ui, label: []const u8, route: Route, focused: bool) []const u8 {
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 
-test "the seven sections paint in order with their answers; the focused one carries the marker" {
+test "the eight sections paint in order with their answers; the focused one carries the marker" {
     var f = try Fixture.init(100, 40);
     defer f.deinit();
     var s: State = .{};
@@ -371,7 +427,7 @@ test "the seven sections paint in order with their answers; the focused one carr
     try testing.expect(saw_install);
 }
 
-test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel come back as outcomes" {
+test "keys: sections walk with ↓/j and 1-8; answers, probes, finish and cancel come back as outcomes" {
     var s: State = .{};
     try testing.expect(handleKey(&s, Key.named(.down)) == .consumed);
     try testing.expect(s.section == .keyboard);
@@ -383,7 +439,11 @@ test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel
     _ = handleKey(&s, Key.char('7'));
     try testing.expect(s.section == .vscode_shim);
     _ = handleKey(&s, Key.named(.down));
-    try testing.expect(s.section == .vscode_shim);
+    try testing.expect(s.section == .integrations);
+    _ = handleKey(&s, Key.named(.down));
+    try testing.expect(s.section == .integrations);
+    _ = handleKey(&s, Key.char('8'));
+    try testing.expect(s.section == .integrations);
     _ = handleKey(&s, Key.char('1'));
     try testing.expect(s.section == .nerd_font);
     _ = handleKey(&s, Key.named(.up));
@@ -392,4 +452,28 @@ test "keys: sections walk with ↓/j and 1-7; answers, probes, finish and cancel
     try testing.expect(handleKey(&s, Key.char(' ')) == .action);
     try testing.expect(handleKey(&s, Key.named(.enter)) == .finish);
     try testing.expect(handleKey(&s, Key.named(.esc)) == .cancel);
+}
+
+test "the Integrations section: a checkbox per first-party integration, its version and status, the focused row marked, each a click target" {
+    var f = try Fixture.init(100, 60);
+    defer f.deinit();
+    var s: State = .{ .section = .integrations };
+    const rows = [_]IntegrationRow{
+        .{ .label = "Jira", .checked = true, .version = "0.2.0", .status = .available },
+        .{ .label = "Bitbucket", .version = "0.2.0", .status = .installed },
+    };
+    draw(f.ui(), f.full(), &s, .{ .integrations = &rows, .integration_row = 1 });
+    const text = try f.text();
+    try testing.expect(std.mem.indexOf(u8, text, "▸ ── 8 · Integrations ──") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "  [x] Jira        0.2.0     not installed") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "▸ [ ] Bitbucket   0.2.0     [✓ installed]") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Space installs the checked now") != null);
+    var hits: usize = 0;
+    for (f.hits.items.items) |h| if (decodeHit(h.target.overlay_item)) |hit| switch (hit) {
+        .chip => |c| {
+            if (c.section == .integrations) hits += 1;
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 2), hits);
 }

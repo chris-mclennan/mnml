@@ -576,15 +576,29 @@ pub const FakeFetcher = struct {
     pub const Route = struct { url: []const u8, body: []const u8 };
     routes: []const Route,
     calls: usize = 0,
+    /// How many times each route was fetched, by its index in `routes`.
+    hits: [16]u32 = .{0} ** 16,
+    mutex: std.atomic.Mutex = .unlocked,
 
     pub fn fetcher(self: *FakeFetcher) Fetcher {
         return .{ .ctx = self, .get = get };
     }
 
+    /// Times `url` was fetched.
+    pub fn hitsOf(self: *FakeFetcher, url: []const u8) u32 {
+        for (self.routes, 0..) |r, i| if (std.mem.eql(u8, r.url, url)) return self.hits[i];
+        return 0;
+    }
+
     fn get(ctx: ?*anyopaque, _: Allocator, _: Io, arena: Allocator, url: []const u8) Allocator.Error!Fetched {
         const self: *FakeFetcher = @ptrCast(@alignCast(ctx.?));
+        while (!self.mutex.tryLock()) {}
+        defer self.mutex.unlock();
         self.calls += 1;
-        for (self.routes) |r| if (std.mem.eql(u8, r.url, url)) return .{ .body = try arena.dupe(u8, r.body) };
+        for (self.routes, 0..) |r, i| if (std.mem.eql(u8, r.url, url)) {
+            if (i < self.hits.len) self.hits[i] += 1;
+            return .{ .body = try arena.dupe(u8, r.body) };
+        };
         return .{ .err = try std.fmt.allocPrint(arena, "{s}: HTTP 404", .{url}) };
     }
 };

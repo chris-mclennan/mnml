@@ -452,7 +452,7 @@ pub fn refresh(app: *App) CommandError!void {
     }
     const api = try gpa.dupe(u8, apiBase(app));
     errdefer gpa.free(api);
-    st.group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation }) catch |err| {
+    st.group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation, st.fetcher }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the fetch: {s}", .{@errorName(err)});
     };
     st.fetching = true;
@@ -515,7 +515,7 @@ pub fn safeName(s: []const u8) bool {
     return true;
 }
 
-fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []SourceSpec, api: []u8, generation: u32) void {
+fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []SourceSpec, api: []u8, generation: u32, fetcher: release.Fetcher) void {
     defer {
         for (specs) |s| s.deinit(gpa);
         gpa.free(specs);
@@ -531,7 +531,7 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []Sourc
             arena_state.deinit();
             return;
         };
-        listSource(io, gpa, arena, api, s, &entries, &problems) catch {
+        listSource(io, gpa, arena, api, s, fetcher, &entries, &problems) catch {
             arena_state.deinit();
             postFailed(events, io, gpa, generation, "marketplace: out of memory", .{});
             return;
@@ -558,7 +558,7 @@ fn dropShadowedBuiltins(entries: *std.ArrayListUnmanaged(Entry)) void {
     }
 }
 
-fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: SourceSpec, fetcher: release.Fetcher, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     switch (s.kind) {
         .crates => {
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: crates.io sources are not searched — integrations are Zig packages now", .{s.id}));
@@ -566,7 +566,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
         },
         .mnml => return listCatalogue(io, arena, s, entries, problems),
         .local_folder => return listLocal(io, arena, s, entries, problems),
-        .release_index => return listIndex(io, gpa, arena, s, entries, problems),
+        .release_index => return listIndex(io, gpa, arena, s, fetcher, entries, problems),
         .launcher_folder, .monorepo_apps => {},
     }
     const url = try std.fmt.allocPrint(arena, "{s}/repos/{s}/contents/{s}", .{ api, s.repo, s.path });
@@ -682,8 +682,8 @@ fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayLis
 /// integration this mnml offers — built on a compatible SDK, released
 /// for this platform (`marketplace_release.offered`). The rest are
 /// left out without a word: a row that cannot install is not a row.
-fn listIndex(io: Io, gpa: Allocator, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
-    const body = switch (try release.http.get(null, gpa, io, arena, s.path)) {
+fn listIndex(io: Io, gpa: Allocator, arena: Allocator, s: SourceSpec, fetcher: release.Fetcher, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    const body = switch (try fetcher.get(fetcher.ctx, gpa, io, arena, s.path)) {
         .body => |b| b,
         .err => |e| {
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ s.id, e }));
