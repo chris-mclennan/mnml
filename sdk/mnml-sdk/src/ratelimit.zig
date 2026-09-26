@@ -431,7 +431,7 @@ pub const Limiter = struct {
             },
         ) catch return;
         if (std.fs.path.dirname(path)) |d| Io.Dir.cwd().createDirPath(self.io, d) catch {};
-        const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
         var end = file.length(self.io) catch 0;
         if (end + line.len > draws_max_bytes) {
             file.close(self.io);
@@ -441,7 +441,7 @@ pub const Limiter = struct {
             Io.Dir.cwd().rename(path, Io.Dir.cwd(), older, self.io) catch {
                 Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = "" }) catch {};
             };
-            const fresh = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+            const fresh = Io.Dir.cwd().createFile(self.io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
             defer fresh.close(self.io);
             end = fresh.length(self.io) catch 0;
             fresh.writePositionalAll(self.io, line, end) catch {};

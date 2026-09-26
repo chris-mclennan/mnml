@@ -277,12 +277,12 @@ pub const Log = struct {
         Io.Dir.cwd().createDirPath(self.io, self.dir) catch {};
         const p = self.path(self.gpa) catch return;
         defer self.gpa.free(p);
-        const file = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, p, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
         var end = file.length(self.io) catch 0;
         if (end + line.len > self.max_bytes) {
             file.close(self.io);
             self.rotate(p);
-            const fresh = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+            const fresh = Io.Dir.cwd().createFile(self.io, p, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
             defer fresh.close(self.io);
             end = fresh.length(self.io) catch 0;
             fresh.writePositionalAll(self.io, line, end) catch return;

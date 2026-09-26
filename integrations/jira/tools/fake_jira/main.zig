@@ -1401,7 +1401,7 @@ fn logRequest(io: Io, store: *Store, arena: Allocator, method: std.http.Method, 
         bytes,
         std.zig.fmtString(jqlOf(body)),
     }) catch return;
-    const file = Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+    const file = Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
     defer file.close(io);
     const end = file.length(io) catch 0;
     file.writePositionalAll(io, line, end) catch {};

@@ -227,7 +227,7 @@ pub fn writeSecret(io: Io, path: []const u8, bytes: []const u8) (Io.File.OpenErr
 
 /// Append `line` + `\n` to `path`, creating it owner-only.
 pub fn appendSecret(io: Io, path: []const u8, line: []const u8) (Io.File.OpenError || Io.File.WritePositionalError || Io.File.LengthError)!void {
-    const file = try Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .permissions = secretPermissions() });
+    const file = try Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false, .permissions = secretPermissions() });
     defer file.close(io);
     const end = try file.length(io);
     try file.writePositionalAll(io, line, end);
@@ -385,7 +385,7 @@ const TestWs = struct {
     fn append(self: *TestWs, rel: []const u8, data: []const u8) !void {
         const p = try std.fs.path.join(t.allocator, &.{ self.path, rel });
         defer t.allocator.free(p);
-        const f = try Io.Dir.cwd().createFile(t.io, p, .{ .truncate = false });
+        const f = try Io.Dir.cwd().createFile(t.io, p, .{ .read = true, .truncate = false });
         defer f.close(t.io);
         try f.writePositionalAll(t.io, data, try f.length(t.io));
     }
