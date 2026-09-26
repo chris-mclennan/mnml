@@ -1,0 +1,12 @@
+# {count}r with fewer chars left than the count fails in Neovim (abc, 5rX
+# -> abc unchanged). mnml replaces what is there and parks the cursor on
+# a line past the end.
+write f.txt "abc\n"
+open f.txt
+command editor.use_vim
+key 5
+key r
+key X
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+ex w
+expect file f.txt contains "abc\n"

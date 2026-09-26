@@ -377,6 +377,29 @@ pub fn replaceCharAtCursor(ed: *Editor, c: u21, out: *EditOutcome) Allocator.Err
     out.buffer_changed = true;
 }
 
+/// `{n}r<c>`: false (and nothing changed) when fewer than `count`
+/// characters are left on the line from the cursor.
+pub fn replaceChars(ed: *Editor, c: u21, count: u32, out: *EditOutcome) Allocator.Error!bool {
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(c, &buf) catch return false;
+    const eol = ed.lineEnd(ed.currentLine());
+    var end = ed.cursor;
+    var i: u32 = 0;
+    while (i < @max(count, 1)) : (i += 1) {
+        if (end >= eol) return false;
+        end = ed.nextBoundary(end);
+    }
+    try ed.checkpoint();
+    var new = std.ArrayList(u8).empty;
+    defer new.deinit(ed.gpa);
+    for (0..@max(count, 1)) |_| try new.appendSlice(ed.gpa, buf[0..n]);
+    const start = ed.cursor;
+    try ed.splice(start, end, new.items);
+    ed.cursor = start + new.items.len - n;
+    out.buffer_changed = true;
+    return true;
+}
+
 pub fn replaceRange(ed: *Editor, start_in: usize, end_in: usize, text: []const u8, out: *EditOutcome) Allocator.Error!void {
     const n = ed.len();
     const start = @min(start_in, n);

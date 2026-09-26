@@ -1065,12 +1065,10 @@ pub const Vim = struct {
                 // characters with ONE line break (`:help r`).
                 if (key.code == .enter and !key.mods.ctrl and !key.mods.alt) return ops(arena, &.{.{ .replace_chars_with_newline = n }});
                 const c = ch orelse return .consumed;
-                var b = Builder.init(arena);
-                for (0..n) |i| {
-                    try b.push(.{ .replace_char_at_cursor = c });
-                    if (i + 1 < n) try b.push(.move_right);
-                }
-                return b.finish();
+                // Visual `r`: every selected char (the selection is live).
+                if (ctx.has_selection) return ops(arena, &.{.{ .replace_char_at_cursor = c }});
+                // `{n}r` needs `n` chars from the cursor, or does nothing.
+                return ops(arena, &.{.{ .replace_chars = .{ .ch = c, .count = n } }});
             },
             .z => {
                 self.resetPending();

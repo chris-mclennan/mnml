@@ -228,6 +228,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .block_join => |j| try block.join(ed, j.keep_space, out),
         .block_other_end_of_row => block.otherEndOfRow(ed),
         .replace_chars_with_newline => |n| try line.replaceCharsWithNewline(ed, n, out),
+        .replace_chars => |r| if (!try delete.replaceChars(ed, r.ch, r.count, out)) {
+            out.aborted = true;
+        },
         .undo_line => try line.undoLine(ed, out),
         .delete_to_line_start_in_insert => try delete.deleteBackInInsert(ed, .line, out),
         .delete_word_right => try delete.deleteWordRight(ed, out),
@@ -437,8 +440,8 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
         .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
         .undo_line,                                                             .abort_unless_moved,                                    .mark_operator_start,                                                                                            .cursor_to_operator_start,
-        .{ .select_count_lines = 2 },                                           .move_bracket_match,                                    .{ .move_to_find_match = true },                                                                                 .exclusive_motion_rule,
-        .delete_selection_linewise,                                             .{ .register_selection_delete = true },                 .{ .register_selection_delete = false },
+        .{ .select_count_lines = 2 },                                           .{ .replace_chars = .{ .ch = 'x', .count = 2 } },       .move_bracket_match,                                                                                             .{ .move_to_find_match = true },
+        .exclusive_motion_rule,                                                 .delete_selection_linewise,                             .{ .register_selection_delete = true },                                                                          .{ .register_selection_delete = false },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

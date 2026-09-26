@@ -459,8 +459,32 @@ pub const Buffer = struct {
         };
         self.stampUndoCursor(undo_before, cursor_before);
         self.syncInsertSession(undo_before);
+        if (result == .ops) self.clampMotionOffPhantom(result.ops, cursor_before);
         self.clampNormalCursor();
         return ev;
+    }
+
+    /// Normal and Visual have no line after the final `\n` (the view
+    /// does not paint one): a motion that runs off the end — `w` on the
+    /// last word, `5w`, `)` — stops ON the last line's last char (`:help
+    /// w`: the motion fails there). Only a pure motion that brought the
+    /// cursor there: an edit can leave a real empty last line in a file
+    /// with no final newline (`A<CR><Esc>` on `ab`, Neovim 2:1), and
+    /// Insert and the standard profile (VS Code's Ctrl+End) keep it.
+    fn clampMotionOffPhantom(self: *Buffer, list: []const EditOp, cursor_before: usize) void {
+        const v = switch (self.input) {
+            .vim => |*v| v,
+            .standard => return,
+        };
+        if (v.vmode == .insert or v.vmode == .replace or v.insert_oneshot_normal) return;
+        const ed = self.editor;
+        const n = ed.len();
+        if (n == 0 or ed.cursor < n or ed.bytes()[n - 1] != '\n' or cursor_before >= n) return;
+        for (list) |o| if (o.isMutation()) return;
+        const last = ed.lineCount() - 1;
+        const bol = ed.lineStart(last);
+        const eol = ed.lineEnd(last);
+        ed.cursor = if (eol == bol) eol else ed.prevBoundary(eol);
     }
 
     /// The undo entry a key pushed remembers where the change began:
@@ -508,8 +532,8 @@ pub const Buffer = struct {
             .vim => |*v| v,
             .standard => return,
         };
-        if (v.vmode != .normal or v.insert_oneshot_normal) return;
         const ed = self.editor;
+        if (v.vmode != .normal or v.insert_oneshot_normal) return;
         if (ed.anchor != null or ed.block_anchor != null) return;
         const line = ed.currentLine();
         const bol = ed.lineStart(line);

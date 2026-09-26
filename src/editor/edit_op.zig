@@ -260,6 +260,10 @@ pub const EditOp = union(enum) {
     /// line break (the new line takes the indent); fewer than `n` left
     /// on the line and nothing changes.
     replace_chars_with_newline: u32,
+    /// vim's `{n}r<c>` (`:help r`): the `count` characters from the cursor
+    /// become `ch`, the cursor on the last of them; fewer than `count`
+    /// left on the line and nothing changes (the command fails).
+    replace_chars: struct { ch: u21, count: u32 },
     /// vim's `U` (`:help U`): the line the latest changes were made on
     /// back as it was before them — itself a change, so `U` again puts
     /// them back.
@@ -296,7 +300,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 168);
+        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 169);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -385,6 +389,7 @@ pub const EditOp = union(enum) {
         return switch (op.*) {
             .repeat => |*r| &r.count,
             .move_word_end_cw, .move_big_word_end_cw, .select_count_lines => |*n| n,
+            .replace_chars => |*r| &r.count,
             else => null,
         };
     }
