@@ -71,6 +71,9 @@ done
 mkdir -p "$p/bin"
 printf '#!/bin/sh\necho "mnml-zig %s (stable profile)"\n' "${FAKE_ZIG_SAYS:-$v}" > "$p/bin/mnml-zig"
 chmod +x "$p/bin/mnml-zig"
+# The real prefix also holds the integrations, one sorting first.
+printf '#!/bin/sh\necho "mnml-bitbucket 0.2.0 (bridge protocol 3)"\n' > "$p/bin/mnml-bitbucket"
+chmod +x "$p/bin/mnml-bitbucket"
 EOF
 chmod +x "$TMP/bin/gh" "$TMP/bin/zig"
 export MNML_GH="$TMP/bin/gh" MNML_ZIG="$TMP/bin/zig"

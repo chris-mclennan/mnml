@@ -376,7 +376,12 @@ if [ "$BUILD" = 0 ] || [ -z "$TAG" ]; then
     record version-build todo "needs --tag and --build"
 else
     if (cd "$REPO" && "$ZIG" build -Doptimize=ReleaseSafe -Dversion="$VERSION" -p "$TMP/prefix") > "$TMP/vb.log" 2>&1; then
-        bin=$(ls "$TMP"/prefix/bin/mnml* 2>/dev/null | head -n 1)
+        # The host by name: the prefix also holds the integration
+        # binaries (mnml-bitbucket sorts before mnml-zig).
+        bin=
+        for b in mnml-zig mnml mnml-zig.exe mnml.exe; do
+            [ -x "$TMP/prefix/bin/$b" ] && { bin="$TMP/prefix/bin/$b"; break; }
+        done
         said=$([ -n "$bin" ] && "$bin" --version 2>&1 | head -n 1)
         case "$said" in
             *"$VERSION"*) record version-build ok "$said" ;;
