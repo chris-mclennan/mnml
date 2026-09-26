@@ -560,23 +560,19 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
 
 // ─── paths + environment ─────────────────────────────────────────────────
 
-/// `<ipc_dir>/mounts/<pid>-<id>.sock`, or a short `/tmp` name (under
-/// `tmp_dir` on Windows) when the workspace path would not fit a
-/// `sockaddr_un` (104 bytes on macOS, 108 on Windows).
-pub fn socketPath(gpa: Allocator, ipc_dir: []const u8, id: u32, tmp_dir: []const u8) Allocator.Error![]u8 {
+/// `<ipc_dir>/mounts/<pid>-<id>.sock`, or a short `/tmp` name when the
+/// workspace path would not fit a `sockaddr_un` (104 bytes on macOS).
+/// Windows keeps the long path: Zig reaches AF_UNIX there through AFD,
+/// whose socket path may be as long as any path (`UnixAddress.max_len`).
+pub fn socketPath(gpa: Allocator, ipc_dir: []const u8, id: u32) Allocator.Error![]u8 {
+    // The real process id on Windows too: two mnml instances sharing a
+    // workspace must not name the same socket.
     const pid: u32 = if (builtin.os.tag == .windows) std.os.windows.GetCurrentProcessId() else @intCast(@as(i64, std.c.getpid()));
     const name = try std.fmt.allocPrint(gpa, "{d}-{d}.sock", .{ pid, id });
     defer gpa.free(name);
     const long = try std.fs.path.join(gpa, &.{ ipc_dir, "mounts", name });
     if (long.len < Io.net.UnixAddress.max_len - 4) return long;
     gpa.free(long);
-    // Windows has the same sockaddr_un ceiling and no `/tmp`: its
-    // temp directory (`tmp_dir`, the caller's TEMP) takes the socket.
-    if (builtin.os.tag == .windows) {
-        const file = try std.fmt.allocPrint(gpa, "mnml-mount-{s}", .{name});
-        defer gpa.free(file);
-        return std.fs.path.join(gpa, &.{ tmp_dir, file });
-    }
     return std.fmt.allocPrint(gpa, "/tmp/mnml-mount-{s}", .{name});
 }
 
@@ -688,16 +684,16 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     try sdk_testing.expectPath("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
     try testing.expectEqualStrings("3", env.get("MNML_PROTOCOL").?);
     try sdk_testing.expectPath("/h", env.get("HOME").?);
-    const tmp_dir = if (builtin.os.tag == .windows) "C:\\Temp" else "/tmp";
-    const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3, tmp_dir);
+    const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);
     try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
     try testing.expect(sdk_testing.pathStartsWith(short, "/ws/.mnml/ipc-zig/mounts/"));
     const deep = "/" ++ "d" ** 120;
-    const fallback = try socketPath(gpa, deep, 4, tmp_dir);
+    const fallback = try socketPath(gpa, deep, 4);
     defer gpa.free(fallback);
     try testing.expect(fallback.len < Io.net.UnixAddress.max_len);
-    try testing.expect(sdk_testing.pathStartsWith(fallback, if (builtin.os.tag == .windows) "C:/Temp/mnml-mount-" else "/tmp/mnml-mount-"));
+    // Windows' AF_UNIX takes a path of any length: the long one stays.
+    try testing.expect(sdk_testing.pathStartsWith(fallback, if (builtin.os.tag == .windows) deep ++ "/mounts/" else "/tmp/mnml-mount-"));
 }
 
 test "close: a sibling that never connected and outlives goodbye is killed, not orphaned — the reader's cancelled wait reaps it by pid" {
