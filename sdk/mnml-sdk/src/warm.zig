@@ -577,10 +577,13 @@ pub fn isStale(h: Lock.Holder, now_secs: f64) bool {
     return !pidAlive(h.pid);
 }
 
-/// This process, as a lock names it. Windows has no pid worth probing
-/// here, so it gets 0 and the heartbeat's age decides everything.
+/// This process, as a lock names it. On Windows it is the process id
+/// too: `pidAlive` cannot probe it there, so the heartbeat's age decides
+/// whether the holder is gone — but a zero would have made every lock
+/// stale on sight (`isStale`), and two warmers would both have taken it.
 pub fn selfPid() i32 {
-    return if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid());
+    if (@import("builtin").os.tag == .windows) return @intCast(std.os.windows.GetCurrentProcessId());
+    return @intCast(std.c.getpid());
 }
 
 /// Is that process still there? Signal 0 is the POSIX liveness probe:
