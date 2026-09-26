@@ -362,7 +362,13 @@ fn scanFile(io: Io, gpa: Allocator, arena: Allocator, dir: Io.Dir, basename: []c
         line_no += 1;
         const line = std.mem.trimEnd(u8, raw, "\r");
         const found = matchLine(line, isMarkdown(basename), keywords) orelse continue;
-        if (path == null) path = try arena.dupe(u8, rel);
+        if (path == null) {
+            // `/` between the parts on every platform, as the other
+            // workspace lists (SEARCH, the tree) spell a relative path.
+            const own = try arena.dupe(u8, rel);
+            std.mem.replaceScalar(u8, own, '\\', '/');
+            path = own;
+        }
         try items.append(arena, .{
             .tag = found.tag,
             .marker = try arena.dupe(u8, found.marker),
