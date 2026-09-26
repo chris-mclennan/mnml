@@ -660,7 +660,9 @@ otherwise. Copy what you need; leave the rest out.
         // session. "claude-code" (your Max/Pro plan, via `claude -p`),
         // "claude-api" ($ANTHROPIC_API_KEY), "copilot" (your GitHub Copilot
         // seat, per-workspace and off until you opt in — see .copilot below),
-        // "local" (not in this release).
+        // "local" (not in this release). Unset by default: no request goes
+        // out and a one-time hint points at ai.setup_suggestions — the value
+        // here is an example.
         .suggest_backend = "claude-code",
         // The model ghost text asks, and ONLY ghost text — the panes and the
         // agents keep .model. It defaults to a fast one: a suggestion is worth
@@ -687,6 +689,21 @@ otherwise. Copy what you need; leave the rest out.
         // environment variable — never a config key, which a cloned repo
         // could set to collect your key) points it at a proxy or a mock.
         .cli_timeout_ms = 600000,
+        // Also read out of `.ai` without a typed field. `.model` is the
+        // model ai.explain / fix / ask / chat ask for — the Messages API
+        // backend's model, and `claude -p --model` when it is not the
+        // default. The next four are the API backend's alone: an extra
+        // system prompt (null = none), whether the agent loop gets its
+        // read-only tools, whether it may also write files, and the reply's
+        // token cap (1..199999; anything else is the default). `.layout_mode`
+        // is the 0.2.x spelling of `.ui.ai_layout_mode` ("grid" / "tabs")
+        // and wins over it when set.
+        .model = "claude-sonnet-4-5",
+        .system_prompt = null,
+        .api_tools = true,
+        .api_write_tools = false,
+        .max_tokens = 4096,
+        .layout_mode = null, // "grid" | "tabs"; null = .ui.ai_layout_mode
         // GitHub Copilot as the ghost-text backend. NOTHING is sent until
         // THIS workspace opts in: `suggest_backend = "copilot"` alone shares
         // nothing, and there is no key that opts in on another workspace's
@@ -807,7 +824,7 @@ otherwise. Copy what you need; leave the rest out.
         .@"test" = .{ .cmd = "zig build test" }, // keywords need @"…"
     },
     .startup = .{
-        .tasks = .{ "build" }, // task names to run on open (exec-bearing)
+        .tasks = .{ "build" }, // task names to run on open (exec-bearing); an example — the default is .{}
         // Panes to open. The first entry needs no .split; every later one
         // does. .kind = .pty runs .cmd under $SHELL -c (exec-bearing).
         .layout = .{
@@ -984,7 +1001,7 @@ otherwise. Copy what you need; leave the rest out.
         // reinstall from the row). Relative to the workspace, `~`
         // expanded. A workspace with sdk/mnml-sdk adds its own
         // integrations/ by itself.
-        .dev_roots = .{ "../my-integrations" },
+        .dev_roots = .{ "../my-integrations" }, // an example — the default is .{}
         // The statusline poller: what keeps a manifest's chip counts
         // live with no pane open. It runs each manifest's
         // `values_sources` command (`mnml-bitbucket --values`) on that
@@ -1109,13 +1126,13 @@ otherwise. Copy what you need; leave the rest out.
         // Folders of script directories you maintain — a company repo, a
         // mounted share. Listed with the `private` badge; the same trust
         // dialog on install. Relative to the workspace, `~` expanded.
-        .private_sources = .{ "~/mnml-private-scripts" },
+        .private_sources = .{ "~/mnml-private-scripts" }, // an example — the default is .{}
         // Folders the Dev tab scans: every subfolder with a script.zon
         // is a script in development, reloaded when one of its files is
         // saved. MNML_SCRIPTS_DEV_ROOTS=<dir:dir> (`;` on Windows)
         // overrides, which is how the corpus and the UI specs point the
         // tab at a folder without writing a config.
-        .dev_roots = .{ "../my-scripts" },
+        .dev_roots = .{ "../my-scripts" }, // an example — the default is .{}
         .show_dev_tab = false,
     },
 
