@@ -3,7 +3,7 @@
 # headless: launch it, send the same channel lines, shoot a PNG to Read,
 # sample a pixel, quit. The recipe and its rules: docs/LOOK.md.
 #
-#   tools/look.sh launch WS [--exe PATH] [--cols N] [--rows N] [--root DIR]
+#   tools/look.sh launch WS [--exe PATH] [--cols N] [--rows N] [--root DIR] [--sandbox]
 #   tools/look.sh key SPEC | type TEXT | run COMMAND_ID | open PATH
 #   tools/look.sh click X Y [right] | hover X Y | send JSON [JSON…]
 #   tools/look.sh shot NAME            prints the PNG path

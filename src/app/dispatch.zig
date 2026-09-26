@@ -2669,6 +2669,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     .zoom => try runCmd(app, .@"view.toggle_zoom"),
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
+                    .sandbox => if (app.sandboxState() == .unsafe)
+                        app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
+                    else
+                        app.toast("sandbox — HOME {s}, state in {s}; nothing reaches your real setup", .{ app.env.get("HOME") orelse "", app.data_root }),
                     _ => {},
                 } else if (seg >= statusline.seg_dyn_base) {
                     // A host's segment: its `click_command` on a left

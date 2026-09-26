@@ -64,7 +64,8 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // looking at names which mnml it is ("mnml [dev] — work").
     {
         const base = std.fs.path.basename(opts.workspace);
-        const tag = profile.tag(profile.of(env));
+        // A sandbox says so in the title as well as on the statusline.
+        const tag = if (config.sandbox.state(env, opts.data_root) != .off) "sandbox" else profile.tag(profile.of(env));
         var title_buf: [256]u8 = undefined;
         const title = if (tag.len > 0)
             std.fmt.bufPrint(&title_buf, "mnml [{s}]{s}{s}", .{ tag, if (base.len > 0) " — " else "", base }) catch "mnml"
@@ -117,8 +118,17 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // where the wrapper relaunches straight away.
     const marker_path = try marker.path(gpa, env);
     defer gpa.free(marker_path);
-    marker.write(io, marker_path, opts.workspace) catch |err| app.toast("marker: {s}: {s}", .{ marker_path, @errorName(err) });
+    // A `--sandbox` run writes no marker: `run.sh restart` / `stop` and
+    // `scripts/shot.sh` mean YOUR instance, and a sandbox must not take
+    // the marker from under it.
+    const sandboxed = app.sandboxState() != .off;
+    if (!sandboxed) marker.write(io, marker_path, opts.workspace) catch |err| app.toast("marker: {s}: {s}", .{ marker_path, @errorName(err) });
     if (opts.note) |n| app.toast("{s}", .{n});
+    switch (app.sandboxState()) {
+        .off => {},
+        .on => app.toast("sandbox — HOME is {s}; your real config and state are untouched. Removed on exit (--sandbox-keep keeps it).", .{env.get(config.sandbox.env_var) orelse ""}),
+        .unsafe => try app.toastPersistent("sandbox-unsafe", "MNML_SANDBOX is set, but HOME or the data root is NOT a throwaway directory — this session can touch your real setup.", .warn),
+    }
     // Images: the probe (kitty graphics) and the environment decide the
     // transport once; `.none` leaves the text fallback.
     app.image_transport = image.detect(env, term.caps.kitty_graphics);
@@ -239,7 +249,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // interleave; the marker outlives a restart for the relaunch.
     bridge.cancel(io);
     if (channel) |*c| c.appendEvent(if (app.restart) "{\"event\":\"exit\",\"restart\":true}" else "{\"event\":\"exit\"}");
-    if (!app.restart) marker.removeIfOurs(gpa, io, marker_path, opts.workspace);
+    if (!app.restart and !sandboxed) marker.removeIfOurs(gpa, io, marker_path, opts.workspace);
     return if (app.restart) 75 else app.exit_code;
 }
 
