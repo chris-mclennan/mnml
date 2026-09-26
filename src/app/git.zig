@@ -1233,7 +1233,7 @@ pub fn nowUnix(app: *App) i64 {
 
 /// Repo-relative path of an absolute one (the path itself when outside).
 pub fn relToRepo(r: *const client.Repo, abs: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and abs[r.path.len] == '/') return abs[r.path.len + 1 ..];
+    if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and std.fs.path.isSep(abs[r.path.len])) return abs[r.path.len + 1 ..];
     return abs;
 }
 

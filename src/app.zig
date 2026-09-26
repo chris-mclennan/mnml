@@ -3017,9 +3017,12 @@ pub const App = struct {
         return config.sandbox.state(&self.env, self.data_root);
     }
 
-    /// Workspace-relative when inside it, else the path itself.
+    /// Workspace-relative when inside it, else the path itself. The
+    /// separator after the workspace is either one on Windows: a path
+    /// `absPath` joined there reads `<ws>\<rel>`, and a `/` never matched
+    /// it, so every toast and title named the whole path.
     pub fn relPath(self: *const App, path: []const u8) []const u8 {
-        if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and path[self.workspace.len] == '/') {
+        if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and std.fs.path.isSep(path[self.workspace.len])) {
             return path[self.workspace.len + 1 ..];
         }
         return path;
