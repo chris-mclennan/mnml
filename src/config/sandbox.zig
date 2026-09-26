@@ -274,6 +274,7 @@ pub fn finish(io: Io, env: *const Map, args: []const []const u8, err_w: *Io.Writ
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 fn testTakesValue(a: []const u8) bool {
     return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config") or std.mem.eql(u8, a, "--profile");
@@ -319,15 +320,15 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
 
     const bare = try plan(arena, "/opt/bin/mnml-zig", &.{ "mnml-zig", "--sandbox" }, root, 4242, testTakesValue);
     try t.expectEqual(@as(usize, 3), bare.argv.len);
-    try t.expectEqualStrings("/opt/bin/mnml-zig", bare.argv[0]);
+    try sdk_testing.expectPath("/opt/bin/mnml-zig", bare.argv[0]);
     try t.expectEqualStrings("--sandbox", bare.argv[1]);
-    try t.expectEqualStrings(root ++ "/workspace", bare.argv[2]);
+    try sdk_testing.expectPath(root ++ "/workspace", bare.argv[2]);
     try t.expectEqualStrings("HOME", bare.set[0][0]);
     try t.expectEqualStrings(root, bare.set[0][1]);
     try t.expectEqualStrings("XDG_CONFIG_HOME", bare.set[1][0]);
-    try t.expectEqualStrings(root ++ "/xdg", bare.set[1][1]);
+    try sdk_testing.expectPath(root ++ "/xdg", bare.set[1][1]);
     try t.expectEqualStrings("MNML_DATA_ROOT", bare.set[2][0]);
-    try t.expectEqualStrings(root ++ "/xdg/mnml", bare.set[2][1]);
+    try sdk_testing.expectPath(root ++ "/xdg/mnml", bare.set[2][1]);
     try t.expectEqualStrings(env_var, bare.set[3][0]);
     try t.expectEqualStrings(root, bare.set[3][1]);
     try t.expectEqualStrings(owner_env, bare.set[4][0]);
@@ -339,12 +340,12 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
     try t.expectEqual(@as(usize, 7), valued.argv.len);
     try t.expectEqualStrings("vim", valued.argv[2]);
     try t.expectEqualStrings("--sandbox", valued.argv[3]);
-    try t.expectEqualStrings(root ++ "/workspace", valued.argv[6]);
+    try sdk_testing.expectPath(root ++ "/workspace", valued.argv[6]);
 
     // A workspace of your own is honoured — no second one.
     const own = try plan(arena, "/x", &.{ "mnml-zig", "/Users/dev/proj", "--sandbox-keep" }, root, 1, testTakesValue);
     try t.expectEqual(@as(usize, 3), own.argv.len);
-    try t.expectEqualStrings("/Users/dev/proj", own.argv[1]);
+    try sdk_testing.expectPath("/Users/dev/proj", own.argv[1]);
     try t.expectEqualStrings("--sandbox-keep", own.argv[2]);
 
     // Second entry: the planned environment is already a sandbox, so the
@@ -359,7 +360,7 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
     for (bare.set) |kv| try env.put(kv[0], kv[1]);
     try t.expect(alreadyInside(&env));
     try t.expect(wanted(bare.argv));
-    try t.expectEqualStrings("/usr/bin", env.get("PATH").?);
+    try sdk_testing.expectPath("/usr/bin", env.get("PATH").?);
 }
 
 test "the chip's state: off without MNML_SANDBOX; on with the home a sandbox and the data root inside; unsafe otherwise" {
@@ -382,7 +383,7 @@ test "ownership: only the pid that made it, only a mnml-sandbox-* under the temp
     try t.expect(owned(&env, 7) == null);
     try env.put(env_var, "/tmp/mnml-sandbox-abcdefgh");
     try env.put(owner_env, "7");
-    try t.expectEqualStrings("/tmp/mnml-sandbox-abcdefgh", owned(&env, 7).?);
+    try sdk_testing.expectPath("/tmp/mnml-sandbox-abcdefgh", owned(&env, 7).?);
     // A nested mnml in a shell pane inherits both, with its own pid.
     try t.expect(owned(&env, 8) == null);
     // A root that is not one `create` makes is never ours to remove.
