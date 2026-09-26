@@ -59,10 +59,22 @@ pub const ObjectProvider = struct {
 /// past it moves by `delta` (`takeLineShifts`).
 pub const LineShift = struct { row: usize, delta: isize };
 
-pub const CharClass = enum { word, punct, space };
+/// vim's word classes (`:help word`, `utf_class` in Neovim's
+/// `mbyte.c`): a run of CJK splits where the script changes — kanji,
+/// hiragana, katakana and hangul are words of their own kinds, CJK
+/// punctuation is punctuation — so `w` from `日本語の…` stops at `の`.
+pub const CharClass = enum { word, punct, space, ideograph, hiragana, katakana, hangul };
 
 pub fn classOf(c: u21) CharClass {
     if (isSpace(c)) return .space;
+    switch (c) {
+        0x3001...0x3020, 0x3030, 0x303d, 0xff01...0xff0f, 0xff1a...0xff20, 0xff3b...0xff40, 0xff5b...0xff65 => return .punct,
+        0x3040...0x309f => return .hiragana,
+        0x30a0...0x30ff => return .katakana,
+        0x3300...0x9fff, 0xf900...0xfaff, 0x20000...0x2fa1f => return .ideograph,
+        0xac00...0xd7a3 => return .hangul,
+        else => {},
+    }
     if (isWordChar(c)) return .word;
     return .punct;
 }
