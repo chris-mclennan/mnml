@@ -16,6 +16,12 @@ on:
         type: boolean
         default: false
 
+# A new push to a pull request supersedes the run on the old head; a
+# push to main keeps every run (each commit there gets its verdict).
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 # Checkout and build only; the token needs nothing but read.
 permissions:
   contents: read
@@ -46,6 +52,23 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: ${{ matrix.os }}
+
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
 
       - name: zig fmt --check
         shell: bash
@@ -125,6 +148,23 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
           cache-key: linux-native
 
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
+
       - name: zig build
         run: zig build -j2 --summary failures
 
@@ -189,6 +229,23 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: cross-${{ matrix.target }}
+
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
       - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
         run: zig build -j2 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
       - name: What was built
