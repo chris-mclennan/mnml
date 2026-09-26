@@ -47,7 +47,7 @@ otherwise. Copy what you need; leave the rest out.
     // ── editor ─────────────────────────────────────────────────────────
     .editor = .{
         .input_style = .standard, // .vim | .standard
-        .tab_width = 4,
+        .tab_width = 4, // an open buffer follows a change, unless its .editorconfig or :setlocal set its own
         .autosave_secs = 0, // a dirty buffer is saved this many seconds after its last change; 0 = off
         .trim_trailing_ws_on_save = false,
         .breadcrumb = true,

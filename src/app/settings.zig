@@ -1029,10 +1029,7 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         side.reseed(app);
         if (app.overlay != .none) app.focus = .overlay;
     } else if (comptime std.mem.eql(u8, path, "editor.tab_width")) {
-        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.setInputStyle(app.input_style, app.editorConfig()),
-            else => {},
-        };
+        try app.syncBufferPrefs();
     }
 }
 

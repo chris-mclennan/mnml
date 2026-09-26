@@ -2046,7 +2046,7 @@ fn spanPiece(app: *App, arena: Allocator, e: *EditorPane, ed: anytype, acc: []co
 /// with a screen's width of slack on each side.
 fn longLineSpanWindow(app: *App, e: *EditorPane, ed: anytype, line: usize, width: u16) [2]usize {
     const text = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
-    const tw: u8 = @intCast(@min(app.cfg.editor.tab_width, 255));
+    const tw: u8 = @intCast(@min(e.buf.doc.tab_width, 255));
     const method = app.screen.width_method;
     const w: u32 = @max(width, 1);
     // `keepCursorVisible`'s horizontal rule, on the cursor's column.
@@ -2327,7 +2327,9 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .matches = matches,
         .current_match = e.find.current,
         .wrap = e.wrap orelse app.cfg.ui.wrap,
-        .tab_width = app.cfg.editor.tab_width,
+        // The buffer's own: a `.editorconfig` or `:setlocal` may differ
+        // from the config (`Document.pref_source`).
+        .tab_width = @intCast(@min(e.buf.doc.tab_width, 255)),
         .line_numbers = app.cfg.ui.line_numbers,
         .cursor_shape = cursor_mod.forMode(mode),
         .focused = focused,

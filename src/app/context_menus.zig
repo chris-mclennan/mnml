@@ -919,10 +919,8 @@ pub fn acceptTabWidth(app: *App, text: []const u8) Allocator.Error!void {
         return;
     }
     app.cfg.editor.tab_width = n;
-    for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .editor => |*e| e.buf.setInputStyle(app.input_style, app.editorConfig()),
-        else => {},
-    };
+    // Every buffer whose width is not its own (`App.syncBufferPrefs`).
+    try app.syncBufferPrefs();
     app.toast("tab width: {d}", .{n});
 }
 
