@@ -410,7 +410,7 @@ test "shim text: env exported, args quoted, the caller's args appended; the Wind
         \\
     , posix);
     const win = try shimText(a, two_profiles[0], .windows);
-    try t.expectEqualStrings("@echo off\r\nrem mnml launch profile \"multi-repo\" — written by mnml; change the profile in config.zon, not here.\r\nset CLAUDE_CONFIG_DIR=/tmp/cfg\r\nset MODEL=it's\r\n\"/opt/bin/claude-multi.sh\" \"--add-dir\" \"../lib\" %*\r\n", win);
+    try sdk_testing.expectPath("@echo off\r\nrem mnml launch profile \"multi-repo\" — written by mnml; change the profile in config.zon, not here.\r\nset CLAUDE_CONFIG_DIR=/tmp/cfg\r\nset MODEL=it's\r\n\"/opt/bin/claude-multi.sh\" \"--add-dir\" \"../lib\" %*\r\n", win);
     try sdk_testing.expectPath("/data/bin/mnml-ai-fast", try shimPath(a, "/data", "fast", .posix));
     try sdk_testing.expectPath("/data/bin/mnml-ai-fast.cmd", try shimPath(a, "/data", "fast", .windows));
     try t.expect(validName("multi-repo"));
@@ -466,7 +466,7 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
     // The platform's shim: `mnml-ai-multi-repo.cmd` on Windows.
     try t.expectEqualStrings(try shimPath(a, root, "multi-repo", shimOs()), l.argv[0]);
     try t.expectEqualStrings("claude (multi-repo)", l.label);
-    try t.expectEqualStrings("/home/x", l.cwd.?);
+    try sdk_testing.expectPath("/home/x", l.cwd.?);
     try t.expect(isProductArgv(&app, l.argv[0], .claude));
     try t.expect(!isProductArgv(&app, l.argv[0], .codex));
     try t.expect(isProductArgv(&app, "claude", .claude));

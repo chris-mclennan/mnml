@@ -232,7 +232,7 @@ test "find: the nearest csproj and the sln above it; the sln builds, the csproj 
     try t.expect(sdk_testing.pathEndsWith(p.csproj.?, "src/App/App.csproj"));
     try t.expect(std.mem.endsWith(u8, p.sln.?, "All.sln"));
     try t.expectEqualStrings(root, p.buildRoot());
-    try t.expect(std.mem.endsWith(u8, p.runRoot(), "src/App"));
+    try t.expect(sdk_testing.pathEndsWith(p.runRoot(), "src/App"));
     // A sibling project: its own csproj, the same sln.
     const tests_dir = try std.fs.path.join(a, &.{ root, "src", "Tests" });
     const q = (try find(t.io, a, tests_dir, root)).?;
@@ -274,7 +274,8 @@ test "parseCsproj: AssemblyName / TargetFramework(s) with defaults; launchBody n
     const dll = try std.fs.path.join(a, &.{ "/ws/src/App", "bin", "Debug", "net9.0", "App.dll" });
     try t.expectEqualStrings(try std.fmt.allocPrint(a, "{{\"program\":{f},\"cwd\":\"/ws/src/App\",\"stopAtEntry\":false}}", .{std.json.fmt(dll, .{})}), body);
     const defaulted = try launchBody(a, "/ws/Lib.csproj", "<Project/>");
-    try t.expect(std.mem.indexOf(u8, defaulted, "/ws/bin/Debug/" ++ default_tfm ++ "/Lib.dll") != null);
+    const lib_dll = try std.fs.path.join(a, &.{ "/ws", "bin", "Debug", default_tfm, "Lib.dll" });
+    try t.expect(std.mem.indexOf(u8, defaulted, try std.fmt.allocPrint(a, "{f}", .{std.json.fmt(lib_dll, .{})})) != null);
 }
 
 test "testAt: the innermost method and its class; a local function keeps the outer class; outside every method is null" {

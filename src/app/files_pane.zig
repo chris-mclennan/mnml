@@ -1411,7 +1411,7 @@ test "marks are keyed by path: toggle advances, a range fills, invert and all re
     f.cursor = 0;
     const one = try f.actionPaths(arena_state.allocator());
     try t.expectEqual(@as(usize, 1), one.len);
-    try t.expect(std.mem.endsWith(u8, one[0], "/docs"));
+    try t.expect(sdk_testing.pathEndsWith(one[0], "/docs"));
     // A mark whose file vanished is dropped on reload.
     try f.toggleMarkPath(f.entryAt(3).?.path);
     try tmp.dir.deleteFile(t.io, "README.md");

@@ -1023,8 +1023,8 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expectEqual(@as(usize, 7), labels.len);
     try t.expectEqualStrings("c.txt", labels[0]);
     try t.expectEqualStrings("a.txt", labels[2]);
-    try t.expectEqualStrings("src/.hidden/no.zig", labels[3]);
-    try t.expectEqualStrings("src/main.zig", labels[4]);
+    try sdk_testing.expectPath("src/.hidden/no.zig", labels[3]);
+    try sdk_testing.expectPath("src/main.zig", labels[4]);
     try t.expectEqualStrings("src", app.overlay.picker.details[4]);
     try t.expectEqualStrings(".env", labels[5]);
     try t.expectEqualStrings("README.md", labels[6]);

@@ -2826,10 +2826,10 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
     try sdk_testing.expectPath("/run/home", env.get("HOME").?);
-    try t.expectEqualStrings("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
+    try sdk_testing.expectPath("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
     try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
     try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
-    try t.expectEqualStrings("/repo/tools/shims", env.get("MNML_SHIMS").?);
+    try sdk_testing.expectPath("/repo/tools/shims", env.get("MNML_SHIMS").?);
     // A terminal pane's shell: macOS's own, else the host's.
     try t.expectEqualStrings(if (builtin.os.tag == .macos) "/bin/zsh" else "/opt/homebrew/bin/fish", env.get("SHELL").?);
     for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME" }) |gone| {

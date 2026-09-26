@@ -1394,7 +1394,7 @@ test "refresh lists every section; collections group by folder with the hidden o
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .item, .link, .gap }, kinds(st, .envs, &kb));
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .link, .gap }, kinds(st, .chains, &kb));
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .gap }, kinds(st, .mocks, &kb));
-    try testing.expectEqualStrings("api/orders.curl", st.rows.items[f.rowOf(.mocks, .item, null).?].label);
+    try sdk_testing.expectPath("api/orders.curl", st.rows.items[f.rowOf(.mocks, .item, null).?].label);
     // The three action links close the list.
     const n = st.rows.items.len;
     try testing.expectEqual(Link.new_request, st.rows.items[n - 3].link);
@@ -1555,7 +1555,7 @@ test "headless: the panel paints the blank row under the filter, seven headers w
     var lines = std.mem.splitScalar(u8, txt, '\n');
     _ = lines.next();
     try testing.expect(std.mem.indexOf(u8, lines.next().?, "HTTP (12)") != null);
-    try testing.expect(std.mem.indexOf(u8, lines.next().?, "/ filter") != null);
+    try testing.expect(sdk_testing.pathContains(lines.next().?, "/ filter"));
     _ = lines.next();
     var x: u16 = 4;
     while (x < 30) : (x += 1) try testing.expectEqualStrings(" ", f.app.screen.readCell(x, 3).?.char.grapheme);
@@ -1582,9 +1582,9 @@ test "headless: the panel paints the blank row under the filter, seven headers w
     const tail = try f.screen();
     defer testing.allocator.free(tail);
     for ([_]Section{ .cookies, .recent, .captured }) |s| try testing.expect(std.mem.indexOf(u8, tail, s.label()) != null);
-    try testing.expect(std.mem.indexOf(u8, tail, "201 POST x/login") != null);
+    try testing.expect(sdk_testing.pathContains(tail, "201 POST x/login"));
     try testing.expect(std.mem.indexOf(u8, tail, "session  x.test") != null);
-    try testing.expect(std.mem.indexOf(u8, tail, "GET  cdn.test/app.js") != null);
+    try testing.expect(sdk_testing.pathContains(tail, "GET  cdn.test/app.js"));
     try testing.expect(std.mem.indexOf(u8, tail, "+ New request") != null);
     try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Paste curl…") != null);
     try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Import…") != null);

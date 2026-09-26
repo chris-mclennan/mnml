@@ -3479,12 +3479,12 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Other  not installed  (elsewhere)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  not installed  (integrations)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "integrations/sample") != null);
+    try testing.expect(sdk_testing.pathContains(txt, "integrations/sample"));
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F1D00}  [dev] htop  not installed  (launchers)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "launchers/htop.zon") != null);
+    try testing.expect(sdk_testing.pathContains(txt, "launchers/htop.zon"));
     // Nothing built: the built binary is the folder's zig-out.
     const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[2]);
-    try testing.expect(std.mem.endsWith(u8, built, "integrations/sample/zig-out/bin/mnml-sample"));
+    try testing.expect(sdk_testing.pathEndsWith(built, "integrations/sample/zig-out/bin/mnml-sample"));
     // `i` on the launcher row: no build, no task pane — the file is
     // copied into the data root and the row says so.
     st.panel.cursor = 0;

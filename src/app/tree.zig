@@ -1728,6 +1728,7 @@ fn expandAll(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "tree: lists dirs first, expands on Enter, opens a file, shows dot entries until H hides them" {
     var tmp = t.tmpDir(.{});
@@ -2303,7 +2304,7 @@ test "multi-root: view.add_workspace prompts, Tab completes a directory segment 
     try tmp.dir.createDirPath(t.io, "ws/inner");
     try acceptAddWorkspace(&app, "inner");
     try t.expectEqual(@as(usize, 2), app.tree.roots.items.len);
-    try t.expect(std.mem.endsWith(u8, app.tree.roots.items[1].path, "/ws/inner"));
+    try t.expect(sdk_testing.pathEndsWith(app.tree.roots.items[1].path, "/ws/inner"));
     // view.switch_workspace lists primary + both roots; picking the second opens it.
     try command.run(&app, .{ .static = .@"view.switch_workspace" });
     try t.expect(app.overlay == .picker);

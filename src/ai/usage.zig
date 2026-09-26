@@ -1578,9 +1578,9 @@ test "accountsFromConfig: the default account, one active, ~ and relative paths"
         .{ .name = "work", .token_path = "~/.claude/work.json", .active = true },
         .{ .name = "consulting", .token_path = "/abs/tok", .active = true },
     }, "/data", "/home/me");
-    try t.expectEqualStrings("/data/ai_token.personal", three[0].token_path);
-    try t.expectEqualStrings("/home/me/.claude/work.json", three[1].token_path);
-    try t.expectEqualStrings("/abs/tok", three[2].token_path);
+    try sdk_testing.expectPath("/data/ai_token.personal", three[0].token_path);
+    try sdk_testing.expectPath("/home/me/.claude/work.json", three[1].token_path);
+    try sdk_testing.expectPath("/abs/tok", three[2].token_path);
     try t.expect(!three[0].active and three[1].active and !three[2].active);
     const none_active = try accountsFromConfig(a, &[_]E{ .{ .name = "", .token_path = "", .active = false }, .{ .name = "b", .token_path = "", .active = false } }, "/data", null);
     try t.expectEqualStrings("default", none_active[0].name);

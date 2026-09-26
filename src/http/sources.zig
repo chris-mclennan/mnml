@@ -186,7 +186,7 @@ test "sync writes the stubs and check reports no drift, then a change" {
     try testing.expect(std.mem.endsWith(u8, trace, "ok — 1 stubs written\n"));
     const stub = try tmp.dir.readFileAlloc(testing.io, "stubs/t/getA.curl", testing.allocator, .limited(4096));
     defer testing.allocator.free(stub);
-    try testing.expect(std.mem.indexOf(u8, stub, "curl '{{BASE_URL}}/a'") != null);
+    try testing.expect(sdk_testing.pathContains(stub, "curl '{{BASE_URL}}/a'"));
     const clean = try check(testing.allocator, testing.io, ws, false);
     defer testing.allocator.free(clean);
     try testing.expect(std.mem.indexOf(u8, clean, "no drift") != null);
@@ -194,8 +194,8 @@ test "sync writes the stubs and check reports no drift, then a change" {
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "stubs/t/stale.curl", .data = "old\n" });
     const dirty = try check(testing.allocator, testing.io, ws, false);
     defer testing.allocator.free(dirty);
-    try testing.expect(std.mem.indexOf(u8, dirty, "  ~ t/getA.curl") != null);
-    try testing.expect(std.mem.indexOf(u8, dirty, "  - t/stale.curl") != null);
+    try testing.expect(sdk_testing.pathContains(dirty, "  ~ t/getA.curl"));
+    try testing.expect(sdk_testing.pathContains(dirty, "  - t/stale.curl"));
     try testing.expect(std.mem.indexOf(u8, dirty, "2 file(s) differ") != null);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

@@ -3000,7 +3000,7 @@ test "locateSources (.zig): a passed row is found by its `test \"…\"` line; zi
     try locateSources(a, t.io, root, root, &tests, .zig);
     try sdk_testing.expectPath("src/shapes.zig", tests[0].file);
     try t.expectEqual(@as(u32, 3), tests[0].line);
-    try t.expectEqualStrings("src/shapes.zig", tests[1].file);
+    try sdk_testing.expectPath("src/shapes.zig", tests[1].file);
     try t.expectEqual(@as(u32, 7), tests[1].line);
     try t.expectEqualStrings("", tests[2].file);
 }
@@ -3187,7 +3187,7 @@ test "locateSources: a passed row is found by class and method in the project's 
     try locateSources(a, t.io, root, root, &tests, .cs);
     try sdk_testing.expectPath("Tests/CalcTests.cs", tests[0].file);
     try t.expectEqual(@as(u32, 6), tests[0].line);
-    try t.expectEqualStrings("Tests/CalcTests.cs", tests[1].file);
+    try sdk_testing.expectPath("Tests/CalcTests.cs", tests[1].file);
     try t.expectEqual(@as(u32, 12), tests[1].line);
     try t.expectEqualStrings("", tests[2].file);
     try t.expectEqualStrings("x.cs", tests[3].file);

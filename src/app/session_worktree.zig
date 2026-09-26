@@ -678,13 +678,13 @@ test "rootFor: <repo>-worktrees beside the repo; the override with ~ expanded, r
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try t.expectEqualStrings("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
-    try t.expectEqualStrings("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
+    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
+    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
     try sdk_testing.expectPath("/home/x/wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
-    try t.expectEqualStrings("/home/x", try rootFor(a, "/p/mnml-zig", "~", "/home/x"));
-    try t.expectEqualStrings("/p/mnml-zig/.worktrees", try rootFor(a, "/p/mnml-zig", ".worktrees", "/home/x"));
-    try t.expectEqualStrings("/srv/trees", try rootFor(a, "/p/mnml-zig", "/srv/trees", "/home/x"));
-    try t.expectEqualStrings("/p/mnml-zig-worktrees/feat", try pathFor(a, "/p/mnml-zig-worktrees", "feat"));
+    try sdk_testing.expectPath("/home/x", try rootFor(a, "/p/mnml-zig", "~", "/home/x"));
+    try sdk_testing.expectPath("/p/mnml-zig/.worktrees", try rootFor(a, "/p/mnml-zig", ".worktrees", "/home/x"));
+    try sdk_testing.expectPath("/srv/trees", try rootFor(a, "/p/mnml-zig", "/srv/trees", "/home/x"));
+    try sdk_testing.expectPath("/p/mnml-zig-worktrees/feat", try pathFor(a, "/p/mnml-zig-worktrees", "feat"));
 }
 
 test "suggestName skips the directories that exist" {

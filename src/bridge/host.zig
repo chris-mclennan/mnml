@@ -660,11 +660,11 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     try base.put("HOME", "/h");
     var env = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig" });
     defer env.deinit();
-    try testing.expectEqualStrings("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
+    try sdk_testing.expectPath("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
     try testing.expect(env.get("MNML_DATA_ROOT") == null);
     var rooted = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig", .data_root = "/private/root" });
     defer rooted.deinit();
-    try testing.expectEqualStrings("/private/root", rooted.get("MNML_DATA_ROOT").?);
+    try sdk_testing.expectPath("/private/root", rooted.get("MNML_DATA_ROOT").?);
     // `integrations.request_log` reaches every integration as two
     // variables — the other half of the name the SDK reads.
     try testing.expect(env.get("MNML_REQUEST_LOG") == null);
@@ -675,11 +675,11 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     var off = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/i", .request_log = .{ .enabled = false } });
     defer off.deinit();
     try testing.expectEqualStrings("0", off.get("MNML_REQUEST_LOG").?);
-    try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
+    try sdk_testing.expectPath("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
-    try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
+    try sdk_testing.expectPath("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
     try testing.expectEqualStrings("3", env.get("MNML_PROTOCOL").?);
-    try testing.expectEqualStrings("/h", env.get("HOME").?);
+    try sdk_testing.expectPath("/h", env.get("HOME").?);
     const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);
     try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
@@ -688,7 +688,7 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     const fallback = try socketPath(gpa, deep, 4);
     defer gpa.free(fallback);
     try testing.expect(fallback.len < Io.net.UnixAddress.max_len);
-    try testing.expect(std.mem.startsWith(u8, fallback, "/tmp/mnml-mount-"));
+    try testing.expect(sdk_testing.pathStartsWith(fallback, "/tmp/mnml-mount-"));
 }
 
 test "close: a sibling that never connected and outlives goodbye is killed, not orphaned — the reader's cancelled wait reaps it by pid" {

@@ -501,7 +501,7 @@ test "rename: a block's ### line from the panel row (the open pane follows); a s
     try f.app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(f.tmp.dir.access(testing.io, "api/alone.http", .{}) != error.FileNotFound);
     try testing.expectError(error.FileNotFound, f.tmp.dir.access(testing.io, "api/solo.http", .{}));
-    try testing.expect(std.mem.endsWith(u8, http.activeRequest(&f.app).?.source_path.?, "/api/alone.http"));
+    try testing.expect(sdk_testing.pathEndsWith(http.activeRequest(&f.app).?.source_path.?, "/api/alone.http"));
 }
 
 test "duplicate and delete: the block cloned as name-copy, the delete confirmed and the others intact, the last block takes the file with it; the file forms" {
@@ -589,7 +589,7 @@ test "move: a block into another collection's file of the same name, a file into
     try testing.expect(f.tmp.dir.access(testing.io, "api/loose.http", .{}) != error.FileNotFound);
     var moved = false;
     for (f.app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .request => |*rp| if (rp.source_path) |sp| if (std.mem.endsWith(u8, sp, "/api/loose.http")) {
+        .request => |*rp| if (rp.source_path) |sp| if (sdk_testing.pathEndsWith(sp, "/api/loose.http")) {
             moved = true;
         },
         else => {},
@@ -612,7 +612,7 @@ test "find: one row per block of every file, `METHOD · name · file`, the tags 
     const p = &f.app.overlay.picker;
     try testing.expectEqual(@as(usize, 4), p.labels.len);
     try sdk_testing.expectPath("GET \u{00b7} one \u{00b7} api/r.http", p.labels[0]);
-    try testing.expectEqualStrings("POST \u{00b7} two \u{00b7} api/r.http", p.labels[1]);
+    try sdk_testing.expectPath("POST \u{00b7} two \u{00b7} api/r.http", p.labels[1]);
     try testing.expectEqualStrings("#smoke #users", p.details[1]);
     try testing.expectEqualStrings("", p.details[0]);
     try testing.expectEqualStrings("GET \u{00b7} Solo one \u{00b7} solo.curl", p.labels[3]);
@@ -620,7 +620,7 @@ test "find: one row per block of every file, `METHOD · name · file`, the tags 
     const rp = http.activeRequest(&f.app).?;
     try testing.expectEqualStrings("https://x/two", rp.url.items);
     try testing.expectEqualStrings("two", rp.block_name.?);
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/api/r.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/api/r.http"));
     // The same block again is the same pane.
     const before = f.app.panes.count();
     try command.run(&f.app, .{ .static = .@"http.find_request" });

@@ -1370,7 +1370,7 @@ test "the overlay renders the sections and the footer names the target file" {
     try app.render();
     const home_title = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(home_title);
-    try t.expect(std.mem.indexOf(u8, home_title, " Settings · → ~/home/config.zon ") != null);
+    try t.expect(sdk_testing.pathContains(home_title, " Settings · → ~/home/config.zon "));
     // click outside closes and keeps
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
