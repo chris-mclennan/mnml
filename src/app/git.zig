@@ -4068,6 +4068,8 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
     if (m.button != .left) return;
     app.needs_render = true;
     if (git_toolbar.actionOf(hit_id)) |action| {
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         // The git toolbar: each button is a `git.*` command; Refresh
         // re-reads this diff.
         const cmd: command.CommandId = switch (action) {
@@ -5006,6 +5008,8 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
     if (git_toolbar.actionOf(hit_id)) |action| {
         if (m.button != .left) return;
         g.wip_focused = false;
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         const cmd: command.CommandId = switch (action) {
             .undo => .@"git.undo",
             .redo => .@"git.redo",
