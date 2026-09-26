@@ -24,6 +24,36 @@ pub fn rightNoCrossLine(ed: *Editor) void {
     if (ed.cursor < eol) ed.cursor = ed.nextBoundary(ed.cursor);
 }
 
+/// `l` in Normal / Visual under NvChad's `whichwrap+=<>[]hl`: the next
+/// char, and from a line's last char (or an empty line) the next line's
+/// first — never the slot past the last char. Stays on the last line's
+/// last char (`:help 'whichwrap'`).
+pub fn rightWrap(ed: *Editor) void {
+    const line = ed.currentLine();
+    const eol = ed.lineEnd(line);
+    const next = ed.nextBoundary(ed.cursor);
+    if (ed.cursor < eol and next < eol) {
+        ed.cursor = next;
+        return;
+    }
+    if (line + 1 < ed.lineCount()) ed.cursor = ed.lineStart(line + 1);
+}
+
+/// `h` under `whichwrap+=h`: the previous char, and from a line's start
+/// the previous line's last char.
+pub fn leftWrap(ed: *Editor) void {
+    const line = ed.currentLine();
+    const bol = ed.lineStart(line);
+    if (ed.cursor > bol) {
+        ed.cursor = ed.prevBoundary(@min(ed.cursor, ed.lineEnd(line)));
+        return;
+    }
+    if (line == 0) return;
+    const pbol = ed.lineStart(line - 1);
+    const peol = ed.lineEnd(line - 1);
+    ed.cursor = if (peol > pbol) ed.prevBoundary(peol) else pbol;
+}
+
 /// `h` as an operator target: stops at the line's start.
 pub fn leftNoCrossLine(ed: *Editor) void {
     const bol = ed.lineStart(ed.currentLine());

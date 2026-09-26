@@ -589,7 +589,7 @@ pub const Buffer = struct {
         var op = list[head];
         if (op == .repeat) op = op.repeat.inner.*;
         return switch (op) {
-            .move_up, .move_down, .move_left, .move_right, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_up, .move_down, .move_left, .move_right, .move_left_wrap, .move_right_wrap, .move_down_first_non_ws, .move_up_first_non_ws => true,
             .move_word_left, .move_word_right, .move_word_end, .move_word_end_back => true,
             .move_big_word_left, .move_big_word_right, .move_big_word_end, .move_big_word_end_back => true,
             .find_char_on_line, .move_to_unmatched => true,

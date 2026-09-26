@@ -1459,7 +1459,7 @@ pub const Vim = struct {
                 // Insert's one-shot `Ctrl-O $` goes past the last char:
                 // the cursor is back in Insert, where that is a place
                 // (`:help i_CTRL-O`).
-                const m: EditOp = if (self.insert_oneshot_normal and m0 == .move_line_last_char) .move_line_end else m0;
+                const m: EditOp = if (self.insert_oneshot_normal and m0 == .move_line_last_char) .move_line_end else wrapHL(m0);
                 return repeated(arena, m, n);
             }
         }
@@ -2404,7 +2404,7 @@ pub const Vim = struct {
         if (motion(key.code)) |m| {
             const n = self.count1();
             self.count = null;
-            return repeated(arena, m, n);
+            return repeated(arena, wrapHL(m), n);
         }
         if (ch == '%' and !key.mods.ctrl) {
             const pct = self.count;
@@ -2679,6 +2679,17 @@ const Builder = struct {
         return .{ .ops = b.list.items };
     }
 };
+
+/// Normal and Visual `h` / `l` / `←` / `→` under NvChad's
+/// `whichwrap+=<>[]hl`: they cross line ends (an operator's `dl` keeps
+/// the plain step, which `:help 'whichwrap'` exempts).
+fn wrapHL(m: EditOp) EditOp {
+    return switch (m) {
+        .move_right => .move_right_wrap,
+        .move_left => .move_left_wrap,
+        else => m,
+    };
+}
 
 /// `{count}%` (`:help N%`): the line `count` percent into the file,
 /// rounded up, 1-based.
