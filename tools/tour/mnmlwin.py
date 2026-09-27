@@ -121,7 +121,7 @@ class Window:
     def _write_wrapper(self):
         env = base_env(self.home, self.tmp)
         env.update(self.app_env)
-        parts = ["exec", "/usr/bin/env", "-i"]
+        parts = ["/usr/bin/env", "-i"]  # not `exec`: the wrapper stays to record the status
         for k in TERMINAL_VARS:
             parts.append(f'{k}="${{{k}:-}}"')
         for k, v in env.items():
@@ -129,10 +129,13 @@ class Window:
         parts.append(shlex.quote(self.exe))
         parts += [shlex.quote(a) for a in self.app_args]
         parts.append('"$@"')
-        # The app's stderr, kept: a panic's trace goes there, and the
-        # terminal it ran in is gone by the time anyone asks why the
-        # app "exited before the last frame".
-        parts.append('2>>' + shlex.quote(os.path.join(self.run_dir, "app-stderr.log")))
+        # The app's stderr and its exit status, kept: a panic's trace
+        # goes to the one and a signal shows in the other (128 + n), and
+        # the terminal it ran in is gone by the time anyone asks why the
+        # app "exited before the last frame". So the wrapper waits for
+        # the app instead of exec'ing it.
+        log = shlex.quote(os.path.join(self.run_dir, "app-stderr.log"))
+        parts.append('2>>' + log + '; s=$?; echo "app exit=$s" >>' + log + '; exit $s')
         path = os.path.join(self.run_dir, "app.sh")
         with open(path, "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\n# Written by tools/tour: the app's whole environment, nothing inherited.\n")
