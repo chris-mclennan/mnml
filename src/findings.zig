@@ -287,7 +287,9 @@ pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) S
         const meta = parseHead(head);
         try items.append(arena, .{
             .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - 3]),
-            .path = try std.fs.path.join(arena, &.{ dir_rel, entry.name }),
+            // `/`-joined on every platform: `isUnderDir` and the other
+            // workspace lists read a relative path that way.
+            .path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_rel, entry.name }),
             .title = try arena.dupe(u8, meta.title),
             .severity = meta.severity,
             .status = meta.status,
@@ -461,6 +463,15 @@ fn matches(it: Item, q: []const u8) bool {
         todos.containsIgnoreCase(it.severity.label(), q) or todos.containsIgnoreCase(it.status.label(), q);
 }
 
+/// The user chose `sort` — the chip's click or a row of its
+/// right-click menu, the one path for both: the list re-sorts and
+/// `ui.findings_sort` is persisted, so the panel opens in that order next time.
+pub fn pickSort(app: *App, sort: ListSort) Allocator.Error!void {
+    try setSort(app, sort);
+    app.cfg.ui.findings_sort = app.findings.sort.toConfig();
+    _ = try settings.persist(app, .workspace, &.{ "ui", "findings_sort" }, app.cfg.ui.findings_sort);
+}
+
 pub fn setSort(app: *App, sort: ListSort) Allocator.Error!void {
     const st = &app.findings;
     st.sort = sort;
@@ -477,9 +488,7 @@ fn refreshCmd(app: *App) CommandError!void {
 
 /// The chip's click: the next mode, persisted as `ui.findings_sort`.
 fn sortCmd(app: *App) CommandError!void {
-    try setSort(app, app.findings.sort.next());
-    app.cfg.ui.findings_sort = app.findings.sort.toConfig();
-    _ = try settings.persist(app, .workspace, &.{ "ui", "findings_sort" }, app.cfg.ui.findings_sort);
+    try pickSort(app, app.findings.sort.next());
     app.toast("findings: {s}", .{app.findings.sort.label()});
 }
 
@@ -814,6 +823,7 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "parseHead: frontmatter severity + status + title, aliases, a bare Severity: line, and no metadata at all" {
     const a = parseHead("---\nseverity: SEV-2\nstatus: Fixed\n---\n# Picker panics\n\nbody\n");
@@ -917,7 +927,7 @@ test "scanInto lists .mnml/findings/*.md with severity + status; a missing direc
             try testing.expectEqual(Severity.high, it.severity);
             try testing.expectEqual(Status.open, it.status);
             try testing.expectEqualStrings("Crash below 30 cols", it.title);
-            try testing.expectEqualStrings(".mnml/findings/finding-1.md", it.path);
+            try sdk_testing.expectPath(".mnml/findings/finding-1.md", it.path);
         } else {
             try testing.expectEqualStrings("r2", it.name);
             try testing.expectEqual(Severity.unknown, it.severity);

@@ -75,7 +75,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "File", .label = "Save", .entry = .{
         .title = "Save",
-        .body = "Writes the active buffer to disk; an untitled scratch buffer is refused with `no file name — use :w <path>`. `editor.format_on_save`, the trailing-whitespace trim (when `editor.trim_trailing_ws_on_save` is on) and the final-newline rule run on the way out, so the text can change a little under the cursor. A file changed on disk since it was read is overwritten without a question — the watcher's toast beforehand is the only warning.",
+        .body = "Writes the active buffer to disk; an untitled scratch buffer opens Save As for a path (vim users are told to use `:w <path>`). `editor.format_on_save`, the trailing-whitespace trim (when `editor.trim_trailing_ws_on_save` is on) and the final-newline rule run on the way out, so the text can change a little under the cursor. A file changed on disk since it was read is overwritten without a question — the watcher's toast beforehand is the only warning.",
         .keys = &.{.{ .command = .@"file.save", .label = "Save" }},
         .links = &.{ .{ .command = .{ .id = .@"file.save", .label = "Save now" } }, .{ .settings = .{ .row = copy.settingsRow("editor.format_on_save"), .label = "Format on save" } }, .{ .settings = .{ .row = copy.settingsRow("editor.trim_trailing_ws_on_save"), .label = "Trim trailing whitespace" } } },
     } },

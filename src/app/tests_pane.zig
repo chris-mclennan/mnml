@@ -2610,6 +2610,7 @@ pub fn scrollBy(p: *TestsPane, delta: i64) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 pub const fixture_report =
     \\{"suites":[{"title":"login.spec.ts","file":"login.spec.ts","specs":[],"suites":[{"title":"auth","file":"login.spec.ts","specs":[
@@ -2997,9 +2998,9 @@ test "locateSources (.zig): a passed row is found by its `test \"…\"` line; zi
         .{ .title = "nowhere", .suite_path = "shapes", .file = "", .line = 0, .status = .passed, .duration_ms = 0, .err = null, .trace_path = null },
     };
     try locateSources(a, t.io, root, root, &tests, .zig);
-    try t.expectEqualStrings("src/shapes.zig", tests[0].file);
+    try sdk_testing.expectPath("src/shapes.zig", tests[0].file);
     try t.expectEqual(@as(u32, 3), tests[0].line);
-    try t.expectEqualStrings("src/shapes.zig", tests[1].file);
+    try sdk_testing.expectPath("src/shapes.zig", tests[1].file);
     try t.expectEqual(@as(u32, 7), tests[1].line);
     try t.expectEqualStrings("", tests[2].file);
 }
@@ -3184,9 +3185,9 @@ test "locateSources: a passed row is found by class and method in the project's 
         .{ .title = "Kept", .suite_path = "", .file = "x.cs", .line = 3, .status = .failed, .duration_ms = 1, .err = null, .trace_path = null },
     };
     try locateSources(a, t.io, root, root, &tests, .cs);
-    try t.expectEqualStrings("Tests/CalcTests.cs", tests[0].file);
+    try sdk_testing.expectPath("Tests/CalcTests.cs", tests[0].file);
     try t.expectEqual(@as(u32, 6), tests[0].line);
-    try t.expectEqualStrings("Tests/CalcTests.cs", tests[1].file);
+    try sdk_testing.expectPath("Tests/CalcTests.cs", tests[1].file);
     try t.expectEqual(@as(u32, 12), tests[1].line);
     try t.expectEqualStrings("", tests[2].file);
     try t.expectEqualStrings("x.cs", tests[3].file);
@@ -3201,7 +3202,7 @@ test "dotnet.test opens the pane on a project; a dotnet result lands with its su
     defer app.deinit();
     app.tree.visible = false;
     try t.expectError(error.Failed, dotnetAll(&app));
-    try t.expect(std.mem.startsWith(u8, app.diag.msg.?, "dotnet.test: no *.csproj / *.sln found in "));
+    try t.expect(sdk_testing.pathStartsWith(app.diag.msg.?, "dotnet.test: no *.csproj / *.sln found in "));
     app.diag.clear();
     try tmp.dir.createDirPath(t.io, "src/Tests");
     try tmp.dir.writeFile(t.io, .{ .sub_path = "All.sln", .data = "" });
@@ -3233,7 +3234,7 @@ test "dotnet.test opens the pane on a project; a dotnet result lands with its su
     app.showPane(id);
     _ = try handleKey(&app, id, p, .{ .code = .enter });
     const e = app.activeEditor().?;
-    try t.expectEqualStrings("src/Tests/CalcTests.cs", app.relPath(e.buf.doc.path.?));
+    try sdk_testing.expectPath("src/Tests/CalcTests.cs", app.relPath(e.buf.doc.path.?));
     try t.expectEqual(@as(usize, 20), e.buf.editor.rowCol().row);
     // R: the failures by name, at the pane's root.
     if (runners.onPath(&app, "dotnet")) {
@@ -3359,7 +3360,7 @@ test "parseJunit: pytest's xunit1 — parametrize ids, the class past the module
     try t.expectEqualStrings("collection failure", r.tests[4].err.?);
     // A run at a project below the workspace: the file is made workspace-relative.
     const deep = try parseJunit(a, fixture_junit, "/ws/py", "/ws", "");
-    try t.expectEqualStrings("py/tests/test_cli.py", deep.tests[0].file);
+    try sdk_testing.expectPath("py/tests/test_cli.py", deep.tests[0].file);
     // The re-run: node ids of the failures, the class in the middle.
     const ids = (try pytestFailedArgs(a, r)).?;
     try t.expectEqual(@as(usize, 1), ids.len);
@@ -3434,14 +3435,14 @@ test "test.run_all on a vitest project opens the pane; a vitest result lands and
     app.showPane(id);
     _ = try handleKey(&app, id, p, .{ .code = .enter });
     const e = app.activeEditor().?;
-    try t.expectEqualStrings("tests/math.test.ts", app.relPath(e.buf.doc.path.?));
+    try sdk_testing.expectPath("tests/math.test.ts", app.relPath(e.buf.doc.path.?));
     try t.expectEqual(@as(usize, 11), e.buf.editor.rowCol().row);
     // R: `-t` with the failure's full name and its file — not the whole suite.
     try vitestRerunFailed(&app);
     const p2 = &app.panes.get(id).?.tests;
     try t.expectEqualStrings("-t", p2.last_args[0]);
     try t.expectEqualStrings("^(clamp is wrong on purpose)$", p2.last_args[1]);
-    try t.expectEqualStrings("tests/math.test.ts", p2.last_args[2]);
+    try sdk_testing.expectPath("tests/math.test.ts", p2.last_args[2]);
     p2.group.cancel(t.io);
     // The pane switches to pytest on a Python project's run; its R is the node ids.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "pyproject.toml", .data = "[project]\nname = \"x\"\n" });
@@ -3469,18 +3470,18 @@ test "test.run_all on a vitest project opens the pane; a vitest result lands and
     app.showPane(id);
     _ = try handleKey(&app, id, p3, .{ .code = .enter });
     const e2 = app.activeEditor().?;
-    try t.expectEqualStrings("tests/test_models.py", app.relPath(e2.buf.doc.path.?));
+    try sdk_testing.expectPath("tests/test_models.py", app.relPath(e2.buf.doc.path.?));
     try t.expectEqual(@as(usize, 16), e2.buf.editor.rowCol().row);
     try pytestRerunFailed(&app);
     const p4 = &app.panes.get(id).?.tests;
-    try t.expectEqualStrings("tests/test_models.py::test_total_weight_is_wrong_on_purpose", p4.last_args[0]);
+    try sdk_testing.expectPath("tests/test_models.py::test_total_weight_is_wrong_on_purpose", p4.last_args[0]);
     try t.expectEqual(@as(usize, 1), p4.last_args.len);
     p4.group.cancel(t.io);
     // The venv's bin goes first on the worker's PATH.
     try tmp.dir.createDirPath(t.io, ".venv/bin");
     try tmp.dir.writeFile(t.io, .{ .sub_path = ".venv/bin/pytest", .data = "#!/bin/sh\nexit 1\n" });
     const venv = pytestVenvBin(&app, root).?;
-    try t.expect(std.mem.endsWith(u8, venv, ".venv/bin"));
+    try t.expect(sdk_testing.pathEndsWith(venv, ".venv/bin"));
 }
 
 // ─── the group must not move ────────────────────────────────────────────

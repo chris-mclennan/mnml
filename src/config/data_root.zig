@@ -161,6 +161,7 @@ fn homeConfigRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error!?[]u8 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const Sandbox = struct {
     tmp: t.TmpDir,
@@ -194,7 +195,7 @@ const Sandbox = struct {
 fn expectPath(actual: []const u8, root: []const u8, rel: []const u8) !void {
     const want = try std.fs.path.join(t.allocator, &.{ root, rel });
     defer t.allocator.free(want);
-    try t.expectEqualStrings(want, actual);
+    try sdk_testing.expectPath(want, actual);
 }
 
 test "MNML_DATA_ROOT wins over everything" {
@@ -205,10 +206,10 @@ test "MNML_DATA_ROOT wins over everything" {
     try s.vars.put("XDG_CONFIG_HOME", "/xdg");
     const root = try dataRoot(t.allocator, t.io, s.env(null));
     defer t.allocator.free(root);
-    try t.expectEqualStrings("/explicit/root", root);
+    try sdk_testing.expectPath("/explicit/root", root);
     const cfg = (try homeConfigPath(t.allocator, t.io, s.env(null))).?;
     defer t.allocator.free(cfg);
-    try t.expectEqualStrings("/explicit/root/config.zon", cfg);
+    try sdk_testing.expectPath("/explicit/root/config.zon", cfg);
 }
 
 test "portable needs the directory AND the opt-in marker" {
@@ -225,7 +226,7 @@ test "portable needs the directory AND the opt-in marker" {
     // awaiting consent = NOT portable yet: still home
     const home_root = try dataRoot(t.allocator, t.io, s.env(bin));
     defer t.allocator.free(home_root);
-    try t.expectEqualStrings("/home/x/.config/mnml", home_root);
+    try sdk_testing.expectPath("/home/x/.config/mnml", home_root);
 
     try s.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/mnml-data/.opted-in", .data = "" });
     try t.expectEqual(PortableState.active, try portableState(t.allocator, t.io, s.env(bin)));
@@ -318,10 +319,10 @@ test "the dev profile is every rung of the ladder with -dev on the end" {
     {
         const root = try dataRoot(t.allocator, t.io, s.env(null));
         defer t.allocator.free(root);
-        try t.expectEqualStrings("/home/x/.config/mnml-dev", root);
+        try sdk_testing.expectPath("/home/x/.config/mnml-dev", root);
         const cfg = (try homeConfigPath(t.allocator, t.io, s.env(null))).?;
         defer t.allocator.free(cfg);
-        try t.expectEqualStrings("/home/x/.config/mnml-dev/config.zon", cfg);
+        try sdk_testing.expectPath("/home/x/.config/mnml-dev/config.zon", cfg);
     }
     // 3. XDG — and the state probes still run on the STABLE paths, so a
     // dev root that does not exist yet (it is about to be seeded) never
@@ -359,19 +360,19 @@ test "the dev profile is every rung of the ladder with -dev on the end" {
     {
         const root = try dataRoot(t.allocator, t.io, s.env(bin));
         defer t.allocator.free(root);
-        try t.expectEqualStrings("/explicit/root-dev", root);
+        try sdk_testing.expectPath("/explicit/root-dev", root);
         const cfg = (try homeConfigPath(t.allocator, t.io, s.env(bin))).?;
         defer t.allocator.free(cfg);
-        try t.expectEqualStrings("/explicit/root-dev/config.zon", cfg);
+        try sdk_testing.expectPath("/explicit/root-dev/config.zon", cfg);
         const stable = try stableDataRoot(t.allocator, t.io, s.env(bin));
         defer t.allocator.free(stable);
-        try t.expectEqualStrings("/explicit/root", stable);
+        try sdk_testing.expectPath("/explicit/root", stable);
     }
     // An unknown profile is the stable one, not a third root.
     try s.vars.put("MNML_PROFILE", "prod");
     const root = try dataRoot(t.allocator, t.io, s.env(bin));
     defer t.allocator.free(root);
-    try t.expectEqualStrings("/explicit/root", root);
+    try sdk_testing.expectPath("/explicit/root", root);
 }
 
 test "an empty variable counts as unset" {
@@ -381,5 +382,5 @@ test "an empty variable counts as unset" {
     try s.vars.put("HOME", "/h");
     const root = try dataRoot(t.allocator, t.io, s.env(null));
     defer t.allocator.free(root);
-    try t.expectEqualStrings("/h/.config/mnml", root);
+    try sdk_testing.expectPath("/h/.config/mnml", root);
 }

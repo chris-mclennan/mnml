@@ -367,8 +367,17 @@ pub fn draw(app: *App, st: *State, ui: Ui, pane: PaneId, area: Rect) Allocator.E
                 var x = r.x + 2;
                 x += ui.putStr(x, r.y, 18, rw.row.chord, Theme.onBg(th.accent, bg));
                 x = @max(x, r.x + 20);
-                x += ui.putStr(x, r.y, r.right() -| x, ui.clipStr(rw.row.title, (r.right() -| x) -| 2), Theme.onBg(th.fg, bg));
-                if (r.right() -| x > 12) _ = ui.putStrRight(r.right() -| 1, r.y, r.right() -| (x + 1), rw.row.id, Theme.onBg(th.muted, bg));
+                // The id keeps its whole width at the right edge and the
+                // title is clipped short of it, two cells apart — never
+                // one running into the other (`…every workspace
+                // sectionview.toggle_hidde`). Too narrow for both: the
+                // title alone.
+                const room = r.right() -| x;
+                const id_w = ui.width(rw.row.id);
+                const with_id = room >= id_w + 2 + 12;
+                const title_w: u16 = if (with_id) room -| (id_w + 3) else room -| 2;
+                _ = ui.putStr(x, r.y, title_w, ui.clipStr(rw.row.title, title_w), Theme.onBg(th.fg, bg));
+                if (with_id) _ = ui.putStrRight(r.right() -| 1, r.y, id_w, rw.row.id, Theme.onBg(th.muted, bg));
                 ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(rw.idx) } });
             },
             .blank => {},

@@ -111,7 +111,7 @@ pub const rows = [_]Row{
     // is written for that menu and comes first.
     .{ .label = "Save", .entry = .{
         .title = "Save",
-        .body = "Writes this buffer to disk and clears the dirty dot on its tab. `editor.format_on_save`, the trailing-whitespace trim (off unless `editor.trim_trailing_ws_on_save` is on) and the final-newline rule all run first, so the text can shift a little under the cursor as it lands. A buffer with no path is refused with `no file name — use :w <path>`, and a file changed on disk since it was read is overwritten without a question.",
+        .body = "Writes this buffer to disk and clears the dirty dot on its tab. `editor.format_on_save`, the trailing-whitespace trim (off unless `editor.trim_trailing_ws_on_save` is on) and the final-newline rule all run first, so the text can shift a little under the cursor as it lands. A buffer with no path asks for one — the standard profile opens Save As; vim is told `no file name — use :w <path>` — and a file changed on disk since it was read is overwritten without a question.",
         .keys = &.{.{ .command = .@"file.save", .label = "Save" }},
         .links = &.{ .{ .command = .{ .id = .@"file.save", .label = "Save now" } }, .{ .settings = .{ .row = copy.settingsRow("editor.format_on_save"), .label = "Format on save" } }, .{ .settings = .{ .row = copy.settingsRow("editor.trim_trailing_ws_on_save"), .label = "Trim trailing whitespace" } } },
     } },

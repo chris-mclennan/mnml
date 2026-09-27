@@ -781,15 +781,24 @@ pub fn chipGlyph(arena: Allocator, chip: ?manifest_mod.Chip) Allocator.Error![]c
 /// absolute path while the manifest `--install` wrote names the bare
 /// `mnml-sample`, and those are the same program.
 pub fn catalogueState(app: *App, arena: Allocator, binary: []const u8, version: []const u8) Allocator.Error!catalogue.State {
-    const want = std.fs.path.basename(try expandEnv(app, arena, binary));
+    const want = programName(try expandEnv(app, arena, binary));
     var state: catalogue.State = .not_installed;
     for (app.integrations.list) |*inst| {
-        const have = std.fs.path.basename(try expandEnv(app, arena, inst.manifest.binary));
+        const have = programName(try expandEnv(app, arena, inst.manifest.binary));
         if (!std.mem.eql(u8, have, want)) continue;
         if (catalogue.olderThan(inst.manifest.version, version)) return .update;
         state = .installed;
     }
     return state;
+}
+
+/// The program a binary names: its file name, and on Windows without
+/// the `.exe` — a catalogue names `…\mnml-sample.exe` where the
+/// manifest its `--install` wrote says `mnml-sample`.
+fn programName(binary: []const u8) []const u8 {
+    const base = std.fs.path.basename(binary);
+    if (builtin.os.tag == .windows and std.ascii.endsWithIgnoreCase(base, ".exe")) return base[0 .. base.len - 4];
+    return base;
 }
 
 /// Whether any manifest OTHER than `except` still names `binary` —
@@ -823,25 +832,41 @@ pub fn expandEnv(app: *App, arena: Allocator, binary: []const u8) Allocator.Erro
 /// else `<data root>/bin/<name>` (what an install links), else the
 /// first PATH hit. Null when nowhere.
 pub fn resolveBinary(app: *App, arena: Allocator, binary_in: []const u8) ?[]const u8 {
-    const io = app.io;
     const binary = expandEnv(app, arena, binary_in) catch return null;
     if (std.fs.path.isAbsolute(binary) or std.mem.indexOfScalar(u8, binary, '/') != null) {
-        Io.Dir.cwd().access(io, binary, .{}) catch return null;
-        return binary;
+        return existingProgram(app.io, arena, binary);
     }
     if (app.data_root.len > 0) {
         const linked = std.fs.path.join(arena, &.{ app.data_root, "bin", binary }) catch return null;
-        if (Io.Dir.cwd().access(io, linked, .{})) |_| return linked else |_| {}
+        if (existingProgram(app.io, arena, linked)) |p| return p;
     }
     const path_var = app.env.get("PATH") orelse return null;
     var it = std.mem.splitScalar(u8, path_var, std.fs.path.delimiter);
-    while (it.next()) |dir| {
+    while (it.next()) |raw| {
+        // Windows' PATH may quote an entry that has a space in it.
+        const dir = std.mem.trim(u8, raw, "\"");
         if (dir.len == 0) continue;
         const full = std.fs.path.join(arena, &.{ dir, binary }) catch return null;
-        Io.Dir.cwd().access(io, full, .{}) catch continue;
-        return full;
+        if (existingProgram(app.io, arena, full)) |p| return p;
     }
     return null;
+}
+
+/// `path` when a program is there. On Windows the name a manifest gives
+/// (`mnml-sample`) is the file `mnml-sample.exe`, so a bare name is
+/// tried with `.exe` too; and a path Windows cannot name at all (a
+/// stray `"` or `*` from PATH) is nothing there, not a question for the
+/// filesystem — Zig 0.16's Debug build panics on OBJECT_NAME_INVALID.
+fn existingProgram(io: Io, arena: Allocator, path: []const u8) ?[]const u8 {
+    if (builtin.os.tag == .windows) {
+        const body = if (std.mem.startsWith(u8, path, "\\\\?\\")) path[4..] else path;
+        if (std.mem.indexOfAny(u8, body, "\"<>|?*") != null) return null;
+    }
+    if (Io.Dir.cwd().access(io, path, .{})) |_| return path else |_| {}
+    if (builtin.os.tag != .windows or std.fs.path.extension(path).len != 0) return null;
+    const exe = std.mem.concat(arena, u8, &.{ path, ".exe" }) catch return null;
+    Io.Dir.cwd().access(io, exe, .{}) catch return null;
+    return exe;
 }
 
 fn registerCommands(app: *App, arena: Allocator, inst: *Installed) Allocator.Error!void {
@@ -2797,9 +2822,13 @@ pub fn removeAccept(app: *App, id: []const u8) Allocator.Error!void {
     if (!launcher and app.data_root.len > 0 and !binaryStillUsed(app, manifest_binary, id)) {
         const name = std.fs.path.basename(try expandEnv(app, arena, manifest_binary));
         const link = try std.fs.path.join(arena, &.{ app.data_root, "bin", name });
-        if (Io.Dir.cwd().deleteFile(app.io, link)) |_| {
-            link_went = true;
-        } else |_| {}
+        // `existingProgram`'s answer: on Windows the link an install made
+        // is `<name>.exe`, the manifest's bare name without it.
+        if (existingProgram(app.io, arena, link)) |found| {
+            if (Io.Dir.cwd().deleteFile(app.io, found)) |_| {
+                link_went = true;
+            } else |_| {}
+        }
     }
     const copy = try arena.dupe(u8, id);
     try refresh(app);
@@ -3185,6 +3214,7 @@ pub fn loadSettings(app: *App) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const build_options = @import("build_options");
 const screen_mod = @import("../ipc/screen.zig");
 
@@ -3462,7 +3492,7 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     try testing.expectEqualStrings("htop", st.dev[0].id());
     try testing.expectEqualStrings("launchers", st.dev[0].root);
     try testing.expect(st.dev[0].launcher);
-    try testing.expect(std.mem.endsWith(u8, st.dev[0].key(), "launchers/htop.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(st.dev[0].key(), "launchers/htop.zon"));
     try testing.expectEqualStrings("other", st.dev[1].id());
     try testing.expectEqualStrings("elsewhere", st.dev[1].root);
     try testing.expectEqualStrings("sample", st.dev[2].id());
@@ -3478,12 +3508,12 @@ test "dev roots: the repo's integrations/ is scanned when sdk/mnml-sdk exists, a
     defer testing.allocator.free(txt);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Other  not installed  (elsewhere)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "[dev] Sample  not installed  (integrations)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "integrations/sample") != null);
+    try testing.expect(sdk_testing.pathContains(txt, "integrations/sample"));
     try testing.expect(std.mem.indexOf(u8, txt, "\u{F1D00}  [dev] htop  not installed  (launchers)") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "launchers/htop.zon") != null);
+    try testing.expect(sdk_testing.pathContains(txt, "launchers/htop.zon"));
     // Nothing built: the built binary is the folder's zig-out.
     const built = try devBuiltBinary(&app, app.frame.allocator(), &st.dev[2]);
-    try testing.expect(std.mem.endsWith(u8, built, "integrations/sample/zig-out/bin/mnml-sample"));
+    try testing.expect(sdk_testing.pathEndsWith(built, "integrations/sample/zig-out/bin/mnml-sample" ++ (if (builtin.os.tag == .windows) ".exe" else "")));
     // `i` on the launcher row: no build, no task pane — the file is
     // copied into the data root and the row says so.
     st.panel.cursor = 0;

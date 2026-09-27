@@ -68,6 +68,7 @@ pub fn removeIfOurs(alloc: Allocator, io: Io, marker_path: []const u8, workspace
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "the path is TMPDIR/mnml-zig-running-USER.workspace" {
     var env = std.process.Environ.Map.init(t.allocator);
@@ -76,7 +77,7 @@ test "the path is TMPDIR/mnml-zig-running-USER.workspace" {
     try env.put("USER", "chris");
     const p = try path(t.allocator, &env);
     defer t.allocator.free(p);
-    try t.expectEqualStrings("/var/folders/xy/T/mnml-zig-running-chris.workspace", p);
+    try sdk_testing.expectPath("/var/folders/xy/T/mnml-zig-running-chris.workspace", p);
 }
 
 test "no TMPDIR means /tmp; no USER means x; an empty value counts as unset" {
@@ -84,13 +85,13 @@ test "no TMPDIR means /tmp; no USER means x; an empty value counts as unset" {
     defer env.deinit();
     const bare = try path(t.allocator, &env);
     defer t.allocator.free(bare);
-    try t.expectEqualStrings("/tmp/mnml-zig-running-x.workspace", bare);
+    try sdk_testing.expectPath("/tmp/mnml-zig-running-x.workspace", bare);
 
     try env.put("TMPDIR", "");
     try env.put("USER", "");
     const empty = try path(t.allocator, &env);
     defer t.allocator.free(empty);
-    try t.expectEqualStrings("/tmp/mnml-zig-running-x.workspace", empty);
+    try sdk_testing.expectPath("/tmp/mnml-zig-running-x.workspace", empty);
 }
 
 test "the dev profile has its own marker, so restart never reaches the other instance" {
@@ -101,14 +102,14 @@ test "the dev profile has its own marker, so restart never reaches the other ins
     try env.put("MNML_PROFILE", "dev");
     const dev = try path(t.allocator, &env);
     defer t.allocator.free(dev);
-    try t.expectEqualStrings("/t/mnml-zig-running-chris.workspace", dev);
+    try sdk_testing.expectPath("/t/mnml-zig-running-chris.workspace", dev);
 
     try env.put("MNML_PROFILE", "stable");
     const stable = try path(t.allocator, &env);
     defer t.allocator.free(stable);
     const want = try std.fmt.allocPrint(t.allocator, "/t/{s}chris.workspace", .{profile_mod.markerPrefix(.stable)});
     defer t.allocator.free(want);
-    try t.expectEqualStrings(want, stable);
+    try sdk_testing.expectPath(want, stable);
 }
 
 test "the Windows spellings fill in: TEMP for TMPDIR, USERNAME for USER" {
@@ -118,7 +119,7 @@ test "the Windows spellings fill in: TEMP for TMPDIR, USERNAME for USER" {
     try env.put("USERNAME", "chris");
     const p = try path(t.allocator, &env);
     defer t.allocator.free(p);
-    try t.expectEqualStrings("/w/temp/mnml-zig-running-chris.workspace", p);
+    try sdk_testing.expectPath("/w/temp/mnml-zig-running-chris.workspace", p);
 }
 
 test "the marker holds the workspace verbatim, no trailing newline, and only its own instance removes it" {

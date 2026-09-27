@@ -1,0 +1,20 @@
+# width: 120
+# height: 40
+# Ctrl+` hides the scratch terminal and brings it back at the height it
+# was dragged to, as VS Code's panel does; it used to come back at the
+# default half (round-7 hunt). The editor above shows row17 at the
+# default split and only about seven rows once the divider is dragged
+# up to row 10.
+write a.txt "row01\nrow02\nrow03\nrow04\nrow05\nrow06\nrow07\nrow08\nrow09\nrow10\nrow11\nrow12\nrow13\nrow14\nrow15\nrow16\nrow17\nrow18\nrow19\nrow20\nrow21\nrow22\nrow23\nrow24\nrow25\nrow26\nrow27\nrow28\nrow29\nrow30\n"
+open a.txt
+key ctrl+`
+wait 1500
+expect screen contains "row17"
+drag 60 19 60 10
+expect screen lacks "row12"
+key ctrl+`
+expect screen contains "row17"
+key ctrl+`
+wait 500
+expect screen lacks "row12"
+expect screen contains "row05"

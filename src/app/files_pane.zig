@@ -827,7 +827,7 @@ pub fn acceptMoveTo(app: *App, paths: []const []const u8, text: []const u8) Allo
         if (name.len == 0) continue;
         const dst = try std.fs.path.join(arena, &.{ dir, name });
         if (std.mem.eql(u8, dst, src)) continue;
-        if (std.mem.startsWith(u8, dst, src) and dst.len > src.len and dst[src.len] == '/') {
+        if (std.mem.startsWith(u8, dst, src) and dst.len > src.len and std.fs.path.isSep(dst[src.len])) {
             app.toast("cannot move {s} into itself", .{name});
             continue;
         }
@@ -1180,7 +1180,7 @@ fn openSortMenu(app: *App, f: *FilesPane, x: u16, y: u16) Allocator.Error!void {
 const Crumbs = struct { labels: []const []const u8, paths: []const []const u8 };
 
 fn under(path: []const u8, root: []const u8) bool {
-    return std.mem.eql(u8, path, root) or (std.mem.startsWith(u8, path, root) and path.len > root.len and path[root.len] == '/');
+    return std.mem.eql(u8, path, root) or (std.mem.startsWith(u8, path, root) and path.len > root.len and std.fs.path.isSep(path[root.len]));
 }
 
 /// The path as crumbs: the workspace name then the relative segments
@@ -1285,6 +1285,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, f: *FilesPane, area: Rect) Allocator.
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 fn realRoot(tmp: *std.testing.TmpDir, gpa: Allocator) ![]u8 {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1404,13 +1405,13 @@ test "marks are keyed by path: toggle advances, a range fills, invert and all re
     defer arena_state.deinit();
     const paths = try f.actionPaths(arena_state.allocator());
     try t.expectEqual(@as(usize, 2), paths.len);
-    try t.expect(std.mem.endsWith(u8, paths[0], "/src"));
-    try t.expect(std.mem.endsWith(u8, paths[1], "/README.md"));
+    try t.expect(sdk_testing.pathEndsWith(paths[0], "/src"));
+    try t.expect(sdk_testing.pathEndsWith(paths[1], "/README.md"));
     f.clearMarks();
     f.cursor = 0;
     const one = try f.actionPaths(arena_state.allocator());
     try t.expectEqual(@as(usize, 1), one.len);
-    try t.expect(std.mem.endsWith(u8, one[0], "/docs"));
+    try t.expect(sdk_testing.pathEndsWith(one[0], "/docs"));
     // A mark whose file vanished is dropped on reload.
     try f.toggleMarkPath(f.entryAt(3).?.path);
     try tmp.dir.deleteFile(t.io, "README.md");

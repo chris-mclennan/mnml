@@ -104,7 +104,7 @@ test "% # and <cfile> expand with their modifiers; \\% is a percent; a missing n
     try std.testing.expectEqualStrings("b.txt", try expand(a, "#", n));
     try std.testing.expectEqualStrings("a", try expand(a, "%:t:r", n));
     try std.testing.expectEqualStrings("txt", try expand(a, "%:e", n));
-    try std.testing.expectEqualStrings("/w/sub/a.txt", try expand(a, "%:p", n));
+    try @import("mnml_sdk").testing.expectPath("/w/sub/a.txt", try expand(a, "%:p", n));
     try std.testing.expectEqualStrings("src/x.zig", try expand(a, "<cfile>", n));
     try std.testing.expectEqualStrings("50%off #1", try expand(a, "50\\%off \\#1", n));
     try std.testing.expectEqualStrings("plain.txt", try expand(a, "plain.txt", n));

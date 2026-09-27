@@ -217,7 +217,9 @@ test "script.run_selection: the cursor line, an expression's value, the selected
 }
 
 /// Whether a toast up right now starts with `prefix`.
+/// A toast starting with `prefix`; a path in it reads with the
+/// platform's separator.
 fn hasToast(app: *App, prefix: []const u8) bool {
-    for (app.toasts.items) |tt| if (std.mem.startsWith(u8, tt.text, prefix)) return true;
+    for (app.toasts.items) |tt| if (@import("mnml_sdk").testing.pathStartsWith(tt.text, prefix)) return true;
     return false;
 }

@@ -163,6 +163,10 @@ fn scratchToggle(app: *App) CommandError!void {
         const layout = app.layouts.current();
         const shown = layout.leafOf(id) != null;
         if (shown and paneFocused(app, id)) {
+            if (layout.leafOf(id)) |leaf| if (layout.parentOf(leaf)) |p| switch (layout.node(p).*) {
+                .split => |sp| app.scratch_ratio = sp.ratio,
+                else => {},
+            };
             const next = layout.removePane(id);
             app.afterSplitChange();
             const fallback: ?PaneId = next orelse if (layout.firstLeaf()) |l| layout.leaf(l).?.active else null;
@@ -176,23 +180,44 @@ fn scratchToggle(app: *App) CommandError!void {
         }
         if (app.active) |a| app.setActive(a);
         try pty_pane.place(app, id, .below);
+        // Back at the height it was dragged to.
+        if (app.scratch_ratio) |r| if (layout.leafOf(id)) |leaf| if (layout.parentOf(leaf)) |p| {
+            layout.setRatio(p, r);
+            app.afterSplitChange();
+        };
         return;
     }
     const id = try pty_pane.open(app, .{ .placement = .below, .kind = .scratch, .label = "scratch" });
     app.scratch_pty = id;
 }
 
-/// `:term` opens a shell below; `:term <cmd…>` runs the line through
+/// The user's `:term` / `:terminal` line. The vim profile opens it in
+/// the current window — a new tab in the focused leaf, as Neovim's
+/// `:terminal` takes over the window and `:b#` brings the file back;
+/// the standard profile splits it off below. Tools that fire a `term`
+/// line go through `termTool` instead, so this never moves them.
+pub fn termEx(app: *App, args: []const u8) CommandError!void {
+    return termLine(app, args, if (app.input_style == .vim) .tab else .below);
+}
+
+/// A `term <prog>` line a launcher, an integration or a task fires
+/// (`launchers.fire`): below the active pane in either profile, where
+/// those tools have always opened.
+pub fn termTool(app: *App, args: []const u8) CommandError!void {
+    return termLine(app, args, .below);
+}
+
+/// An empty line opens the login shell; `<cmd…>` runs the line through
 /// the platform's shell (`sh -c`, `cmd /d /c`) with the line as the tab
 /// label.
-pub fn termEx(app: *App, args: []const u8) CommandError!void {
+fn termLine(app: *App, args: []const u8, placement: pty_pane.Placement) CommandError!void {
     const line = std.mem.trim(u8, args, " \t");
-    if (line.len == 0) return shell(app, .below);
+    if (line.len == 0) return shell(app, placement);
     var shell_buf: [4][]const u8 = undefined;
     _ = try pty_pane.open(app, .{
         .argv = pty.shellArgv(&shell_buf, &app.env, line),
         .label = line,
-        .placement = .below,
+        .placement = placement,
         .kind = .command,
     });
 }
@@ -201,10 +226,19 @@ pub fn termEx(app: *App, args: []const u8) CommandError!void {
 
 const t = std.testing;
 
-test "headless smoke: `:term printf hi` opens a pane below the editor and the grid shows hi" {
+/// An app on `/tmp` in the vim or the standard profile. The caller
+/// opens its scratch editor once the app sits where it will stay.
+fn termApp(vim: bool) !App {
+    var cfg: app_mod.Config = .{};
+    if (vim) cfg.editor.input_style = .vim;
+    return App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 60, .rows = 12 });
+}
+
+test "standard `:term printf hi` opens a pane below the editor and the grid shows hi" {
     // `printf` and a login shell: POSIX.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app_v = try termApp(false);
+    const app = &app_v;
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -215,15 +249,74 @@ test "headless smoke: `:term printf hi` opens a pane below the editor and the gr
     // Two leaves: the scratch editor on top, the terminal below.
     const layout = app.layouts.current();
     try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
-    try t.expect(try pty_pane.tickUntilScreen(&app, "hi", 5000));
-    try t.expect(try pty_pane.tickUntilScreen(&app, "[exited 0]", 5000));
+    try t.expect(layout.leafOf(id).? != layout.leafOf(ed).?);
+    try t.expect(try pty_pane.tickUntilScreen(app, "hi", 5000));
+    try t.expect(try pty_pane.tickUntilScreen(app, "[exited 0]", 5000));
     // The buffers picker lists it with the [term] marker.
-    try command.run(&app, .{ .static = .@"picker.buffers" });
+    try command.run(app, .{ .static = .@"picker.buffers" });
     var seen = false;
     for (app.overlay.picker.labels) |l| if (std.mem.eql(u8, l, "printf hi [term]")) {
         seen = true;
     };
     try t.expect(seen);
+}
+
+test "vim `:term` takes the current window: a tab in the editor's leaf, and `:b#` swaps back and forth" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var app_v = try termApp(true);
+    const app = &app_v;
+    defer app.deinit();
+    app.tree.visible = false;
+    const ed = try app.openScratch();
+    const layout = app.layouts.current();
+    const leaf = layout.leafOf(ed).?;
+    try app.runEx("term");
+    const sh = app.active.?;
+    try t.expect(sh != ed);
+    try t.expect(app.panes.pty(sh).?.kind == .shell);
+    // One leaf, two tabs: the editor is still there, behind the shell.
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expectEqual(leaf, layout.leafOf(sh).?);
+    try t.expectEqual(@as(usize, 2), layout.leaf(leaf).?.tabs.items.len);
+    try t.expectEqual(sh, layout.leaf(leaf).?.active);
+    try app.runEx("b#");
+    try t.expectEqual(ed, app.active.?);
+    try t.expectEqual(ed, layout.leaf(leaf).?.active);
+    try app.runEx("b#");
+    try t.expectEqual(sh, app.active.?);
+    // `:term <cmd>` lands the same way, running the command.
+    try app.runEx("terminal printf hi");
+    const cmd = app.active.?;
+    try t.expectEqualStrings("printf hi", app.panes.get(cmd).?.title());
+    try t.expectEqual(leaf, layout.leafOf(cmd).?);
+    try t.expectEqual(@as(usize, 1), (try layout.leaves(app.frame.allocator())).len);
+    try t.expect(try pty_pane.tickUntilScreen(app, "hi", 5000));
+}
+
+test "a tool's `term` line opens below in both profiles — the vim `:term` placement never reaches it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    for ([_]bool{ false, true }) |vim| {
+        var app_v = try termApp(vim);
+        const app = &app_v;
+        defer app.deinit();
+        app.tree.visible = false;
+        const ed = try app.openScratch();
+        // The way a launcher / integration / task command fires its line.
+        _ = try app.dyn_commands.register(.{ .id = "tool.hi", .runner = .{ .ex = "term printf hi" }, .owner = .{ .integration = "tool" } });
+        try command.runNamed(app, "tool.hi");
+        const id = app.active.?;
+        try t.expect(id != ed);
+        const layout = app.layouts.current();
+        try t.expectEqual(@as(usize, 2), (try layout.leaves(app.frame.allocator())).len);
+        try t.expect(layout.leafOf(id).? != layout.leafOf(ed).?);
+        // A bare `term` from a tool too.
+        app.showPane(ed);
+        _ = try app.dyn_commands.register(.{ .id = "tool.sh", .runner = .{ .ex = ":terminal" }, .owner = .{ .integration = "tool" } });
+        try command.runNamed(app, "tool.sh");
+        const sh = app.active.?;
+        try t.expect(layout.leafOf(sh).? != layout.leafOf(ed).?);
+        try t.expectEqual(@as(usize, 1), layout.leaf(layout.leafOf(ed).?).?.tabs.items.len);
+    }
 }
 
 test "term.shell opens the login shell beside the active pane; focus_or_open_shell finds it again" {

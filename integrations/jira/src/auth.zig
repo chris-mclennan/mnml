@@ -223,6 +223,7 @@ pub fn describe(arena: Allocator, r: Result) Allocator.Error![]u8 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "clean strips whitespace and the quotes Atlassian's copy button adds" {
     try testing.expectEqualStrings("ATATT3x", clean("  ATATT3x \n"));
@@ -287,7 +288,7 @@ test "every refusal path names what to do, and none of them carries the token" {
     // Nothing anywhere.
     const nowhere = try resolve(arena, testing.io, &env, .{ .data_root = root });
     try testing.expectEqual(Reason.nowhere, nowhere.missing.reason);
-    try testing.expect(std.mem.endsWith(u8, nowhere.missing.path, "integrations/jira/token"));
+    try testing.expect(sdk_testing.pathEndsWith(nowhere.missing.path, "integrations/jira/token"));
     const lines = try explain(arena, nowhere.missing);
     try testing.expectEqualStrings("No Jira API token.", lines[0]);
     try testing.expect(std.mem.indexOf(u8, lines[2], "id.atlassian.com") != null);
@@ -338,7 +339,7 @@ test "~ expands against HOME and nothing else does" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    try testing.expectEqualStrings("/h/x/token", try expandHome(arena, "~/x/token", "/h"));
+    try sdk_testing.expectPath("/h/x/token", try expandHome(arena, "~/x/token", "/h"));
     try testing.expectEqualStrings("/h", try expandHome(arena, "~", "/h"));
     try testing.expectEqualStrings("~other/x", try expandHome(arena, "~other/x", "/h"));
     try testing.expectEqualStrings("~/x", try expandHome(arena, "~/x", null));

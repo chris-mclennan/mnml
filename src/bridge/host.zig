@@ -562,12 +562,16 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
 
 /// `<ipc_dir>/mounts/<pid>-<id>.sock`, or a short `/tmp` name when the
 /// workspace path would not fit a `sockaddr_un` (104 bytes on macOS).
+/// Windows keeps the long path: Zig reaches AF_UNIX there through AFD,
+/// whose socket path may be as long as any path (`UnixAddress.max_len`).
 pub fn socketPath(gpa: Allocator, ipc_dir: []const u8, id: u32) Allocator.Error![]u8 {
-    const pid: u32 = if (builtin.os.tag == .windows) 0 else @intCast(@as(i64, std.c.getpid()));
+    // The real process id on Windows too: two mnml instances sharing a
+    // workspace must not name the same socket.
+    const pid: u32 = if (builtin.os.tag == .windows) std.os.windows.GetCurrentProcessId() else @intCast(@as(i64, std.c.getpid()));
     const name = try std.fmt.allocPrint(gpa, "{d}-{d}.sock", .{ pid, id });
     defer gpa.free(name);
     const long = try std.fs.path.join(gpa, &.{ ipc_dir, "mounts", name });
-    if (builtin.os.tag == .windows or long.len < Io.net.UnixAddress.max_len - 4) return long;
+    if (long.len < Io.net.UnixAddress.max_len - 4) return long;
     gpa.free(long);
     return std.fmt.allocPrint(gpa, "/tmp/mnml-mount-{s}", .{name});
 }
@@ -621,6 +625,7 @@ pub fn envFor(gpa: Allocator, base: *const std.process.Environ.Map, vars: EnvVar
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "grid: a full frame sets the shape; dirty rows patch in place; short and long rows are clipped" {
     const gpa = testing.allocator;
@@ -659,11 +664,11 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     try base.put("HOME", "/h");
     var env = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig" });
     defer env.deinit();
-    try testing.expectEqualStrings("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
+    try sdk_testing.expectPath("/s.sock", env.get("MNML_MOUNT_SOCKET").?);
     try testing.expect(env.get("MNML_DATA_ROOT") == null);
     var rooted = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/ws/.mnml/ipc-zig", .data_root = "/private/root" });
     defer rooted.deinit();
-    try testing.expectEqualStrings("/private/root", rooted.get("MNML_DATA_ROOT").?);
+    try sdk_testing.expectPath("/private/root", rooted.get("MNML_DATA_ROOT").?);
     // `integrations.request_log` reaches every integration as two
     // variables — the other half of the name the SDK reads.
     try testing.expect(env.get("MNML_REQUEST_LOG") == null);
@@ -674,20 +679,21 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     var off = try envFor(gpa, &base, .{ .socket_path = "/s.sock", .workspace = "/ws", .theme = "onedark", .ipc_dir = "/i", .request_log = .{ .enabled = false } });
     defer off.deinit();
     try testing.expectEqualStrings("0", off.get("MNML_REQUEST_LOG").?);
-    try testing.expectEqualStrings("/ws", env.get("MNML_WORKSPACE").?);
+    try sdk_testing.expectPath("/ws", env.get("MNML_WORKSPACE").?);
     try testing.expectEqualStrings("onedark", env.get("MNML_THEME").?);
-    try testing.expectEqualStrings("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
+    try sdk_testing.expectPath("/ws/.mnml/ipc-zig", env.get("MNML_IPC_DIR").?);
     try testing.expectEqualStrings("3", env.get("MNML_PROTOCOL").?);
-    try testing.expectEqualStrings("/h", env.get("HOME").?);
+    try sdk_testing.expectPath("/h", env.get("HOME").?);
     const short = try socketPath(gpa, "/ws/.mnml/ipc-zig", 3);
     defer gpa.free(short);
     try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
-    try testing.expect(std.mem.startsWith(u8, short, "/ws/.mnml/ipc-zig/mounts/"));
+    try testing.expect(sdk_testing.pathStartsWith(short, "/ws/.mnml/ipc-zig/mounts/"));
     const deep = "/" ++ "d" ** 120;
     const fallback = try socketPath(gpa, deep, 4);
     defer gpa.free(fallback);
     try testing.expect(fallback.len < Io.net.UnixAddress.max_len);
-    try testing.expect(std.mem.startsWith(u8, fallback, "/tmp/mnml-mount-"));
+    // Windows' AF_UNIX takes a path of any length: the long one stays.
+    try testing.expect(sdk_testing.pathStartsWith(fallback, if (builtin.os.tag == .windows) deep ++ "/mounts/" else "/tmp/mnml-mount-"));
 }
 
 test "close: a sibling that never connected and outlives goodbye is killed, not orphaned — the reader's cancelled wait reaps it by pid" {

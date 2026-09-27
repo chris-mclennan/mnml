@@ -221,8 +221,29 @@ pub const Vim = struct {
         return self.op != null or self.prefix != .none;
     }
 
+    /// An operator waits for its motion (`d`, `c`, `gU` …) — Neovim's
+    /// operator-pending mode, not a register or mark prefix.
+    pub fn isOperatorPending(self: *const Vim) bool {
+        return self.op != null and !self.cmdline_open;
+    }
+
     pub fn onBlur(self: *Vim) void {
         self.enterNormal();
+    }
+
+    /// The end of a pending operator's motion that only the buffer or the
+    /// app could find — a mark (`d'a`), a search (`d/pat<CR>`): `motion`
+    /// moves the cursor there from the range's start, and the operator
+    /// finishes the way it finishes after `j` (`linewise`) or `w`. Null
+    /// when no operator is pending.
+    pub fn finishPendingMotion(self: *Vim, motion_ops: []const EditOp, linewise: bool, ctx: EditCtx, arena: Allocator) Allocator.Error!?InputResult {
+        const op = self.op orelse return null;
+        self.resetPending();
+        var b = Builder.init(arena);
+        try b.push(.select_start);
+        for (motion_ops) |m| try b.push(m);
+        if (linewise) return try self.finishLinewise(&b, op, ctx);
+        return try self.finishExclusive(&b, op, ctx);
     }
 
     /// Insert-mode `Ctrl+N` / `Ctrl+P` / `Ctrl+O` are vim's before they
@@ -776,7 +797,15 @@ pub const Vim = struct {
                 'w' => return ops(arena, &.{.delete_word_left_in_insert}),
                 'u' => return ops(arena, &.{.delete_to_line_start_in_insert}),
                 'h' => return ops(arena, &.{.backspace}),
-                't' => return ops(arena, &.{.indent}),
+                // `i_CTRL-T`: the line gains an indent and the cursor
+                // stays on the same text (`:help i_CTRL-T`) — `indent`
+                // keeps the (row, col), so step over what it added.
+                't' => {
+                    const step = try arena.create(EditOp);
+                    step.* = .move_right;
+                    const width: u32 = if (self.use_tabs) 1 else @intCast(self.tab_width);
+                    return ops(arena, &.{ .indent, .{ .repeat = .{ .count = width, .inner = step } } });
+                },
                 'd' => return ops(arena, &.{.outdent}),
                 'v', 'q' => {
                     self.insert_literal_next = true;
@@ -842,8 +871,10 @@ pub const Vim = struct {
     fn finishOperator(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx, linewise_object: bool) Allocator.Error!InputResult {
         switch (op) {
             .delete => {
-                if (linewise_object) try b.push(.normalize_linewise_selection);
-                try b.push(.delete_selection);
+                if (linewise_object) {
+                    try b.push(.normalize_linewise_selection);
+                    try b.push(.delete_selection_linewise);
+                } else try b.push(.delete_selection);
             },
             .yank => {
                 if (linewise_object) try b.push(.normalize_linewise_selection);
@@ -852,7 +883,17 @@ pub const Vim = struct {
                 try b.push(.{ .set_cursor_byte = ctx.cursor });
             },
             .change => {
+                // The text goes to the registers the way `d` would put it
+                // there (`:help c`): linewise for whole lines, into `"-`
+                // for a change within one line.
                 if (linewise_object) try b.push(.normalize_linewise_selection_inner);
+                try b.push(.{ .register_selection_delete = linewise_object });
+                // Whole lines keep the first one's indent to type after
+                // (Neovim's `autoindent`: `cj` on `  a` → `  X`).
+                if (linewise_object) {
+                    try b.push(.swap_anchor_cursor);
+                    try b.push(.move_line_first_non_ws);
+                }
                 try b.push(.{ .replace_selection = "" });
                 try b.push(.continue_insert_run);
                 self.vmode = .insert;
@@ -919,6 +960,88 @@ pub const Vim = struct {
         return b.finish();
     }
 
+    /// An operator after a linewise motion (`j` `k` `+` `-` `_`, `'a`):
+    /// every line the range touches, whole. Delete / yank / change keep
+    /// their linewise registers; the case operators and `yk` end where
+    /// the range began (`:help y`).
+    fn finishLinewise(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        try b.push(.mark_operator_start);
+        return self.finishLinewiseMarked(b, op, ctx);
+    }
+
+    /// `finishLinewise` once `mark_operator_start` has run.
+    fn finishLinewiseMarked(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        switch (op) {
+            .delete, .yank, .change, .script => {
+                const r = try self.finishOperator(b, op, ctx, true);
+                if (op == .yank and r == .ops) {
+                    const list: []EditOp = @constCast(r.ops);
+                    list[list.len - 1] = .cursor_to_operator_start;
+                }
+                return r;
+            },
+            .fold, .reflow, .surround_add, .filter => return self.finishOperator(b, op, ctx, false),
+            .lower, .upper, .toggle_case => {
+                try b.push(.normalize_linewise_selection);
+                _ = try self.finishOperator(b, op, ctx, false);
+                try b.push(.cursor_to_operator_start);
+                return b.finish();
+            },
+            else => {
+                try b.push(.normalize_linewise_selection);
+                return self.finishOperator(b, op, ctx, false);
+            },
+        }
+    }
+
+    /// An operator after an exclusive motion (`w` `b` `}` `` `a `` `/pat`
+    /// `n`): `:help exclusive` decides, when the op is applied, whether a
+    /// range ending in column 1 stops at the line above's end or turns
+    /// linewise. The operators that hand their range to the app keep
+    /// the plain range.
+    fn finishExclusive(self: *Vim, b: *Builder, op: PendingOp, ctx: EditCtx) Allocator.Error!InputResult {
+        switch (op) {
+            .fold, .reflow, .surround_add, .@"align", .filter, .script, .comment => return self.finishOperator(b, op, ctx, false),
+            else => {},
+        }
+        // The column the motion ended on is the one a linewise delete
+        // keeps (`d/pat` onto a line start lands on column 1).
+        try b.push(.mark_operator_start);
+        try b.push(.exclusive_motion_rule);
+        const vmode_before = self.vmode;
+        var lb = Builder.init(b.arena);
+        const lines = (try self.finishLinewiseMarked(&lb, op, ctx)).ops;
+        self.vmode = vmode_before;
+        var cb = Builder.init(b.arena);
+        const chars = (try self.finishOperator(&cb, op, ctx, false)).ops;
+        try b.push(.{ .if_lines_object = .{ .lines = lines, .chars = chars } });
+        return b.finish();
+    }
+
+    /// `{n}D` / `{n}C`: the operator over `$` with a count — from the
+    /// cursor to the end of the line `n - 1` below (`:help $`).
+    fn countedToLineEnd(self: *Vim, n: u32, op: PendingOp, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
+        var b = Builder.init(arena);
+        try b.push(.select_start);
+        try b.pushRepeated(.move_down, n - 1);
+        try b.push(.move_line_end);
+        return self.finishOperator(&b, op, ctx, false);
+    }
+
+    /// `{count}cc` / `{count}S`: the lines go to the register whole and
+    /// one line stays to type into, keeping the first one's indent
+    /// (Neovim's `autoindent`: `  abc` + `ccX` → `  X`).
+    fn changeLines(arena: Allocator, n: u32) Allocator.Error![]const EditOp {
+        return arena.dupe(EditOp, &.{
+            .{ .select_count_lines = n },
+            .{ .register_selection_delete = true },
+            .swap_anchor_cursor,
+            .move_line_first_non_ws,
+            .{ .replace_selection = "" },
+            .continue_insert_run,
+        });
+    }
+
     /// `[(` `[{` `])` `]}` as a motion, or as an operator's target.
     fn unmatchedMotion(self: *Vim, op: ?PendingOp, open: u21, forward: bool, n: u32, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         const m: EditOp = .{ .move_to_unmatched = .{ .open = open, .forward = forward } };
@@ -966,12 +1089,10 @@ pub const Vim = struct {
                 // characters with ONE line break (`:help r`).
                 if (key.code == .enter and !key.mods.ctrl and !key.mods.alt) return ops(arena, &.{.{ .replace_chars_with_newline = n }});
                 const c = ch orelse return .consumed;
-                var b = Builder.init(arena);
-                for (0..n) |i| {
-                    try b.push(.{ .replace_char_at_cursor = c });
-                    if (i + 1 < n) try b.push(.move_right);
-                }
-                return b.finish();
+                // Visual `r`: every selected char (the selection is live).
+                if (ctx.has_selection) return ops(arena, &.{.{ .replace_char_at_cursor = c }});
+                // `{n}r` needs `n` chars from the cursor, or does nothing.
+                return ops(arena, &.{.{ .replace_chars = .{ .ch = c, .count = n } }});
             },
             .z => {
                 self.resetPending();
@@ -1058,19 +1179,21 @@ pub const Vim = struct {
                 const exact = self.prefix == .mark_jump_exact;
                 const op = self.op;
                 self.resetPending();
-                if (asciiLetter(ch)) |c| {
+                // `'[` / `']`: the first / last line of the text last put,
+                // yanked or changed (`:help '[`), a buffer mark like `a`.
+                const bracket_mark: ?u8 = if (ch == '[' or ch == ']') @intCast(ch.?) else null;
+                if (bracket_mark orelse asciiLetter(ch)) |c| {
                     // `d'a` / `` y`a `` / `c'a`: a mark is a motion (`:help
                     // '`). The buffer holds the mark, so it builds the
                     // range; only the buffer-local marks are targets.
                     if (op) |o| {
-                        const glyph: u8 = switch (o) {
-                            .delete => 'd',
-                            .yank => 'y',
-                            .change => 'c',
-                            else => return .consumed,
-                        };
-                        if (c < 'a' or c > 'z') return .consumed;
-                        return .{ .app = .{ .operator_to_mark = .{ .op = glyph, .mark = c, .exact = exact } } };
+                        if ((c < 'a' or c > 'z') and bracket_mark == null) return .consumed;
+                        // The operator stays pending: the buffer finds
+                        // the mark and hands it back as the motion's end
+                        // (`finishPendingMotion`), so every operator
+                        // takes a mark the way it takes `w` or `j`.
+                        self.op = o;
+                        return .{ .app = .{ .operator_to_mark = .{ .op = o.glyph()[0], .mark = c, .exact = exact } } };
                     }
                     return .{ .app = if (exact) .{ .jump_to_mark_exact = c } else .{ .jump_to_mark_line = c } };
                 }
@@ -1095,10 +1218,10 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 const linewise = select_op == .select_inner_paragraph or select_op == .select_around_paragraph;
-                const is_bracket = select_op == .select_inner_bracket or select_op == .select_around_bracket;
+                const counted = select_op == .select_inner_bracket or select_op == .select_around_bracket or select_op == .select_inner_tag or select_op == .select_around_tag;
                 var b = Builder.init(arena);
-                // `2di{`: the count-th enclosing pair (`:help i{`).
-                if (is_bracket and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
+                // `2di{` / `d2it`: the count-th enclosing pair (`:help i{`).
+                if (counted and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
                 // No object under the cursor (`ci(` outside parens): the
                 // operator is abandoned, not run on nothing.
                 try b.push(.abort_unless_selection);
@@ -1110,17 +1233,7 @@ pub const Vim = struct {
                     const vmode_before = self.vmode;
                     var lb = Builder.init(arena);
                     const lines = (try self.finishOperator(&lb, op, ctx, true)).ops;
-                    const lines_list: []const EditOp = if (op == .change) blk: {
-                        var l2 = Builder.init(arena);
-                        for (lines) |o| {
-                            try l2.push(o);
-                            if (o == .normalize_linewise_selection_inner) {
-                                try l2.push(.swap_anchor_cursor);
-                                try l2.push(.move_line_first_non_ws);
-                            }
-                        }
-                        break :blk l2.list.items;
-                    } else lines;
+                    const lines_list: []const EditOp = lines;
                     self.vmode = vmode_before;
                     var cb = Builder.init(arena);
                     const chars = (try self.finishOperator(&cb, op, ctx, false)).ops;
@@ -1346,9 +1459,13 @@ pub const Vim = struct {
             return repeated(arena, m, n);
         }
         if (!ctrl) {
-            if (motion(key.code)) |m| {
+            if (motion(key.code)) |m0| {
                 const n = self.count1();
                 self.resetPending();
+                // Insert's one-shot `Ctrl-O $` goes past the last char:
+                // the cursor is back in Insert, where that is a place
+                // (`:help i_CTRL-O`).
+                const m: EditOp = if (self.insert_oneshot_normal and m0 == .move_line_last_char) .move_line_end else wrapHL(m0);
                 return repeated(arena, m, n);
             }
         }
@@ -1462,11 +1579,24 @@ pub const Vim = struct {
                     },
                     'D' => {
                         self.resetPending();
-                        return ops(arena, &.{.delete_to_line_end});
+                        if (n == 1) return ops(arena, &.{.delete_to_line_end});
+                        // `{n}D` is `d$` with a count: to the end of the
+                        // line `n - 1` below (clamped); on the last line
+                        // it fails (`:help D`).
+                        if (ctx.line_idx + 1 >= ctx.line_count) return .consumed;
+                        return self.countedToLineEnd(n, .delete, ctx, arena);
                     },
                     'C' => {
-                        self.enterInsert();
-                        return ops(arena, &.{.delete_to_line_end});
+                        if (n == 1) {
+                            self.enterInsert();
+                            return ops(arena, &.{.delete_to_line_end});
+                        }
+                        if (ctx.line_idx + 1 >= ctx.line_count) {
+                            self.resetPending();
+                            return .consumed;
+                        }
+                        self.resetPending();
+                        return self.countedToLineEnd(n, .change, ctx, arena);
                     },
                     's' => {
                         self.resetPending();
@@ -1474,17 +1604,12 @@ pub const Vim = struct {
                         return .consumed;
                     },
                     'S' => {
-                        self.enterInsert();
-                        var b = Builder.init(arena);
-                        try b.push(.move_line_end);
-                        try b.push(.select_line);
-                        for (1..n) |_| {
-                            try b.push(.move_down);
-                            try b.push(.move_line_end);
+                        if (n > 1 and ctx.line_idx + 1 >= ctx.line_count) {
+                            self.resetPending();
+                            return .consumed;
                         }
-                        try b.push(.{ .replace_selection = "" });
-                        try b.push(.continue_insert_run);
-                        return b.finish();
+                        self.enterInsert();
+                        return ops(arena, try changeLines(arena, n));
                     },
                     'q' => {
                         if (self.is_recording_macro) {
@@ -1598,13 +1723,10 @@ pub const Vim = struct {
                     '%' => {
                         const pct = self.count;
                         self.resetPending();
-                        if (pct) |p| {
-                            const clamped: usize = @min(@max(p, 1), 100);
-                            const lc = @max(ctx.line_count, 1);
-                            const target = @max(@min((clamped * lc + 99) / 100, lc), 1);
-                            return ops(arena, &.{.{ .move_to_line_keep_col = target }});
-                        }
-                        return runCmd(.@"editor.bracket_match");
+                        if (pct) |p| return ops(arena, &.{.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) }});
+                        // A motion, so operators and Visual take it too;
+                        // `editor.bracket_match` runs the same one.
+                        return ops(arena, &.{.move_bracket_match});
                     },
                     '*' => {
                         self.resetPending();
@@ -1737,6 +1859,7 @@ pub const Vim = struct {
             ';' => return runCmd(.@"editor.jump_prev_edit"),
             ',' => return runCmd(.@"editor.jump_next_edit"),
             'J' => return repeated(arena, .{ .join_lines = .{ .keep_space = false } }, @max(n -| 1, 1)),
+            '&' => return runCmd(.@"editor.repeat_last_substitute_all"),
             '_' => return ops(arena, &.{.move_line_last_non_ws}),
             'e' => return repeated(arena, .move_word_end_back, n),
             'E' => return repeated(arena, .move_big_word_end_back, n),
@@ -1841,24 +1964,24 @@ pub const Vim = struct {
             if (try self.findCharKey(key, ctx, arena)) |r| return r;
         }
         const n = self.count1();
+        const self_count_pct = self.count;
         self.resetPending();
         if (key.code == .esc) return .consumed;
         if (doubled) {
             switch (op) {
-                .delete => return repeated(arena, .delete_line, n),
+                // Always a `repeat`, so `{count}.` after a bare `dd`
+                // replaces its count instead of running `dd` count times.
+                .delete => {
+                    var b = Builder.init(arena);
+                    try b.pushRepeated(.delete_line, n);
+                    return b.finish();
+                },
                 .yank => return ops(arena, &.{.{ .yank_lines_count = n }}),
                 .change => {
+                    // `{count}cc` past the last line fails (it is `c{count-1}j`).
+                    if (n > 1 and ctx.line_idx + 1 >= ctx.line_count) return .consumed;
                     self.vmode = .insert;
-                    var b = Builder.init(arena);
-                    try b.push(.select_line);
-                    try b.push(.move_line_end);
-                    for (1..n) |_| {
-                        try b.push(.move_down);
-                        try b.push(.move_line_end);
-                    }
-                    try b.push(.{ .replace_selection = "" });
-                    try b.push(.continue_insert_run);
-                    return b.finish();
+                    return ops(arena, try changeLines(arena, n));
                 },
                 .indent, .outdent, .reindent => {
                     var b = Builder.init(arena);
@@ -1982,37 +2105,67 @@ pub const Vim = struct {
             else => null,
         };
         if (vertical) |dir| {
-            const total = n + 1;
+            // `j` / `k` / `+` / `-` are linewise motions (`:help linewise`):
+            // the range is every line from the cursor's to where the
+            // counted motion stops — at the buffer's edge when the count
+            // overshoots (`3Gd9k` takes lines 1-3), nothing at all when
+            // it cannot move (`dj` on the last line).
+            const step: EditOp = switch (code) {
+                .char => |c| switch (c) {
+                    '+' => .move_down_first_non_ws,
+                    '-' => .move_up_first_non_ws,
+                    else => if (dir < 0) .move_up else .move_down,
+                },
+                .enter => .move_down_first_non_ws,
+                else => if (dir < 0) .move_up else .move_down,
+            };
+            if (op == .filter) return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n + 1 } } };
             var b = Builder.init(arena);
-            // `>j` / `<k`: one line op over a selection spanning the lines
-            // (a per-line op without a selection would hit the cursor
-            // line every time).
-            if (op == .indent or op == .outdent or op == .reindent or op == .@"align") {
-                try b.push(.select_start);
-                for (0..n) |_| try b.push(if (dir < 0) .move_up else .move_down);
-                // Park at the last line's end so a selection ending on a
-                // line start does not exclude that line.
-                try b.push(.move_line_end);
-                return self.finishOperator(&b, op, ctx, false);
+            try b.push(.select_start);
+            // Always a `repeat`, so `3.` can replace the count of `dj`.
+            try b.pushRepeated(step, n);
+            try b.push(.abort_unless_moved);
+            return self.finishLinewise(&b, op, ctx);
+        }
+        // `d_` is `dd`, `d3_` three lines (`:help _`): `count - 1` lines
+        // down, linewise.
+        if (ch == '_') {
+            if (op == .filter) return .{ .app = .{ .filter_lines_from_cursor = .{ .count = n } } };
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            if (n > 1) {
+                try b.pushRepeated(.move_down, n - 1);
+                try b.push(.abort_unless_moved);
             }
-            if (dir < 0) for (0..n) |_| try b.push(.move_up);
-            switch (op) {
-                .yank => {
-                    try b.push(.{ .yank_lines_count = total });
-                    return b.finish();
-                },
-                .filter => return .{ .app = .{ .filter_lines_from_cursor = .{ .count = total } } },
-                .delete, .change => {
-                    for (0..total) |_| try b.push(.delete_line);
-                    if (op == .change) {
-                        try b.push(.insert_newline);
-                        try b.push(.move_up);
-                        self.vmode = .insert;
-                    }
-                    return b.finish();
-                },
-                else => {},
+            return self.finishLinewise(&b, op, ctx);
+        }
+        // `%` is an inclusive motion (`d%`, `y%`, `c%`); `{count}%` is
+        // linewise to that percentage of the file.
+        if (ch == '%') {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            if (self_count_pct) |p| {
+                try b.push(.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) });
+                return self.finishLinewise(&b, op, ctx);
             }
+            try b.push(.move_bracket_match);
+            try b.push(.make_selection_inclusive);
+            return self.finishOperator(&b, op, ctx, false);
+        }
+        // `dn` / `dN` (`:help n`): to the next / previous match of the last
+        // search, exclusive. `d/pat<CR>` / `d?pat<CR>`: the find bar opens
+        // with the operator still pending; the app hands the match back
+        // (`finishPendingMotion`).
+        if (ch == 'n' or ch == 'N') {
+            var b = Builder.init(arena);
+            try b.push(.select_start);
+            try b.push(.{ .move_to_find_match = (ch == 'n') != self.last_search_backward });
+            return self.finishExclusive(&b, op, ctx);
+        }
+        if (ch == '/' or ch == '?') {
+            self.op = op;
+            self.last_search_backward = ch == '?';
+            return .{ .app = .{ .operator_search = .{ .backward = ch == '?' } } };
         }
         if (motion(code)) |m0| {
             const m: EditOp = if (n == 1 and (op == .delete or op == .yank)) switch (m0) {
@@ -2037,7 +2190,8 @@ pub const Vim = struct {
             if (inclusive) try b.push(.move_right);
             // `G` is linewise: the last line counts whole.
             if (ch == 'G') try b.push(.move_line_end);
-            return self.finishOperator(&b, op, ctx, false);
+            if (inclusive or ch == 'G') return self.finishOperator(&b, op, ctx, false);
+            return self.finishExclusive(&b, op, ctx);
         }
         return .consumed;
     }
@@ -2171,15 +2325,33 @@ pub const Vim = struct {
             },
             .text_object_inner, .text_object_around => {
                 const around = self.prefix == .text_object_around;
+                const n = self.count1();
                 self.resetPending();
                 const op = textObjectOp(key, around) orelse return .consumed;
                 self.visual_exact = true;
+                // `v2it` / `v2i(`: the count-th enclosing pair.
+                const counted = op == .select_inner_bracket or op == .select_around_bracket or op == .select_inner_tag or op == .select_around_tag;
+                if (counted and n > 1 and op != .select_inner_bracket) return repeated(arena, op, n);
                 // `vip` / `vap` make the selection linewise (`:help v_ip`).
                 if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
                 // `vi{` over a body on its own lines takes the last line's
                 // break too, so `vi{d` leaves no empty line (`:help v_i{`).
-                if (op == .select_inner_bracket) return ops(arena, &.{ op, .{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } } });
+                if (op == .select_inner_bracket) {
+                    var b = Builder.init(arena);
+                    if (n > 1) try b.pushRepeated(op, n) else try b.push(op);
+                    try b.push(.{ .if_lines_object = .{ .lines = &.{.move_right}, .chars = &.{} } });
+                    return b.finish();
+                }
                 return ops(arena, &.{op});
+            },
+            .register => {
+                // `"ap` / `"+y` over a selection (`:help v_p`).
+                self.prefix = .none;
+                if (ch) |c| {
+                    const valid = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '.';
+                    if (valid) self.pending_register = c;
+                }
+                return .consumed;
             },
             .align_char_wait => {
                 self.enterNormal();
@@ -2238,10 +2410,17 @@ pub const Vim = struct {
         if (motion(key.code)) |m| {
             const n = self.count1();
             self.count = null;
-            return repeated(arena, m, n);
+            return repeated(arena, wrapHL(m), n);
+        }
+        if (ch == '%' and !key.mods.ctrl) {
+            const pct = self.count;
+            self.count = null;
+            if (pct) |p| return ops(arena, &.{.{ .move_to_line_keep_col = pctLine(p, ctx.line_count) }});
+            return ops(arena, &.{.move_bracket_match});
         }
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
-        self.count = null;
+        // `v2it`: the count rides on to the text object.
+        if (!(ch == 'i' or ch == 'a')) self.count = null;
         if (key.code == .esc) {
             self.enterNormal();
             return ops(arena, &.{.select_clear});
@@ -2280,6 +2459,8 @@ pub const Vim = struct {
             },
             'd', 'x' => {
                 self.enterNormal();
+                // V-LINE's lines go to the register linewise.
+                if (linewise) return ops(arena, &.{ widen, .delete_selection_linewise });
                 return ops(arena, &.{ widen, .delete_selection });
             },
             'c', 's', 'R' => {
@@ -2288,8 +2469,8 @@ pub const Vim = struct {
                 // Linewise (`V…c`, and `R` from any Visual — `S` is
                 // surround's here): the lines go, one empty line stays
                 // (`:help v_c`, `v_R`).
-                if (linewise or c == 'R') return ops(arena, &.{ .normalize_linewise_selection_inner, .{ .replace_selection = "" }, .continue_insert_run });
-                return ops(arena, &.{ widen, .{ .replace_selection = "" }, .continue_insert_run });
+                if (linewise or c == 'R') return ops(arena, &.{ .normalize_linewise_selection_inner, .{ .register_selection_delete = true }, .swap_anchor_cursor, .move_line_first_non_ws, .{ .replace_selection = "" }, .continue_insert_run });
+                return ops(arena, &.{ widen, .{ .register_selection_delete = false }, .{ .replace_selection = "" }, .continue_insert_run });
             },
             'y' => {
                 self.enterNormal();
@@ -2304,8 +2485,10 @@ pub const Vim = struct {
                     '<' => .outdent_to_first_non_blank,
                     else => .reindent,
                 };
-                if (linewise) return ops(arena, &.{ .normalize_linewise_selection, op, .select_clear });
-                return ops(arena, &.{ op, .select_clear });
+                // The selection is remembered before the op ends it, so
+                // `gv` has it back (`Vj>gv>`, `:help gv`).
+                if (linewise) return ops(arena, &.{ .normalize_linewise_selection, .remember_selection, op, .select_clear });
+                return ops(arena, &.{ .remember_selection, op, .select_clear });
             },
             'g' => {
                 self.prefix = .g;
@@ -2318,7 +2501,7 @@ pub const Vim = struct {
                     else => .toggle,
                 };
                 self.enterNormal();
-                return ops(arena, &.{ widen, .{ .transform_selection_case = kind }, .select_clear });
+                return ops(arena, &.{ widen, .remember_selection, .{ .transform_selection_case = kind }, .select_clear });
             },
             'r' => {
                 // Widen now; the replace prefix fills the selection next key.
@@ -2334,10 +2517,14 @@ pub const Vim = struct {
                 self.enterNormal();
                 // Nothing to put: nothing is deleted either (Vim: E353).
                 if (ctx.register_empty and self.pending_register == null) return ops(arena, &.{.select_clear});
-                return ops(arena, &.{ widen, .{ .replace_selection = "" }, .paste_before });
+                return ops(arena, &.{ widen, .{ .put_over_selection = .{ .swap = c == 'p', .linewise = linewise } } });
             },
             '\'', '`' => {
                 self.prefix = if (c == '\'') .mark_jump_line else .mark_jump_exact;
+                return .consumed;
+            },
+            '"' => {
+                self.prefix = .register;
                 return .consumed;
             },
             '*' => {
@@ -2498,6 +2685,25 @@ const Builder = struct {
         return .{ .ops = b.list.items };
     }
 };
+
+/// Normal and Visual `h` / `l` / `←` / `→` under NvChad's
+/// `whichwrap+=<>[]hl`: they cross line ends (an operator's `dl` keeps
+/// the plain step, which `:help 'whichwrap'` exempts).
+fn wrapHL(m: EditOp) EditOp {
+    return switch (m) {
+        .move_right => .move_right_wrap,
+        .move_left => .move_left_wrap,
+        else => m,
+    };
+}
+
+/// `{count}%` (`:help N%`): the line `count` percent into the file,
+/// rounded up, 1-based.
+fn pctLine(p: u32, line_count: usize) usize {
+    const clamped: usize = @min(@max(p, 1), 100);
+    const lc = @max(line_count, 1);
+    return @max(@min((clamped * lc + 99) / 100, lc), 1);
+}
 
 fn asciiLetter(c: ?u21) ?u8 {
     const v = c orelse return null;

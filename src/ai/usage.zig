@@ -1325,6 +1325,7 @@ pub fn tickerIndex(now: u64, n: usize) usize {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 /// The shape of a real `/api/oauth/usage` body (values invented).
 pub const usage_fixture =
@@ -1570,16 +1571,16 @@ test "accountsFromConfig: the default account, one active, ~ and relative paths"
     const none = try accountsFromConfig(a, &[_]E{}, "/data", "/home/me");
     try t.expectEqual(@as(usize, 1), none.len);
     try t.expectEqualStrings("default", none[0].name);
-    try t.expectEqualStrings("/data/ai_token", none[0].token_path);
+    try sdk_testing.expectPath("/data/ai_token", none[0].token_path);
     try t.expect(none[0].active);
     const three = try accountsFromConfig(a, &[_]E{
         .{ .name = "personal", .token_path = "ai_token.personal", .active = false },
         .{ .name = "work", .token_path = "~/.claude/work.json", .active = true },
         .{ .name = "consulting", .token_path = "/abs/tok", .active = true },
     }, "/data", "/home/me");
-    try t.expectEqualStrings("/data/ai_token.personal", three[0].token_path);
-    try t.expectEqualStrings("/home/me/.claude/work.json", three[1].token_path);
-    try t.expectEqualStrings("/abs/tok", three[2].token_path);
+    try sdk_testing.expectPath("/data/ai_token.personal", three[0].token_path);
+    try sdk_testing.expectPath("/home/me/.claude/work.json", three[1].token_path);
+    try sdk_testing.expectPath("/abs/tok", three[2].token_path);
     try t.expect(!three[0].active and three[1].active and !three[2].active);
     const none_active = try accountsFromConfig(a, &[_]E{ .{ .name = "", .token_path = "", .active = false }, .{ .name = "b", .token_path = "", .active = false } }, "/data", null);
     try t.expectEqualStrings("default", none_active[0].name);

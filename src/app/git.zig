@@ -1052,7 +1052,7 @@ pub fn onOpen(app: *App, args: hooks.HookArgs) void {
     var best: ?usize = null;
     var best_len: usize = 0;
     for (st.repos.items, 0..) |r, i| {
-        if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and abs[r.path.len] == '/' and r.path.len > best_len) {
+        if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and std.fs.path.isSep(abs[r.path.len]) and r.path.len > best_len) {
             best = i;
             best_len = r.path.len;
         }
@@ -1233,7 +1233,7 @@ pub fn nowUnix(app: *App) i64 {
 
 /// Repo-relative path of an absolute one (the path itself when outside).
 pub fn relToRepo(r: *const client.Repo, abs: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and abs[r.path.len] == '/') return abs[r.path.len + 1 ..];
+    if (std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and std.fs.path.isSep(abs[r.path.len])) return abs[r.path.len + 1 ..];
     return abs;
 }
 
@@ -4068,6 +4068,8 @@ pub fn diffClick(app: *App, id: PaneId, dp: *DiffPane, hit_id: u32, m: Mouse) Al
     if (m.button != .left) return;
     app.needs_render = true;
     if (git_toolbar.actionOf(hit_id)) |action| {
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         // The git toolbar: each button is a `git.*` command; Refresh
         // re-reads this diff.
         const cmd: command.CommandId = switch (action) {
@@ -4573,6 +4575,14 @@ fn buildPlan(app: *App, g: *GraphPane, sel: []const usize) CommandError!Plan {
         at = indexOfSha(g, c.parents[0]) orelse break;
     }
     if (remaining != 0) return app.diag.fail(arena, "rebase: a selected commit is not on the current branch's first-parent line from HEAD", .{});
+    // A merge on the line would be replayed flat — `rebase -i` without
+    // `--rebase-merges` lists no merge, so the plan could not be laid on
+    // git's todo, and the attempt would already have autostashed and
+    // checked out. Refused here, before anything touches the tree.
+    for (chain.items) |ci| {
+        const c = g.commits[ci];
+        if (c.parents.len > 1) return app.diag.fail(arena, "rebase: {s} is a merge — rewriting history through a merge is not supported; choose commits above it", .{c.short()});
+    }
     var plan: Plan = .{};
     errdefer plan.deinit(gpa);
     const oldest = g.commits[chain.items[chain.items.len - 1]];
@@ -4998,6 +5008,8 @@ pub fn graphClick(app: *App, id: PaneId, g: *GraphPane, hit_id: u32, m: Mouse) A
     if (git_toolbar.actionOf(hit_id)) |action| {
         if (m.button != .left) return;
         g.wip_focused = false;
+        // Branch drops its menu under the button.
+        if (action == .branch) return runToast(app, @import("cmd_git.zig").branchMenuAt(app, m.x, m.y + 1));
         const cmd: command.CommandId = switch (action) {
             .undo => .@"git.undo",
             .redo => .@"git.redo",
@@ -6902,6 +6914,24 @@ test "push and start PR: the remote and the forge page come off the rail, a remo
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "no remote") != null);
     app.diag.clear();
     app.git.rail_remotes = &remotes;
+    app.git.rail_branches = &.{};
+    app.git.rail_remotes = &.{};
+}
+
+test "push and start PR: the page opens only once the push landed" {
+    // Windows reaches a named browser through `cmd /c start`, and
+    // `start` answers a browser that is not there with a modal dialog
+    // nobody on a CI runner can close: the first Windows run sat on it
+    // until the step's timeout.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    try f.write(".gitignore", ".mnml/\n");
+    try f.write("a.txt", "one\n");
+    try f.sh(&.{ "add", "a.txt", ".gitignore" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    const app = &f.app;
 
     // The page opens on the push's own result, never before it. A
     // browser that cannot start says so — which is the proof it was
@@ -6916,8 +6946,6 @@ test "push and start PR: the remote and the forge page come off the rail, a remo
     landed.payload = .{ .op = .{ .desc = "pushed main to origin", .ok = true, .url = "https://github.com/acme/widget/compare/main?expand=1" } };
     try handle(app, landed);
     try testing.expectEqualStrings("https://github.com/acme/widget/compare/main?expand=1", app.lastToast().?);
-    app.git.rail_branches = &.{};
-    app.git.rail_remotes = &.{};
 }
 
 test "the compare base: W marks the row (⚑ in the mark cell), rangeSet tints base..HEAD, d on another row opens the range diff titled base..row, W on the base clears it; a branch diffs against the current one" {
@@ -7598,7 +7626,10 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     // Fenced at the tmp dir it never goes up into it.
     const fence = try std.fs.path.join(testing.allocator, &.{ root, "tmp" });
     defer testing.allocator.free(fence);
-    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere:{s}/", .{fence});
+    // The platform's list separator: `;` on Windows, where `:` is in
+    // every drive-lettered path.
+    const sep = if (builtin.os.tag == .windows) ";" else ":";
+    const list = try std.fmt.allocPrint(testing.allocator, "/nowhere" ++ sep ++ "{s}/", .{fence});
     defer testing.allocator.free(list);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
     try testing.expect((try repoAbove(&a, ws)) == null);
@@ -7609,7 +7640,7 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     try testing.expectEqualStrings(root, (try repoFor(&a, ws)).?);
     try testing.expectEqualStrings(root, (try repoFor(&a, root)).?);
     try a.env.put("GIT_CEILING_DIRECTORIES", list);
-    try testing.expect(isCeiling(testing.io, "/a:/b/", "/b"));
-    try testing.expect(!isCeiling(testing.io, "/a:/b", "/c"));
+    try testing.expect(isCeiling(testing.io, "/a" ++ sep ++ "/b/", "/b"));
+    try testing.expect(!isCeiling(testing.io, "/a" ++ sep ++ "/b", "/c"));
     try testing.expect(!isCeiling(testing.io, "", "/"));
 }

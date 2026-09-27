@@ -26,6 +26,9 @@ pub fn yankLine(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Erro
 pub fn yankLinesCount(ed: *Editor, n: u32, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
     if (n == 0) return;
     const first = ed.currentLine();
+    // `{n}yy` is `y{n-1}j`: on the last line it fails (Neovim: `G2yy`
+    // yanks nothing).
+    if (n > 1 and first + 1 >= ed.lineCount()) return;
     const last = @min(first + n - 1, ed.lineCount() - 1);
     const start = ed.lineStart(first);
     const last_end = ed.lineEnd(last);
@@ -92,8 +95,59 @@ fn put(ed: *Editor, clip: *Clipboard, where: Where, land: Land, out: *EditOutcom
 /// the word between the next chars).
 pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
     const one = clip.text();
+    return putText(ed, one, clip.isLinewise(), clip.isBlockwise(), where, land, times, out);
+}
+
+/// Visual `p` / `P` (`:help v_p`): the register's text replaces the
+/// selection. `swap` (`p`): the replaced text then goes to the registers
+/// as a delete would put it, so `yiw` … `viwp` … `p` swaps two words;
+/// `P` leaves the registers alone. `linewise`: the selection is whole
+/// lines (V-LINE, already widened).
+pub fn putOverSelection(ed: *Editor, clip: *Clipboard, swap: bool, linewise: bool, out: *EditOutcome) Allocator.Error!void {
+    const sel = ed.selection() orelse return;
+    const one = try ed.gpa.dupe(u8, clip.text());
+    defer ed.gpa.free(one);
+    const lw = clip.isLinewise();
+    const bw = clip.isBlockwise();
+    if (one.len == 0) {
+        ed.anchor = null;
+        return;
+    }
+    if (swap and sel[1] > sel[0]) {
+        const body = ed.bytes()[sel[0]..sel[1]];
+        try clip.pushDelete(body, linewise);
+        out.clipboard_set = clip.lastWritten();
+    }
+    // Undo lands where the selection began, with none live (vim's `u`
+    // after `viwp`).
+    ed.rememberSelection();
+    ed.cursor = sel[0];
+    ed.anchor = null;
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
+    try ed.checkpoint();
+    try ed.splice(sel[0], sel[1], "");
+    if (linewise) delete.clampOffPhantomLine(ed);
+    out.buffer_changed = true;
+    if (linewise and !lw and !bw) {
+        // Charwise text over whole lines is a line of its own (Neovim:
+        // `yiwjVp` on a/b/c -> a/a/c).
+        const as_line = try std.mem.concat(ed.gpa, u8, &.{ one, "\n" });
+        defer ed.gpa.free(as_line);
+        return putText(ed, as_line, true, false, .before, .start, 1, out);
+    }
+    if (!linewise and lw) {
+        // Lines over a charwise selection split its line there and go
+        // between the halves (Neovim: `yyjviwp` on `a b`/`c` -> a b, , a b, ).
+        try ed.splice(ed.cursor, ed.cursor, "\n");
+        ed.cursor += 1;
+    }
+    try putText(ed, one, lw, bw, .before, .start, 1, out);
+}
+
+fn putText(ed: *Editor, one: []const u8, linewise: bool, blockwise: bool, where: Where, land: Land, times: u32, out: *EditOutcome) Allocator.Error!void {
     if (one.len == 0 or times == 0) return;
-    if (clip.isBlockwise() and !mc.hasExtras(ed)) return putBlock(ed, one, where, land, times, out);
+    if (blockwise and !mc.hasExtras(ed)) return putBlock(ed, one, where, land, times, out);
     const repeated: ?[]u8 = if (times > 1) blk: {
         const buf = try ed.gpa.alloc(u8, one.len * times);
         for (0..times) |i| @memcpy(buf[i * one.len ..][0..one.len], one);
@@ -107,8 +161,9 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
         out.buffer_changed = true;
         return;
     }
-    if (clip.isLinewise()) {
-        _ = try putLines(ed, s, where, land);
+    if (linewise) {
+        const r = try putLines(ed, s, where, land);
+        out.changed_range = r.range;
     } else {
         // `p` puts after the char under the cursor; on an empty line (or
         // past the end) there is none, and vim puts at the cursor — not
@@ -116,7 +171,10 @@ pub fn putTimes(ed: *Editor, clip: *Clipboard, where: Where, land: Land, times: 
         const on_newline = ed.cursor >= ed.len() or ed.bytes()[ed.cursor] == '\n';
         const at = if (where == .after and !on_newline) @min(ed.nextBoundary(ed.cursor), ed.len()) else ed.cursor;
         try ed.splice(at, at, s);
-        ed.cursor = at + s.len;
+        out.changed_range = .{ at, at + s.len };
+        // `:help p`: the cursor ends on the put text's last char — or at
+        // its start when the text spans lines; `gp` / `gP` just after it.
+        ed.cursor = if (land == .end) at + s.len else if (std.mem.indexOfScalar(u8, s, '\n') != null) at else ed.prevBoundary(at + s.len);
     }
     ed.anchor = null;
     out.buffer_changed = true;
@@ -193,10 +251,16 @@ fn textCells(r: []const u8) usize {
     return n;
 }
 
-/// A linewise payload `s` below (`after`) or above the cursor's line;
-/// returns the line its first line landed on.
-fn putLines(ed: *Editor, s: []const u8, where: Where, land: Land) Allocator.Error!usize {
+/// A linewise payload `s` below (`after`) or above the cursor's line:
+/// the line its first line landed on and the bytes it took. `.start`
+/// leaves the cursor on that line's first non-blank (`:help p`), `.end`
+/// (`gp`) on the line after the put.
+const PutLines = struct { line: usize, range: [2]usize };
+
+fn putLines(ed: *Editor, s: []const u8, where: Where, land: Land) Allocator.Error!PutLines {
     const line = ed.currentLine();
+    const first = if (where == .after) line + 1 else line;
+    var range: [2]usize = undefined;
     if (where == .after) {
         const eol = ed.lineEnd(line);
         const at_eof = eol >= ed.len();
@@ -208,17 +272,24 @@ fn putLines(ed: *Editor, s: []const u8, where: Where, land: Land) Allocator.Erro
             const payload = try std.mem.concat(ed.gpa, u8, &.{ "\n", trimmed });
             defer ed.gpa.free(payload);
             try ed.splice(insert_at, insert_at, payload);
-            ed.cursor = if (land == .start) insert_at + 1 else insert_at + payload.len;
+            range = .{ insert_at + 1, insert_at + payload.len };
+            ed.cursor = insert_at + payload.len;
         } else {
             try ed.splice(insert_at, insert_at, s);
-            ed.cursor = if (land == .start) insert_at else insert_at + s.len;
+            range = .{ insert_at, insert_at + s.len };
+            ed.cursor = insert_at + s.len;
         }
-        return line + 1;
+    } else {
+        const bol = ed.lineStart(line);
+        try ed.splice(bol, bol, s);
+        range = .{ bol, bol + s.len };
+        ed.cursor = bol + s.len;
     }
-    const bol = ed.lineStart(line);
-    try ed.splice(bol, bol, s);
-    ed.cursor = if (land == .start) bol else bol + s.len;
-    return line;
+    if (land == .start) ed.cursor = ed.firstNonWs(first);
+    // `gp` below the last line: there is no line after, the put's last
+    // line takes the cursor (Neovim `yyjgp` on a/b ends at 3:1).
+    if (ed.cursor >= ed.len() and ed.len() > 0 and ed.bytes()[ed.len() - 1] == '\n') ed.cursor = ed.lineStart(ed.lineCount() - 1);
+    return .{ .line = first, .range = range };
 }
 
 /// `[count]]p` / `[count][p` (`:help ]p`): a linewise register put with
@@ -257,8 +328,9 @@ pub fn putIndentedTimes(ed: *Editor, clip: *Clipboard, where: Where, times: u32,
         }
     }
     try ed.checkpoint();
-    const first = try putLines(ed, payload.items, where, .start);
-    ed.cursor = ed.firstNonWs(first);
+    const r = try putLines(ed, payload.items, where, .start);
+    out.changed_range = r.range;
+    ed.cursor = ed.firstNonWs(r.line);
     ed.goal_col = null;
     ed.anchor = null;
     out.buffer_changed = true;
@@ -325,8 +397,6 @@ pub fn pasteAfter(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Er
 
 /// `P`.
 pub fn pasteBefore(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.Error!void {
-    // Charwise `P` lands after the text like Rust mnml; linewise at the
-    // line start.
     try put(ed, clip, .before, .start, out);
 }
 
@@ -398,12 +468,16 @@ test "charwise yank/put and modeless paste over a selection" {
     ed.cursor = 4;
     try pasteAfter(ed, &clip, &out);
     try std.testing.expectEqualStrings("hellohe", ed.doc.text.items);
-    try std.testing.expectEqual(@as(usize, 7), ed.cursor);
+    // On the put text's last char (`:help p`).
+    try std.testing.expectEqual(@as(usize, 6), ed.cursor);
     ed.anchor = 0;
     ed.cursor = 5;
     try paste(ed, &clip, &out);
     try std.testing.expectEqualStrings("hehe", ed.doc.text.items);
+    // `{n}yy` on the last line fails (`y{n-1}j`); a bare `yy` takes it.
     try yankLinesCount(ed, 3, &clip, &out);
+    try std.testing.expectEqualStrings("he", clip.text());
+    try yankLinesCount(ed, 1, &clip, &out);
     try std.testing.expectEqualStrings("hehe\n", clip.text());
 }
 

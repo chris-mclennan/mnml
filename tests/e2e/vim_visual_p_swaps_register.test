@@ -1,0 +1,18 @@
+# Visual p puts the replaced text in the unnamed register (`:help v_p`):
+# yiw w viw p $ p on "hello world" -> "hello helloworld". mnml keeps
+# "hello" and gives "hello hellohello".
+write f.txt "hello world\n"
+open f.txt
+command editor.use_vim
+key y
+key i
+key w
+key w
+key v
+key i
+key w
+key p
+key $
+key p
+ex w
+expect file f.txt contains "hello helloworld"

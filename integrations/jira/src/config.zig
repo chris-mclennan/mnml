@@ -783,6 +783,7 @@ pub const example =
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "the example parses, validates, and reads as the reference's config" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
@@ -990,13 +991,13 @@ test "resolvePath prefers the workspace file, then the data root, and names the 
     const ws = try std.fs.path.join(arena, &.{ root, "ws" });
     const data = try std.fs.path.join(arena, &.{ root, "data" });
     const none = try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null);
-    try testing.expect(std.mem.endsWith(u8, none, "data/integrations/jira/config.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(none, "data/integrations/jira/config.zon"));
     try tmp.dir.createDirPath(testing.io, "data/integrations/jira");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "data/integrations/jira/config.zon", .data = ".{}" });
-    try testing.expect(std.mem.endsWith(u8, try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "data/integrations/jira/config.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "data/integrations/jira/config.zon"));
     try tmp.dir.createDirPath(testing.io, "ws/.mnml/integrations/jira");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/.mnml/integrations/jira/config.zon", .data = ".{}" });
-    try testing.expect(std.mem.endsWith(u8, try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "ws/.mnml/integrations/jira/config.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(try resolvePath(arena, testing.io, .{ .workspace = ws, .data_root = data }, null), "ws/.mnml/integrations/jira/config.zon"));
     try testing.expectEqualStrings("/from/env.zon", try resolvePath(arena, testing.io, .{ .workspace = ws }, "/from/env.zon"));
     try testing.expectEqualStrings("/flag.zon", try resolvePath(arena, testing.io, .{ .explicit = "/flag.zon" }, "/from/env.zon"));
 }

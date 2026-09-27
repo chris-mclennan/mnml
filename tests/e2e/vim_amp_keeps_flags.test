@@ -1,0 +1,15 @@
+# Neovim maps & to :&& (keep the flags) and g& to :%s//~/& . mnml's &
+# drops the g flag and g& changes nothing.
+write f.txt "foo foo\nfoo foo\nfoo\n"
+open f.txt
+command editor.use_vim
+ex s/foo/bar/g
+key j
+key &
+ex w
+expect file f.txt contains "bar bar\nbar bar\nfoo\n"
+key u
+key g
+key &
+ex w
+expect file f.txt contains "bar bar\nbar bar\nbar\n"

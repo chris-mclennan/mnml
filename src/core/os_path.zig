@@ -145,6 +145,20 @@ pub const Candidates = struct {
 /// The map is the App's own environment — a spawn resolves a bare
 /// argv[0] against the PROCESS's `PATH`, which may differ, so a caller
 /// about to spawn should spawn the path this returns.
+/// Whether `a` and `b` name one path as the platform reads it: on
+/// Windows `/` and `\` are one separator, so `D:\ws\a` and
+/// `D:\ws/a` are the same file; elsewhere the bytes must match.
+pub fn samePath(a: []const u8, b: []const u8) bool {
+    return samePathWith(a, b, Rules.native);
+}
+
+pub fn samePathWith(a: []const u8, b: []const u8, r: Rules) bool {
+    if (!r.drives) return std.mem.eql(u8, a, b);
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x != y and !(r.isSep(x) and r.isSep(y))) return false;
+    return true;
+}
+
 pub fn which(io: Io, env: *const Map, buf: []u8, name: []const u8) ?[]const u8 {
     return whichWith(io, env, buf, name, Rules.native);
 }
@@ -292,4 +306,11 @@ test "which: finds a file on the map's PATH, skips a directory of the same name,
     try testing.expect(which(testing.io, &env, &buf, "absent") == null);
     try expectSome(want, which(testing.io, &env, &buf, want));
     try testing.expect(which(testing.io, &env, &buf, try std.fs.path.join(a, &.{ dir_a, "tool" })) == null);
+}
+
+test "samePath: one separator under Windows rules, bytes elsewhere" {
+    try testing.expect(samePathWith("D:\\ws\\a", "D:\\ws/a", Rules.win));
+    try testing.expect(!samePathWith("D:\\ws\\a", "D:\\ws\\b", Rules.win));
+    try testing.expect(!samePathWith("/ws/a", "/ws\\a", Rules.posix));
+    try testing.expect(samePathWith("/ws/a", "/ws/a", Rules.posix));
 }

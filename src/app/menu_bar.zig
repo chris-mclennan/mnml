@@ -888,7 +888,10 @@ test "menu bar: a click drops the menu in Rust's dropdown shape with the recent 
     try t.expectEqual(Config.MenuBar.hidden, app.cfg.ui.menu_bar);
     try command.run(&app, .{ .static = .@"view.menu_bar_cycle" });
     try t.expectEqual(Config.MenuBar.always, app.cfg.ui.menu_bar);
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".menu_bar = .always") != null);

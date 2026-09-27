@@ -1,0 +1,20 @@
+# % is a motion: d% deletes through the matching bracket, v% extends the
+# selection to it (Neovim: d% on "(a b) x" -> " x", register "(a b)";
+# fbv%d -> " x"). mnml ran % as a command, so d% and v% did nothing.
+write f.txt "(a b) x\n"
+open f.txt
+command editor.use_vim
+key d
+key %
+ex w
+expect file f.txt contains " x\n"
+expect file f.txt lacks "(a b)"
+key u
+key f
+key b
+key v
+key %
+key d
+ex w
+expect file f.txt contains " x\n"
+expect file f.txt lacks "a"
