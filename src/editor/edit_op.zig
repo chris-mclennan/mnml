@@ -62,8 +62,9 @@ pub const EditOp = union(enum) {
     move_bracket_match,
     /// `n` / `N` as an operator's motion: the start of the find match the
     /// app seeded after / before the cursor, resolved when applied so `.`
-    /// finds the next one; none fails the list.
-    move_to_find_match: bool,
+    /// finds the next one; none fails the list. `count` steps that many
+    /// matches, wrapping (`d2n`).
+    move_to_find_match: struct { forward: bool, count: u32 = 1 },
     /// Display-row motions; the payload is the wrap width (0 = no wrap).
     move_visual_down: usize,
     move_visual_up: usize,

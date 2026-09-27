@@ -445,3 +445,30 @@ test "cheatsheet: the split walk's pair in each profile — vim the handler's Ct
         try t.expectEqualStrings(w.prev, prev.?);
     }
 }
+
+test "cheatsheet: every chord is spelled the app's one way — lowercase modifiers and key names, in both profiles" {
+    // `ctrl+shift+b`, never `Ctrl+Shift+B` beside `ctrl+n`. A single
+    // character keeps its case: vim's `ctrl+w W` is not `ctrl+w w`.
+    for ([_]keymap.Profile{ .vim, .standard }) |profile| {
+        var st = try State.init(t.allocator, profile);
+        defer st.deinit();
+        var lower_seen = false;
+        for (st.sections) |s| for (s.rows) |r| {
+            var chords = std.mem.tokenizeScalar(u8, r.chord, ' ');
+            while (chords.next()) |chord| {
+                var parts = std.mem.splitScalar(u8, chord, '+');
+                while (parts.next()) |part| {
+                    const last = parts.peek() == null;
+                    // A lone `+` (`ctrl++`) splits into empty parts.
+                    if (last and std.unicode.utf8CountCodepoints(part) catch 2 <= 1) continue;
+                    for (part) |c| if (std.ascii.isUpper(c)) {
+                        std.debug.print("{s}: {s} ({s})\n", .{ @tagName(profile), r.chord, r.id });
+                        return error.TestMixedCaseChord;
+                    };
+                }
+            }
+            if (std.mem.startsWith(u8, r.chord, "ctrl+")) lower_seen = true;
+        };
+        try t.expect(lower_seen);
+    }
+}

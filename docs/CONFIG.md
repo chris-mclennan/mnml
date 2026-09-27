@@ -89,6 +89,7 @@ otherwise. Copy what you need; leave the rest out.
         .text_width = 80,
         .ensure_trailing_newline = true,
         .chord_timeout_ms = 500, // vim's timeoutlen; clamped to 100..5000
+        .report = 2, // vim's 'report': more than this many lines changed toasts "N fewer lines" / "N more lines" (vim profile)
         // The wheel (and a scrollbar drag) in the editor: .always carries the
         // cursor with the view (vim's Ctrl-E canon), .never moves the view
         // and pins it until the cursor moves (VS Code / Sublime), .auto

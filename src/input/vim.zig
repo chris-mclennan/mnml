@@ -1738,13 +1738,12 @@ pub const Vim = struct {
                         self.last_search_backward = true;
                         return runCmd(.@"find.word_backward");
                     },
-                    'n' => {
+                    'n', 'N' => {
                         self.resetPending();
-                        return runCmd(if (self.last_search_backward) .@"find.prev" else .@"find.next");
-                    },
-                    'N' => {
-                        self.resetPending();
-                        return runCmd(if (self.last_search_backward) .@"find.next" else .@"find.prev");
+                        const forward = (c == 'n') != self.last_search_backward;
+                        // `{count}n`: the `count`th match on (`:help n`).
+                        if (n > 1) return .{ .app = .{ .find_step = .{ .count = n, .forward = forward } } };
+                        return runCmd(if (forward) .@"find.next" else .@"find.prev");
                     },
                     'm' => {
                         self.prefix = .mark_set;
@@ -2159,7 +2158,7 @@ pub const Vim = struct {
         if (ch == 'n' or ch == 'N') {
             var b = Builder.init(arena);
             try b.push(.select_start);
-            try b.push(.{ .move_to_find_match = (ch == 'n') != self.last_search_backward });
+            try b.push(.{ .move_to_find_match = .{ .forward = (ch == 'n') != self.last_search_backward, .count = n } });
             return self.finishExclusive(&b, op, ctx);
         }
         if (ch == '/' or ch == '?') {

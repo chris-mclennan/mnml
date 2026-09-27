@@ -113,6 +113,9 @@ pub const AppCommand = union(enum) {
     /// `{count}gT` (`count` pages back). Without a count the handler
     /// runs `tab.next` / `tab.prev` instead.
     tab_page: struct { count: u32, back: bool },
+    /// `{count}n` / `{count}N`: `count` find matches on from the current
+    /// one (`find.next` / `find.prev` `count` times, one jump).
+    find_step: struct { count: u32, forward: bool },
     /// `d'a` / `` y`a `` / `c'a`: `op` is `d`, `y` or `c`; `exact` is the
     /// backtick form (charwise, exclusive), else linewise to the mark's
     /// line. The buffer owns the mark, so it builds the range.
@@ -137,7 +140,7 @@ pub const AppCommand = union(enum) {
     script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 29);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 30);
     }
 };
 

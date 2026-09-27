@@ -206,32 +206,29 @@ pub fn deleteBlock(ed: *Editor, clip: *Clipboard, out: *EditOutcome) Allocator.E
 }
 
 /// `U` / `u` / `~` on a block (`:help v_U`): the case of every
-/// character inside the rectangle, ASCII letters as the charwise form
-/// does. The cursor parks at the top-left.
+/// character inside the rectangle, through the same Unicode mapping as
+/// the charwise form (`line.caseText`). The cursor parks at the top-left.
 pub fn transformCase(ed: *Editor, kind: CaseTransform, out: *EditOutcome) Allocator.Error!void {
     const r = rect(ed) orelse return;
     remember(ed);
     const last = @min(r.r1, ed.lineCount() - 1);
     var cp = false;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ed.gpa);
     var row = @min(r.r0, last);
     while (row <= last) : (row += 1) {
         const sp = span(ed, row, r.c0, r.c1, ed.block_eol);
-        var b = sp.inner_s;
-        while (b < sp.inner_e) : (b += 1) {
-            const c = ed.bytes()[b];
-            const t = switch (kind) {
-                .lower => std.ascii.toLower(c),
-                .upper => std.ascii.toUpper(c),
-                .toggle => if (std.ascii.isUpper(c)) std.ascii.toLower(c) else std.ascii.toUpper(c),
-            };
-            if (t == c) continue;
-            if (!cp) {
-                try ed.checkpoint();
-                cp = true;
-            }
-            try ed.splice(b, b + 1, &.{t});
-            out.buffer_changed = true;
+        if (sp.inner_s >= sp.inner_e) continue;
+        const src = ed.bytes()[sp.inner_s..sp.inner_e];
+        buf.clearRetainingCapacity();
+        try line_ops.caseText(ed.gpa, &buf, src, kind);
+        if (std.mem.eql(u8, buf.items, src)) continue;
+        if (!cp) {
+            try ed.checkpoint();
+            cp = true;
         }
+        try ed.splice(sp.inner_s, sp.inner_e, buf.items);
+        out.buffer_changed = true;
     }
     ed.cursor = ed.byteAtVcol(r.r0, r.c0);
     selectClear(ed);
@@ -414,4 +411,34 @@ test "a block yank or delete is a blockwise register: p / P lay its rows out as 
     try clip.setYank("Q", false);
     try register.pasteAfter(ed, &clip, &out);
     try testing.expect(!clip.isBlockwise());
+}
+
+test "block case ops map Unicode letters the way the charwise ones do" {
+    // Neovim 0.12.5 on `aéßb / xÿσz / qжœw`, `l<C-v>jjl` then `~` or
+    // `U` gives `aÉẞb / xŸΣz / qЖŒw`; `u` changes nothing.
+    const cases = [_]struct { k: CaseTransform, want: []const u8 }{
+        .{ .k = .toggle, .want = "aÉẞb\nxŸΣz\nqЖŒw" },
+        .{ .k = .upper, .want = "aÉẞb\nxŸΣz\nqЖŒw" },
+        .{ .k = .lower, .want = "aéßb\nxÿσz\nqжœw" },
+    };
+    for (cases) |c| {
+        const ed = try Editor.init(testing.allocator, "aéßb\nxÿσz\nqжœw");
+        defer ed.deinit();
+        var out: EditOutcome = .{};
+        ed.cursor = 1;
+        selectStart(ed);
+        ed.cursor = ed.byteAtVcol(2, 2);
+        try transformCase(ed, c.k, &out);
+        try testing.expectEqualStrings(c.want, ed.doc.text.items);
+        try testing.expectEqual(@as(usize, 1), ed.cursor);
+    }
+    // And back: `u` over the upper-cased block restores the original.
+    const ed = try Editor.init(testing.allocator, "aÉẞb\nxŸΣz\nqЖŒw");
+    defer ed.deinit();
+    var out: EditOutcome = .{};
+    ed.cursor = 1;
+    selectStart(ed);
+    ed.cursor = ed.byteAtVcol(2, 2);
+    try transformCase(ed, .lower, &out);
+    try testing.expectEqualStrings("aéßb\nxÿσz\nqжœw", ed.doc.text.items);
 }

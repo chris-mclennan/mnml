@@ -64,7 +64,7 @@ pub fn main(init: std.process.Init) !u8 {
     // IPC mailbox, the marker and every integration this host spawns
     // all get the same answer (`src/config/profile.zig`).
     if (profile.fromArgs(args[1..])) |name| {
-        if (profile.parse(name) == null) return usage(w, "--profile needs dev or stable");
+        if (profile.parse(name) == null) return usage(w, null, "--profile needs dev or stable");
         try env.put(profile.env_var, name);
     }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "profile")) return profileSubcommand(gpa, io, env, args[2..], w);
@@ -87,7 +87,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -128,7 +128,7 @@ fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !?input.Style {
         if (std.mem.eql(u8, a, "--input")) {
             i += 1;
             if (i >= argv.len) {
-                _ = try usage(w, "--input needs vim or standard");
+                _ = try usage(w, null, "--input needs vim or standard");
                 return error.Usage;
             }
             value = argv[i];
@@ -139,7 +139,7 @@ fn parseInputFlag(argv: []const [:0]const u8, w: *Io.Writer) !?input.Style {
         } else if (std.mem.eql(u8, v, "standard")) {
             style = .standard;
         } else {
-            _ = try usage(w, "--input needs vim or standard");
+            _ = try usage(w, null, "--input needs vim or standard");
             return error.Usage;
         }
     }
@@ -232,13 +232,13 @@ fn profileSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv
             force = true;
         } else if (std.mem.eql(u8, a, "--from")) {
             i += 1;
-            if (i >= argv.len) return usage(w, "profile seed --from needs stable or a directory");
+            if (i >= argv.len) return usage(w, "profile", "profile seed --from needs stable or a directory");
             from = argv[i];
         } else if (std.mem.startsWith(u8, a, "--from=")) {
             from = a["--from=".len..];
         } else if (std.mem.eql(u8, a, profile.flag) or std.mem.startsWith(u8, a, profile.flag ++ "=")) {
             if (std.mem.eql(u8, a, profile.flag)) i += 1; // already in the environment
-        } else return usage(w, "mnml profile [seed [--from stable|DIR] [--force]]");
+        } else return usage(w, "profile", "mnml profile [seed [--from stable|DIR] [--force]]");
     }
 
     if (!seed_it) {
@@ -331,7 +331,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         if (st.kind == .directory and workspace == null) workspace = a else try files.append(arena, a);
     }
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, "workspace is not a directory");
+    const ws_len = Io.Dir.cwd().realPathFile(io, workspace orelse ".", &cwd_buf) catch return usage(w, null, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws_len];
     {
         const plain = try arena.alloc([]const u8, argv.len);
@@ -349,7 +349,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         .note = startup.note,
     };
     const code = loop.run(gpa, io, env, cfg) catch |err| switch (err) {
-        error.NotATty => return usage(w, "stdout is not a terminal (use --headless)"),
+        error.NotATty => return usage(w, null, "stdout is not a terminal (use --headless)"),
         else => return err,
     };
     if (code == restart_code and env.get("MNML_RUN_LOOP") == null) relaunchSelf(io, arena, argv);
@@ -503,13 +503,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             gate = true;
         } else if (std.mem.eql(u8, a, "--filter")) {
             i += 1;
-            if (i >= argv.len) return usage(w, "--filter needs a name");
+            if (i >= argv.len) return usage(w, "test", "--filter needs a name");
             name_filter = argv[i];
         } else if (std.mem.startsWith(u8, a, "--filter=")) {
             name_filter = a["--filter=".len..];
         } else if (std.mem.eql(u8, a, "--skip")) {
             i += 1;
-            if (i >= argv.len) return usage(w, "--skip needs a name");
+            if (i >= argv.len) return usage(w, "test", "--skip needs a name");
             try skips.append(gpa, argv[i]);
         } else if (std.mem.startsWith(u8, a, "--skip=")) {
             try skips.append(gpa, a["--skip=".len..]);
@@ -523,10 +523,10 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             use_stub = true;
         } else if (std.mem.eql(u8, a, "--sizes")) {
             i += 1;
-            if (i >= argv.len) return usage(w, "--sizes needs a list like 80x24,120x40 (or `ladder`)");
-            if (!(try appendSizes(gpa, &sizes, argv[i]))) return usage(w, "bad size (want WxH, or `ladder`)");
+            if (i >= argv.len) return usage(w, "test", "--sizes needs a list like 80x24,120x40 (or `ladder`)");
+            if (!(try appendSizes(gpa, &sizes, argv[i]))) return usage(w, "test", "bad size (want WxH, or `ladder`)");
         } else if (std.mem.startsWith(u8, a, "--sizes=")) {
-            if (!(try appendSizes(gpa, &sizes, a["--sizes=".len..]))) return usage(w, "bad size (want WxH, or `ladder`)");
+            if (!(try appendSizes(gpa, &sizes, a["--sizes=".len..]))) return usage(w, "test", "bad size (want WxH, or `ladder`)");
         } else if (a.len > 0 and a[0] == '-') {
             // Unknown flags are ignored, as the Rust runner ignores them.
         } else try paths.append(gpa, a);
@@ -538,7 +538,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         gate_paths.deinit(gpa);
     }
     if (gate) {
-        const list = Io.Dir.cwd().readFileAlloc(io, "tools/gate.txt", gpa, .unlimited) catch return usage(w, "--gate needs tools/gate.txt");
+        const list = Io.Dir.cwd().readFileAlloc(io, "tools/gate.txt", gpa, .unlimited) catch return usage(w, "test", "--gate needs tools/gate.txt");
         defer gpa.free(list);
         var lines = std.mem.splitScalar(u8, list, '\n');
         while (lines.next()) |raw| {
@@ -827,10 +827,23 @@ fn parseSize(tok: []const u8) ?e2e.Size {
     return .{ .cols = cols, .rows = rows };
 }
 
-fn usage(w: *Io.Writer, msg: []const u8) !u8 {
-    try w.print("mnml-zig test: {s}\n", .{msg});
+/// A usage error on stdout, prefixed by the subcommand it came from —
+/// `mnml-zig test: …`, `mnml-zig profile: …` — or by the app alone
+/// (`mnml-zig: stdout is not a terminal …`) when `verb` is null.
+fn usage(w: *Io.Writer, verb: ?[]const u8, msg: []const u8) !u8 {
+    if (verb) |v| try w.print("mnml-zig {s}: {s}\n", .{ v, msg }) else try w.print("mnml-zig: {s}\n", .{msg});
     try w.flush();
     return 2;
+}
+
+test "usage names the subcommand it came from, and only the app when there is none" {
+    var buf: [128]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    try std.testing.expectEqual(@as(u8, 2), try usage(&w, null, "stdout is not a terminal (use --headless)"));
+    try std.testing.expectEqualStrings("mnml-zig: stdout is not a terminal (use --headless)\n", w.buffered());
+    w = .fixed(&buf);
+    _ = try usage(&w, "test", "--filter needs a name");
+    try std.testing.expectEqualStrings("mnml-zig test: --filter needs a name\n", w.buffered());
 }
 
 /// Parse every file and report; the way to validate the corpus before
@@ -902,7 +915,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     }
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
     const ws_rel = workspace orelse ".";
-    const ws = Io.Dir.cwd().realPathFile(io, ws_rel, &cwd_buf) catch return usage(w, "workspace is not a directory");
+    const ws = Io.Dir.cwd().realPathFile(io, ws_rel, &cwd_buf) catch return usage(w, null, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws];
 
     const size = headless.sizeFromEnv(env.get("MNML_COLS"), env.get("MNML_ROWS"));

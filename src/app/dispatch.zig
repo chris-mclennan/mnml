@@ -725,6 +725,8 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     const trigger = before_mode == .insert and isAbbrevTrigger(k);
     const was_recording = e.buf.isRecording();
     const wrap_width = try beforeBufferInput(app, e);
+    const doc_before = e.buf.doc;
+    const lines_before = e.buf.editor.lineCount();
 
     const ev = try e.buf.feedKey(k, &app.clipboard, app.pane_rows, wrap_width, arena);
     if (e.buf.jumped) jumplist.noteJumpMotion(app);
@@ -765,11 +767,40 @@ fn feedEditor(app: *App, pane_id: PaneId, e: *EditorPane, k: Key) Allocator.Erro
     // The pane mirrors the editor's block anchor for the `I` / `A` / `c`
     // / `r` app commands, which arrive after the handler has already
     // left V-BLOCK.
+    // vim's `'report'`: a key that changed the line count by more than
+    // `editor.report` lines says so — a delete, a put, an undo, an ex
+    // command — unless it was typed in Insert.
+    if (app.input_style == .vim and still.buf.doc == doc_before and before_mode != .insert and before_mode != .replace) {
+        if (lineReport(arena, lines_before, still.buf.editor.lineCount(), app.cfg.editor.report)) |msg| app.toast("{s}", .{msg});
+    }
     const after_mode = still.buf.input.mode();
     if (after_mode == .visual_block and before_mode != .visual_block) still.block_anchor = still.buf.editor.block_anchor orelse still.buf.editor.cursor;
     if (after_mode != .visual_block) still.block_anchor = null;
     try finishDeferredInserts(app);
     return true;
+}
+
+/// Neovim's line-count message (`:help 'report'`): `3 fewer lines` /
+/// `3 more lines` when the count moved by more than `report`, else
+/// null. Frame arena.
+pub fn lineReport(arena: Allocator, before: usize, after: usize, report: u16) ?[]const u8 {
+    const n = if (after > before) after - before else before - after;
+    if (n <= report) return null;
+    // Neovim's `msgmore`: one line is `1 more line` / `1 line less`.
+    if (n == 1) return if (after > before) "1 more line" else "1 line less";
+    return std.fmt.allocPrint(arena, "{d} {s} lines", .{ n, if (after > before) "more" else "fewer" }) catch null;
+}
+
+test "lineReport: more than `report` lines, in Neovim's words" {
+    var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer a.deinit();
+    const ar = a.allocator();
+    try std.testing.expect(lineReport(ar, 8, 6, 2) == null);
+    try std.testing.expectEqualStrings("3 fewer lines", lineReport(ar, 8, 5, 2).?);
+    try std.testing.expectEqualStrings("3 more lines", lineReport(ar, 5, 8, 2).?);
+    try std.testing.expect(lineReport(ar, 5, 8, 3) == null);
+    try std.testing.expectEqualStrings("1 line less", lineReport(ar, 2, 1, 0).?);
+    try std.testing.expectEqualStrings("1 more line", lineReport(ar, 1, 2, 0).?);
 }
 
 /// What the buffer needs from the app before a key or a runner's app
@@ -1897,7 +1928,7 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
         .consumed, .focus_toggle => {},
         .ignored => try widgetFallthrough(app, k),
         .toggle_regex, .toggle_case, .toggle_word => try cmd_find.liveUpdate(app),
-        .cancel => app.closeFindBar(true),
+        .cancel => try cmd_find.cancelFromBar(app),
         .changed => {
             if (app.input_style == .vim) find_history.endWalk(app);
             try cmd_find.liveUpdate(app);
@@ -3933,6 +3964,10 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .cmdline_paste_from_clipboard => try cmdlineInsert(app, e, app.clipboard.text()),
         .flash_start => |f| try flash.start(app, pane_id, e, f.a, f.b),
         .tab_page => |tp| cmd_tab.gotoPage(app, tp.count, tp.back),
+        .find_step => |fs| {
+            const d: i32 = @intCast(@min(fs.count, std.math.maxInt(i32)));
+            try cmd_find.stepFind(app, if (fs.forward) d else -d);
+        },
         .split_resize => |r| cmd_view.resizeByCells(app, r.width, r.cells) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},

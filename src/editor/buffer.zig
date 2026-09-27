@@ -452,6 +452,7 @@ pub const Buffer = struct {
         // this key's own snapshot lands.
         const undo_before = self.editor.doc.history.undoLen();
         const cursor_before = self.editor.cursor;
+        const mode_before = self.input.mode();
         self.syncInsertSession(undo_before);
         self.key_failed = false;
         self.jumped = false;
@@ -467,7 +468,7 @@ pub const Buffer = struct {
             .ignored => .{ .unhandled = key },
             .app => |cmd| try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
-        self.stampUndoCursor(undo_before, cursor_before);
+        self.stampUndoCursor(undo_before, cursor_before, mode_before);
         self.syncInsertSession(undo_before);
         if (result == .ops) self.clampMotionOffPhantom(result.ops, cursor_before);
         self.clampNormalCursor();
@@ -498,14 +499,19 @@ pub const Buffer = struct {
     }
 
     /// The undo entry a key pushed remembers where the change began:
-    /// the cursor the key started from, or the first changed byte when
+    /// the cursor the key started from, or the start of the change when
     /// that lies before it — vim's `uh_cursor` is taken after an operator
-    /// has moved to its area's start (`vim -es`: `Vjygvdu` → 1:1 though
-    /// `gv` left the cursor on line 2) — not where the op's own
-    /// checkpoint found it after the handler's motions. So `u` after
-    /// `3>>`, `dd` or `gvd` lands where the change began
+    /// has moved to its area's start — not where the op's own checkpoint
+    /// found it after the handler's motions. A linewise change, or one a
+    /// Normal-mode operator made on lines above (`Vjygvdu` → 1:1 though
+    /// `gv` left the cursor on line 2), begins at its first line's start;
+    /// a charwise one at its first changed character (Neovim 0.12.5:
+    /// `viwpu`, `$dbu`, `wvjdu` put the cursor on the area's first
+    /// character). An Insert session keeps the cursor Insert began at
+    /// (`$i<BS><BS>zz<Esc>u` → back on the `x`). So `u` after `3>>`,
+    /// `dd`, `gvd` or `viwp` lands where the change began
     /// (`undo.placeAfterHistoryHop`).
-    fn stampUndoCursor(self: *Buffer, undo_before: usize, cursor_before: usize) void {
+    fn stampUndoCursor(self: *Buffer, undo_before: usize, cursor_before: usize, mode_before: input.EditingMode) void {
         const h = &self.editor.doc.history;
         if (h.undoLen() <= undo_before) return;
         var at = cursor_before;
@@ -525,7 +531,13 @@ pub const Buffer = struct {
             const changed = if (prefix < old_len and old.at(prefix) == '\n') prefix + 1 else prefix;
             const changed_line_start = if (old.lastIndexOfScalar(changed, '\n')) |i| i + 1 else 0;
             const cursor_line_start = if (old.lastIndexOfScalar(cursor_before, '\n')) |i| i + 1 else 0;
-            if (changed_line_start < cursor_line_start) at = changed_line_start;
+            const typing = mode_before == .insert or mode_before == .replace or mode_before == .none;
+            const linewise = mode_before == .visual_line;
+            const charwise = mode_before == .visual or mode_before == .visual_block or
+                (!typing and changed_line_start == cursor_line_start);
+            if (!typing and !linewise and charwise and changed < cursor_before) {
+                at = @min(changed, now.len);
+            } else if (changed_line_start < cursor_line_start) at = changed_line_start;
         }
         h.setUndoCursor(undo_before, at);
     }
@@ -1141,11 +1153,12 @@ pub const Buffer = struct {
         if (self.doc.read_only) return .noop;
         const undo_before = self.editor.doc.history.undoLen();
         const cursor_before = self.editor.cursor;
+        const mode_before = self.input.mode();
         const ev = switch (cmd) {
             .macro_record_into => |reg| try self.macroToggle(reg, clip, false),
             else => try self.handleApp(cmd, clip, viewport_rows, wrap_width, arena),
         };
-        self.stampUndoCursor(undo_before, cursor_before);
+        self.stampUndoCursor(undo_before, cursor_before, mode_before);
         self.clampNormalCursor();
         return ev;
     }
@@ -1728,6 +1741,21 @@ test "vim undo, redo, dot-repeat" {
     try vim("Vjdj.", "|a\nb\nc\nd\ne\nf", "c\n|f");
     try vim("Vjd.", "|alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\n", "|echo\nfoxtrot\n");
     try vim("<c-v>jld.", "|abcd\nefgh\nijkl\nmnop", "|\n\nijkl\nmnop");
+    // `u` puts the cursor where the change began, not where the key
+    // left it (Neovim 0.12.5, `foo barbaz qux`): a Visual op from its
+    // area's start, a backward operator from the motion's end — but an
+    // Insert session from where Insert began.
+    const s = "|foo barbaz qux\nline two";
+    try vim("yiwwviwpu", s, "foo |barbaz qux\nline two");
+    try vim("yiwwvlllpu", s, "foo |barbaz qux\nline two");
+    try vim("wwvhhhdu", s, "foo barb|az qux\nline two");
+    try vim("$vbdu", s, "foo barbaz |qux\nline two");
+    try vim("wvjdu", s, "foo |barbaz qux\nline two");
+    try vim("jwvkdu", s, "foo b|arbaz qux\nline two");
+    try vim("$dbu", s, "foo barbaz |qux\nline two");
+    try vim("$Xu", s, "foo barbaz q|ux\nline two");
+    try vim("$i<bs><bs>zz<esc>u", s, "foo barbaz qu|x\nline two");
+    try vim("A<bs><bs><esc>u", s, "foo barbaz qu|x\nline two");
 }
 
 test "closed folds are one line to j / k and to dd / yy" {
@@ -2004,7 +2032,9 @@ test "vim surround: ys over motions and objects, yss, visual S, ds, cs" {
     try vim("cst\"", "<b>h|i</b>", "|\"hi\"");
     try vim("cs\"x", "\"a|b\"", "\"a|b\""); // not a pair char
     try vim("cs\"<esc>x", "\"a|b\"", "\"a|\""); // Esc cancels
-    try vim("ds\"u", "x \"a |b\" y", "x \"a |b\" y"); // one undo step
+    // One undo step, landing where the change began — the opening
+    // quote, as `u` after any charwise operator (NvChad has no `ds`).
+    try vim("ds\"u", "x \"a |b\" y", "x |\"a b\" y");
 }
 
 test "vim ctrl+a / ctrl+x, gA align, gq reflow" {

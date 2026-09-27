@@ -1,0 +1,37 @@
+# A count on n / N steps that many matches, alone or as an operator's
+# motion (Neovim 0.12.5 on "a foo b foo c foo d" after /foo<CR>: 0 2n
+# -> 1:9; 0 d2n -> "foo c foo d"; $ d2N -> "a foo b d"; 0 d5n wraps
+# round the three matches -> "foo c foo d"). mnml dropped the count:
+# 2n went to the first match and d2n deleted to it.
+write f.txt "a foo b foo c foo d\n"
+open f.txt
+command editor.use_vim
+key /
+type foo
+key enter
+key 0
+key 2
+key n
+expect status contains "\"cursor\":{\"line\":1,\"col\":9}"
+key 0
+key d
+key 2
+key n
+ex w
+expect file f.txt contains "foo c foo d\n"
+expect file f.txt lacks "b"
+key u
+key $
+key d
+key 2
+key N
+ex w
+expect file f.txt contains "a foo b d\n"
+key u
+key 0
+key d
+key 5
+key n
+ex w
+expect file f.txt contains "foo c foo d\n"
+expect file f.txt lacks "b"
