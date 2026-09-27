@@ -1,0 +1,26 @@
+# A config change of `editor.tab_width` moves the width in a buffer
+# that took the config's, and not in one whose `.editorconfig` named
+# one or that `:setlocal` gave its own. The runner never loads config
+# files, so this changes it with `:set ts` — the same
+# `App.syncBufferPrefs` a reload runs (its unit test in `app.zig`
+# reloads a workspace config). The tab opens with an indent guide
+# (`│`); the letter lands at the width.
+write .editorconfig "[*.mk]\ntab_width = 6\n"
+write a.txt "\tA\n"
+write b.txt "\tB\n"
+write c.mk "\tC\n"
+open c.mk
+expect screen contains "1 │     C"
+open a.txt
+expect screen contains "1 │   A"
+open b.txt
+ex setlocal ts=2
+expect screen contains "1 │ B"
+ex set ts=8
+expect screen contains "1 │ B"
+open a.txt
+expect screen contains "1 │       A"
+open c.mk
+expect screen contains "1 │     C"
+open b.txt
+expect screen contains "1 │ B"

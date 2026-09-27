@@ -22,8 +22,7 @@ shell mkdir -p zdot && printf '%s\n' 'unset HISTFILE' 'setopt prompt_subst' 'n=0
 command view.toggle_tree
 command term.shell_right
 expect within 5000 screen contains "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij"
-# The pane's first frame resizes it once already (its size before the
-# frame is a guess), so start the count over on a clean screen.
+# Start the count over on a clean screen, with the prompt drawn once.
 type "n=0; clear"
 key enter
 wait 500

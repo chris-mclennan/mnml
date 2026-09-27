@@ -1,0 +1,30 @@
+# width: 120
+# height: 40
+# env: SHELL=${MNML_E2E_WORKSPACE}/bin/zsh
+# env: HOME=${MNML_E2E_WORKSPACE}/zdot
+# env: ZDOTDIR=${MNML_E2E_WORKSPACE}/zdot
+# A shell opened in a split starts at the size the split gives it, so
+# the first frame resizes nothing and its first prompt is on the pane's
+# first row. zsh ends every command's output with an end-of-line mark
+# padded to the width it was told (PROMPT_SP); a child spawned a column
+# too wide and resized as it prints wraps that padding, and the mark is
+# left on a row of its own above the prompt.
+#
+# `bin/zsh` notes the size the pty had when it started (before any
+# frame could resize it) and hands over to the real zsh. The mark is
+# spelled out so it can be looked for; the editor's first line shares
+# the prompt's row only if the prompt is on the pane's first.
+shell mkdir -p zdot bin && printf '%s\n' '#!/bin/sh' 'stty size > "$HOME/born"' 'exec /bin/zsh "$@"' > bin/zsh && chmod +x bin/zsh
+shell printf '%s\n' 'unset HISTFILE' 'PROMPT_EOL_MARK=EOLMARK' 'PROMPT="ready> "' > zdot/.zshrc
+write a.txt "top-line\n"
+open a.txt
+command term.shell_right
+expect within 5000 screen contains "ready> "
+# The editor's 44 columns less the divider, less the rail; the
+# body's 37 rows less the strip.
+expect file zdot/born contains "36 43"
+expect screen contains "top-line                               │▌ready> "
+expect screen lacks "EOLMARK"
+wait 500
+expect screen contains "top-line                               │▌ready> "
+expect screen lacks "EOLMARK"

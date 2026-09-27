@@ -175,6 +175,20 @@ pub fn commentTokenFor(ext: ?[]const u8) [2][]const u8 {
     return .{ "", "" };
 }
 
+/// Who set a per-document preference: the config (it follows the
+/// config), the file's `.editorconfig`, or `:setlocal` (both explicit).
+pub const PrefSource = enum { config, editorconfig, local };
+
+/// `Document.pref_source`, per preference. `tab_width` covers the
+/// indent too (`tab_width`, `indent_unit`), which a config seeds from
+/// the one `editor.tab_width`.
+pub const PrefSources = struct {
+    tab_width: PrefSource = .config,
+    auto_indent: PrefSource = .config,
+    trim_trailing_ws_on_save: PrefSource = .config,
+    ensure_trailing_newline: PrefSource = .config,
+};
+
 pub const Document = struct {
     gpa: Allocator,
     text: std.ArrayList(u8) = .empty,
@@ -244,6 +258,12 @@ pub const Document = struct {
     /// `indent_unit` / `use_tabs` rather than what the text looks like
     /// (`editor/indent.zig`).
     indent_pinned: bool = false,
+    /// Where this document's copy of each `editor.*` preference came
+    /// from. A config change (a reload, `:set`, a Settings row, the
+    /// indent chip — `App.syncBufferPrefs`) copies the config's value
+    /// into a pref at `.config` only: one the file's `.editorconfig`
+    /// named is re-read from it, and one `:setlocal` set is left alone.
+    pref_source: PrefSources = .{},
     /// The file's mtime + size when it was last read or written; the
     /// watcher compares against it. Null for a scratch document.
     disk: ?DiskStamp = null,

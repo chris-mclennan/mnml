@@ -267,7 +267,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.pty_cursor.unfocused", .label = "Terminal cursor, other panes", .section = .ui, .scope = .home },
     .{ .path = "ui.pty_cursor.blink", .label = "Terminal cursor blinks", .section = .ui, .scope = .home },
     // Read when a shell pane starts (`app/shell_integration.zig`).
-    .{ .path = "terminal.shell_integration", .label = "Shell integration (zsh)", .section = .ui, .scope = .home },
+    .{ .path = "terminal.shell_integration", .label = "Shell integration", .section = .ui, .scope = .home },
     .{ .path = "ui.pane_rail", .label = "Pane colour rail", .section = .ui, .scope = .home },
     .{ .path = "ui.welcome", .label = "Welcome screen", .section = .ui, .scope = .home },
     // How the focused pane and section are marked (`ui/focus_cue.zig`).
@@ -1029,10 +1029,7 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
         side.reseed(app);
         if (app.overlay != .none) app.focus = .overlay;
     } else if (comptime std.mem.eql(u8, path, "editor.tab_width")) {
-        for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-            .editor => |*e| e.buf.setInputStyle(app.input_style, app.editorConfig()),
-            else => {},
-        };
+        try app.syncBufferPrefs();
     }
 }
 

@@ -1,0 +1,40 @@
+# width: 120
+# height: 40
+# env: SHELL=/bin/bash
+# env: HOME=${MNML_E2E_WORKSPACE}/bdot
+# env: BASH_SILENCE_DEPRECATION_WARNING=1
+# bash's twin of pty_resize_prompt_marks: a three-line prompt with no
+# marks of its own keeps all three lines on screen when its pane is
+# narrowed by two splits. The pane's shell integration marks the
+# prompt `133;A;redraw=last` — on SIGWINCH readline redraws only the
+# prompt's LAST line, so that is the one row the terminal blanks before
+# the reflow; the rows above reflow as text. A mark that said the whole
+# prompt is redrawn would blank `top-row` and the long line, and bash
+# would never draw them again.
+#
+# Only the first shell wears the long prompt (the login file notes it);
+# the ones the splits open get a short prompt of their own.
+shell mkdir -p bdot && printf '%s\n' 'unset HISTFILE' 'if [ ! -e ~/first ]; then : > ~/first' "  PS1='top-row\\n0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij\\n> '" "else PS1='other> '; fi" > bdot/.bash_profile
+command view.toggle_tree
+command term.shell_right
+expect within 5000 screen contains "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij"
+type "clear"
+key enter
+wait 500
+expect within 3000 screen contains "▌top-row"
+
+# The first split: 118 columns to 59, the long line now two rows.
+command term.shell_right
+expect within 5000 screen contains "other> "
+expect within 2000 screen contains "▌top-row"
+expect screen contains "▌0123456789abcdefghij0123456789abcdefghij0123456789abcdefghi│"
+expect screen contains "▌j0123456789abcdefghij "
+expect screen contains "▌> "
+
+# The second: 59 to 38, three rows.
+command term.shell_right
+expect within 5000 screen contains "▌0123456789abcdefghij0123456789abcdefgh│"
+expect screen contains "▌top-row"
+expect screen contains "▌ij0123456789abcdefghij0123456789abcdef│"
+expect screen contains "▌ghij "
+expect screen contains "▌> "

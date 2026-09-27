@@ -349,18 +349,28 @@ pub const Buffer = struct {
     }
 
     /// What a `.editorconfig` said about this file, over the config's
-    /// defaults already on the buffer. Unset keys leave things alone.
+    /// defaults already on the buffer. Unset keys leave things alone,
+    /// and so does a key whose pref `:setlocal` set; a key it names
+    /// marks the pref as the file's (`Document.pref_source`).
     pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
-        if (r.indent_style != null or r.indentUnit() != null) {
+        const src = &self.doc.pref_source;
+        if ((r.indent_style != null or r.indentUnit() != null) and src.tab_width != .local) {
             const use_tabs = if (r.indent_style) |s| s == .tab else self.doc.use_tabs;
             const unit = r.indentUnit() orelse self.doc.tab_width;
             const display = r.tabDisplayWidth() orelse self.doc.tab_width;
             self.setIndent(display, unit, use_tabs);
             self.doc.indent_pinned = true;
+            src.tab_width = .editorconfig;
         }
         if (r.end_of_line) |e| self.doc.eol = e;
-        if (r.trim_trailing_whitespace) |v| self.doc.trim_trailing_ws_on_save = v;
-        if (r.insert_final_newline) |v| self.doc.ensure_trailing_newline = v;
+        if (r.trim_trailing_whitespace) |v| if (src.trim_trailing_ws_on_save != .local) {
+            self.doc.trim_trailing_ws_on_save = v;
+            src.trim_trailing_ws_on_save = .editorconfig;
+        };
+        if (r.insert_final_newline) |v| if (src.ensure_trailing_newline != .local) {
+            self.doc.ensure_trailing_newline = v;
+            src.ensure_trailing_newline = .editorconfig;
+        };
     }
 
     /// Append the missing final `\n` as one undoable edit. The cursor,

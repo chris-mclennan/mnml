@@ -37,3 +37,9 @@ pub const zsh_integration = .{
     .zshenv = @embedFile("shell-integration/zsh/zshenv"),
     .script = @embedFile("shell-integration/zsh/mnml-integration.zsh"),
 };
+pub const bash_integration = .{
+    .init = @embedFile("shell-integration/bash/mnml.bash"),
+};
+pub const fish_integration = .{
+    .init = @embedFile("shell-integration/fish/mnml.fish"),
+};

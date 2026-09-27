@@ -47,6 +47,12 @@ pub const Options = struct {
 
 /// Run until the app quits. Returns the exit code: 75 for a restart.
 pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options) !u8 {
+    // The config is the App's from `App.initWith` on (which frees it on
+    // its own failure too); an exit before that — no terminal to take —
+    // frees it here.
+    var loaded = opts.loaded;
+    var handed = false;
+    errdefer if (!handed) loaded.deinit();
     // Term is intrusive (its writer buffers into itself); heap it so it
     // never moves.
     const term = try gpa.create(Term);
@@ -77,9 +83,10 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     }
 
     const size = term.screen();
+    handed = true;
     var app = try App.initWith(gpa, io, .{
-        .cfg = opts.loaded.config,
-        .loaded = opts.loaded,
+        .cfg = loaded.config,
+        .loaded = loaded,
         .workspace = opts.workspace,
         .data_root = opts.data_root,
         .cols = size.width,
@@ -570,4 +577,24 @@ test "with allow_input the live loop's input lines MOVE the App: a key opens the
 
     // Nothing here was answered "not in this build".
     for (app.toasts.items) |ts| try t.expect(std.mem.indexOf(u8, ts.text, "not in this build") == null);
+}
+
+test "no terminal to take: the run refuses with NotATty and frees the config it was handed" {
+    // Only where stdout is not a terminal — `zig build unit` hands the
+    // test binary a pipe; run by hand in a terminal this would take it.
+    if (try std.Io.File.stdout().isTty(t.io)) return error.SkipZigTest;
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    // A workspace layer, so the loader's arena holds strings of its own.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .ui = .{ .theme = \"onedark\" } }" });
+    const loaded = try config.load.load(t.allocator, t.io, .{ .workspace = ws, .env = .{ .vars = &vars } });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    // The testing allocator fails the test on anything left behind.
+    try t.expectError(error.NotATty, run(t.allocator, t.io, &env, .{ .loaded = loaded, .workspace = ws }));
 }

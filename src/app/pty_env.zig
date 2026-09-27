@@ -26,9 +26,13 @@ const shell_integration = @import("shell_integration.zig");
 pub const prompt_script = @import("themes").prompt_script;
 pub const prompt_file = "prompt.sh";
 
+pub const Launch = shell_integration.Launch;
+
 /// The child's environment: the app's, the pane's `extra` `KEY=VALUE`
-/// lines over it, and the variables above. The caller owns the map.
-pub fn build(app: *App, extra: []const []const u8, shell: bool) Allocator.Error!std.process.Environ.Map {
+/// lines over it, and the variables above. `shell` is non-null for a
+/// shell, and gets how to start it (the integration's handoff; its
+/// strings are on the frame arena). The caller owns the map.
+pub fn build(app: *App, extra: []const []const u8, shell: ?*Launch) Allocator.Error!std.process.Environ.Map {
     var env = try app.env.clone(app.gpa);
     errdefer env.deinit();
     try env.put("MNML_PANE", "1");
@@ -37,9 +41,9 @@ pub fn build(app: *App, extra: []const []const u8, shell: bool) Allocator.Error!
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try env.put(kv[0..eq], kv[eq + 1 ..]);
     }
-    if (shell) {
+    if (shell) |launch| {
         try putPrompt(app, &env);
-        try shell_integration.apply(app.io, app.frame.allocator(), &env, app.data_root, app.cfg.terminal.shell_integration);
+        launch.* = try shell_integration.apply(app.io, app.frame.allocator(), &env, app.data_root, app.cfg.terminal.shell_integration);
     }
     return env;
 }
@@ -96,14 +100,15 @@ const t = std.testing;
 test "every child gets MNML_PANE and the workspace; a shell also gets the prompt's colours, and the script once there is a data root" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
     defer app.deinit();
-    var cmd = try build(&app, &.{"MNML_WORKSPACE=/tmp/worktree"}, false);
+    var cmd = try build(&app, &.{"MNML_WORKSPACE=/tmp/worktree"}, null);
     defer cmd.deinit();
     try t.expectEqualStrings("1", cmd.get("MNML_PANE").?);
     // A session worktree's own workspace wins over the app's.
     try t.expectEqualStrings("/tmp/worktree", cmd.get("MNML_WORKSPACE").?);
     try t.expect(cmd.get("MNML_PROMPT_BG") == null);
 
-    var sh = try build(&app, &.{}, true);
+    var launch: Launch = .{};
+    var sh = try build(&app, &.{}, &launch);
     defer sh.deinit();
     try t.expectEqualStrings("/tmp", sh.get("MNML_WORKSPACE").?);
     try t.expectEqualStrings("mnml", sh.get("MNML_CONTEXT").?);
@@ -121,7 +126,7 @@ test "every child gets MNML_PANE and the workspace; a shell also gets the prompt
     const old = app.data_root;
     app.data_root = root;
     defer app.data_root = old;
-    var sh2 = try build(&app, &.{}, true);
+    var sh2 = try build(&app, &.{}, &launch);
     defer sh2.deinit();
     const path = sh2.get("MNML_PROMPT_SCRIPT").?;
     const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(1024 * 1024));

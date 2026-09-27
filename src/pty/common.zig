@@ -70,6 +70,22 @@ pub const Exit = union(enum) {
     }
 };
 
+/// What `Handler.effects.device_attributes` returns — the library's
+/// `device_attributes.Attributes`, which it does not export by name.
+const DeviceAttributes = blk: {
+    const field = @FieldType(vt.TerminalStream.Handler.Effects, "device_attributes");
+    const func = @typeInfo(@typeInfo(field).optional.child).pointer.child;
+    break :blk @typeInfo(func).@"fn".return_type.?;
+};
+
+/// The answer to a device-attributes query (`CSI c`, `CSI > c`,
+/// `CSI = c`): the library's defaults, a VT220 with ANSI colour. Without
+/// one a child that waits for it — fish 4 does, at every start — stalls
+/// until it gives up (ten seconds for fish).
+pub fn deviceAttributes(_: *vt.TerminalStream.Handler) DeviceAttributes {
+    return .{};
+}
+
 /// The terminal half of `Session.resize`, shared by both backends. The
 /// pty is sized first and the grid second, as ghostty orders it; what
 /// this adds is the part of ghostty's resize the library mnml pins no

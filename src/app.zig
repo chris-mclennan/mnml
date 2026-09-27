@@ -2471,26 +2471,41 @@ pub const App = struct {
     /// a markdown file gets the editor AND a preview split beside it.
     /// `editor.auto_indent` changed (`:set ai`, the settings row): every
     /// open buffer follows.
-    /// The per-buffer copies of `editor.auto_indent`, `auto_pair`,
+    /// The per-buffer copies of `editor.tab_width`, `auto_indent`, `auto_pair`,
     /// `trim_trailing_ws_on_save` and `ensure_trailing_newline` follow
-    /// the config when it changes (`:set`, Settings, a reload), so the
-    /// file already open obeys the toast — a file's `.editorconfig`
-    /// still has the last word on the two save-time rules.
+    /// the config when it changes (a reload, `:set`, Settings, the
+    /// indent chip), so the file already open obeys the toast — except
+    /// where the buffer's own value is explicit (`Document.pref_source`):
+    /// a file's `.editorconfig` is read again and keeps the last word on
+    /// what it names, and a `:setlocal` value is left as it is.
     pub fn syncBufferPrefs(self: *App) Allocator.Error!void {
         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
         defer arena_state.deinit();
+        const c = self.cfg.editor;
         for (self.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
             .editor => |*e| {
                 const doc = e.buf.doc;
-                doc.auto_indent = self.cfg.editor.auto_indent;
-                doc.auto_pair = self.cfg.editor.auto_pair;
-                doc.trim_trailing_ws_on_save = self.cfg.editor.trim_trailing_ws_on_save;
-                doc.ensure_trailing_newline = self.cfg.editor.ensure_trailing_newline;
+                const src = &doc.pref_source;
+                if (src.auto_indent != .local) doc.auto_indent = c.auto_indent;
+                doc.auto_pair = c.auto_pair;
+                if (src.trim_trailing_ws_on_save != .local) {
+                    doc.trim_trailing_ws_on_save = c.trim_trailing_ws_on_save;
+                    src.trim_trailing_ws_on_save = .config;
+                }
+                if (src.ensure_trailing_newline != .local) {
+                    doc.ensure_trailing_newline = c.ensure_trailing_newline;
+                    src.ensure_trailing_newline = .config;
+                }
+                // The indent as a fresh open seeds it: both widths from
+                // the one config value.
+                if (src.tab_width != .local) {
+                    e.buf.setIndent(c.tab_width, c.tab_width, doc.use_tabs);
+                    doc.indent_pinned = false;
+                    src.tab_width = .config;
+                }
                 const path = doc.path orelse continue;
                 _ = arena_state.reset(.retain_capacity);
-                const r = try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace);
-                if (r.trim_trailing_whitespace) |v| doc.trim_trailing_ws_on_save = v;
-                if (r.insert_final_newline) |v| doc.ensure_trailing_newline = v;
+                e.buf.applyEditorconfig(try editorconfig.resolveFor(self.io, arena_state.allocator(), path, self.workspace));
             },
             else => {},
         };
@@ -4028,6 +4043,67 @@ test "a command's next run replaces its last run's toast, the new text in the ne
     app.toast("free one", .{});
     app.toast("free two", .{});
     try t.expectEqual(@as(usize, 6), app.toasts.items.len);
+}
+
+test "a config reload moves tab_width in a buffer that took the config's, not in one whose .editorconfig or :setlocal set it" {
+    const t = std.testing;
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try t.allocator.dupe(u8, pbuf[0..try tmp.dir.realPath(t.io, &pbuf)]);
+    defer t.allocator.free(root);
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .editor = .{ .tab_width = 2 } }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".editorconfig", .data = "[*.mk]\nindent_size = 8\n" });
+    for ([_][]const u8{ "plain.txt", "build.mk", "local.txt" }) |f| try tmp.dir.writeFile(t.io, .{ .sub_path = f, .data = "\tx\n" });
+    var loaded = try config.load.load(t.allocator, t.io, .{ .workspace = root, .env = .{ .vars = &vars } });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = root, .cols = 60, .rows = 12 });
+    loaded = undefined; // the app owns it now
+    defer app.deinit();
+
+    const doc_mod = @import("editor/document.zig");
+    const docOf = struct {
+        fn f(a: *App, name: []const u8) !*doc_mod.Document {
+            const path = try std.fs.path.join(a.frame.allocator(), &.{ a.workspace, name });
+            const id = a.panes.findPath(path) orelse return error.TestUnexpectedResult;
+            return a.panes.editor(id).?.buf.doc;
+        }
+    }.f;
+    for ([_][]const u8{ "plain.txt", "build.mk", "local.txt" }) |f| {
+        const path = try std.fs.path.join(app.frame.allocator(), &.{ root, f });
+        _ = try app.openEditor(path);
+    }
+    // The three sources at open: the config's 2, the file's 8, and
+    // `:setlocal`'s 6 over the config's.
+    try dispatch.runExLine(&app, "setlocal ts=6 sw=6");
+    const plain = try docOf(&app, "plain.txt");
+    const mk = try docOf(&app, "build.mk");
+    const local = try docOf(&app, "local.txt");
+    try t.expectEqual(@as(usize, 2), plain.tab_width);
+    try t.expectEqual(@as(usize, 8), mk.indent_unit);
+    try t.expectEqual(@as(usize, 6), local.tab_width);
+    try t.expectEqual(@as(usize, 6), local.indent_unit);
+    try t.expectEqual(doc_mod.PrefSource.config, plain.pref_source.tab_width);
+    try t.expectEqual(doc_mod.PrefSource.editorconfig, mk.pref_source.tab_width);
+    try t.expectEqual(doc_mod.PrefSource.local, local.pref_source.tab_width);
+
+    // The workspace config says 3 and is read again.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .editor = .{ .tab_width = 3 } }" });
+    try app.reloadConfig(.ask);
+    try t.expectEqual(@as(usize, 3), app.cfg.editor.tab_width);
+    try t.expectEqual(@as(usize, 3), plain.tab_width);
+    try t.expectEqual(@as(usize, 3), plain.indent_unit);
+    try t.expectEqual(@as(usize, 8), mk.indent_unit);
+    try t.expectEqual(@as(usize, 6), local.tab_width);
+    try t.expectEqual(@as(usize, 6), local.indent_unit);
+
+    // `:set ts` is the config's too: the same two stay.
+    try dispatch.runExLine(&app, "set ts=5");
+    try t.expectEqual(@as(usize, 5), plain.tab_width);
+    try t.expectEqual(@as(usize, 8), mk.indent_unit);
+    try t.expectEqual(@as(usize, 6), local.tab_width);
 }
 
 test "editorconfig reaches an opened buffer; a scratch takes the config's save prefs; the dead config fields are read" {

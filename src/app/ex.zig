@@ -181,6 +181,7 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{"changes"})) return changes(app);
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
+    if (eqAny(verb, &.{ "setl", "setlocal" })) return setLocal(app, args);
     if (eqAny(verb, &.{"settings"})) return command.run(app, .{ .static = .@"view.settings" });
     if (eqAny(verb, &.{"sidebar"})) return sidebar(app, args);
     // // changed (launcher-dock): the word form of the dock's verbs.
@@ -1090,6 +1091,9 @@ fn retab(app: *App, range: ?Range, args: []const u8, bang: bool) CommandError!vo
         }
     }
     doc.tab_width = new_ts;
+    // `:retab N` sets the buffer's own tab stop, as vim's sets the
+    // local 'tabstop': a config change no longer moves it.
+    if (trimmed.len > 0) doc.pref_source.tab_width = .local;
     if (std.mem.eql(u8, out.items, text[from..to])) {
         app.toast(":retab — nothing to change", .{});
         return;
@@ -1415,10 +1419,9 @@ fn set(app: *App, args: []const u8) CommandError!void {
             const v = value orelse return app.diag.fail(arena, ":set {s}=N", .{name});
             const n = std.fmt.parseInt(u8, v, 10) catch return app.diag.fail(arena, ":set {s} — not a number: {s}", .{ name, v });
             app.cfg.editor.tab_width = @max(n, 1);
-            for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-                .editor => |*e| e.buf.doc.tab_width = @max(n, 1),
-                else => {},
-            };
+            // The config's value: every buffer that has no width of its
+            // own (a `.editorconfig`, `:setlocal`) follows.
+            try app.syncBufferPrefs();
             app.toast(":set {s}={d}", .{ name, n });
         } else if (eqAny(name, &.{ "rightpanel", "rightpanel!", "invrightpanel" })) {
             const toggle = std.mem.endsWith(u8, name, "!") or std.mem.startsWith(u8, name, "inv");
@@ -1559,6 +1562,45 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
         return;
     };
     return app.diag.fail(arena, ":set — unknown option \"{s}\"", .{opt});
+}
+
+/// `:setlocal {option}…` (`:help :setlocal`): this buffer's own value,
+/// which a config change — a reload, `:set`, Settings — no longer moves
+/// (`Document.pref_source`). The buffer prefs only: `ts` / `tabstop`
+/// (the display width of a tab), `sw` / `shiftwidth` (the indent unit),
+/// `ai` / `autoindent` and their `no` forms.
+fn setLocal(app: *App, args: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = try editor(app, ":setlocal");
+    const doc = e.buf.doc;
+    var it = std.mem.tokenizeAny(u8, args, " \t");
+    var any = false;
+    while (it.next()) |opt_in| {
+        any = true;
+        var opt = opt_in;
+        var value: ?[]const u8 = null;
+        if (std.mem.indexOfScalar(u8, opt, '=')) |eq| {
+            value = opt[eq + 1 ..];
+            opt = opt[0..eq];
+        }
+        const off = std.mem.startsWith(u8, opt, "no") and opt.len > 2;
+        const name = if (off) opt[2..] else opt;
+        if (eqAny(name, &.{ "ts", "tabstop", "sw", "shiftwidth" })) {
+            const v = value orelse return app.diag.fail(arena, ":setlocal {s}=N", .{name});
+            const n = std.fmt.parseInt(u8, v, 10) catch return app.diag.fail(arena, ":setlocal {s} — not a number: {s}", .{ name, v });
+            if (eqAny(name, &.{ "ts", "tabstop" }))
+                e.buf.setIndent(@max(n, 1), doc.indent_unit, doc.use_tabs)
+            else
+                e.buf.setIndent(doc.tab_width, @max(n, 1), doc.use_tabs);
+            doc.pref_source.tab_width = .local;
+        } else if (eqAny(name, &.{ "ai", "autoindent" })) {
+            doc.auto_indent = !off;
+            doc.pref_source.auto_indent = .local;
+        } else return app.diag.fail(arena, ":setlocal {s} — not one of ts, sw, ai", .{opt});
+        app.toast(":setlocal {s}", .{opt_in});
+    }
+    if (!any) return app.diag.fail(arena, ":setlocal {{option}}…", .{});
+    app.needs_render = true;
 }
 
 fn ambiguous(name: []const u8) bool {
