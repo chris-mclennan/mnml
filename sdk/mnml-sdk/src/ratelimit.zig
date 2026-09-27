@@ -385,13 +385,24 @@ pub const Limiter = struct {
         defer gpa.free(p);
         var l = try init(gpa, io, p, configFor(service));
         errdefer l.deinit();
-        // Resolved once, whether or not anything is listening: the
-        // broker comes and goes with mnml, so the answer to "is there
-        // one" belongs to `acquireVia`, not to startup. Told
-        // `MNML_BROKER=0`, there is no socket to try at all.
-        if (!broker.enabledIn(env)) return l;
-        l.broker_socket = broker.socketPath(gpa, io, env, service) catch &.{};
+        try l.attachBroker(env, service);
         return l;
+    }
+
+    /// Point this limiter at the broker socket the environment resolves
+    /// for `service` — `forService`'s second half, for a pane that built
+    /// its limiter on a path of its own (a configured `state_path`, a
+    /// preset of its own) and would otherwise never ask the broker at
+    /// all: both panes did exactly that, so the broker served Jira's
+    /// Bitbucket calls and nothing else. Resolved once, whether or not
+    /// anything is listening — the broker comes and goes with mnml, so
+    /// "is there one" belongs to `acquireVia`, not to startup. Told
+    /// `MNML_BROKER=0`, there is no socket to try at all.
+    pub fn attachBroker(self: *Limiter, env: *const std.process.Environ.Map, service: []const u8) Allocator.Error!void {
+        if (!broker.enabledIn(env)) return;
+        const p = broker.socketPath(self.gpa, self.io, env, service) catch return;
+        defer self.gpa.free(p);
+        try self.useBroker(p);
     }
 
     pub fn deinit(self: *Limiter) void {
@@ -1342,6 +1353,34 @@ test "a limiter for a service resolves its broker socket beside the bucket, list
     // Resolved at startup, tried per request — the broker comes and
     // goes with mnml.
     if (broker.supported) try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.sock", l.broker_socket);
+}
+
+test "a limiter built on a path of its own attaches the environment's broker socket — and none under MNML_BROKER=0" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const own = try std.fmt.allocPrint(t.allocator, "{s}/my-bitbucket-bucket.json", .{dir});
+    defer t.allocator.free(own);
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("BITBUCKET_BROKER_SOCKET", "/tmp/bb-test-broker.sock");
+
+    // The pane's way: its own state path, its own preset, then the broker.
+    var l = try Limiter.init(t.allocator, t.io, own, .{ .rate = 2.0, .capacity = 4.0 });
+    defer l.deinit();
+    try t.expectEqualStrings("", l.broker_socket);
+    try l.attachBroker(&env, "bitbucket");
+    try t.expectEqualStrings("/tmp/bb-test-broker.sock", l.broker_socket);
+    // The path and the preset are still the pane's.
+    try t.expectEqualStrings(own, l.path);
+    try t.expectApproxEqAbs(@as(f64, 4.0), l.cfg.capacity, 0.001);
+
+    try env.put("MNML_BROKER", "0");
+    var off = try Limiter.init(t.allocator, t.io, own, .{});
+    defer off.deinit();
+    try off.attachBroker(&env, "bitbucket");
+    try t.expectEqualStrings("", off.broker_socket);
 }
 
 test "MNML_BROKER=0 leaves a limiter without a broker socket: every acquire is the file bucket's" {

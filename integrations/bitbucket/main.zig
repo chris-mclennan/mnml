@@ -378,6 +378,9 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     // this the bucket says only how much is left, which is the half of
     // the answer that does not help.
     try limiter.identify(ratelimit.service, "mnml-bitbucket", sdk.warm.selfPid());
+    // And the broker, when mnml hosts one: a limiter built on the
+    // pane's own path (`.rate.state_path`) never asked it before.
+    try limiter.attachBroker(env, ratelimit.service);
     var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-bitbucket");
     errdefer log.deinit();
     var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);

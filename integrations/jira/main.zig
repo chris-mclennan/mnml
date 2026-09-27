@@ -963,6 +963,9 @@ fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate
     // this the bucket says only how much is left, which is the half of
     // the answer that does not help.
     try l.identify(ratelimit.service, "mnml-jira", selfPid());
+    // And the broker, when mnml hosts one: without this the pane's own
+    // requests never queued there — only its Bitbucket calls did.
+    try l.attachBroker(env, ratelimit.service);
     return l;
 }
 
@@ -1537,6 +1540,22 @@ test "the pane's own publish is the `--values` publish for the same listing, row
     // And it is a line WITH rows on it — an empty `items` would make
     // the two agree for the wrong reason.
     try testing.expect(std.mem.indexOf(u8, pane_line, "\"items\":[{\"text\":\"ENG-1  Checkout rewrite\"") != null);
+}
+
+test "the pane's own limiter is pointed at the broker the environment names, and at none under MNML_BROKER=0" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("JIRA_RATELIMIT_STATE", "/tmp/jira-wire-test-bucket.json");
+    try env.put("JIRA_BROKER_SOCKET", "/tmp/jira-wire-test-broker.sock");
+    var l = try openLimiter(testing.allocator, testing.io, &env, .{});
+    defer l.deinit();
+    try testing.expectEqualStrings("/tmp/jira-wire-test-broker.sock", l.broker_socket);
+    try testing.expectEqualStrings("/tmp/jira-wire-test-bucket.json", l.path);
+
+    try env.put("MNML_BROKER", "0");
+    var off = try openLimiter(testing.allocator, testing.io, &env, .{});
+    defer off.deinit();
+    try testing.expectEqualStrings("", off.broker_socket);
 }
 
 test "--check prints the config and where the token is, never the token" {
