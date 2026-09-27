@@ -49,6 +49,7 @@ const tree_mod = @import("app/tree.zig");
 const info_view_app = @import("app/info_view.zig");
 const ex = @import("app/ex.zig");
 const ex_verbs = @import("app/ex_verbs.zig");
+const cmd_find = @import("app/cmd_find.zig");
 const dispatch = @import("app/dispatch.zig");
 const cmd_picker = @import("app/cmd_picker.zig");
 const render_mod = @import("app/render.zig");
@@ -1467,6 +1468,10 @@ pub const App = struct {
     /// `*`, `#`, `:s/pat/` and `:g/pat/` all write it, and an empty
     /// pattern in `:s//new/` or `:g//cmd` reads it back. Owned.
     last_search_pattern: ?[]u8 = null,
+    /// The standard profile's search term: the find bar's query and
+    /// toggles as Esc left them. F3 / Shift+F3 on a pane with no find
+    /// live search for it (VS Code). Owned.
+    find_term: ?cmd_find.FindTerm = null,
     /// A `:s///c` walking its matches.
     replace_confirm: ?ex_verbs.ReplaceConfirm = null,
     /// `:g` → user command → `:norm` → `:`… nesting, bounded by `ex_verbs.max_depth`.
@@ -2000,6 +2005,7 @@ pub const App = struct {
         }
         self.abbrevs.deinit(gpa);
         ex_verbs.deinitState(self);
+        if (self.find_term) |t| self.gpa.free(t.query);
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);

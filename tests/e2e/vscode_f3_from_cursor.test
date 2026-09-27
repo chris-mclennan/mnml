@@ -1,0 +1,38 @@
+# F3 / Shift+F3 find the next / previous match of the last search from
+# the CURSOR, with the find bar open or closed (VS Code's
+# editor.action.nextMatchFindAction). mnml stepped a stored index —
+# from wherever the last step landed, not where the cursor had moved —
+# and F3 did nothing once the bar was closed.
+write f.txt "foo a foo b foo c\nend\n"
+open f.txt
+key ctrl+f
+type foo
+key enter
+key esc
+key ctrl+end
+key f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+key f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":7}"
+key ctrl+end
+key shift+f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":13}"
+key home
+key up
+key right
+key right
+key right
+key shift+f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":1}"
+# The bar closed without a landing (Esc straight after typing) still
+# leaves "foo" as the search term F3 finds.
+write g.txt "x foo y foo\n"
+open g.txt
+key ctrl+f
+type foo
+key esc
+key ctrl+home
+key f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":3}"
+key f3
+expect status contains "\"cursor\":{\"line\":1,\"col\":9}"

@@ -1928,7 +1928,7 @@ fn findBarKey(app: *App, k: Key) Allocator.Error!void {
         .consumed, .focus_toggle => {},
         .ignored => try widgetFallthrough(app, k),
         .toggle_regex, .toggle_case, .toggle_word => try cmd_find.liveUpdate(app),
-        .cancel => app.closeFindBar(true),
+        .cancel => try cmd_find.cancelFromBar(app),
         .changed => {
             if (app.input_style == .vim) find_history.endWalk(app);
             try cmd_find.liveUpdate(app);

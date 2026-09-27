@@ -213,6 +213,42 @@ pub fn liveUpdate(app: *App) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// What the standard profile's F3 searches for once the bar is closed
+/// (`App.find_term`).
+pub const FindTerm = struct { query: []u8, regex: bool, whole: bool, case: ?bool };
+
+/// The bar's Esc. It puts back what the bar found the pane with, but in
+/// the standard profile the query typed stays the search term, as VS
+/// Code's does: F3 / Shift+F3 with the bar closed find it from the
+/// cursor, even when Esc came before any landing.
+pub fn cancelFromBar(app: *App) Allocator.Error!void {
+    const fb = &(app.find_bar orelse return);
+    if (app.input_style == .standard and fb.state.query.items.len > 0 and @import("pty_search.zig").barPane(app) == null) {
+        const q = try app.gpa.dupe(u8, fb.state.query.items);
+        if (app.find_term) |old| app.gpa.free(old.query);
+        app.find_term = .{
+            .query = q,
+            .regex = fb.state.regex,
+            .whole = fb.state.whole_word,
+            .case = if (fb.state.match_case) true else app.search_case,
+        };
+    }
+    app.closeFindBar(true);
+}
+
+/// A step with no find live on an editor: the standard profile's kept
+/// term becomes the pane's query, matches found, none current (so the
+/// step goes from the cursor).
+fn adoptFindTerm(app: *App, tg: Target) Allocator.Error!void {
+    if (app.input_style != .standard or tg != .editor) return;
+    const term = app.find_term orelse return;
+    const f = tg.find();
+    f.regex = term.regex;
+    f.dialect = dialectFor(app);
+    if (term.whole) try f.setWordQuery(term.query, tg.text(), term.case) else try f.setQuery(term.query, tg.text(), term.case);
+    f.current = null;
+}
+
 /// The bar's query with its case and whole-word toggles.
 fn setBarQuery(app: *App, fb: *const app_mod.FindBarState, f: *find_mod.FindState, q: []const u8, text: []const u8) Allocator.Error!void {
     const case: ?bool = if (fb.state.match_case) true else app.search_case;
@@ -425,6 +461,7 @@ pub fn stepFind(app: *App, delta: i32) Allocator.Error!void {
     const tg = Target.of(app, id) orelse return;
     const f = tg.find();
     try ensureFresh(tg);
+    if (!f.isActive()) try adoptFindTerm(app, tg);
     if (!f.isActive()) {
         app.toast("no active find — use / or Ctrl+F first", .{});
         app.key_failed = true;
