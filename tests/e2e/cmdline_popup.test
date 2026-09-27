@@ -13,9 +13,10 @@ open data.txt
 command editor.use_vim
 
 # ── `:do` — dozens of candidates, `dock` among them ──
-# The `dock.*` ids (prefix matches) head the list; the bare `dock` ex
-# verb scores under them and is the last row. Eight rows show, then
-# the hint says how many more there are.
+# The bare `dock` ex verb heads the list (an ex verb the text begins
+# outranks the registry ids, as Neovim's `:vs<Tab>` is `:vsplit`); the
+# `dock.*` ids follow. Eight rows show, then the hint says how many more
+# there are.
 key :
 type "do"
 expect screen contains ":do▏"
@@ -24,10 +25,12 @@ expect screen contains "│ dock.close_all"
 expect screen contains "more — Tab to cycle)"
 
 # Tab writes the first row into the line; the popup stays up on the
-# same list. Up from there wraps to the last row — `dock`.
+# same list, and Down / Up walk it.
 key tab
-expect screen contains ":dock.add_preset▏"
+expect screen contains ":dock▏"
 expect screen contains "│ dock.close_all"
+key down
+expect screen contains ":dock.add_preset▏"
 key up
 expect screen contains ":dock▏"
 # Enter runs the line: `:dock` alone toggles the launcher dock.
@@ -62,8 +65,8 @@ key esc
 # ── typing re-filters ──
 key :
 type "ta"
-expect screen contains "│ tab.close "
+expect screen contains "│ tabclose "
 type "bn"
-expect screen lacks "│ tab.close "
+expect screen lacks "│ tabclose "
 expect screen contains "│ tabnew "
 key esc

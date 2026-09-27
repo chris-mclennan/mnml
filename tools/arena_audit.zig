@@ -931,7 +931,7 @@ pub fn walkJobResults(arena: Allocator, io: Io, root: []const u8) !Result {
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
-        try files.append(arena, try arena.dupe(u8, entry.path));
+        try files.append(arena, try slashed(arena, entry.path));
     }
     std.mem.sort([]const u8, files.items, {}, struct {
         fn lt(_: void, a: []const u8, b: []const u8) bool {
@@ -1192,7 +1192,7 @@ pub fn walk(arena: Allocator, io: Io, root: []const u8) !Result {
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".zig")) continue;
-        try files.append(arena, try arena.dupe(u8, entry.path));
+        try files.append(arena, try slashed(arena, entry.path));
     }
     std.mem.sort([]const u8, files.items, {}, struct {
         fn lt(_: void, a: []const u8, b: []const u8) bool {
@@ -1581,4 +1581,12 @@ test "src/ has no string that dies before the consumer that keeps it" {
         std.debug.print("\n{s}\n", .{out.written()});
     }
     try t.expectEqual(@as(usize, 0), r.findings.len);
+}
+
+/// A walked path with `/` between its parts, the way the owner lists and
+/// the report spell them; Windows' walker hands back `\`.
+fn slashed(arena: Allocator, path: []const u8) Allocator.Error![]u8 {
+    const out = try arena.dupe(u8, path);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }

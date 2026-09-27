@@ -12,14 +12,22 @@ pub const table = .{
     .@"file.save_all" = &saveAllCmd,
     .@"file.reload" = &reload,
     .@"file.new" = &new,
+    .@"file.save_as" = &saveAs,
 };
 
 fn save(app: *App) CommandError!void {
     return saveCurrent(app);
 }
 
-/// Write the active editor to its path. Scratch buffers are refused
-/// with a reason; `:w <path>` is how they get one.
+/// What a buffer with no file name is told: vim users name one with
+/// `:w`; a standard-profile Save goes on to the Save As prompt instead.
+pub fn noNameHint(app: *const App) []const u8 {
+    return if (app.input_style == .vim) "no file name — use :w <path>" else "no file name — Save As (Ctrl+Shift+S) gives it one";
+}
+
+/// Write the active editor to its path. A scratch buffer asks for one:
+/// the standard profile's Save opens Save As (as VS Code's does for an
+/// untitled file); vim users are pointed at `:w <path>`.
 pub fn saveCurrent(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     // A request pane writes itself back into its source block.
@@ -27,7 +35,10 @@ pub fn saveCurrent(app: *App) CommandError!void {
     // A ZON tree writes its working text.
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .zon) return @import("zon_pane.zig").save(app, id);
     const e = try app.requireEditor();
-    if (e.buf.doc.path == null) return app.diag.fail(arena, "no file name — use :w <path>", .{});
+    if (e.buf.doc.path == null) {
+        if (app.input_style == .standard) return openSaveAs(app, app.active.?);
+        return app.diag.fail(arena, "{s}", .{noNameHint(app)});
+    }
     return savePane(app, app.active.?, e, .{ .may_hold = true });
 }
 
@@ -64,7 +75,7 @@ pub const SaveOpts = struct {
 /// once per real write. `lsp_format.held` tells the caller which it was.
 pub fn savePane(app: *App, id: app_mod.PaneId, e: *app_mod.EditorPane, opts: SaveOpts) CommandError!void {
     const arena = app.frame.allocator();
-    const path = e.buf.doc.path orelse return app.diag.fail(arena, "no file name — use :w <path>", .{});
+    const path = e.buf.doc.path orelse return app.diag.fail(arena, "{s}", .{noNameHint(app)});
     const rel = app.relPath(path);
     if (!opts.resume_held) {
         if (format_app.held(app, id)) {
@@ -139,11 +150,54 @@ fn reload(app: *App) CommandError!void {
     app.toast("reloaded {s}", .{app.relPath(path)});
 }
 
-/// A scratch buffer — or, with the tree focused, a prompt for a path
-/// beside the selected row (the tree's `New file…`).
+/// `file.new` asks for the path wherever it runs: from the tree, beside
+/// the cursor row; from anywhere else, in the workspace root — the
+/// "New file in /" prompt the Rust app gives. A scratch buffer that
+/// has no file to save into is `:enew`'s, not Ctrl+N's.
 fn new(app: *App) CommandError!void {
-    if (app.focus == .tree and app.tree.visible) return @import("tree.zig").promptNewFile(app);
-    _ = app.openScratch() catch return error.OutOfMemory;
+    const tree = @import("tree.zig");
+    if (app.focus == .tree and app.tree.visible) return tree.promptNewFile(app);
+    return tree.promptNewFileIn(app, "");
+}
+
+/// `file.save_as` (Ctrl+Shift+S): a path prompt seeded with the active
+/// editor's path; Enter saves the buffer there and it keeps the name.
+fn saveAs(app: *App) CommandError!void {
+    _ = try app.requireEditor();
+    return openSaveAs(app, app.active.?);
+}
+
+fn openSaveAs(app: *App, id: app_mod.PaneId) CommandError!void {
+    const e = app.panes.editor(id) orelse return error.NoActivePane;
+    app.overlay.deinit(app.gpa);
+    var state = app_mod.Prompt.init(app.gpa, "Save as (workspace-relative path)");
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    if (e.buf.doc.path) |p| try state.setText(app.gpa, app.relPath(p));
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .{ .save_as = id } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The Save As prompt's Enter: pane `id` takes the typed name and saves.
+pub fn acceptSaveAs(app: *App, id: app_mod.PaneId, text: []const u8) std.mem.Allocator.Error!void {
+    const typed = std.mem.trim(u8, text, " \t");
+    if (typed.len == 0) return;
+    if (app.panes.editor(id) == null) return app.toast("save as: the editor is gone", .{});
+    app.active = id;
+    app.focus = .{ .pane = id };
+    // An explicit Save As into a folder that is not there yet makes it,
+    // as the new-file prompt does.
+    if (std.fs.path.dirname(typed)) |parent| std.Io.Dir.cwd().createDirPath(app.io, try app.absPath(parent)) catch {};
+    @import("ex.zig").saveAs(app, typed) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("save as: {s}", .{@errorName(err)}),
+    };
+}
+
+fn closeOverlayForTest(app: *App) void {
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.focus = if (app.active) |a| .{ .pane = a } else .tree;
 }
 
 test "file.save writes the active buffer and clears dirty; a scratch buffer is refused" {
@@ -156,8 +210,15 @@ test "file.save writes the active buffer and clears dirty; a scratch buffer is r
     defer app.deinit();
     try t.expectError(error.NoActivePane, command.run(&app, .{ .static = .@"file.save" }));
     _ = try app.openScratch();
+    // The standard profile's Save on a scratch buffer asks for a name.
+    try command.run(&app, .{ .static = .@"file.save" });
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .save_as);
+    closeOverlayForTest(&app);
+    // A vim user is pointed at `:w <path>`.
+    try app.setInputStyle(.vim);
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"file.save" }));
     try t.expectEqualStrings("no file name — use :w <path>", app.lastToast().?);
+    try app.setInputStyle(.standard);
     const path = try std.fs.path.join(t.allocator, &.{ root, "a.txt" });
     defer t.allocator.free(path);
     _ = try app.openPath(path);

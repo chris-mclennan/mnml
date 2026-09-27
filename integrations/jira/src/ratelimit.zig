@@ -74,6 +74,7 @@ pub fn parseRetryAfter(value: []const u8) ?f64 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "the Jira bucket is the SDK's, at this service's own file" {
     try testing.expectApproxEqAbs(@as(f64, 0.33), default_config.rate, 1e-12);
@@ -86,14 +87,14 @@ test "the Jira bucket is the SDK's, at this service's own file" {
     {
         const p = try statePath(testing.allocator, testing.io, &env);
         defer testing.allocator.free(p);
-        try testing.expectEqualStrings("/data/ratelimit/jira.json", p);
+        try sdk_testing.expectPath("/data/ratelimit/jira.json", p);
     }
     try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
     const p = try statePath(testing.allocator, testing.io, &env);
     defer testing.allocator.free(p);
     // The name the Rust crate and the Python script write, so a pane, a
     // poller and a script all land on one file.
-    try testing.expectEqualStrings("/shared/jira-ratelimit.json", p);
+    try sdk_testing.expectPath("/shared/jira-ratelimit.json", p);
 }
 
 test "the user's rate block becomes the bucket's numbers, and an unset field keeps the preset" {

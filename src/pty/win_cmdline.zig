@@ -41,8 +41,24 @@ pub fn appendCommandLine(buf: *std.ArrayList(u8), gpa: Allocator, argv: []const 
     try buf.appendSlice(gpa, arg0);
     if (needs_quotes) try buf.append(gpa, '"');
 
-    for (argv[1..]) |arg| {
+    const cmd = isCmd(arg0);
+    for (argv[1..], 1..) |arg, i| {
         try buf.append(gpa, ' ');
+        // `cmd.exe` reads its own command line, not `CommandLineToArgvW`'s:
+        // everything after `/c` is the command as it stands, and a `\"`
+        // there is a backslash and a quote. So the command goes out as
+        // `/s /c "<command>"` — `/s` makes cmd strip exactly that outer
+        // pair — and is never escaped. (Escaped, a quoted program path
+        // reached cmd as `\"D:\…\"` and "is not recognized".)
+        if (cmd and std.ascii.eqlIgnoreCase(arg, "/c")) {
+            try buf.appendSlice(gpa, "/s /c \"");
+            for (argv[i + 1 ..], 0..) |part, k| {
+                if (k > 0) try buf.append(gpa, ' ');
+                try buf.appendSlice(gpa, part);
+            }
+            try buf.append(gpa, '"');
+            return;
+        }
         // The rest: quoted when empty or holding whitespace, a control
         // character or a quote; backslashes double only before a quote
         // (and at the end, where the closing quote follows).
@@ -71,6 +87,12 @@ pub fn appendCommandLine(buf: *std.ArrayList(u8), gpa: Allocator, argv: []const 
         try buf.appendNTimes(gpa, '\\', backslashes * 2);
         try buf.append(gpa, '"');
     }
+}
+
+/// `argv[0]` names cmd.exe (a bare `cmd`, `cmd.exe`, or a path to it).
+fn isCmd(arg0: []const u8) bool {
+    const base = arg0[if (std.mem.lastIndexOfAny(u8, arg0, "\\/")) |i| i + 1 else 0..];
+    return std.ascii.eqlIgnoreCase(base, "cmd") or std.ascii.eqlIgnoreCase(base, "cmd.exe");
 }
 
 /// A process exit code as the pane sees it. Codes that fit a byte are
@@ -141,7 +163,16 @@ test "commandLine: std's own vectors — spaces, quotes, backslashes before quot
 test "commandLine: a quote in arg0 is refused, anywhere else it is escaped" {
     try testing.expectError(error.InvalidArg0, commandLine(testing.allocator, &.{"\"quotes\"quotes\""}));
     try testing.expectError(error.InvalidArg0, commandLine(testing.allocator, &.{"quotes\"quotes"}));
-    try expectLine(&.{ "cmd.exe", "/d", "/c", "echo \"hi\"" }, "cmd.exe /d /c \"echo \\\"hi\\\"\"");
+}
+
+test "commandLine: cmd.exe's command goes out whole after /s /c, quotes and all, never escaped" {
+    try expectLine(&.{ "cmd.exe", "/d", "/c", "echo \"hi\"" }, "cmd.exe /d /s /c \"echo \"hi\"\"");
+    try expectLine(
+        &.{ "C:\\Windows\\system32\\CMD.EXE", "/d", "/c", "\"D:\\a b\\mnml-sample.exe\" --install" },
+        "C:\\Windows\\system32\\CMD.EXE /d /s /c \"\"D:\\a b\\mnml-sample.exe\" --install\"",
+    );
+    // Not cmd: the ordinary rules still apply to a `/c` argument.
+    try expectLine(&.{ "prog", "/c", "a \"b\"" }, "prog /c \"a \\\"b\\\"\"");
 }
 
 test "exitFromCode: bytes are codes, NTSTATUS values read as a signal" {

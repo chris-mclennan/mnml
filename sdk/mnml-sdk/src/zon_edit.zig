@@ -129,8 +129,13 @@ fn fieldNameIs(ast: Ast, field: Ast.Node.Index, key: []const u8) bool {
     if (first < 2) return false;
     const name = ast.tokenSlice(first - 2);
     if (std.mem.eql(u8, name, key)) return true;
-    // `@"…"` — compare the inside; escapes in a key are not a thing.
-    return name.len >= 3 and name[0] == '@' and name[1] == '"' and name[name.len - 1] == '"' and std.mem.eql(u8, name[2 .. name.len - 1], key);
+    // `@"…"` — compare the inside with the key as `appendKey` escapes
+    // it: a Windows path key (the trust store's) carries `\`.
+    if (!(name.len >= 3 and name[0] == '@' and name[1] == '"' and name[name.len - 1] == '"')) return false;
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.print("{f}", .{std.zig.fmtString(key)}) catch return std.mem.eql(u8, name[2 .. name.len - 1], key);
+    return std.mem.eql(u8, name[2 .. name.len - 1], w.buffered());
 }
 
 /// Insert `keys` (one field, or a nested chain of sections) into the
@@ -212,9 +217,8 @@ fn renderInline(arena: Allocator, keys: []const []const u8, literal: []const u8)
 /// Bare identifier when it can be, `@"…"` otherwise (`ctrl+p`, `space f f`).
 fn appendKey(out: *std.ArrayList(u8), arena: Allocator, key: []const u8) Allocator.Error!void {
     if (std.zig.isValidId(key)) return out.appendSlice(arena, key);
-    try out.appendSlice(arena, "@\"");
-    try out.appendSlice(arena, key);
-    try out.append(arena, '"');
+    // Escaped: a key is any string (a Windows path's `\` included).
+    try out.print(arena, "@\"{f}\"", .{std.zig.fmtString(key)});
 }
 
 pub fn lineStart(src: []const u8, pos: usize) usize {
@@ -776,4 +780,18 @@ test "persistScalar writes, backs up, no-ops, and prunes to max_backups" {
     const saved = try backups.readFileAlloc(t.io, newest[0..newest_len], t.allocator, .unlimited);
     defer t.allocator.free(saved);
     try t.expectEqualStrings(first, saved);
+}
+
+test "a key with a backslash is written escaped and found again: a Windows path as the trust store keys it" {
+    const key = "D:\\a\\ws";
+    const first = (try splice(t.allocator, ".{}\n", &.{key}, "\"00ff\"")) orelse return error.TestExpectedChange;
+    defer t.allocator.free(first);
+    try t.expect(std.mem.indexOf(u8, first, ".@\"D:\\\\a\\\\ws\" = \"00ff\"") != null);
+    const first_z = try t.allocator.dupeZ(u8, first);
+    defer t.allocator.free(first_z);
+    // The same key again replaces the value in place, not a second field.
+    const second = (try splice(t.allocator, first_z, &.{key}, "\"0aaa\"")) orelse return error.TestExpectedChange;
+    defer t.allocator.free(second);
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, second, "@\""));
+    try t.expect(std.mem.indexOf(u8, second, "\"0aaa\"") != null);
 }

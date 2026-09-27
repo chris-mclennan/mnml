@@ -138,6 +138,7 @@ pub fn load(arena: Allocator, io: Io, env: *const std.process.Environ.Map) Alloc
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "font-codepoint-map lines: ranges, singles, a comma list; other keys and comments skipped; the last rule wins" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
@@ -193,7 +194,7 @@ test "the config is found under XDG_CONFIG_HOME, then ~/.config, then the macOS 
     try env.put("HOME", root);
     const cands = try candidates(arena, &env);
     try t.expectEqual(if (builtin.os.tag == .macos) @as(usize, 2) else 1, cands.len);
-    try t.expect(std.mem.endsWith(u8, cands[0], ".config/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith(cands[0], ".config/ghostty/config"));
     // Nothing on disk: an empty map, no path.
     const none = try load(arena, io, &env);
     try t.expect(none.path == null);
@@ -208,7 +209,7 @@ test "the config is found under XDG_CONFIG_HOME, then ~/.config, then the macOS 
     try tmp.dir.writeFile(io, .{ .sub_path = "xdg/ghostty/config", .data = "font-codepoint-map = U+EB40=Other\n" });
     try env.put("XDG_CONFIG_HOME", try std.fs.path.join(arena, &.{ root, "xdg" }));
     const xdg_map = try load(arena, io, &env);
-    try t.expect(std.mem.endsWith(u8, xdg_map.path.?, "xdg/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith(xdg_map.path.?, "xdg/ghostty/config"));
     try t.expect(xdg_map.routedFont(0xF1B0A) == null);
     try t.expectEqualStrings("Other", xdg_map.routedFont(0xEB40).?);
 }

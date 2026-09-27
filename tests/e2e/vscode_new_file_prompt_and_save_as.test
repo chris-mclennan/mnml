@@ -1,0 +1,33 @@
+# Ctrl+N from an editor opened a nameless [scratch] whose Ctrl+S said
+# "no file name — use :w <path>" — vim advice, and no Save As anywhere
+# (round-7 hunt). It asks for the path, as the Rust app does ("New file
+# in /"), from any focus; Ctrl+Shift+S saves a buffer under a new name,
+# and a scratch buffer's Ctrl+S opens that prompt.
+write sub/a.txt "x\n"
+open sub/a.txt
+key ctrl+n
+expect screen contains "New file in /"
+type fresh.txt
+key enter
+expect pane "fresh.txt"
+type brand new content
+key ctrl+s
+expect file fresh.txt contains "brand new content"
+key ctrl+shift+s
+expect screen contains "Save as (workspace-relative path)"
+expect screen contains "fresh.txt"
+key ctrl+a
+type copy/renamed.txt
+key enter
+expect pane "renamed.txt"
+expect file copy/renamed.txt contains "brand new content"
+command scratch.new
+expect pane "[scratch]"
+type draft
+key ctrl+s
+expect screen contains "Save as (workspace-relative path)"
+expect screen lacks ":w <path>"
+type draft.txt
+key enter
+expect pane "draft.txt"
+expect file draft.txt contains "draft"

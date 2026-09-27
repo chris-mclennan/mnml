@@ -1506,7 +1506,7 @@ test "session: a foreign workspace, a future version and a broken file are one t
     try restore(&app);
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "does not parse") != null);
     // A well-formed file naming a file that no longer exists restores nothing for it.
-    const text = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\", .panes = .{{ .{{ .path = \"{s}/gone.txt\" }} }}, .tabs = .{{ .{{ .nodes = .{{ .{{ .leaf = .{{ .active = 0, .tabs = .{{0}} }} }} }}, .root = 0 }} }}, .active = 0 }}", .{ f.root, f.root });
+    const text = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{f}\", .panes = .{{ .{{ .path = \"{f}/gone.txt\" }} }}, .tabs = .{{ .{{ .nodes = .{{ .{{ .leaf = .{{ .active = 0, .tabs = .{{0}} }} }} }}, .root = 0 }} }}, .active = 0 }}", .{ std.zig.fmtString(f.root), std.zig.fmtString(f.root) });
     defer t.allocator.free(text);
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = rel_path, .data = text });
     try restore(&app);
@@ -1540,7 +1540,7 @@ test "session: the workspace compare is by realpath — a symlinked spelling on 
     // The file names the unresolved spelling; the app runs on the resolved one.
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 120, .rows = 40 });
     defer app.deinit();
-    const by_link = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{link});
+    const by_link = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{f}\" }}", .{std.zig.fmtString(link)});
     defer t.allocator.free(by_link);
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_link });
     try restore(&app);
@@ -1550,7 +1550,7 @@ test "session: the workspace compare is by realpath — a symlinked spelling on 
     // The reverse: the file is canonical, the app was launched through the link.
     var via_link = try App.initWith(t.allocator, t.io, .{ .workspace = link, .cols = 120, .rows = 40 });
     defer via_link.deinit();
-    const by_ws = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{ws});
+    const by_ws = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{f}\" }}", .{std.zig.fmtString(ws)});
     defer t.allocator.free(by_ws);
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_ws });
     try restore(&via_link);
@@ -1560,11 +1560,16 @@ test "session: the workspace compare is by realpath — a symlinked spelling on 
     try save(&via_link);
     const written = try f.tmp.dir.readFileAlloc(t.io, "ws/" ++ rel_path, t.allocator, .limited(1 << 20));
     defer t.allocator.free(written);
-    try t.expect(std.mem.indexOf(u8, written, ws) != null);
-    try t.expect(std.mem.indexOf(u8, written, link) == null);
+    // Looked for as ZON spells them — escaped, as Windows' `\` has to be.
+    const ws_zon = try std.fmt.allocPrint(t.allocator, "\"{f}\"", .{std.zig.fmtString(ws)});
+    defer t.allocator.free(ws_zon);
+    const link_zon = try std.fmt.allocPrint(t.allocator, "\"{f}\"", .{std.zig.fmtString(link)});
+    defer t.allocator.free(link_zon);
+    try t.expect(std.mem.indexOf(u8, written, ws_zon) != null);
+    try t.expect(std.mem.indexOf(u8, written, link_zon) == null);
 
     // A real directory that is not this workspace is still one toast.
-    const by_other = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{s}\" }}", .{other});
+    const by_other = try std.fmt.allocPrint(t.allocator, ".{{ .workspace = \"{f}\" }}", .{std.zig.fmtString(other)});
     defer t.allocator.free(by_other);
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/" ++ rel_path, .data = by_other });
     app.session.restored = false;
@@ -2326,7 +2331,7 @@ test "session: a file from the old field set still loads; an unknown pane kind i
 
     // Written before the query-shaped kinds existed: no `repo`, no
     // `query`, no `grep_*`, no `diff_scope`, no `rev`.
-    const old = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .editor, .path = \"{s}\", .cursor = 2 }} }}, .tabs = .{{ .{{ .nodes = .{{ .{{ .leaf = .{{ .active = 0, .tabs = .{{0}} }} }} }}, .root = 0 }} }} }}", .{ f.root, a }, 0);
+    const old = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{f}\", .panes = .{{ .{{ .kind = .editor, .path = \"{f}\", .cursor = 2 }} }}, .tabs = .{{ .{{ .nodes = .{{ .{{ .leaf = .{{ .active = 0, .tabs = .{{0}} }} }} }}, .root = 0 }} }} }}", .{ std.zig.fmtString(f.root), std.zig.fmtString(a) }, 0);
     const parsed = try parse(arena, old);
     try t.expectEqual(@as(usize, 1), parsed.panes.len);
     try t.expectEqual(PaneKind.editor, parsed.panes[0].kind);
@@ -2342,7 +2347,7 @@ test "session: a file from the old field set still loads; an unknown pane kind i
 
     // A kind a later build added: the whole file is ignored with the
     // "does not parse" toast — never a crash, never half a layout.
-    const newer = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .hologram, .path = \"{s}\" }} }} }}", .{ f.root, a }, 0);
+    const newer = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{f}\", .panes = .{{ .{{ .kind = .hologram, .path = \"{f}\" }} }} }}", .{ std.zig.fmtString(f.root), std.zig.fmtString(a) }, 0);
     try t.expectError(error.ParseZon, parse(arena, newer));
     {
         var app = try f.app();
@@ -2356,7 +2361,7 @@ test "session: a file from the old field set still loads; an unknown pane kind i
     }
 
     // And a field a later build added is ignored, not a parse failure.
-    const extra = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{s}\", .panes = .{{ .{{ .kind = .editor, .path = \"{s}\", .telepathy = true }} }} }}", .{ f.root, a }, 0);
+    const extra = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{f}\", .panes = .{{ .{{ .kind = .editor, .path = \"{f}\", .telepathy = true }} }} }}", .{ std.zig.fmtString(f.root), std.zig.fmtString(a) }, 0);
     const ok = try parse(arena, extra);
     try t.expectEqual(@as(usize, 1), ok.panes.len);
 }

@@ -167,7 +167,9 @@ Each is one line and a recommendation; none was changed on this branch.
 | `[<Space> / ]<Space>` | blank line above / below | missing | — |  |
 | `<C-W>d` | diagnostics float | different | view.split_goto_definition | vim's older `CTRL-W d` |
 | `Y` | y$ | same | the handler |  |
-| `&` | :&& | same | editor.repeat_last_substitute |  |
+| `&` | :&& | same | editor.repeat_last_substitute | keeps the last `:s` flags since vimfix3 (it dropped them before, so the row was wrong) |
+| `g&` | :%s//~/& | same | editor.repeat_last_substitute_all | added on vimfix3 |
+| `:term` / `:term {cmd}` | a terminal buffer in the current window; `:b#` back to the file | same | a new tab in the focused leaf (`termEx`) | since termvim; the standard profile's `:term` still splits below, and a tool's `term` line (launchers, integrations, tasks) opens below in both profiles (`termTool`) |
 
 *NvChad insert mode*
 

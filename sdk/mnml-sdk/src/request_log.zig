@@ -277,12 +277,12 @@ pub const Log = struct {
         Io.Dir.cwd().createDirPath(self.io, self.dir) catch {};
         const p = self.path(self.gpa) catch return;
         defer self.gpa.free(p);
-        const file = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, p, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
         var end = file.length(self.io) catch 0;
         if (end + line.len > self.max_bytes) {
             file.close(self.io);
             self.rotate(p);
-            const fresh = Io.Dir.cwd().createFile(self.io, p, .{ .truncate = false, .lock = .exclusive }) catch return;
+            const fresh = Io.Dir.cwd().createFile(self.io, p, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
             defer fresh.close(self.io);
             end = fresh.length(self.io) catch 0;
             fresh.writePositionalAll(self.io, line, end) catch return;
@@ -578,6 +578,7 @@ fn nowSecs(io: Io) f64 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "one request, one line — and the line carries every field the pane needs to explain itself" {
     var tmp = t.tmpDir(.{});
@@ -799,22 +800,22 @@ test "the data root is the host's, and the file is one per service" {
     {
         const r = try dataRoot(t.allocator, &env);
         defer t.allocator.free(r);
-        try t.expectEqualStrings("/home/ada/.config/mnml", r);
+        try sdk_testing.expectPath("/home/ada/.config/mnml", r);
     }
     try env.put("XDG_CONFIG_HOME", "/xdg");
     {
         const r = try dataRoot(t.allocator, &env);
         defer t.allocator.free(r);
-        try t.expectEqualStrings("/xdg/mnml", r);
+        try sdk_testing.expectPath("/xdg/mnml", r);
     }
     // What the host sets for every child it starts wins over both.
     try env.put("MNML_DATA_ROOT", "/data");
     var log = try Log.open(t.allocator, t.io, &env, "bitbucket", "mnml-bitbucket");
     defer log.deinit();
-    try t.expectEqualStrings("/data/requests", log.dir);
+    try sdk_testing.expectPath("/data/requests", log.dir);
     const p = try log.path(t.allocator);
     defer t.allocator.free(p);
-    try t.expectEqualStrings("/data/requests/bitbucket.jsonl", p);
+    try sdk_testing.expectPath("/data/requests/bitbucket.jsonl", p);
     // Neither variable set is ON: the log has to be there when the
     // slow morning happens, not be switched on afterwards.
     try t.expect(log.enabled);

@@ -611,7 +611,7 @@ pub const PaneStore = struct {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {
                 .editor => |*e| if (e.buf.doc.path) |bp| {
-                    if (std.mem.eql(u8, bp, path)) return @intCast(i);
+                    if (@import("../core/os_path.zig").samePath(bp, path)) return @intCast(i);
                 },
                 else => {},
             };
@@ -626,7 +626,7 @@ pub const PaneStore = struct {
         if (self.findPath(path)) |id| return id;
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {
-                .md_preview => |*m| if (std.mem.eql(u8, m.path, path)) return @intCast(i),
+                .md_preview => |*m| if (@import("../core/os_path.zig").samePath(m.path, path)) return @intCast(i),
                 .image => |*im| if (std.mem.eql(u8, im.path, path)) return @intCast(i),
                 .request => |*r| if (r.source_path) |sp| {
                     if (std.mem.eql(u8, sp, path)) return @intCast(i);
@@ -641,7 +641,7 @@ pub const PaneStore = struct {
     pub fn findPreview(self: *PaneStore, path: []const u8) ?PaneId {
         for (self.slots.items, 0..) |*slot, i| {
             if (slot.*) |*p| switch (p.*) {
-                .md_preview => |*m| if (std.mem.eql(u8, m.path, path)) return @intCast(i),
+                .md_preview => |*m| if (@import("../core/os_path.zig").samePath(m.path, path)) return @intCast(i),
                 else => {},
             };
         }

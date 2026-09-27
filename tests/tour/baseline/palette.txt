@@ -8,7 +8,7 @@
    │      .gitignore         │                            _ __ ___    _ __    _ __ ___   | |
   │      CHANGELOG.md     ? │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
    │     󰂺 READ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
- 󰐱 │           │  git                                                                       495 of 1145 │
+ 󰐱 │           │  git                                                                       496 of 1147 │
    │         󰐙 │▌★ git  ·  Git: status / staging view  ·  git.status_pane                    space g s █│
  󰎒 │           │ ★ view  ·  Activity: open git graph  ·  view.activity_git                ctrl+shift+g █│
    │           │ git  ·  Git: diff the worktree  ·  git.diff                     space g D / space g d █│
@@ -30,11 +30,11 @@
    │           │ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│
    │───────────└────────────────────────────────────────────────────────────────────────────────────────┘
    │ Sidebar              󰐃 ⋮ │
-   │                          │                             mnml 0.3.0-dev+gdd7a1c9c-dirty
+   │                          │                                mnml 0.3.0-dev+g1cb0b5c4
    │ Arrows or j/k walk rows. │
    │ Enter opens the          │
    │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:40  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  22:15  ws   —
                                                            ⋯

@@ -2295,8 +2295,11 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .current_match = e.find.current,
         .wrap = e.wrap orelse app.cfg.ui.wrap,
         .tab_width = app.cfg.editor.tab_width,
-        .line_numbers = app.cfg.ui.line_numbers,
-        .cursor_shape = cursor_mod.forMode(mode),
+        // `space n` is NvChad's `set nu!`: with `relativenumber` still
+        // set the gutter stays, counting from a `0` cursor line.
+        .line_numbers = app.cfg.ui.line_numbers or app.cfg.ui.relative_line_numbers,
+        .relative_only = !app.cfg.ui.line_numbers,
+        .cursor_shape = cursor_mod.forModeOp(mode, e.buf.input.isOperatorPending()),
         .focused = focused,
         .visual_block = mode == .visual_block,
         .block_eol = e.buf.editor.block_eol,

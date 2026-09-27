@@ -1,0 +1,14 @@
+# A change within one line fills "- like a delete does (Neovim: cw bye
+# <Esc> "-p on "hello world" -> "byehello world"). mnml leaves "- empty.
+write f.txt "hello world\n"
+open f.txt
+command editor.use_vim
+key c
+key w
+type bye
+key esc
+key "
+key -
+key p
+ex w
+expect file f.txt contains "byehello world"

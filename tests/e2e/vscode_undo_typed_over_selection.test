@@ -1,0 +1,24 @@
+# Typing over a selection then one Ctrl+Z restores the selected text, as
+# VS Code (and the Rust app) do: the replaced selection and the typed run
+# are one undo stop. The run's first char claimed it without naming its
+# owner, so the second char opened a group of its own and Ctrl+Z left
+# "X" behind (round-7 hunt). Both faces: one selection, and two Ctrl+D
+# selections.
+write a.txt "abc def\n"
+write b.txt "foo bar foo\n"
+open a.txt
+key shift+end
+type XY
+key ctrl+z
+expect screen contains "1 abc def"
+key ctrl+s
+expect file a.txt contains "abc def\n"
+open b.txt
+key ctrl+d
+key ctrl+d
+type XY
+key ctrl+s
+expect file b.txt contains "XY bar XY"
+key ctrl+z
+key ctrl+s
+expect file b.txt contains "foo bar foo\n"

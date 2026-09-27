@@ -84,7 +84,7 @@ pub const Ipc = struct {
         defer self.gpa.free(json);
         const text = try std.mem.concat(self.gpa, u8, &.{ json, "\n" });
         defer self.gpa.free(text);
-        const file = Io.Dir.cwd().createFile(self.io, self.path, .{ .truncate = false }) catch return error.WriteFailed;
+        const file = Io.Dir.cwd().createFile(self.io, self.path, .{ .read = true, .truncate = false }) catch return error.WriteFailed;
         defer file.close(self.io);
         const end = file.length(self.io) catch return error.WriteFailed;
         file.writePositionalAll(self.io, text, end) catch return error.WriteFailed;

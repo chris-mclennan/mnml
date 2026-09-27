@@ -109,3 +109,56 @@ test "the child is still underneath: a leak through Scribble is a leak" {
     const buf = try gpa.alloc(u8, 32);
     gpa.free(buf);
 }
+
+/// `got`, a path the code built, is `want`, spelled with `/`. Windows
+/// takes either separator and `std.fs.path.join` writes `\`, so there
+/// both sides are read with every `\` as `/` — a path test states where
+/// a file goes, and the separator is the platform's business.
+pub fn expectPath(want: []const u8, got: []const u8) !void {
+    if (@import("builtin").os.tag != .windows) return std.testing.expectEqualStrings(want, got);
+    const w = try slashed(want);
+    defer std.testing.allocator.free(w);
+    const g = try slashed(got);
+    defer std.testing.allocator.free(g);
+    return std.testing.expectEqualStrings(w, g);
+}
+
+/// `got` ends with `suffix`, spelled with `/`, read as `expectPath` reads.
+pub fn pathEndsWith(got: []const u8, suffix: []const u8) bool {
+    if (@import("builtin").os.tag != .windows) return std.mem.endsWith(u8, got, suffix);
+    const g = slashed(got) catch return false;
+    defer std.testing.allocator.free(g);
+    return std.mem.endsWith(u8, g, suffix);
+}
+
+/// `got` starts with `prefix`, spelled with `/`, read as `expectPath` reads.
+pub fn pathStartsWith(got: []const u8, prefix: []const u8) bool {
+    if (@import("builtin").os.tag != .windows) return std.mem.startsWith(u8, got, prefix);
+    const g = slashed(got) catch return false;
+    defer std.testing.allocator.free(g);
+    return std.mem.startsWith(u8, g, prefix);
+}
+
+/// `got` holds `needle`, spelled with `/`, read as `expectPath` reads.
+pub fn pathContains(got: []const u8, needle: []const u8) bool {
+    if (@import("builtin").os.tag != .windows) return std.mem.indexOf(u8, got, needle) != null;
+    const g = slashed(got) catch return false;
+    defer std.testing.allocator.free(g);
+    return std.mem.indexOf(u8, g, needle) != null;
+}
+
+fn slashed(p: []const u8) Allocator.Error![]u8 {
+    const out = try std.testing.allocator.dupe(u8, p);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
+}
+
+test "a path compares with its separators read as the platform writes them" {
+    const joined = try std.fs.path.join(std.testing.allocator, &.{ "/data", "ratelimit", "x.json" });
+    defer std.testing.allocator.free(joined);
+    try expectPath("/data/ratelimit/x.json", joined);
+    try std.testing.expect(pathEndsWith(joined, "/ratelimit/x.json"));
+    try std.testing.expect(pathContains(joined, "/ratelimit/"));
+    try std.testing.expect(pathStartsWith(joined, "/data/ratelimit/"));
+    try std.testing.expect(!pathEndsWith(joined, "/other.json"));
+}

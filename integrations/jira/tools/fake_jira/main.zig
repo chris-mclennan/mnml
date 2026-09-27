@@ -1401,7 +1401,7 @@ fn logRequest(io: Io, store: *Store, arena: Allocator, method: std.http.Method, 
         bytes,
         std.zig.fmtString(jqlOf(body)),
     }) catch return;
-    const file = Io.Dir.cwd().createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+    const file = Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
     defer file.close(io);
     const end = file.length(io) catch 0;
     file.writePositionalAll(io, line, end) catch {};
@@ -1642,6 +1642,9 @@ test "--life-secs is a real deadline: a server nobody talks to is gone when the 
 }
 
 test "--parent-pid: a server whose starter is gone leaves too, deadline or no deadline" {
+    // The orphan check is the POSIX liveness probe (`kill(pid, 0)`); on
+    // Windows `orphaned` is always false and the deadline alone applies.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     var store = try Store.init(testing.allocator);
     defer store.deinit();

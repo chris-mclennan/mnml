@@ -7,28 +7,25 @@ write data.txt "alpha"
 open data.txt
 command editor.use_vim
 
-# Open the cmdline. Type "wr" — Tab cycles. Multiple matches now exist:
-# - ai.write_branch_name (id-contains "wr", score 200)
-# - ai.write_tests (id-contains "wr", score 200)
-# - view.toggle_wrap (id-contains "wr", score 200)
-# - write (EX prefix, score 150)
-# First Tab picks the alphabetically-first at the highest score tier
-# (`ai.write_branch_name` sorts before `ai.write_tests`).
+# Open the cmdline. Type "wr" — an ex verb the text begins outranks the
+# registry ids that only contain it (Neovim: getcompletion("wr",
+# "cmdline") = { "write" }): `write` (350) before ai.write_branch_name /
+# ai.write_tests / view.toggle_wrap (contains, 200).
 key :
 type "wr"
 key tab
-expect screen contains ":ai.write_branch_name"
+expect screen contains ":write"
 key escape
 
-# "ta" has many matches. tab.* commands (id-prefix, score 300) outrank
-# tabclose etc. (EX prefix, score 150). First Tab picks tab.close
-# (alphabetically first at 300).
+# "ta": the ex verbs (tabclose, tabedit, …; 350) before the tab.* ids
+# (prefix, 300), alphabetical within each (Neovim lists tabclose then
+# tabedit among its own).
 key :
 type "ta"
 key tab
-expect screen contains ":tab.close"
+expect screen contains ":tabclose"
 key tab
-expect screen contains ":tab.first"
+expect screen contains ":tabedit"
 key escape
 
 # File-path completion: after a path-accepting command + space, Tab cycles

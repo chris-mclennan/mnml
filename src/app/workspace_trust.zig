@@ -112,7 +112,8 @@ pub fn removeEntry(gpa: Allocator, io: Io, path: []const u8, workspace: []const 
         else => return e,
     };
     defer gpa.free(text);
-    const needle = try std.fmt.allocPrint(gpa, ".@\"{s}\" =", .{workspace});
+    // Spelled as the store writes the key: escaped (a Windows path's `\`).
+    const needle = try std.fmt.allocPrint(gpa, ".@\"{f}\" =", .{std.zig.fmtString(workspace)});
     defer gpa.free(needle);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     defer out.deinit(gpa);
