@@ -2705,7 +2705,9 @@ test "mnml.diagnostics: a script's findings reach the gutter, the statusline, th
     const lua = app.script();
     const pane = try app.openScratchWith("one\ntwo\nthree\n");
     const e = app.panes.editor(pane).?;
-    const path = try testing.allocator.dupe(u8, "/tmp/app.js");
+    // The file as the script's relative name resolves: under the
+    // workspace, joined natively.
+    const path = try std.fs.path.join(testing.allocator, &.{ "/tmp", "app.js" });
     defer testing.allocator.free(path);
     e.buf.doc.setPath(path) catch unreachable;
     try lua.runString(

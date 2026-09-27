@@ -772,6 +772,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *MountPane, rect: Rect) Allocator.
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 /// Poll `tick` until `pred` holds or `ms` elapse.
 fn waitFor(app: *App, ms: u32, ctx: anytype, comptime pred: fn (@TypeOf(ctx)) bool) !void {
@@ -1134,7 +1135,9 @@ test "the IPC channel an integration is told about exists even when the workspac
     // The socket leaves the workspace for `/tmp`…
     const sock = try host.socketPath(testing.allocator, dir, 1);
     defer testing.allocator.free(sock);
-    try testing.expect(std.mem.startsWith(u8, sock, "/tmp/"));
+    // (Windows' AF_UNIX takes a path of any length, so there it stays
+    // in the workspace.)
+    try testing.expect(std.mem.startsWith(u8, sock, if (@import("builtin").os.tag == .windows) dir else "/tmp/"));
     // …and the channel is there anyway.
     try Io.Dir.cwd().access(testing.io, dir, .{});
     try testing.expect(std.mem.startsWith(u8, dir, deep.items));

@@ -429,7 +429,10 @@ const InstallRig = struct {
         errdefer env.deinit();
         try tmp.dir.createDirPath(t.io, "tools");
         try tmp.dir.createDirPath(t.io, "installed");
-        const path = try std.fmt.allocPrint(t.allocator, "{s}/tools:{s}/installed:/bin:/usr/bin", .{ root, root });
+        // The platform's PATH delimiter: `;` on Windows, where a drive
+        // letter's `:` would split the entries.
+        const d = [1]u8{std.fs.path.delimiter};
+        const path = try std.fmt.allocPrint(t.allocator, "{s}/tools" ++ d ++ "{s}/installed" ++ d ++ "/bin" ++ d ++ "/usr/bin", .{ root, root });
         defer t.allocator.free(path);
         try env.put("PATH", path);
         const fake_bin = try std.fmt.allocPrint(t.allocator, "{s}/installed", .{root});
@@ -450,8 +453,9 @@ const InstallRig = struct {
         try r.tmp.dir.writeFile(t.io, .{ .sub_path = rel, .data = script });
         const abs = try std.fs.path.join(t.allocator, &.{ r.root, rel });
         defer t.allocator.free(abs);
-        const perms: std.Io.File.Permissions = if (builtin.os.tag == .windows) .default_file else .fromMode(0o755);
-        try std.Io.Dir.cwd().setFilePermissions(t.io, abs, perms, .{});
+        // Windows has no execute bit to set (and Zig 0.16's
+        // dirSetFilePermissions there is a TODO panic).
+        if (builtin.os.tag != .windows) try std.Io.Dir.cwd().setFilePermissions(t.io, abs, .fromMode(0o755), .{});
     }
 
     fn app(r: *InstallRig) !App {

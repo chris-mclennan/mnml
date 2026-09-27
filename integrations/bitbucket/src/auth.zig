@@ -266,6 +266,7 @@ pub fn describe(gpa: Allocator, tk: *const Tokens) Allocator.Error![]u8 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "BITBUCKET_ACCESS_TOKEN is the token when it is set, and the file is the token when it is not" {
     var tmp = t.tmpDir(.{});
@@ -461,7 +462,7 @@ test "the diagnostic block names the source and the length and never the token" 
     defer ftk.deinit();
     const ftext = try describe(t.allocator, &ftk);
     defer t.allocator.free(ftext);
-    try t.expect(std.mem.indexOf(u8, ftext, "/token") != null);
+    try t.expect(sdk_testing.pathContains(ftext, "/token"));
     try t.expect(std.mem.indexOf(u8, ftext, "23 chars, not shown") != null);
     try t.expect(std.mem.indexOf(u8, ftext, "approve token: the read token") != null);
     try t.expect(std.mem.indexOf(u8, ftext, "secret") == null);

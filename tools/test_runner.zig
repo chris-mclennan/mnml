@@ -52,13 +52,24 @@ var fba: std.heap.FixedBufferAllocator = .init(&fba_buffer);
 
 pub fn main(init: std.process.Init.Minimal) void {
     const args = init.args.toSlice(fba.allocator()) catch |err| std.debug.panic("unable to parse command line args: {t}", .{err});
+    var child = false;
+    var from: usize = 1;
+    var progress: ?[]const u8 = null;
     for (args[1..]) |arg| {
         if (std.mem.startsWith(u8, arg, "--seed=")) {
             testing.random_seed = std.fmt.parseUnsigned(u32, arg["--seed=".len..], 0) catch
                 @panic("unable to parse --seed command line argument");
+        } else if (std.mem.eql(u8, arg, "--child")) {
+            child = true;
+        } else if (std.mem.startsWith(u8, arg, "--from=")) {
+            from = std.fmt.parseUnsigned(usize, arg["--from=".len..], 10) catch @panic("unable to parse --from");
+        } else if (std.mem.startsWith(u8, arg, "--progress=")) {
+            progress = arg["--progress=".len..];
         }
         // Anything else (`--listen=-`, `--cache-dir=`) is the build runner's; ignored.
     }
+    if (!child) return supervise(init, args);
+    runner_io = .init(std.heap.page_allocator, .{});
     const filter: ?[]const u8 = if (builtin.os.tag == .windows) null else init.environ.getPosix("MNML_TEST_FILTER");
     // The build runner hands `--seed=` only to a runner in its protocol
     // mode, never to this one, so `testing.random_seed` is 0 here unless
@@ -82,8 +93,10 @@ pub fn main(init: std.process.Init.Minimal) void {
     var flaky_idx: [64]usize = undefined;
     var flaky_err: [64]anyerror = undefined;
     for (test_fns, 0..) |test_fn, i| {
+        if (i + 1 < from) continue;
         if (filter) |f| if (std.mem.indexOf(u8, test_fn.name, f) == null) continue;
         ran += 1;
+        if (progress) |p| markProgress(runner_io.io(), p, i + 1);
         std.debug.print("▶ {d}/{d} {s}\n", .{ i + 1, test_fns.len, test_fn.name });
         var one: One = .{ .init = init, .test_fn = test_fn, .leaks = &leaks };
         const errors_before = log_err_count;
@@ -129,6 +142,84 @@ pub fn main(init: std.process.Init.Minimal) void {
     if (log_err_count != 0) std.debug.print("{d} errors were logged.\n", .{log_err_count});
     if (leaks != 0) std.debug.print("{d} tests leaked memory.\n", .{leaks});
     if (leaks != 0 or log_err_count != 0 or counts.fail != 0) std.process.exit(1);
+}
+
+/// The runner proper runs in a child; this parent only restarts it. A
+/// test that panics takes its process down, and with it every test after
+/// it: one crash hid 2280 of the main binary's 2536 tests on the suite's
+/// first Windows run. So the parent starts the child again just past the
+/// test that crashed, names that test `CRASH`, and fails the run at the
+/// end. The child writes the number of the test it is about to run to a
+/// progress file beside the binary, which is how the parent knows where
+/// it died.
+fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
+    const gpa = std.heap.page_allocator;
+    // The child's environment is this process's: an Io made without one
+    // spawns on Windows with an empty block — no PATH, so no `git`, no
+    // `cmd.exe`, in any test.
+    var threaded: Io.Threaded = .init(gpa, .{ .argv0 = .init(init.args), .environ = init.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+    const test_fns = builtin.test_functions;
+
+    var name_buf: [64]u8 = undefined;
+    var nonce: [8]u8 = undefined;
+    io.random(&nonce);
+    const progress = std.fmt.bufPrint(&name_buf, "test-progress-{x}", .{std.mem.readInt(u64, &nonce, .little)}) catch unreachable;
+    // Beside the test binary, in the build's cache: nowhere a checkout sees.
+    const progress_path = std.fs.path.join(gpa, &.{ std.fs.path.dirname(args[0]) orelse ".", progress }) catch @panic("OOM");
+    defer Io.Dir.cwd().deleteFile(io, progress_path) catch {};
+
+    var from: usize = 1;
+    var crashes: usize = 0;
+    var code: u8 = 0;
+    while (from <= test_fns.len) {
+        var argv: std.ArrayList([]const u8) = .empty;
+        for (args) |a| {
+            if (std.mem.startsWith(u8, a, "--from=") or std.mem.startsWith(u8, a, "--progress=")) continue;
+            argv.append(gpa, a) catch @panic("OOM");
+        }
+        argv.append(gpa, "--child") catch @panic("OOM");
+        argv.append(gpa, std.fmt.allocPrint(gpa, "--from={d}", .{from}) catch @panic("OOM")) catch @panic("OOM");
+        argv.append(gpa, std.fmt.allocPrint(gpa, "--progress={s}", .{progress_path}) catch @panic("OOM")) catch @panic("OOM");
+        Io.Dir.cwd().deleteFile(io, progress_path) catch {};
+        var proc = std.process.spawn(io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .inherit, .stderr = .inherit }) catch |err|
+            std.debug.panic("test runner: cannot start the suite: {t}", .{err});
+        const term = proc.wait(io) catch |err| std.debug.panic("test runner: lost the suite: {t}", .{err});
+        // The child ends its own run with 0 or 1; anything else — a
+        // signal, or Windows' exit code 3 from a panic — is a crash.
+        switch (term) {
+            .exited => |c| if (c <= 1) {
+                code = c;
+                break;
+            },
+            else => {},
+        }
+        var buf: [32]u8 = undefined;
+        const text = Io.Dir.cwd().readFile(io, progress_path, &buf) catch "";
+        const at = std.fmt.parseUnsigned(usize, std.mem.trim(u8, text, " \n"), 10) catch {
+            std.debug.print("  CRASH before the first test ran ({any}); giving up\n", .{term});
+            std.process.exit(1);
+        };
+        crashes += 1;
+        std.debug.print("  CRASH {s} ({any}) — the suite goes on from the next test\n", .{ test_fns[at - 1].name, term });
+        from = at + 1;
+    }
+    if (crashes != 0) {
+        std.debug.print("{d} tests crashed the process.\n", .{crashes});
+        std.process.exit(1);
+    }
+    std.process.exit(code);
+}
+
+/// The runner's own Io, for the progress file: `testing.io` belongs to
+/// the test and is torn down between them.
+var runner_io: Io.Threaded = undefined;
+
+fn markProgress(io: Io, path: []const u8, index: usize) void {
+    var buf: [24]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{d}\n", .{index}) catch return;
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text }) catch {};
 }
 
 fn reportFlaky(name: []const u8, err: anyerror) void {

@@ -555,7 +555,10 @@ test "reset_layout: leaves full screen and the zoom, shows the tree at the confi
     const wb = paneRect(&app, b).?.w;
     try t.expect(wa + 1 >= wb and wb + 1 >= wa);
     // The persisted bars.
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".menu_bar = .always") != null);

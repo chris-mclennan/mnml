@@ -1735,6 +1735,7 @@ test "expandEnv: a name and a braced name from the map, an unset name is empty, 
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const StubFactory = driver_mod.StubFactory;
 
 const fast: Timing = .{ .step_settle_ms = 1, .expect_budget_ms = 60, .expect_poll_ms = 5, .wait_slice_ms = 2 };
@@ -1865,7 +1866,7 @@ test "the step order and the driver calls are exactly the Rust runner's" {
     defer t.allocator.free(calls);
     const ws_open = std.mem.indexOf(u8, calls, "open ").?;
     const open_line_end = std.mem.indexOfScalarPos(u8, calls, ws_open, '\n').?;
-    try t.expect(std.mem.endsWith(u8, calls[ws_open..open_line_end], "/a.txt"));
+    try t.expect(sdk_testing.pathEndsWith(calls[ws_open..open_line_end], "/a.txt"));
     try t.expect(std.mem.indexOf(u8, calls[ws_open..open_line_end], "mnml-e2e-") != null);
     const before = calls[0..ws_open];
     const after = calls[open_line_end + 1 ..];
@@ -1938,7 +1939,7 @@ test "a missing file's expect file names the path" {
     defer o.deinit(t.allocator);
     try t.expect(!o.passed);
     try t.expect(std.mem.startsWith(u8, o.message.?, "line 1: can't read "));
-    try t.expect(std.mem.endsWith(u8, o.message.?, "/nope.txt: FileNotFound"));
+    try t.expect(sdk_testing.pathEndsWith(o.message.?, "/nope.txt: FileNotFound"));
 }
 
 test "step failures: unknown command, ghost without an editor, unsafe paths, refused shell" {
@@ -1999,6 +2000,9 @@ test "shell steps run in the workspace when allowed, and a non-zero exit fails w
 }
 
 test "each file persists into its own data root, so one that leaves something installed cannot reach the next" {
+    // Its files are `shell` steps, and `shell` is `/bin/sh -c`: POSIX,
+    // as the shell-step tests above.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var env = try TestEnv.init();
     defer env.deinit();
     var opts = env.opts();
@@ -2056,13 +2060,52 @@ test "parse errors and unreadable files are outcomes, never panics" {
 test "wait ticks the driver while the clock runs" {
     var env = try TestEnv.init();
     defer env.deinit();
-    const path = try env.script("w.test", "wait 30\n");
+    const path = try env.script("w.test", "wait 100\n");
     defer t.allocator.free(path);
-    var sf: StubFactory = .{};
-    var o = runFile(t.allocator, t.io, sf.factory(), path, content_size, env.opts());
+    // Every tick is stamped. A `wait` that slept its whole clock and
+    // ticked once after would leave one gap as long as the wait; one that
+    // ticks between slices leaves no gap longer than a slice took. The
+    // assertion is relative to what the clock actually did, so a runner
+    // that oversleeps each 2 ms slice tenfold still passes, and only a
+    // single sleep swallowing half the file's span fails it.
+    const Stamped = struct {
+        var at: [4096]i64 = undefined;
+        var n: usize = 0;
+        fn create(_: *anyopaque, gpa: Allocator, _: Io, cfg: driver_mod.Config) anyerror!Driver {
+            const s = try gpa.create(driver_mod.Stub);
+            s.* = try driver_mod.Stub.init(gpa, cfg.cols, cfg.rows);
+            return .{ .ptr = s, .vtable = &stamped };
+        }
+        const stamped: Driver.VTable = blk: {
+            var v = @as(*const Driver.VTable, driver_mod.Stub.vtablePtr()).*;
+            v.tick = struct {
+                fn f(p: *anyopaque) driver_mod.Error!void {
+                    if (n < at.len) {
+                        at[n] = Io.Timestamp.now(std.testing.io, .awake).toMilliseconds();
+                        n += 1;
+                    }
+                    return driver_mod.Stub.vtablePtr().tick(p);
+                }
+            }.f;
+            break :blk v;
+        };
+    };
+    Stamped.n = 0;
+    var dummy: u8 = 0;
+    var o = runFile(t.allocator, t.io, .{ .ptr = &dummy, .create = Stamped.create }, path, content_size, env.opts());
     try expectPassed(&o);
-    // 30 ms in 2 ms slices: many ticks beyond the render cycles' four.
-    try t.expect(sf.stats.ticks > 8);
+    const stamps = Stamped.at[0..Stamped.n];
+    try t.expect(stamps.len >= 2);
+    const span = stamps[stamps.len - 1] - stamps[0];
+    // The clock ran: the ticks span the whole wait.
+    try t.expect(span >= 100);
+    var widest: i64 = 0;
+    for (stamps[1..], stamps[0 .. stamps.len - 1]) |b, a| widest = @max(widest, b - a);
+    // And it was ticked through: no single gap is half of it.
+    if (widest * 2 > span) {
+        std.debug.print("wait ticks: {d} over {d} ms, widest gap {d} ms\n", .{ stamps.len, span, widest });
+        return error.TestUnexpectedResult;
+    }
 }
 
 test "a leaking App fails the file" {
@@ -2199,7 +2242,7 @@ test "runPath: skips, sizes, names, and the ok/ok*/FAIL/N-M report" {
     try t.expectEqualStrings(expected[0..head], report[0..head]);
     const middle = expected[head + "SCREEN".len .. std.mem.indexOf(u8, expected, "SUITE").?];
     try t.expect(std.mem.indexOf(u8, report, middle) != null);
-    try t.expect(std.mem.indexOf(u8, report, "/suite/sub/c_net.test\n") != null);
+    try t.expect(sdk_testing.pathContains(report, "/suite/sub/c_net.test\n"));
     try t.expect(std.mem.indexOf(u8, report, "  FAIL e_wide.test @80x40 — line 2: screen does not contain \"nope\"\n") != null);
     // The tally keeps `N/M passed` as its first bytes — scripts grep for
     // it — and then says how much of M actually checked anything.
@@ -2386,7 +2429,7 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     defer t.allocator.free(skip_line);
     const expected = try std.mem.concat(t.allocator, u8, &.{ "\u{25b6} e2e: alpha_one.test\n  ok   alpha_one.test\n", skip_line });
     defer t.allocator.free(expected);
-    try t.expectEqualStrings(expected, out.written());
+    try sdk_testing.expectPath(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
     try t.expectEqualStrings("notes", stemOf("notes"));
 }
@@ -2785,11 +2828,12 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try host.put("SHELL", "/opt/homebrew/bin/fish");
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
-    try t.expectEqualStrings("/run/home", env.get("HOME").?);
-    try t.expectEqualStrings("/repo/tools/shims/ai:/usr/bin:/bin", env.get("PATH").?);
+    try sdk_testing.expectPath("/run/home", env.get("HOME").?);
+    // The shims go first, joined with the platform's PATH delimiter.
+    try sdk_testing.expectPath("/repo/tools/shims/ai" ++ [1]u8{std.fs.path.delimiter} ++ "/usr/bin:/bin", env.get("PATH").?);
     try t.expectEqualStrings("C.UTF-8", env.get("LC_ALL").?);
     try t.expectEqualStrings("300", env.get("MNML_E2E_FILE_TIMEOUT_SECS").?);
-    try t.expectEqualStrings("/repo/tools/shims", env.get("MNML_SHIMS").?);
+    try sdk_testing.expectPath("/repo/tools/shims", env.get("MNML_SHIMS").?);
     // A terminal pane's shell: macOS's own, else the host's.
     try t.expectEqualStrings(if (builtin.os.tag == .macos) "/bin/zsh" else "/opt/homebrew/bin/fish", env.get("SHELL").?);
     for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME" }) |gone| {

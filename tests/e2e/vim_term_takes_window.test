@@ -1,0 +1,20 @@
+# The vim profile's `:term` takes the current window, as Neovim's
+# `:terminal` does (NvChad: one window before and after, the terminal a
+# listed buffer, `:b#` back to the file): a new tab in the focused leaf,
+# the file's tab still on the strip beside it. `:b#` swaps back and forth.
+write a.txt "alpha\n"
+open a.txt
+command view.toggle_tree
+command editor.use_vim
+ex term sleep 30
+expect pane sleep 30
+expect screen contains " 󰈙 a.txt 󰅖   󲀀 sleep 30 󰅖"
+ex b#
+expect pane a.txt
+expect screen contains "alpha"
+ex b#
+expect pane sleep 30
+# A bare `:term`: the login shell, in the same leaf again.
+ex term
+expect within 3000 screen contains "TERMINAL"
+expect screen contains " 󰈙 a.txt 󰅖   󲀀 sleep 30 󰅖   󲀀"

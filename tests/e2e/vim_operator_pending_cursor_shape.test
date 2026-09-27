@@ -1,0 +1,9 @@
+# Neovim's default guicursor (NvChad keeps it) has o:hor20: after d / c /
+# y the cursor is a low underline until the motion. mnml kept the block.
+write f.txt "abc def\n"
+open f.txt
+command editor.use_vim
+key d
+expect status contains "\"cursorShape\":\"underline\""
+key w
+expect status contains "\"cursorShape\":\"block\""

@@ -30,11 +30,11 @@
    │                          │                                                Ctrl+N         new file
    │──────────────────────────│                                                Ctrl+Q         quit
    │ Sidebar              󰐃 ⋮ │
-   │                          │                             mnml 0.3.0-dev+gdd7a1c9c-dirty
+   │                          │                                mnml 0.3.0-dev+g1cb0b5c4
    │ Arrows or j/k walk rows. │
    │ Enter opens the          │
    │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:40  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  22:15  ws   —
                                                            ⋯

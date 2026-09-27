@@ -260,7 +260,7 @@ pub const Server = struct {
             status,
             bytes,
         }) catch return;
-        const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
         defer file.close(self.io);
         const end = file.length(self.io) catch 0;
         file.writePositionalAll(self.io, line, end) catch {};

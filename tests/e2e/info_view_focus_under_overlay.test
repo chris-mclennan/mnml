@@ -14,8 +14,13 @@ expect screen lacks "Hover a chip, tab, or tree row"
 key esc
 open src/main.rs
 expect screen contains "fn  ·  RS  ·  main."
+# Focusing the tree reveals the active file (NvChad's
+# `update_focused_file`), so its row's doc shows; back at the first row
+# the editor's summary comes through again.
 command view.focus_tree
 expect screen contains " TREE "
+expect screen contains "main.rs — Rust sourc"
+key home
 expect screen contains "fn  ·  RS  ·  main."
 key r
 key end

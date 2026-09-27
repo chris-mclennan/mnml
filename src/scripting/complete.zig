@@ -44,7 +44,7 @@ pub fn isScriptPath(app: *App, path: []const u8) bool {
     if (!std.mem.endsWith(u8, path, ".lua")) return false;
     if (diag.isInitPath(app, path)) return true;
     const dir = std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml" }) catch return false;
-    return path.len > dir.len and std.mem.startsWith(u8, path, dir) and path[dir.len] == '/';
+    return path.len > dir.len and std.mem.startsWith(u8, path, dir) and std.fs.path.isSep(path[dir.len]);
 }
 
 pub const Context = union(enum) {

@@ -1,0 +1,14 @@
+# d/pat<CR> deletes up to the match (Neovim: "a b foo c" -> "foo c").
+# mnml drops the operator at /, then the typed "foo" runs as Normal keys
+# (f o, then o opens a line) and <CR> lands in Insert: blank lines appear.
+write f.txt "a b foo c\n"
+open f.txt
+command editor.use_vim
+key d
+key /
+type foo
+key enter
+key esc
+ex w
+expect file f.txt contains "foo c\n"
+expect file f.txt lacks "a b"

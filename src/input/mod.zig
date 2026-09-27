@@ -117,6 +117,13 @@ pub const AppCommand = union(enum) {
     /// backtick form (charwise, exclusive), else linewise to the mark's
     /// line. The buffer owns the mark, so it builds the range.
     operator_to_mark: struct { op: u8, mark: u8, exact: bool },
+    /// `d/pat<CR>` / `d?pat<CR>`: the find bar opens for the pending
+    /// operator; its Enter hands the match back as the motion's end.
+    operator_search: struct { backward: bool },
+    /// The end of a pending operator's motion, found outside the handler
+    /// (a search's match): `motion` moves there from the cursor, the
+    /// operator finishes linewise or exclusive. Frame arena.
+    operator_motion: struct { motion: []const EditOp, linewise: bool },
     /// `{count} Ctrl-W >` and friends: the active window's width
     /// (`width`) or height by `cells`, negative to shrink.
     split_resize: struct { width: bool, cells: i32 },
@@ -130,7 +137,7 @@ pub const AppCommand = union(enum) {
     script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 27);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 29);
     }
 };
 
@@ -268,6 +275,20 @@ pub const InputHandler = union(enum) {
     pub fn isOpPending(h: *const InputHandler) bool {
         return switch (h.*) {
             inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "isOpPending")) impl.isOpPending() else false,
+        };
+    }
+
+    /// `Vim.finishPendingMotion`; null for a handler with no operators.
+    pub fn finishPendingMotion(h: *InputHandler, motion: []const EditOp, linewise: bool, ctx: EditCtx, arena: Allocator) Allocator.Error!?InputResult {
+        return switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "finishPendingMotion")) impl.finishPendingMotion(motion, linewise, ctx, arena) else null,
+        };
+    }
+
+    /// An operator waits for its motion — the cursor shape's `o` mode.
+    pub fn isOperatorPending(h: *const InputHandler) bool {
+        return switch (h.*) {
+            inline else => |*impl| if (@hasDecl(@TypeOf(impl.*), "isOperatorPending")) impl.isOperatorPending() else false,
         };
     }
 

@@ -5,7 +5,7 @@ const std = @import("std");
 const symbols_font_name = "MnmlSymbols.ttf";
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    const target = windowsGnu(b, b.standardTargetOptions(.{}));
     const optimize = b.standardOptimizeOption(.{});
 
     // ── terminal core: ghostty-vt ──
@@ -1065,6 +1065,19 @@ pub fn build(b: *std.Build) void {
     llvmForX86Debug(b, target, optimize);
 }
 
+/// A Windows target with no ABI named is `-gnu`, said out loud. ghostty's
+/// build turns an unnamed Windows ABI into msvc, so a plain `zig build` on
+/// a Windows host compiled ghostty-vt (and its translate-c'd wuffs header)
+/// for msvc while everything else, libc included, was mingw: the C import
+/// then failed on mingw's own headers. Naming gnu here hands ghostty the
+/// ABI the shipped Windows build already uses (`release_targets`).
+fn windowsGnu(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.ResolvedTarget {
+    if (target.result.os.tag != .windows or target.query.abi != null) return target;
+    var query = target.query;
+    query.abi = .gnu;
+    return b.resolveTargetQuery(query);
+}
+
 /// Every x86_64 Debug compile goes through LLVM. Zig 0.16's own x86_64
 /// code generator, the Debug default on that arch, crashes on this tree
 /// ("TODO implement writeToPackedMemory for more types"; SEGV on the CI
@@ -1550,6 +1563,10 @@ fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
     for (unit_step.dependencies.items) |dep| {
         const run = dep.cast(std.Build.Step.Run) orelse continue;
         run.setEnvironmentVariable("HOME", home);
+        // The machine's system git config stays out too: Git for Windows
+        // ships `core.autocrlf=true` there, which checked the fixtures'
+        // files out with CRLF and failed every test that reads one back.
+        run.setEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         for ([_][]const u8{
             "MNML_IPC_DIR",    "MNML_WORKSPACE", "MNML_DATA_ROOT", "MNML_BROKER",           "MNML_SESSIONS_HOME",
             "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "TATTLE_ARTIFACTS_ROOT", "CLAUDECODE",

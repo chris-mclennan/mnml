@@ -219,13 +219,25 @@ pub fn units(s: []const u8, enc: Encoding) u32 {
 
 // ─── uris ───────────────────────────────────────────────────────────────
 
-/// `file:///abs/path`, percent-encoding what RFC 3986 says to.
+/// `file:///abs/path`, percent-encoding what RFC 3986 says to. A
+/// Windows path (`D:\a\b`) is `file:///D:/a/b`: `/` between the
+/// parts, the drive's colon kept, a slash before the drive.
 pub fn uriFromPath(arena: Allocator, path: []const u8) Allocator.Error![]u8 {
+    return uriFromPathFor(arena, path, @import("builtin").os.tag == .windows);
+}
+
+fn uriFromPathFor(arena: Allocator, path: []const u8, windows: bool) Allocator.Error![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     try out.appendSlice(arena, "file://");
-    for (path) |c| {
+    const drive = windows and path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':';
+    if (drive) try out.append(arena, '/');
+    for (path, 0..) |c, i| {
         if (std.ascii.isAlphanumeric(c) or c == '/' or c == '-' or c == '_' or c == '.' or c == '~') {
             try out.append(arena, c);
+        } else if (windows and c == '\\') {
+            try out.append(arena, '/');
+        } else if (drive and i == 1) {
+            try out.append(arena, ':');
         } else {
             try out.print(arena, "%{X:0>2}", .{c});
         }
@@ -234,7 +246,23 @@ pub fn uriFromPath(arena: Allocator, path: []const u8) Allocator.Error![]u8 {
 }
 
 /// The path of a `file://` URI, percent-decoded. Null for other schemes.
+/// On Windows `file:///D:/a/b` (or `file:///d%3A/a/b`) is `D:\a\b`.
 pub fn pathFromUri(arena: Allocator, uri: []const u8) Allocator.Error!?[]u8 {
+    return pathFromUriFor(arena, uri, @import("builtin").os.tag == .windows);
+}
+
+fn pathFromUriFor(arena: Allocator, uri: []const u8, windows: bool) Allocator.Error!?[]u8 {
+    const posix = try pathFromUriPosix(arena, uri) orelse return null;
+    if (!windows) return posix;
+    // Only a drive-lettered path is Windows'; a drive-less `/x/y` (a
+    // server's own fixture, a UNC-less root) stays as written.
+    if (!(posix.len >= 3 and posix[0] == '/' and std.ascii.isAlphabetic(posix[1]) and posix[2] == ':')) return posix;
+    const p = posix[1..];
+    std.mem.replaceScalar(u8, p, '/', '\\');
+    return p;
+}
+
+fn pathFromUriPosix(arena: Allocator, uri: []const u8) Allocator.Error!?[]u8 {
     if (!std.mem.startsWith(u8, uri, "file://")) return null;
     var rest = uri["file://".len..];
     // `file://localhost/x` and `file:///C:/x` shapes.
@@ -724,4 +752,17 @@ test "readers: diagnostics, completion items, hover shapes, nested symbols" {
     try testing.expectEqualStrings("interface", symbolKindLabel(syms[0].kind));
     try testing.expectEqual(@as(u32, 10), syms[0].character);
     try testing.expectEqual(@as(u8, 1), syms[1].depth);
+}
+
+test "file URIs on Windows: file:///D:/a/b both ways, the drive's colon kept and %3A read" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings("file:///D:/ws/src/a%20b.zig", try uriFromPathFor(a, "D:\\ws\\src\\a b.zig", true));
+    try std.testing.expectEqualStrings("D:\\ws\\src\\a b.zig", (try pathFromUriFor(a, "file:///D:/ws/src/a%20b.zig", true)).?);
+    try std.testing.expectEqualStrings("d:\\ws\\x.zig", (try pathFromUriFor(a, "file:///d%3A/ws/x.zig", true)).?);
+    // A drive-less path is left as written; the POSIX forms are unchanged.
+    try std.testing.expectEqualStrings("/tmp/x.ts", (try pathFromUriFor(a, "file:///tmp/x.ts", true)).?);
+    try std.testing.expectEqualStrings("file:///ws/a%20b.zig", try uriFromPathFor(a, "/ws/a b.zig", false));
+    try std.testing.expectEqualStrings("/ws/a b.zig", (try pathFromUriFor(a, "file:///ws/a%20b.zig", false)).?);
 }

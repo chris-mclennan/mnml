@@ -340,6 +340,7 @@ fn expandTilde(arena: Allocator, path: []const u8, home: ?[]const u8) Allocator.
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const Fixture = struct {
     arena_state: std.heap.ArenaAllocator,
@@ -401,7 +402,7 @@ test "a full layer parses into a patch" {
     try t.expectEqualStrings("the", p.abbr.get("teh").?);
     try t.expectEqual(@as(?Config.AiBackend, .sub), p.ai.?.backend);
     try t.expectEqualStrings("work", p.ai.?.claude_accounts.?[0].name);
-    try t.expectEqualStrings("/usr/bin/cargo", p.tools.?.get("cargo").?.get("path").?.string);
+    try sdk_testing.expectPath("/usr/bin/cargo", p.tools.?.get("cargo").?.get("path").?.string);
     try t.expectEqualStrings("build", p.startup.?.tasks.?[0]);
     try t.expectEqualStrings("zig build", p.tasks.get("build").?.cmd);
     try t.expectEqualStrings("personal", p.workspaces.?[0].group.?);
@@ -511,8 +512,8 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     // keystroke and give it no time to answer.
     try t.expectEqual(@as(u16, Config.suggest_idle_ms_min), cfg.ai.suggest_idle_ms);
     try t.expectEqual(@as(u32, Config.suggest_timeout_ms_min), cfg.ai.suggest_timeout_ms);
-    try t.expectEqualStrings("/home/u/code", cfg.ui.projects_dir);
-    try t.expectEqualStrings("/home/u", cfg.startup.default_workspace.?);
+    try sdk_testing.expectPath("/home/u/code", cfg.ui.projects_dir);
+    try sdk_testing.expectPath("/home/u", cfg.startup.default_workspace.?);
     try t.expectEqual(@as(usize, 2), cfg.startup.layout.len);
     try t.expectEqual(@as(?u8, 99), cfg.startup.layout[1].ratio);
     try t.expectEqual(@as(usize, 2), f.diags.count());
@@ -593,7 +594,7 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         // diagnostics: the strip note + the unknown section in explicit
         try t.expectEqual(@as(usize, 2), loaded.diagnostics.count());
         try t.expectEqualStrings(explicit, loaded.explicit_path.?);
-        try t.expect(std.mem.endsWith(u8, loaded.home_path.?, "home/config.zon"));
+        try t.expect(sdk_testing.pathEndsWith(loaded.home_path.?, "home/config.zon"));
     }
     // trusted workspace
     {
@@ -635,7 +636,7 @@ test "load: three layers in order, untrusted workspace stripped, bad file non-fa
         defer loaded.deinit();
         try t.expectEqualStrings("onedark", loaded.config.ui.theme); // not read
         try t.expectEqual(@as(usize, 0), loaded.diagnostics.count());
-        try t.expect(std.mem.endsWith(u8, loaded.workspace_toml.?, "old/.mnml/config.toml"));
+        try t.expect(sdk_testing.pathEndsWith(loaded.workspace_toml.?, "old/.mnml/config.toml"));
         try t.expect(loaded.home_toml == null); // the home .zon exists
         // A .zon beside the .toml: the .toml is nothing.
         try tmp.dir.writeFile(t.io, .{ .sub_path = "old/.mnml/config.zon", .data = ".{}" });

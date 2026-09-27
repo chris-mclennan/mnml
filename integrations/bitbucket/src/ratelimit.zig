@@ -44,6 +44,7 @@ pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Al
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "the Bitbucket bucket is the SDK's, at this service's path" {
     try t.expectApproxEqAbs(@as(f64, 0.22), config.rate, 1e-12);
@@ -55,13 +56,13 @@ test "the Bitbucket bucket is the SDK's, at this service's path" {
     {
         const p = try statePath(t.allocator, t.io, &env);
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/data/ratelimit/bitbucket.json", p);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket.json", p);
     }
     try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
     {
         const p = try statePath(t.allocator, t.io, &env);
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/shared/bitbucket-ratelimit.json", p);
+        try sdk_testing.expectPath("/shared/bitbucket-ratelimit.json", p);
     }
     try env.put("BITBUCKET_RATELIMIT_STATE", "/tmp/x.json");
     const p = try statePath(t.allocator, t.io, &env);

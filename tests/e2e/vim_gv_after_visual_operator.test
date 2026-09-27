@@ -1,0 +1,14 @@
+# gv after a visual operator (>, <, =, U, u, ~) reselects the same lines
+# (Neovim: Vj>gvd on a/b/c -> c). mnml reselects nothing; the d is lost.
+# (After y it works.)
+write f.txt "a\nb\nc\n"
+open f.txt
+command editor.use_vim
+key V
+key j
+key >
+key g
+key v
+key d
+ex w
+expect file f.txt lacks "b"

@@ -218,8 +218,13 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz, .now = props.now };
-        try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);
-        try window(ctx, "Current week (all models)", u.weekly_percent, u.weekly_severity, u.weekly_resets_at, true, u.weekly_active, u.weekly_locked_reason, true);
+        // No reading yet: the windows would be empty bars saying "0%
+        // used", which reads as real data. The status line below (no
+        // data yet / fetching… / re-auth) is the whole story.
+        if (u.fetched_at > 0) {
+            try window(ctx, "Current session", u.percent, u.severity, u.resets_at, false, u.session_active, u.locked_reason, true);
+            try window(ctx, "Current week (all models)", u.weekly_percent, u.weekly_severity, u.weekly_resets_at, true, u.weekly_active, u.weekly_locked_reason, true);
+        }
         // The week by surface, when the endpoint sent it.
         if (u.breakdown) |bd| try surfaces(ctx, bd, props.now, usage_pane.hit_breakdown_base + @as(u32, @intCast(i)));
         // Per-model windows.

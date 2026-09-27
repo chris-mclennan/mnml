@@ -1,0 +1,10 @@
+# The cheatsheet clips a long description short of the command id, which
+# keeps its whole width (NvChad's cheatsheet truncates inside the
+# column). mnml painted the id over the description's tail:
+# "…every workspace sectionview.toggle_hidde".
+command editor.use_vim
+key space
+key c
+key h
+expect screen contains "view.toggle_hidden_all"
+expect screen lacks "sectionview."

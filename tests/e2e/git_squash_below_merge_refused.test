@@ -1,0 +1,40 @@
+# Squash / fixup / reword over a commit whose line from HEAD crosses a
+# merge announced "rebasing N commit(s)", then failed inside mnml's own
+# sequence editor ("--rebase-todo: the plan names <merge>, which is not
+# in …": `rebase -i` without `--rebase-merges` lists no merge) — after
+# the attempt had autostashed and checked out, so every dirty buffer was
+# flagged "changed on disk" (round-7 hunt). It is refused up front, in a
+# plain sentence, and nothing touches the tree or the history.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt && git commit -q -m "first"
+write b.txt "two\n"
+shell git add b.txt && git commit -q -m "second"
+shell git checkout -q -b side HEAD~1
+write s.txt "side\n"
+shell git add s.txt && git commit -q -m "side work"
+shell git checkout -q main && git merge -q --no-edit side
+write c.txt "three\n"
+shell git add c.txt && git commit -q -m "third"
+shell git rev-parse HEAD > .git/head-before.txt
+open a.txt
+key end
+type  dirty
+expect dirty true
+command git.graph
+wait 600
+expect screen contains "third"
+# cursor on "third" (HEAD): its parent is the merge
+command git.squash
+wait 2500
+command messages.show
+expect screen contains "is a merge"
+expect screen lacks "rebasing"
+expect screen lacks "rebase-todo"
+expect screen lacks "which is not in"
+expect screen lacks "changed on disk"
+shell test "$(git rev-parse HEAD)" = "$(cat .git/head-before.txt)"
+shell test -z "$(git stash list)"
+shell git diff --quiet

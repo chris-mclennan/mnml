@@ -36,7 +36,9 @@ ipc_cmd = os.path.join(WS, ".mnml", SUBDIR, "command")
 
 pid, fd = pty.fork()
 if pid == 0:
-    env = dict(os.environ, TERM="xterm-256color")
+    # MNML_RUN_LOOP: this stands in for run.sh's loop, which catches the
+    # restart's exit 75; without it the app relaunches itself.
+    env = dict(os.environ, TERM="xterm-256color", MNML_RUN_LOOP="1")
     os.execvpe(BIN, [BIN, WS], env)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 
