@@ -28,6 +28,9 @@ command view.focus_pane
 key r
 wait 3000
 shell test -f jira.log && test ! -s jira.log
+# The chip is still up after the refresh: the `lacks " DRY "` below is
+# only evidence if it was there to go.
+expect screen contains " DRY "
 command integrations.toggle_dry_run
 expect within 10000 screen lacks " DRY "
 key r

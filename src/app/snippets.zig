@@ -101,7 +101,7 @@ pub const Vars = struct {
         if (eql(u8, name, "RELATIVE_FILEPATH")) {
             const p = v.path orelse return null;
             const ws = v.workspace orelse return p;
-            if (std.mem.startsWith(u8, p, ws) and p.len > ws.len and p[ws.len] == '/') return p[ws.len + 1 ..];
+            if (std.mem.startsWith(u8, p, ws) and p.len > ws.len and std.fs.path.isSep(p[ws.len])) return p[ws.len + 1 ..];
             return p;
         }
         if (eql(u8, name, "WORKSPACE_FOLDER")) return v.workspace;

@@ -1305,6 +1305,16 @@ pub const App = struct {
             return;
         }
         const t = &a.tabs[idx];
+        // A dry run over rows already on screen: nothing was sent and
+        // nothing failed. The rows, the count, `as of` and the DRY chip
+        // stay; the message line says so — the Bitbucket pane's answer to
+        // the same refresh. (With nothing fetched yet there is nothing to
+        // keep, and the empty tab says why below.)
+        if (res.error_text.len > 0 and t.fetched and std.mem.eql(u8, res.error_text, jira.Client.dry_run_message)) {
+            a.say("dry run on — nothing sent; the pane keeps what it already shows", .{});
+            res.drop();
+            return;
+        }
         if (res.error_text.len > 0) {
             t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
             a.sayWithAction(retry_action, "error: {s}", .{res.error_text});
@@ -5688,9 +5698,17 @@ test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a 
     try testing.expect(h.app.budget.isDry());
     try testing.expect(std.mem.indexOf(u8, h.app.status.items, "dry run on") != null);
     const before = h.store.requests;
+    const shown = h.app.tab().issues.len;
+    try testing.expect(shown > 0);
     _ = try h.app.onKey("r");
     try h.app.ensureLoaded();
     try testing.expectEqual(before, h.store.requests);
+    // Nothing failed: the rows stay, no error is kept for the header,
+    // and the message line says nothing was sent.
+    try testing.expectEqual(shown, h.app.tab().issues.len);
+    try testing.expectEqualStrings("", h.app.tab().last_error);
+    try testing.expect(std.mem.indexOf(u8, h.app.status.items, "nothing sent") != null);
+    try testing.expect(std.mem.indexOf(u8, h.app.status.items, "error") == null);
     _ = try h.app.onKey("shift+n");
     try testing.expect(!h.app.budget.isDry());
 

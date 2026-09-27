@@ -111,7 +111,7 @@ pub fn renderLine(gpa: Allocator, entry: Entry, ts_ms: i64, workspace_label: ?[]
 /// Append one line to `path`, creating the file and its directory.
 pub fn appendLine(gpa: Allocator, io: Io, path: []const u8, line: []const u8) !void {
     if (std.fs.path.dirname(path)) |parent| try Io.Dir.cwd().createDirPath(io, parent);
-    const file = try Io.Dir.cwd().createFile(io, path, .{ .truncate = false });
+    const file = try Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false });
     defer file.close(io);
     const end = try file.length(io);
     const with_nl = try std.mem.concat(gpa, u8, &.{ line, "\n" });

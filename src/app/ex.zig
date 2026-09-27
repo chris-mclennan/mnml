@@ -175,8 +175,10 @@ pub fn run(app: *App, line_in: []const u8) CommandError!void {
     if (eqAny(verb, &.{ "y", "ya", "yan", "yank" })) return yankLines(app, range, args);
     if (eqAny(verb, &.{ "ab", "abb", "abbreviate", "iab", "iabbrev" })) return abbreviate(app, args);
     if (eqAny(verb, &.{ "una", "unabbreviate", "iuna", "iunabbrev" })) return unabbreviate(app, args);
-    if (eqAny(verb, &.{ "reg", "registers", "di", "display" })) return registers(app, args);
+    if (eqAny(verb, &.{ "reg", "registers", "di", "dis", "disp", "displ", "displa", "display" })) return registers(app, args);
     if (eqAny(verb, &.{"marks"})) return marks(app);
+    if (eqAny(verb, &.{ "ju", "jum", "jump", "jumps" })) return jumps(app);
+    if (eqAny(verb, &.{"changes"})) return changes(app);
     if (eqAny(verb, &.{ "delm", "delmarks" })) return delmarks(app, args, bang);
     if (eqAny(verb, &.{ "se", "set" })) return set(app, args);
     if (eqAny(verb, &.{ "setl", "setlocal" })) return setLocal(app, args);
@@ -498,6 +500,13 @@ fn searchLine(ed: *const Editor, re: *regex.Regex, from: usize, forward: bool) ?
 }
 
 // ─── files ──────────────────────────────────────────────────────────────
+
+/// `:saveas {path}` for the active editor — the standard profile's Save
+/// As prompt lands here too: the buffer takes the new name and is saved
+/// through the one save path.
+pub fn saveAs(app: *App, path_arg: []const u8) CommandError!void {
+    return write(app, null, path_arg, false, true);
+}
 
 fn write(app: *App, range: ?Range, path_arg: []const u8, then_close: bool, rename: bool) CommandError!void {
     const arena = app.frame.allocator();
@@ -1310,6 +1319,44 @@ fn marks(app: *App) CommandError!void {
     app.toast(":marks · {s}", .{parts.items});
 }
 
+/// `:ju[mps]` (`:help :jumps`): the jumplist, oldest first, `>` where
+/// `Ctrl-O` / `Ctrl-I` stand now.
+fn jumps(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const st = &app.jumplist;
+    if (st.back.items.len == 0 and st.forward.items.len == 0) {
+        app.toast(":jumps — the jumplist is empty", .{});
+        return;
+    }
+    var parts: std.ArrayListUnmanaged(u8) = .empty;
+    for (st.back.items) |p| try parts.print(arena, "{s}{s}:{d}:{d}", .{ if (parts.items.len > 0) "  " else "", app.relPath(p.path), p.row + 1, p.col + 1 });
+    try parts.appendSlice(arena, if (parts.items.len > 0) "  >" else ">");
+    var i = st.forward.items.len;
+    while (i > 0) {
+        i -= 1;
+        const p = st.forward.items[i];
+        try parts.print(arena, "  {s}:{d}:{d}", .{ app.relPath(p.path), p.row + 1, p.col + 1 });
+    }
+    app.toast(":jumps · {s}", .{parts.items});
+}
+
+/// `:changes` (`:help :changes`): the buffer's change list, oldest
+/// first — what `g;` / `g,` walk.
+fn changes(app: *App) CommandError!void {
+    const arena = app.frame.allocator();
+    const e = try editor(app, ":changes");
+    const list = e.buf.doc.change_list.items;
+    if (list.len == 0) {
+        app.toast(":changes — no changes yet", .{});
+        return;
+    }
+    var parts: std.ArrayListUnmanaged(u8) = .empty;
+    const from = list.len -| 20;
+    if (from > 0) try parts.print(arena, "…{d} older  ", .{from});
+    for (list[from..], 0..) |p, i| try parts.print(arena, "{s}{d}:{d}", .{ if (i > 0) "  " else "", p.row + 1, p.col + 1 });
+    app.toast(":changes · {s}", .{parts.items});
+}
+
 fn delmarks(app: *App, args: []const u8, bang: bool) CommandError!void {
     const e = try editor(app, ":delmarks");
     if (bang) {
@@ -1507,7 +1554,7 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
             try app.setInputStyle(if (app.cfg.editor.input_style == .vim) .vim else .standard);
         } else if (comptime std.mem.eql(u8, cp, "editor.clipboard")) {
             app.clipboard.selectMode(app.cfg.editor.clipboard);
-        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
+        } else if (comptime std.mem.eql(u8, cp, "editor.auto_indent") or std.mem.eql(u8, cp, "editor.auto_pair") or std.mem.eql(u8, cp, "editor.trim_trailing_ws_on_save") or std.mem.eql(u8, cp, "editor.ensure_trailing_newline")) {
             try app.syncBufferPrefs();
         }
         app.needs_render = true;

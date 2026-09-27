@@ -165,7 +165,7 @@ fn pushFile(gpa: Allocator, labels: *std.ArrayListUnmanaged([]u8), details: *std
 }
 
 fn inWorkspace(app: *App, path: []const u8) bool {
-    return std.mem.startsWith(u8, path, app.workspace) and path.len > app.workspace.len and path[app.workspace.len] == '/';
+    return std.mem.startsWith(u8, path, app.workspace) and path.len > app.workspace.len and std.fs.path.isSep(path[app.workspace.len]);
 }
 
 fn exists(app: *App, path: []const u8) bool {
@@ -935,9 +935,13 @@ pub fn cancel(app: *App) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = app_mod.Key;
 
 test "// changed (quickopen-prefixes): only a LEADING > @ : ? switches quick open's mode" {
+    // The fixture is a file named `a>b.txt` — the point is a `>` that is
+    // not leading — and Windows allows no `>` in a file name.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     const root = try realRoot(&tmp, t.allocator);
@@ -1022,8 +1026,8 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expectEqual(@as(usize, 7), labels.len);
     try t.expectEqualStrings("c.txt", labels[0]);
     try t.expectEqualStrings("a.txt", labels[2]);
-    try t.expectEqualStrings("src/.hidden/no.zig", labels[3]);
-    try t.expectEqualStrings("src/main.zig", labels[4]);
+    try sdk_testing.expectPath("src/.hidden/no.zig", labels[3]);
+    try sdk_testing.expectPath("src/main.zig", labels[4]);
     try t.expectEqualStrings("src", app.overlay.picker.details[4]);
     try t.expectEqualStrings(".env", labels[5]);
     try t.expectEqualStrings("README.md", labels[6]);
@@ -1051,7 +1055,7 @@ test "picker.buffers lists every open buffer, filters, and Enter switches; picke
     try t.expectEqual(@as(i64, 0), app.overlay.picker.score_bonus[0]);
     try t.expectEqual(@as(i64, 20), app.overlay.picker.score_bonus[@intFromEnum(command.CommandId.@"editor.undo")]);
     for ("view.toggle_wrap") |c| try app.handle(.{ .key = Key.char(c) });
-    try t.expectEqualStrings("view  ·  Toggle line wrapping (vim :set wrap)  ·  view.toggle_wrap", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try t.expectEqualStrings("view  ·  Toggle word wrap (vim :set wrap)  ·  view.toggle_wrap", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
     try app.handle(.{ .key = Key.named(.enter) });
     try t.expect(app.overlay == .none);
     try t.expectEqual(true, app.activeEditor().?.wrap.?);
@@ -1074,7 +1078,7 @@ test "picker.files lists every file of a tree past 5000: the 5101st is found by 
     try t.expectEqual(@as(usize, 5101), app.overlay.picker.labels.len);
     for ("zz_target") |c| try app.handle(.{ .key = Key.char(c) });
     try t.expect(app.overlay.picker.filtered.items.len >= 1);
-    try t.expectEqualStrings("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
+    try sdk_testing.expectPath("zzz/zz_target.txt", app.overlay.picker.labels[app.overlay.picker.filtered.items[0]]);
 }
 
 test "Ctrl+S saves from the palette and from the find bar; both stay open" {

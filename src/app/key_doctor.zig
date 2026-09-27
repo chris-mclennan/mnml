@@ -239,6 +239,7 @@ pub const host_is_macos = builtin.os.tag == .macos;
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "terminal detection: TERM_PROGRAM first, then the kitty and Windows Terminal markers, then TERM; case-insensitive" {
     try t.expectEqual(Terminal.ghostty, detectTerminalFrom("ghostty", "xterm-ghostty", false, false));
@@ -319,7 +320,7 @@ test "applyGhosttyOptionAsAlt: writes the file (creating the directory), backs t
 
     // No config anywhere: the first candidate, its directory made.
     const path = (try ghosttyConfigPath(arena, io, &env)).?;
-    try t.expect(std.mem.endsWith(u8, path, ".config/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith(path, ".config/ghostty/config"));
     try t.expectEqual(FixOutcome.appended, try applyGhosttyOptionAsAlt(t.allocator, io, path));
     const written = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(65536));
     try t.expect(std.mem.endsWith(u8, written, "macos-option-as-alt = true\n"));
@@ -344,7 +345,7 @@ test "applyGhosttyOptionAsAlt: writes the file (creating the directory), backs t
     try tmp.dir.createDirPath(io, "xdg/ghostty");
     try tmp.dir.writeFile(io, .{ .sub_path = "xdg/ghostty/config", .data = "" });
     try env.put("XDG_CONFIG_HOME", try std.fs.path.join(arena, &.{ root, "xdg" }));
-    try t.expect(std.mem.endsWith(u8, (try ghosttyConfigPath(arena, io, &env)).?, "xdg/ghostty/config"));
+    try t.expect(sdk_testing.pathEndsWith((try ghosttyConfigPath(arena, io, &env)).?, "xdg/ghostty/config"));
 }
 
 test "fixNote: the sentence names what happened; a long path is cut with an ellipsis" {

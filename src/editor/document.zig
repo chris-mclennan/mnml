@@ -446,11 +446,22 @@ pub const Document = struct {
 
     /// THE mutation chokepoint. Replaces `[start, end)` with `new` and
     /// patches the line index in O(lines) without rescanning the text.
-    /// Both ends must be char boundaries. Does not touch `by`'s cursor;
+    /// Both ends should be char boundaries. Does not touch `by`'s cursor;
     /// every other view's positions are shifted along.
-    pub fn spliceBy(self: *Document, start: usize, end: usize, new: []const u8, by: ?*const Editor) Allocator.Error!void {
-        assert(start <= end and end <= self.text.items.len);
-        assert(self.isBoundary(start) and self.isBoundary(end));
+    ///
+    /// A range that is out of the text or cuts a character (a stale
+    /// selection whose bytes moved under it) is clamped outward to whole
+    /// characters rather than trusted: splitting a UTF-8 sequence would
+    /// leave the text invalid, so the edit covers the characters it
+    /// touches.
+    pub fn spliceBy(self: *Document, start_in: usize, end_in: usize, new: []const u8, by: ?*const Editor) Allocator.Error!void {
+        const text_len = self.text.items.len;
+        const end_c = @min(end_in, text_len);
+        var start = self.snapBoundary(@min(start_in, end_c));
+        var end = end_c;
+        while (end < text_len and !self.isBoundary(end)) end += 1;
+        if (start > end) start = end;
+        assert(start <= end and end <= text_len);
         const gpa = self.gpa;
         const nl_new = std.mem.count(u8, new, "\n");
         try self.line_starts.ensureUnusedCapacity(gpa, nl_new);
@@ -905,4 +916,18 @@ test "Splice.shiftPoint: rows follow an edit above, an insertion at the point pu
     // "The end of the line" as `maxInt(u32)` stays there, never overflows.
     const eol = std.math.maxInt(u32);
     try std.testing.expectEqual(Point{ .row = 0, .col = eol }, typed.shiftPoint(.{ .row = 0, .col = eol }));
+}
+
+test "spliceBy: a range that cuts a character or runs past the end is clamped to whole characters" {
+    const gpa = std.testing.allocator;
+    const d = try Document.create(gpa, "Ω≈ç!");
+    d.retain();
+    defer d.release();
+    // 1..3 starts inside Ω (2 bytes) and ends inside ≈ (3 bytes).
+    try d.spliceBy(1, 3, "x", null);
+    try std.testing.expectEqualStrings("xç!", d.text.items);
+    try d.spliceBy(3, 99, "", null);
+    try std.testing.expectEqualStrings("xç", d.text.items);
+    try d.spliceBy(50, 60, "?", null);
+    try std.testing.expectEqualStrings("xç?", d.text.items);
 }

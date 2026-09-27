@@ -1,0 +1,21 @@
+# width: 120
+# height: 40
+# The git toolbar's Branch button drops its menu under the button, as a
+# toolbar menu does; it used to open at the far bottom-left over the
+# sidebar, where the statusline chip's menu goes (round-7 hunt). The
+# menu's top edge sits on the row under the toolbar, over the graph's
+# column header, so that header's SHA cell is covered.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write a.txt "one\n"
+shell git add a.txt && git commit -q -m "first"
+key ctrl+shift+g
+wait 800
+expect screen contains "│     SHA    │"
+click 82 2
+expect screen contains "Checkout…"
+expect screen contains "┌ Branch ─"
+expect screen lacks "│     SHA    │"
+key esc
+expect screen lacks "Checkout…"

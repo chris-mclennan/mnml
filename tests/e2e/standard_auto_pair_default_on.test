@@ -1,0 +1,16 @@
+# `editor.auto_pair` defaults to true, but opening a file never copied it
+# into the buffer (applyBufferPrefs / syncBufferPrefs skipped it): "("
+# typed "(" alone, and the first toggle turned pairing OFF (round-7 hunt).
+# A fresh file pairs; one toggle turns it off, as its toast says.
+write a.ts "\n"
+open a.ts
+type (
+key ctrl+s
+expect file a.ts contains "()"
+command editor.toggle_auto_pair
+expect screen contains "auto-pair off"
+key end
+type [
+key ctrl+s
+expect file a.ts contains "()["
+expect file a.ts lacks "[]"

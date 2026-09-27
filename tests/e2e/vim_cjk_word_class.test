@@ -1,0 +1,9 @@
+# Vim splits CJK runs by script class: w from の lands on テ (char 5),
+# dw at 日 deletes only 日本語. mnml treats the whole run as one word.
+write f.txt "日本語のテキスト abc\n"
+open f.txt
+command editor.use_vim
+key d
+key w
+ex w
+expect file f.txt contains "のテキスト abc"

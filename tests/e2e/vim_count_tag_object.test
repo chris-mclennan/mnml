@@ -1,0 +1,13 @@
+# d2it deletes the inside of the SECOND enclosing tag (Neovim: <a><b>x</b></a>
+# -> <a></a>). mnml ignores the count.
+write f.html "<a><b>x</b></a>\n"
+open f.html
+command editor.use_vim
+key f
+key x
+key d
+key 2
+key i
+key t
+ex w
+expect file f.html contains "<a></a>"

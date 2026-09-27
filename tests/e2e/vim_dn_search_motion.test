@@ -1,0 +1,23 @@
+# dn uses the last search as an exclusive motion (Neovim: /foo<CR> 0 dn
+# on "a b foo c foo" -> "foo c foo"; . then takes the next one). d_ is
+# dd (Neovim: d_ on "a" / "  b" -> "  b", register "a\n" linewise).
+# mnml changed nothing for either.
+write f.txt "a b foo c foo\n"
+open f.txt
+command editor.use_vim
+key /
+type foo
+key enter
+key 0
+key d
+key n
+ex w
+expect file f.txt contains "foo c foo\n"
+expect file f.txt lacks "a b"
+write g.txt "a\n  b\n"
+open g.txt
+key d
+key _
+ex w
+expect file g.txt contains "  b\n"
+expect file g.txt lacks "a"

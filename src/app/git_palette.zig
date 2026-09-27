@@ -1166,7 +1166,7 @@ fn treeLabel(app: *App, arena: Allocator, path: []const u8) []const u8 {
     const rel = app.relPath(path);
     if (rel.len < path.len) return rel;
     const real = std.Io.Dir.realPathFileAbsoluteAlloc(app.io, app.workspace, arena) catch return path;
-    if (std.mem.startsWith(u8, path, real) and path.len > real.len and path[real.len] == '/') return path[real.len + 1 ..];
+    if (std.mem.startsWith(u8, path, real) and path.len > real.len and std.fs.path.isSep(path[real.len])) return path[real.len + 1 ..];
     return path;
 }
 

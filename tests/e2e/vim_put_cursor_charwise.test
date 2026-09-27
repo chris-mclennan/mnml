@@ -1,0 +1,14 @@
+# Neovim: after a charwise p / P the cursor is on the LAST char of the
+# put text; `ywP..` gives "hellohellohello   hello world". mnml leaves it
+# one past, so the dot-repeats land elsewhere.
+write f.txt "hello world\n"
+open f.txt
+command editor.use_vim
+key y
+key w
+key P
+expect status contains "\"cursor\":{\"line\":1,\"col\":6}"
+key .
+key .
+ex w
+expect file f.txt contains "hellohellohello   hello world"

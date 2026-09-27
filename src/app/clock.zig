@@ -4,14 +4,13 @@
 //! again on the next minute boundary while the clock shows.
 //!
 //! // changed: the std library has no time-zone reader, so local time
-//! comes from libc's `localtime_r` on POSIX (`core/localtime.zig`);
-//! Windows shows UTC (the chip says so). `clock.utc` is a session choice
+//! comes from libc (`core/localtime.zig`: `localtime_r` on POSIX, the
+//! CRT's `_localtime64_s` on Windows). `clock.utc` is a session choice
 //! — the config carries `ui.clock` (on / off) and no zone key, as the
 //! Rust config did not. The git graph's DATE / TIME column follows the
 //! same choice (`utc`), so the two clocks on one screen agree.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -47,14 +46,13 @@ pub fn seed(app: *App) void {
 
 // ─── time ────────────────────────────────────────────────────────────────
 
-/// Seconds east of UTC for `secs`, per libc; 0 where there is no libc
-/// zone reader (Windows).
+/// Seconds east of UTC for `secs`, per libc; 0 when libc cannot say.
 pub const localOffset = localtime.offset;
 
-/// Is the clock reading UTC — by choice, or because the platform has no
-/// zone reader? Every wall clock the app paints asks this one question.
+/// Is the clock reading UTC? Every wall clock the app paints asks this
+/// one question.
 pub fn inUtc(app: *const App) bool {
-    return app.clock.mode == .utc or builtin.os.tag == .windows;
+    return app.clock.mode == .utc;
 }
 
 /// Wall-clock seconds now.
@@ -174,7 +172,10 @@ test "the clock: on by default beside the bell; utc / hide / local switch it, th
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     try t.expect(nextDeadlineMs(&app) == null);
     try t.expect(!app.cfg.ui.clock);
-    const home = (try settings.configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try settings.configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".clock = false") != null);

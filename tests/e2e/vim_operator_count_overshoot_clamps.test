@@ -1,0 +1,56 @@
+# d{N}k / d{N}j / c{N}j / {N}. past the buffer edge take only the lines
+# between the cursor and the edge, linewise (Neovim / NvChad probe:
+# 3Gd9k on l1..l5 leaves "l4 l5" with "l1\nl2\nl3\n" in the register,
+# linewise; 3Gd9j leaves "l1 l2"; 3Gc9jX<Esc> leaves "l1 l2 X"; 2Gdd9.
+# leaves "l1"; dj on the last line changes nothing). mnml used to run
+# N+1 line deletes and empty the whole buffer.
+write f.txt "l1\nl2\nl3\nl4\nl5\n"
+open f.txt
+command editor.use_vim
+key 3
+key G
+key d
+key 9
+key k
+key G
+key p
+ex w
+expect file f.txt contains "l4\nl5\nl1\nl2\nl3\n"
+key u
+key u
+key 3
+key G
+key d
+key 9
+key j
+ex w
+expect file f.txt contains "l1\nl2\n"
+expect file f.txt lacks "l3"
+key u
+key 3
+key G
+key c
+key 9
+key j
+type X
+key esc
+ex w
+expect file f.txt contains "l1\nl2\nX\n"
+expect file f.txt lacks "l4"
+key u
+key 2
+key G
+key d
+key d
+key 9
+key .
+ex w
+expect file f.txt contains "l1\n"
+expect file f.txt lacks "l5"
+key u
+key u
+key G
+key d
+key j
+ex w
+expect file f.txt contains "l1\nl2\nl3\nl4\nl5\n"

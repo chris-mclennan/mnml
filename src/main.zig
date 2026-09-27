@@ -348,10 +348,31 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         .files = files.items,
         .note = startup.note,
     };
-    return loop.run(gpa, io, env, cfg) catch |err| switch (err) {
+    const code = loop.run(gpa, io, env, cfg) catch |err| switch (err) {
         error.NotATty => return usage(w, "stdout is not a terminal (use --headless)"),
         else => return err,
     };
+    if (code == restart_code and env.get("MNML_RUN_LOOP") == null) relaunchSelf(io, arena, argv);
+    return code;
+}
+
+/// `app.restart`'s exit: `run.sh`'s loop rebuilds and relaunches on it.
+const restart_code: u8 = 75;
+
+/// Window ▸ Restart (and every "restart to apply" offer) outside `run.sh`
+/// — an installed mnml, a bare `zig-out/bin/mnml-zig` — used to just
+/// quit: nothing was there to catch the 75. `run.sh` exports
+/// `MNML_RUN_LOOP`; without it the terminal is already given back by
+/// now, so the process replaces itself with the same binary and
+/// arguments (`rest`: the ones after the program name). If that fails
+/// the 75 is returned as before.
+fn relaunchSelf(io: Io, arena: Allocator, rest: []const [:0]const u8) void {
+    const exe = std.process.executablePathAlloc(io, arena) catch return;
+    const argv = arena.alloc([]const u8, rest.len + 1) catch return;
+    argv[0] = exe;
+    for (rest, 1..) |a, i| argv[i] = a;
+    const err = std.process.replace(io, .{ .argv = argv });
+    std.log.warn("restart: could not relaunch {s}: {s}", .{ exe, @errorName(err) });
 }
 
 // ─── mnml-zig run / chain / discover / sync / proxy ─────────────────────

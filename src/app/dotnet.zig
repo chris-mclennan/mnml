@@ -211,6 +211,7 @@ pub fn fileFilterArg(arena: Allocator, syms: []const structure.Symbol) Allocator
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "find: the nearest csproj and the sln above it; the sln builds, the csproj runs; nothing above the workspace" {
     var tmp = t.tmpDir(.{});
@@ -228,10 +229,10 @@ test "find: the nearest csproj and the sln above it; the sln builds, the csproj 
     try tmp.dir.writeFile(t.io, .{ .sub_path = "src/Tests/Tests.csproj", .data = "<Project/>" });
     const sub = try std.fs.path.join(a, &.{ root, "src", "App", "Sub" });
     const p = (try find(t.io, a, sub, root)).?;
-    try t.expect(std.mem.endsWith(u8, p.csproj.?, "src/App/App.csproj"));
+    try t.expect(sdk_testing.pathEndsWith(p.csproj.?, "src/App/App.csproj"));
     try t.expect(std.mem.endsWith(u8, p.sln.?, "All.sln"));
     try t.expectEqualStrings(root, p.buildRoot());
-    try t.expect(std.mem.endsWith(u8, p.runRoot(), "src/App"));
+    try t.expect(sdk_testing.pathEndsWith(p.runRoot(), "src/App"));
     // A sibling project: its own csproj, the same sln.
     const tests_dir = try std.fs.path.join(a, &.{ root, "src", "Tests" });
     const q = (try find(t.io, a, tests_dir, root)).?;
@@ -269,9 +270,12 @@ test "parseCsproj: AssemblyName / TargetFramework(s) with defaults; launchBody n
     try t.expectEqualStrings("Lib", none.assembly_name);
     try t.expect(none.target_framework == null);
     const body = try launchBody(a, "/ws/src/App/App.csproj", plain);
-    try t.expectEqualStrings("{\"program\":\"/ws/src/App/bin/Debug/net9.0/App.dll\",\"cwd\":\"/ws/src/App\",\"stopAtEntry\":false}", body);
+    // The dll path is joined natively (`\` on Windows), JSON-escaped.
+    const dll = try std.fs.path.join(a, &.{ "/ws/src/App", "bin", "Debug", "net9.0", "App.dll" });
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{{\"program\":{f},\"cwd\":\"/ws/src/App\",\"stopAtEntry\":false}}", .{std.json.fmt(dll, .{})}), body);
     const defaulted = try launchBody(a, "/ws/Lib.csproj", "<Project/>");
-    try t.expect(std.mem.indexOf(u8, defaulted, "/ws/bin/Debug/" ++ default_tfm ++ "/Lib.dll") != null);
+    const lib_dll = try std.fs.path.join(a, &.{ "/ws", "bin", "Debug", default_tfm, "Lib.dll" });
+    try t.expect(std.mem.indexOf(u8, defaulted, try std.fmt.allocPrint(a, "{f}", .{std.json.fmt(lib_dll, .{})})) != null);
 }
 
 test "testAt: the innermost method and its class; a local function keeps the outer class; outside every method is null" {

@@ -108,7 +108,7 @@ fn repoOf(app: *App, abs: []const u8) Allocator.Error!?*client.Repo {
     if (!app.git.discovered) try git.discover(app);
     var best: ?*client.Repo = null;
     for (app.git.repos.items) |r| {
-        const under = std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and abs[r.path.len] == '/';
+        const under = std.mem.startsWith(u8, abs, r.path) and abs.len > r.path.len and std.fs.path.isSep(abs[r.path.len]);
         if (under and (best == null or r.path.len > best.?.path.len)) best = r;
     }
     if (best) |b| return b;

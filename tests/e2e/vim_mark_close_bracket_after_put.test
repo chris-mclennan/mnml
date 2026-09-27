@@ -1,0 +1,14 @@
+# '] after a linewise put is the put's last line (Neovim: yy j p gg ']
+# x deletes the "a" on line 3). mnml goes to line 1.
+write f.txt "a\nb\nc\n"
+open f.txt
+command editor.use_vim
+key y
+key y
+key j
+key p
+key g
+key g
+key '
+key ]
+expect status contains "\"cursor\":{\"line\":3,\"col\":1}"

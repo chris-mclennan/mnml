@@ -1046,8 +1046,8 @@ test "two installed scripts run in their own states: one erroring leaves the oth
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
     defer app.deinit();
     try t.expectEqual(@as(usize, 2), app.scripts.entries.items.len);
-    const alpha = app.scripts.find("alpha").?;
-    const beta = app.scripts.find("beta").?;
+    const alpha = app.scripts.find("alpha") orelse return notInstalled(&app, "alpha");
+    const beta = app.scripts.find("beta") orelse return notInstalled(&app, "beta");
     // Two states, two ids, neither 0 (which is `init.lua`'s).
     try t.expect(alpha.state != null and beta.state != null);
     try t.expect(alpha.state.? != beta.state.?);
@@ -1118,7 +1118,7 @@ test "a script's require reaches only its own lib; `..`, a separator and an abso
     try tmp.dir.writeFile(t.io, .{ .sub_path = "scripts/libbed/lib/helper.lua", .data = "return { greeting = 'hi from lib' }" });
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
-    const e = app.scripts.find("libbed").?;
+    const e = app.scripts.find("libbed") orelse return notInstalled(&app, "libbed");
     try t.expect(e.err == null);
     const l = app.luaState(e.id).?;
     _ = l.L.getGlobal("loaded");
@@ -1189,7 +1189,7 @@ test "install from a directory: the trust dialog lists the claims, Cancel runs n
     // Install: the folder lands under the data root and it runs.
     try acceptInstall(&app, src);
     try app.handle(.{ .key = app_mod.Key.char('i') });
-    const e = app.scripts.find("greeter").?;
+    const e = app.scripts.find("greeter") orelse return notInstalled(&app, "greeter");
     try t.expect(e.state != null);
     try t.expectEqualStrings("2.1.0", e.version);
     try t.expectEqual(Source.community, e.source);
@@ -1240,7 +1240,7 @@ test "an installed script's `mnml.list{}` asks ITS state for the rows — the in
     defer app.deinit();
     try acceptInstall(&app, src);
     try app.handle(.{ .key = app_mod.Key.char('i') });
-    const e = app.scripts.find("lister").?;
+    const e = app.scripts.find("lister") orelse return notInstalled(&app, "lister");
     try t.expect(e.state != null);
     try t.expectEqualStrings("scripts: installed lister", app.lastToast().?);
     // The list is registered in the installed state and its rows landed.
@@ -1275,7 +1275,7 @@ test "a typo'd field in script.zon loads the script and names the field in a war
     );
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
-    const e = app.scripts.find("typo").?;
+    const e = app.scripts.find("typo") orelse return notInstalled(&app, "typo");
     try t.expect(e.state != null);
     try t.expect(app.dyn_commands.get("user.typo_go") != null);
     var named = false;
@@ -1298,7 +1298,7 @@ test "a manifest whose api is higher than this build's is a row that says so, an
     );
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
-    const e = app.scripts.find("future").?;
+    const e = app.scripts.find("future") orelse return notInstalled(&app, "future");
     try t.expect(!e.supported());
     try t.expect(e.state == null);
     try t.expect(app.dyn_commands.get("user.future_go") == null);
@@ -1320,7 +1320,7 @@ test "a dev root's script reloads when one of its files is saved" {
     cfg.scripts.dev_roots = &.{"dev"};
     var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = root, .cols = 100, .rows = 30 });
     defer app.deinit();
-    const e = app.scripts.find("wip").?;
+    const e = app.scripts.find("wip") orelse return notInstalled(&app, "wip");
     try t.expectEqual(Source.dev, e.source);
     try t.expect(app.dyn_commands.get("user.one") != null);
     // Edit the file in a pane and save: the hook reloads that script.
@@ -1358,7 +1358,7 @@ test "install from an archive and from a local git repo; the manifest records wh
     try acceptInstall(&app, tar);
     try t.expect(app.overlay == .confirm);
     try app.handle(.{ .key = app_mod.Key.char('i') });
-    const packed_e = app.scripts.find("packed").?;
+    const packed_e = app.scripts.find("packed") orelse return notInstalled(&app, "packed");
     try t.expect(packed_e.state != null);
     try t.expectEqualStrings(tar, packed_e.url);
     try command.runNamed(&app, "user.packed_go");
@@ -1390,7 +1390,7 @@ test "install from an archive and from a local git repo; the manifest records wh
     try acceptInstall(&app, url);
     try t.expect(app.overlay == .confirm);
     try app.handle(.{ .key = app_mod.Key.char('i') });
-    const cloned = app.scripts.find("cloned").?;
+    const cloned = app.scripts.find("cloned") orelse return notInstalled(&app, "cloned");
     try t.expect(cloned.state != null);
     try command.runNamed(&app, "user.cloned_go");
     try t.expectEqualStrings("cloned", app.lastToast().?);
@@ -1466,7 +1466,7 @@ test "script.reload takes the installed scripts with init.lua, and a vim operato
     {
         var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
         defer app.deinit();
-        const e = app.scripts.find("surrounder").?;
+        const e = app.scripts.find("surrounder") orelse return notInstalled(&app, "surrounder");
         try t.expect(e.state != null);
         // The letter is claimed by the SCRIPT's state, not `init.lua`'s.
         try t.expectEqual(e.id, script_ops.lookup('w').?.state);
@@ -1479,7 +1479,7 @@ test "script.reload takes the installed scripts with init.lua, and a vim operato
         try t.expect(app.dyn_commands.get("user.wrap_cmd_v2") != null);
         try t.expect(std.mem.indexOf(u8, app.lastToast().?, "1 installed script") != null);
         // Still one claim, and still that script's.
-        const after = app.scripts.find("surrounder").?;
+        const after = app.scripts.find("surrounder") orelse return notInstalled(&app, "surrounder");
         try t.expectEqual(after.id, script_ops.lookup('w').?.state);
         try command.runNamed(&app, "user.wrap_cmd_v2");
         try t.expectEqualStrings("wrapped", app.lastToast().?);
@@ -1521,7 +1521,7 @@ test "an installed script's statusline segment polls and paints, and its picker 
     defer app.deinit();
     try acceptInstall(&app, src);
     try app.handle(.{ .key = app_mod.Key.char('i') });
-    const e = app.scripts.find("peek").?;
+    const e = app.scripts.find("peek") orelse return notInstalled(&app, "peek");
     try t.expect(e.state != null);
     // The registrations landed in the installed state, not init.lua's.
     try t.expectEqual(@as(usize, 1), e.state.?.segments.items.len);
@@ -1544,4 +1544,11 @@ test "an installed script's statusline segment polls and paints, and its picker 
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
     try t.expect(app.overlay != .picker);
     try t.expectEqualStrings("accepted peek-item 7", app.lastToast().?);
+}
+
+/// A script the test expected installed is not: name what the app said
+/// last, rather than panicking on the missing entry.
+fn notInstalled(app: *App, name: []const u8) error{TestUnexpectedResult} {
+    std.debug.print("script {s} is not installed; last toast: {s}\n", .{ name, app.lastToast() orelse "(none)" });
+    return error.TestUnexpectedResult;
 }

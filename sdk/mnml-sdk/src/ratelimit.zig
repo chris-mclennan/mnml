@@ -431,7 +431,7 @@ pub const Limiter = struct {
             },
         ) catch return;
         if (std.fs.path.dirname(path)) |d| Io.Dir.cwd().createDirPath(self.io, d) catch {};
-        const file = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+        const file = Io.Dir.cwd().createFile(self.io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
         var end = file.length(self.io) catch 0;
         if (end + line.len > draws_max_bytes) {
             file.close(self.io);
@@ -441,7 +441,7 @@ pub const Limiter = struct {
             Io.Dir.cwd().rename(path, Io.Dir.cwd(), older, self.io) catch {
                 Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = "" }) catch {};
             };
-            const fresh = Io.Dir.cwd().createFile(self.io, path, .{ .truncate = false, .lock = .exclusive }) catch return;
+            const fresh = Io.Dir.cwd().createFile(self.io, path, .{ .read = true, .truncate = false, .lock = .exclusive }) catch return;
             defer fresh.close(self.io);
             end = fresh.length(self.io) catch 0;
             fresh.writePositionalAll(self.io, line, end) catch {};
@@ -900,6 +900,7 @@ pub const Retry = struct {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "the presets are the Rust crate's constants, and an unknown service takes the tighter one" {
     try t.expectApproxEqAbs(@as(f64, 0.22), Config.bitbucket.rate, 1e-12);
@@ -1022,7 +1023,7 @@ test "every draw is written beside the state file, where anything else on the ma
     // the contract in docs/SDK.md gives.
     const want = try std.fs.path.join(t.allocator, &.{ dir, "jira-draws.jsonl" });
     defer t.allocator.free(want);
-    try t.expectEqualStrings(want, draws);
+    try sdk_testing.expectPath(want, draws);
     const text = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
     defer t.allocator.free(text);
     try t.expectEqual(@as(usize, 4), std.mem.count(u8, text, "\n"));
@@ -1267,7 +1268,7 @@ test "the state path follows the Rust crate's resolution order, per service" {
     }) |case| {
         const p = try statePath(t.allocator, t.io, &env, case[0]);
         defer t.allocator.free(p);
-        try t.expectEqualStrings(case[1], p);
+        try sdk_testing.expectPath(case[1], p);
     }
     try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
     for ([_][2][]const u8{
@@ -1276,17 +1277,17 @@ test "the state path follows the Rust crate's resolution order, per service" {
     }) |case| {
         const p = try statePath(t.allocator, t.io, &env, case[0]);
         defer t.allocator.free(p);
-        try t.expectEqualStrings(case[1], p);
+        try sdk_testing.expectPath(case[1], p);
     }
     // The per-service override wins, and only for its own service.
     try env.put("JIRA_RATELIMIT_STATE", "/tmp/j.json");
     {
         const p = try statePath(t.allocator, t.io, &env, "jira");
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/tmp/j.json", p);
+        try sdk_testing.expectPath("/tmp/j.json", p);
         const other = try statePath(t.allocator, t.io, &env, "bitbucket");
         defer t.allocator.free(other);
-        try t.expectEqualStrings("/shared/bitbucket-ratelimit.json", other);
+        try sdk_testing.expectPath("/shared/bitbucket-ratelimit.json", other);
     }
     var buf: [64]u8 = undefined;
     try t.expectEqualStrings("BITBUCKET_RATELIMIT_STATE", stateEnvName(&buf, "bitbucket").?);
@@ -1337,10 +1338,10 @@ test "a limiter for a service resolves its broker socket beside the bucket, list
     try env.put("MNML_DATA_ROOT", "/data");
     var l = try Limiter.forService(t.allocator, t.io, &env, "bitbucket");
     defer l.deinit();
-    try t.expectEqualStrings("/data/ratelimit/bitbucket.json", l.path);
+    try sdk_testing.expectPath("/data/ratelimit/bitbucket.json", l.path);
     // Resolved at startup, tried per request — the broker comes and
     // goes with mnml.
-    if (broker.supported) try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.sock", l.broker_socket);
+    if (broker.supported) try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.sock", l.broker_socket);
 }
 
 test "MNML_BROKER=0 leaves a limiter without a broker socket: every acquire is the file bucket's" {

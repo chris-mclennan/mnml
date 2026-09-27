@@ -236,8 +236,13 @@ const Fixture = struct {
     }
 };
 
+fn pathEql(got: []const u8, want: []const u8) bool {
+    return got.len == want.len and @import("mnml_sdk").testing.pathStartsWith(got, want);
+}
+
 fn hasEntry(entries: []const ListPane.Entry, text: []const u8, path: []const u8, line: u32, col: u32) bool {
-    for (entries) |e| if (std.mem.eql(u8, e.text, text) and e.path != null and std.mem.eql(u8, e.path.?, path) and e.line == line and e.col == col) return true;
+    // The entry's path reads with the platform's separator.
+    for (entries) |e| if (std.mem.eql(u8, e.text, text) and e.path != null and pathEql(e.path.?, path) and e.line == line and e.col == col) return true;
     return false;
 }
 

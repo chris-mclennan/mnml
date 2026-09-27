@@ -1,6 +1,6 @@
  ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /Use…            │ 󰎒 Sessions 󰅖   󰐕                                                          󱸀  󲀀      
-  │▌    docs               │▌ SESSIONS (0)                       ended: hidden   ⏸ pause   ? help   sort: state    
+▌ │▌    docs               │▌ SESSIONS (0)                       ended: hidden   ⏸ pause   ? help   sort: state    
    │     󱼅  notes.md         │▌  󰍉 / filter
  󰍉 │     src                │▌
    │     󱼄  main.zig         │▌  + New session
@@ -10,7 +10,7 @@
    │     󰂺 README.md          │▌
  󰐱 │                          │▌
    │         󰐙 Add workspace  │▌
-▌󰎒 │                          │▌
+ 󰎒 │                          │▌
    │                          │▌
   │                          │▌
    │                          │▌
@@ -36,5 +36,5 @@
    │                          │▌  no session under the cursor
   │                          │▌
    │                          │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  21:31  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  22:15  ws   —
                                                            ⋯

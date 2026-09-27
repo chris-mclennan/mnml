@@ -30,11 +30,11 @@
    │──────────────────────────│                                                Ctrl+N         new file
    │ Sidebar              󰐃 ⋮ │                                                Ctrl+Q         quit
    │                          │
-   │ Arrows or j/k walk rows. │                             mnml 0.3.0-dev+gdd7a1c9c-dirty
+   │ Arrows or j/k walk rows. │                                mnml 0.3.0-dev+g1cb0b5c4
    │ Enter opens the          │
-   │ selection. Ctrl+Shift+P  │                                                                        ┌─────────── × ┐
-  │ opens the palette.       │                                                                        │ dock: always │
-   │                          │                                                                        └──────────────┘
+   │ selection. Ctrl+Shift+P  │
+  │ opens the palette.       │
+   │                          │
                            Browser  󱸀 Claude Code  󱸁 Codex   HTTP  󲀀 New terminal  󰐕 New                            󰐃
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:40  ws   —
-dock: always
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  22:15  ws   —
+

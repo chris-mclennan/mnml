@@ -368,6 +368,13 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
     var rx = @max(left_end, right_edge -| right_w);
     var prev = ground;
     for (lanes.right) |s| {
+        // An arrow is the hand-off INTO its chip: when the edge would
+        // leave the chip nothing past its leading blanks, the row would
+        // end on a dangling arrow (the round-7 hunt's 80x24 row), so the
+        // arrow goes with its chip.
+        const lead: u16 = @intCast(std.mem.indexOfNone(u8, s.text, " ") orelse s.text.len);
+        const arrow_w: u16 = if (arrows and !Color.eql(prev, s.bg)) 1 else 0;
+        if (rx + arrow_w + @min(lead + 1, s.cols(ui)) > right_edge) break;
         if (arrows and !Color.eql(prev, s.bg)) {
             rx += ui.putStr(rx, y, right_edge -| rx, pl_left, .{ .fg = s.bg, .bg = prev });
         }
@@ -453,6 +460,49 @@ test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand th
     const ui = g.ui();
     draw(ui, g.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
     try g.expectRow(0, row_left ++ " " ** 39 ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
+}
+
+test "a right lane cut at the edge never ends on an arrow: the arrow goes with the chip it leads into" {
+    // Round-7 hunt, 80x24: the cut landed just before the language chip
+    // and the row ended on its arrow. Every width that cuts the lane.
+    const right = [_]Seg{
+        Seg.init(" 17:50 ", P.comment, P.bg2),
+        Seg.init(folder_glyph ++ " ws ", P.blue, P.bg3).strong(),
+        Seg.init(" zig ", P.bg_darker, P.blue).strong(),
+    };
+    const left = [_]Seg{Seg.init(" EDIT ", P.bg_darker, P.green).strong()};
+    var cut_on_arrow_seen = false;
+    var w: u16 = 12;
+    while (w < 40) : (w += 1) {
+        var f = try Fixture.init(w, 1);
+        defer f.deinit();
+        draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+        // The last arrow on the row must be followed by something
+        // other than blanks: an arrow then only its chip's padding
+        // reads as the same dangle.
+        var x: u16 = w;
+        var arrow_at: ?u16 = null;
+        while (x > 0) {
+            x -= 1;
+            if (std.mem.eql(u8, f.cell(x, 0).char.grapheme, pl_left_nerd)) {
+                arrow_at = x;
+                break;
+            }
+        }
+        if (arrow_at) |ax| {
+            var shown = false;
+            var k = ax + 1;
+            while (k < w) : (k += 1) {
+                const g = f.cell(k, 0).char.grapheme;
+                if (g.len > 0 and !std.mem.eql(u8, g, " ")) shown = true;
+            }
+            if (!shown) {
+                std.debug.print("width {d} ends on an arrow\n", .{w});
+                cut_on_arrow_seen = true;
+            }
+        }
+    }
+    try testing.expect(!cut_on_arrow_seen);
 }
 
 test "every chip is a hit over exactly its cells; arrows and the gap are not" {
@@ -550,11 +600,12 @@ test "at 60 columns the left lane is at its floor and the screen edge cuts the r
     try testing.expectEqual(seg_app_base + 1, f.hits.at(24, 0).?.statusline_seg);
     try testing.expectEqual(seg_app_base + 4, f.hits.at(58, 0).?.statusline_seg);
     // Narrower still: the right lane starts at the left lane's end and
-    // the edge takes the rest; then the row itself clips.
+    // the edge takes the rest — an arrow with no room for its chip goes
+    // with it rather than dangle; then the row itself clips.
     var g = try Fixture.init(24, 1);
     defer g.deinit();
     draw(g.ui(), g.full(), .{ .left = &spec_left, .right = &spec_right });
-    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file] " ++ pl_left_nerd);
+    try g.expectRow(0, " TREE " ++ pl_right_nerd ++ " " ++ branch_glyph ++ "…" ++ pl_right_nerd ++ " [no file]");
     var h = try Fixture.init(10, 1);
     defer h.deinit();
     draw(h.ui(), h.full(), .{ .left = &spec_left, .right = &spec_right });

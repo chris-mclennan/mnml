@@ -200,6 +200,7 @@ pub fn accept(app: *App, row: app_mod.GrepRow) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = app_mod.Key;
 
 test "live grep: typing runs the workspace grep, the rows carry their file, the preview centres on the hit" {
@@ -235,8 +236,8 @@ test "live grep: typing runs the workspace grep, the rows carry their file, the 
     try t.expect(app.overlay.picker.labels.len > 0);
     const row = app.overlay.picker.grep_hits[0];
     try t.expectEqual(@as(u32, 60), row.line);
-    try t.expect(std.mem.endsWith(u8, row.path, "src/a.zig"));
-    try t.expect(std.mem.startsWith(u8, app.overlay.picker.labels[0], "src/a.zig:60"));
+    try t.expect(sdk_testing.pathEndsWith(row.path, "src/a.zig"));
+    try t.expect(sdk_testing.pathStartsWith(app.overlay.picker.labels[0], "src/a.zig:60"));
     // The preview is centred on the hit and the needle keeps its own ground.
     const p = &app.overlay.picker;
     try t.expect(p.preview.len > 0);

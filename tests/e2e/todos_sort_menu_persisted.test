@@ -1,0 +1,17 @@
+# width: 120
+# height: 40
+# The TODOS header's sort chip persisted its choice (ui.todos_sort in the
+# workspace config) when CLICKED, but a pick from its right-click menu
+# only re-sorted the list: nothing was written, so the next launch opened
+# on the old order (round-7 hunt). Both doors now go through one path
+# (`pickSort`), for NOTES and FINDINGS too.
+write a.txt "// TODO: alpha\n"
+command view.activity_todos
+command todos.refresh
+expect within 5000 screen contains "TODOS (1)"
+# the chip sits at x=23..25 on the header row
+rightclick 24 1
+expect screen contains "Name (Z–A)"
+click 26 5
+expect screen lacks "Name (Z–A)"
+expect file .mnml/config.zon contains "todos_sort = .name_desc"
