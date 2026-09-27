@@ -1639,6 +1639,14 @@ const Harness = struct {
     env: std.process.Environ.Map,
     server: *Server,
     dir: []u8,
+    /// `deinit` runs once, whichever of the test's own call or its
+    /// `defer` comes first — so a test may stop the broker mid-body
+    /// and still `defer` it. A test that failed BEFORE its explicit
+    /// stop left the broker's accept and dispatch tasks alive, and the
+    /// runner's per-test `Io.Threaded.deinit` joined them for good:
+    /// the macOS runner's "wedged broker test", one run in three, was
+    /// a slow-runner expectation failing above `h.deinit()`.
+    stopped: bool = false,
 
     /// `tokens` seeds the bucket before the broker starts, so a test
     /// can queue every client while the first token is still on its
@@ -1678,6 +1686,8 @@ const Harness = struct {
     }
 
     fn deinit(h: *Harness) void {
+        if (h.stopped) return;
+        h.stopped = true;
         h.server.stop();
         h.server.destroy();
         h.env.deinit();
@@ -1817,6 +1827,9 @@ test "no broker at the path is null, not an error — the caller falls back to t
 test "status answers the budget, the queue by class and what has been served; a stopped broker answers nothing" {
     if (!supported) return error.SkipZigTest;
     var h = try Harness.init("bitbucket", .{ .rate = 10.0, .capacity = 5.0, .max_block_secs = 2.0 }, null);
+    // Stopped explicitly below, to show a stopped broker answers nothing;
+    // the defer is for the failing paths above that line.
+    defer h.deinit();
     const io = t.io;
     const path = try t.allocator.dupe(u8, h.server.path());
     defer t.allocator.free(path);
