@@ -5,7 +5,7 @@ own, records the pid and the window id, and every verb it runs re-checks
 that the window is still ITS window. What it does not do is type: `key`
 and `type` need the harness to be the active application, which takes
 the keyboard from the person at the machine. So this module drives the
-app the other way — JSONL lines appended to `<ws>/.mnml/ipc-zig/command`
+app the other way — JSONL lines appended to `<run>/ipc/command` (`--ipc-dir`)
 with `ipc.allow_input` on (`mnml-drive launch --allow-input`) — and
 uses the driver only for what needs the window: launch, shot, pixel,
 quit. The window's own mouse reporting is off (`--no-mouse`): the
@@ -39,7 +39,7 @@ DRIVE = os.path.join(REPO, "zig-out", "bin", "mnml-drive")
 # to know what it is running in, and they describe the harness window,
 # not the developer.
 TERMINAL_VARS = ("TERM", "TERMINFO", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM",
-                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_PROFILE")
+                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_PROFILE", "MNML_IPC_DIR")
 
 CLEAN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -105,7 +105,10 @@ class Window:
         self.data_root = os.path.join(self.run_dir, "data")
         self.home = os.path.join(self.run_dir, "home")
         self.tmp = os.path.join(self.run_dir, "tmp")
-        self.ipc = os.path.join(self.ws, ".mnml", "ipc-zig")
+        # Beside the run, never inside the workspace: a `.mnml/` planted
+        # in the fixture is a tree row the script did not write (two
+        # "delete the first row" scripts deleted the channel itself).
+        self.ipc = os.path.join(self.run_dir, "ipc")
         self.app_env = dict(app_env or {})
         self.app_args = list(app_args)
         self.log = log or (lambda msg: None)
@@ -149,6 +152,7 @@ class Window:
             "TMPDIR": self.tmp,
         }
         cmd = [DRIVE, "launch", "--workspace", self.ws, "--data-root", self.data_root,
+               "--ipc-dir", self.ipc,
                "--cols", str(self.cols), "--rows", str(self.rows), "--exe", wrapper,
                "--allow-input", "--no-mouse", "--timeout", str(self.timeout_ms)]
         r = subprocess.run(cmd, env=drive_env, capture_output=True, text=True)
