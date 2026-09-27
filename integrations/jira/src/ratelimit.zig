@@ -5,8 +5,9 @@
 //! Jira panes and the statusline poller each held their own idea of the
 //! budget, so four processes pacing themselves perfectly still spent
 //! four times the allowance and Atlassian answered all four with a 429.
-//! The bucket now lives in one file — `<root>/jira-ratelimit.json`,
-//! flock'd, with the same six keys the Bitbucket bucket and the Rust
+//! The bucket now lives in one file — `jira-ratelimit.json` in a
+//! shared folder, or `ratelimit/jira.json` under mnml's data root
+//! (`statePath` in the SDK module) — flock'd, with the same six keys the Bitbucket bucket and the Rust
 //! crate use — so every pane, the poller and anything else on the
 //! machine take turns on ONE allowance, and one 429 parks all of them.
 //!

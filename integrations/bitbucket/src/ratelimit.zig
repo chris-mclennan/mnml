@@ -10,9 +10,10 @@
 //! The SDK module holds the bucket; this file only says which service
 //! it is.
 //!
-//! The file is `<root>/bitbucket-ratelimit.json`; where the root is,
-//! and everything else about the mechanism, is in
-//! `sdk/mnml-sdk/src/ratelimit.zig`.
+//! The file is `bitbucket-ratelimit.json` in a shared folder, or
+//! `ratelimit/bitbucket.json` under mnml's data root; which one, and
+//! everything else about the mechanism, is in
+//! `sdk/mnml-sdk/src/ratelimit.zig` (`statePath`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
