@@ -39,7 +39,7 @@ const usage_text =
     \\
     \\  launch --workspace DIR --data-root DIR [--size small|corpus|full]
     \\         [--cols N] [--rows N] [--font-size PT] [--exe PATH] [--ghostty PATH]
-    \\         [--timeout MS] [--take-focus] [--allow-input] [--no-mouse]
+    \\         [--timeout MS] [--take-focus] [--allow-input] [--no-mouse] [--ipc-dir DIR]
     \\  key <spec>              one chord or a chain: ctrl+p, "space f f", enter
     \\  type <text>             literal text, any codepoint
     \\  click|rightclick|doubleclick|hover X Y      cell coordinates
@@ -395,7 +395,15 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     const conf_path = try std.fs.path.join(gpa, &.{ data_root, "ghostty.conf" });
     const abs_exe = if (std.fs.path.isAbsolute(exe)) exe else try Io.Dir.cwd().realPathFileAlloc(io, exe, gpa);
     const abs_ws = if (std.fs.path.isAbsolute(workspace)) workspace else try Io.Dir.cwd().realPathFileAlloc(io, workspace, gpa);
-    const ipc_dir = try std.fs.path.join(gpa, &.{ abs_ws, ".mnml", "ipc-zig" });
+    // `--ipc-dir DIR` puts the channel outside the workspace: a corpus
+    // script that deletes "the first row of the tree" must find the
+    // fixture's first file there, not a `.mnml/` the harness planted.
+    // The app is told through `MNML_IPC_DIR`, which `ipc/channel.zig`
+    // honours as an absolute directory in place of `<ws>/.mnml/<subdir>`.
+    const ipc_dir = if (flagValue(args, "--ipc-dir")) |d|
+        (if (std.fs.path.isAbsolute(d)) try gpa.dupe(u8, d) else try std.fs.path.join(gpa, &.{ try Io.Dir.cwd().realPathFileAlloc(io, ".", gpa), d }))
+    else
+        try std.fs.path.join(gpa, &.{ abs_ws, ".mnml", "ipc-zig" });
     const screen = mac.mainDisplayBounds();
     // The menu bar owns the top of the main display; a window placed at
     // y = 0 has its first row under it.
@@ -426,6 +434,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         var child_env = try envWith(gpa, io, init_env, &.{
             .{ "MNML_DATA_ROOT", data_root },
             .{ "MNML_PROFILE", "dev" },
+            .{ "MNML_IPC_DIR", ipc_dir },
         });
         defer child_env.deinit();
         const cfg_flag = try std.fmt.allocPrint(gpa, "--config-file={s}", .{conf_path});
