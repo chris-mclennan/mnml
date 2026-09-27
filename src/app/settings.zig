@@ -321,6 +321,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "editor.tab_width", .label = "Tab width", .section = .editor, .scope = .workspace, .number = .{ .min = 1, .max = 16, .step = 1 } },
     .{ .path = "editor.text_width", .label = "Text width", .section = .editor, .scope = .workspace, .number = .{ .min = 20, .max = 400, .step = 10 } },
     .{ .path = "editor.chord_timeout_ms", .label = "Chord timeout (ms)", .section = .editor, .scope = .home, .number = .{ .min = config.Config.chord_timeout_ms_min, .max = config.Config.chord_timeout_ms_max, .step = 100 } },
+    // Vim's 'report' (`app/dispatch.zig` `lineReport`): 0 reports
+    // every line count; a large value silences it.
+    .{ .path = "editor.report", .label = "Report changes over N lines", .section = .editor, .scope = .home, .number = .{ .min = 0, .max = 999, .step = 1 } },
     // The tree-sitter size ceiling. A discrete row on a number field:
     // the overlay is v1 (choices only) and the sizes worth picking are a
     // short list — the raw byte count is the ZON view's to edit.
@@ -1386,6 +1389,43 @@ test "// changed (settings-title-path): a subtitle too long for the box is cut f
     // Never past the cut: one cell of room is the mark alone.
     try t.expectEqualStrings("…", ui_settings.elideLeft(ui, long, 1));
     try t.expectEqualStrings("", ui_settings.elideLeft(ui, long, 0));
+}
+
+test "rows: editor.report is a number row that steps, writes the home config, and stops at 0" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 100, .rows = 80 });
+    defer app.deinit();
+    try open(&app);
+    var found = false;
+    for (try items(&app, app.frame.allocator()), 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Report changes over N lines")) {
+        app.overlay.settings.ui.cursor = i;
+        try t.expect(it.row.number != null);
+        try t.expectEqual(@as(usize, 2), it.row.current);
+        found = true;
+    };
+    try t.expect(found);
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expectEqual(@as(u16, 3), app.cfg.editor.report);
+    try app.handle(.{ .key = Key.named(.left) });
+    try app.handle(.{ .key = Key.named(.left) });
+    try app.handle(.{ .key = Key.named(.left) });
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expectEqual(@as(u16, 0), app.cfg.editor.report);
+    {
+        const text = (try readOrNull(tmp, "config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".report = 0") != null);
+    }
+    // Esc puts the shipped value back.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqual(@as(u16, 2), app.cfg.editor.report);
 }
 
 test "number rows: → steps the right panel width, writes it, and the config seeds the slot" {

@@ -433,10 +433,19 @@ is green, and every comment is either resolved or replied to.
 ## Rate limiting
 
 Every request passes the shared token bucket the reference and the
-Python scripts on this machine already take turns on —
-`~/.tattle-claude-artifacts/bitbucket-ratelimit.json` (or
-`$TATTLE_ARTIFACTS_ROOT`, `$BITBUCKET_RATELIMIT_STATE`, `<MNML_DATA_ROOT>/ratelimit/`),
-0.22 requests/s, a burst of 40. A 429 pauses the pane (The API budget,
+Python scripts on this machine already take turns on, 0.22 requests/s,
+a burst of 40. The file is the first of: `.rate.state_path`;
+`$BITBUCKET_RATELIMIT_STATE`; `bitbucket-ratelimit.json` under
+`$TATTLE_ARTIFACTS_ROOT`; the same name under
+`~/.tattle-claude-artifacts/`, when that folder exists;
+`<MNML_DATA_ROOT>/ratelimit/bitbucket.json`; and
+`~/.config/mnml/ratelimit/bitbucket.json` with no data root
+(`sdk/mnml-sdk/src/ratelimit.zig` `statePath`). The rate broker's
+socket is `bitbucket-broker.sock` beside the file the environment
+resolves — `.rate.state_path` does not move it — or
+`$BITBUCKET_BROKER_SOCKET` outright; a derived path too long for a Unix
+socket becomes `/tmp/mnml-broker-bitbucket-<12 hex>.sock`
+(`broker.zig` `socketPath`). A 429 pauses the pane (The API budget,
 below — the Jira pane's same `sdk.budget`) and parks every process on
 the bucket; a read is asked again, up to three tries, a write never,
 and nothing else is retried. A repo that fails keeps its row,

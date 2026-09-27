@@ -17,8 +17,9 @@
 //! separate tabbed right panel. Here the two are one idea: a section
 //! has a `Side`, and `view.move_section_left` / `_right` move it. The
 //! Rust look is the default — TODOS / NOTES / FINDINGS are sidebar
-//! sections there, so they start on the left; the outline and the
-//! diagnostics were right-panel panes, so they start on the right.
+//! sections there, so they start on the left; the outline was a
+//! right-panel pane, so it starts in the other column, and the
+//! diagnostics start in the dock.
 //!
 //! State: `App.side` (`State`). The explorer's own open flag stays
 //! `tree.visible` (Rust's `tree_visible`, read all over); `open` is the

@@ -1,0 +1,53 @@
+# `:setlocal et` / `noet` and `:setlocal wrap` / `nowrap` (`:help
+# :setlocal`) set the CURRENT buffer's value and nothing else: another
+# buffer keeps the config's, and a config change — `:set ts`, which runs
+# the same `App.syncBufferPrefs` a reload does — does not put the local
+# value back, not even where an `.editorconfig` names the indent style.
+# `:setlocal` used to know only ts, sw and ai, and refused the rest.
+write .editorconfig "[*.txt]\nindent_style = space\n"
+write a.txt "aaa\n"
+write b.txt "bbb\n"
+open b.txt
+command editor.use_vim
+ex setlocal noet
+expect screen contains ":setlocal noet"
+type ">>"
+key ctrl+s
+expect file b.txt contains "\tbbb"
+# The other buffer still pads with spaces.
+open a.txt
+type ">>"
+key ctrl+s
+expect file a.txt contains "    aaa"
+expect file a.txt lacks "\t"
+# A config change leaves b.txt's own value alone.
+ex set ts=8
+open b.txt
+type "<<"
+type ">>"
+key ctrl+s
+expect file b.txt contains "\tbbb"
+# …and `:setlocal et` gives it spaces back.
+ex setlocal et
+expect screen contains ":setlocal et"
+type "<<"
+type ">>"
+key ctrl+s
+expect file b.txt lacks "\t"
+
+# Wrap, per editor: on in one, the config's (off) in the other.
+write long1.txt "AAA BBB CCC DDD EEE FFF GGG HHH III JJJ KKK LLL MMM NNN OOO PPP QQQ RRR SSS TTT UUU VVV WWW XXX YYY ZZZ"
+write long2.txt "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz"
+open long1.txt
+expect screen lacks "ZZZ"
+ex setlocal wrap
+expect screen contains "ZZZ"
+open long2.txt
+expect screen lacks "zzz"
+open long1.txt
+expect screen contains "ZZZ"
+ex setlocal nowrap
+expect screen lacks "ZZZ"
+# Something it still does not take says so.
+ex setlocal list
+expect screen contains ":setlocal list — not one of ts, sw, ai, et, wrap"

@@ -201,13 +201,17 @@ pub const AppEvent = union(enum) {
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
     mount: *bridge_host.Event,
 
-    /// A finished TODO scan. Owned; `todos.handle` adopts the arena.
+    /// A finished TODO scan. Owned; `todos.handle` copies it into its
+    /// snapshot and `destroy`s it on every path.
     todos: *todos.ScanResult,
-    /// A finished notes listing. Owned; `notes.handle` adopts the arena.
+    /// A finished notes listing. Owned; `notes.handle` copies it into its
+    /// snapshot and `destroy`s it on every path.
     notes: *notes.ScanResult,
-    /// A finished findings listing. Owned; `findings.handle` adopts the arena.
+    /// A finished findings listing. Owned; `findings.handle` copies it into its
+    /// snapshot and `destroy`s it on every path.
     findings: *findings.ScanResult,
-    /// A finished session listing. Owned; `sessions.handle` adopts the arena.
+    /// A finished session listing. Owned; `sessions.handle` copies it into its
+    /// snapshot and `destroy`s it on every path.
     sessions: *sessions.ScanResult,
     /// A finished dock tail read. Owned; `dock.handle` adopts the lines.
     dock: *dock.TailResult,

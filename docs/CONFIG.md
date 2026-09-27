@@ -1832,8 +1832,8 @@ Rows are discrete choices (bools, enums, the theme) and numbers
 (`tree_width`, `right_panel_width`, `bottom_panel_height`,
 `sidebar_auto_below`, `wheel_lines`, `md_image_rows`,
 `hover_help_height`, `hover_help_grace_ms`, `color_column`, `focus_follows_mouse_delay_ms`,
-`tab_width`, `text_width`, `chord_timeout_ms`, `suggest_idle_ms`,
-`suggest_timeout_ms` — 115 rows in all, plus the Reset row); text
+`tab_width`, `text_width`, `chord_timeout_ms`, `report`, `suggest_idle_ms`,
+`suggest_timeout_ms` — 117 rows in all, plus the Reset row); text
 (`projects_dir`, the labels) stays a file edit.
 
 ### Themes

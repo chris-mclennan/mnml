@@ -573,6 +573,21 @@ test "driver: the headless loop's workspace is trusted only as the store says; t
     }
 }
 
+test "driver: the headless loop runs the startup hook but never the update check" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, t.allocator);
+    defer t.allocator.free(root);
+    var f: AppFactory = .{};
+    // As `--headless` builds it: the startup hook on, the shipped
+    // `ui.check_updates = true`.
+    const d = try f.factory().make(t.allocator, t.io, .{ .workspace = root, .data_root = "", .cols = 80, .rows = 24, .startup_hook = true });
+    defer d.deinit();
+    const app = &AppDriver.cast(d.ptr).app;
+    try t.expect(app.cfg.ui.check_updates);
+    try t.expect(!app.update.started);
+}
+
 test "driver: status counts the toasts up; toast.dismiss_all and the next tick bring it to zero" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

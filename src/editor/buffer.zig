@@ -355,7 +355,7 @@ pub const Buffer = struct {
     pub fn applyEditorconfig(self: *Buffer, r: editorconfig.Resolved) void {
         const src = &self.doc.pref_source;
         if ((r.indent_style != null or r.indentUnit() != null) and src.tab_width != .local) {
-            const use_tabs = if (r.indent_style) |s| s == .tab else self.doc.use_tabs;
+            const use_tabs = if (src.use_tabs == .local) self.doc.use_tabs else if (r.indent_style) |s| s == .tab else self.doc.use_tabs;
             const unit = r.indentUnit() orelse self.doc.tab_width;
             const display = r.tabDisplayWidth() orelse self.doc.tab_width;
             self.setIndent(display, unit, use_tabs);

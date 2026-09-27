@@ -101,8 +101,8 @@ indent_guide_active: Style,
 /// Tree-sitter capture roles, foreground only.
 syntax: Syntax,
 
-/// What a highlight capture paints as. `styleForCapture` in
-/// `app/syntax.zig` maps capture-name prefixes onto these.
+/// What a highlight capture paints as. `roleFor` in `highlight/role.zig`
+/// maps capture-name prefixes onto a role; `roleStyle` picks its style.
 pub const Syntax = struct {
     comment: Style,
     string: Style,

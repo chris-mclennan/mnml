@@ -1092,8 +1092,6 @@ fn drawBottomClose(app: *App, ui: Ui, area: Rect) void {
     ui.hit(cell, .{ .button = @intFromEnum(Button.bottom_close) });
 }
 
-/// The panel in the right slot. Only TODOS draws today; the others
-/// name themselves until their module lands.
 /// The right column's strip: ` <title>` and a `×` at the far end (Rust
 /// `right_panel` strip, less the tab chord and the `+` that mean
 /// nothing here). The outline is titled with its file, the rest with

@@ -1,6 +1,6 @@
 //! The update check. Once per launch (behind `ui.check_updates`, and
-//! only from the terminal loop's `startup` hook — never headless, never
-//! in a test) a worker asks GitHub for the newest release and, when its
+//! only from the terminal loop, right after its `startup` hook — never
+//! headless, never in a test) a worker asks GitHub for the newest release and, when its
 //! tag is newer than this build, the next tick toasts it. `app.check_updates`
 //! runs the same check by hand and also reports "up to date".
 //!
@@ -17,7 +17,6 @@ const App = app_mod.App;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const event = @import("../core/event.zig");
-const hooks = @import("../core/hooks.zig");
 const http_parse = @import("../http/parse.zig");
 const http_client = @import("../http/client.zig");
 
@@ -75,7 +74,11 @@ pub const State = struct {
     }
 };
 
-pub fn onStartup(app: *App, _: hooks.HookArgs) void {
+/// The automatic check. The terminal loop calls it after the `startup`
+/// hook; it is not a hook subscriber, because `--headless`, the `.test`
+/// runner and the unit tests all emit `startup` and none of them may
+/// touch the network.
+pub fn startupCheck(app: *App) void {
     if (!app.cfg.ui.check_updates) return;
     if (app.env.get("MNML_NO_UPDATE_CHECK")) |v| if (std.mem.eql(u8, v, "1")) return;
     start(app, false) catch {};
@@ -226,4 +229,13 @@ test "tagFromJson reads tag_name and strips the v; the tick toasts what the work
     try tick(&app);
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "is the latest release") != null);
     try t.expect(app.update.take(app.io) == null);
+}
+
+test "the startup hook never starts the update check: headless, the .test runner and the unit tests all emit it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    defer app.deinit();
+    try t.expect(app.cfg.ui.check_updates);
+    try t.expect(app.env.get("MNML_NO_UPDATE_CHECK") == null);
+    app.hooks.emit(&app, .startup);
+    try t.expect(!app.update.started);
 }
