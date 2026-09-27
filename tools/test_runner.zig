@@ -24,6 +24,15 @@
 //! chain. `MNML_TEST_STRICT=1` retries nothing. A test that panics takes
 //! the process down and is not retried.
 //!
+//! A test that WEDGES — no progress for `MNML_TEST_WEDGE_SECS` (300 by
+//! default; 0 turns it off) — is named too: the supervising parent watches
+//! the child's progress file, and when it stops moving it samples the
+//! child's threads (`/usr/bin/sample` on macOS: the stacks of every thread,
+//! which is what a wedge needs and what a timeout throws away), kills it,
+//! prints `WEDGED <test>`, and goes on from the next test; the run fails.
+//! The macOS runner sat on one broker test for forty minutes with nothing
+//! but its name in the log before this existed.
+//!
 //! Per test it does what `lib/compiler/test_runner.zig` does: a fresh
 //! `testing.allocator_instance` (a leak is a failure) and a fresh
 //! `testing.io_instance` (`Io.Threaded`, its worker pool joined in
@@ -170,6 +179,7 @@ fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
     const progress_path = std.fs.path.join(gpa, &.{ std.fs.path.dirname(args[0]) orelse ".", progress }) catch @panic("OOM");
     defer Io.Dir.cwd().deleteFile(io, progress_path) catch {};
 
+    const wedge_secs = wedgeSecs(init);
     var from: usize = 1;
     var crashes: usize = 0;
     var code: u8 = 0;
@@ -185,7 +195,20 @@ fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
         Io.Dir.cwd().deleteFile(io, progress_path) catch {};
         var proc = std.process.spawn(io, .{ .argv = argv.items, .stdin = .ignore, .stdout = .inherit, .stderr = .inherit }) catch |err|
             std.debug.panic("test runner: cannot start the suite: {t}", .{err});
+        var watch: Watchdog = .{
+            .io = io,
+            .progress_path = progress_path,
+            .pid = proc.id orelse 0,
+            .started = Io.Timestamp.now(io, .real),
+            .limit_ns = @as(i96, wedge_secs) * std.time.ns_per_s,
+        };
+        const watcher: ?std.Thread = if (wedge_secs > 0 and builtin.os.tag != .windows and watch.pid != 0)
+            std.Thread.spawn(.{}, Watchdog.run, .{&watch}) catch null
+        else
+            null;
         const term = proc.wait(io) catch |err| std.debug.panic("test runner: lost the suite: {t}", .{err});
+        watch.done.store(true, .release);
+        if (watcher) |th| th.join();
         // The child ends its own run with 0 or 1; anything else — a
         // signal, or Windows' exit code 3 from a panic — is a crash.
         switch (term) {
@@ -202,7 +225,11 @@ fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
             std.process.exit(1);
         };
         crashes += 1;
-        std.debug.print("  CRASH {s} ({any}) — the suite goes on from the next test\n", .{ test_fns[at - 1].name, term });
+        if (watch.fired.load(.acquire)) {
+            std.debug.print("  WEDGED {s} — no progress for {d} s, killed; the suite goes on from the next test\n", .{ test_fns[at - 1].name, wedge_secs });
+        } else {
+            std.debug.print("  CRASH {s} ({any}) — the suite goes on from the next test\n", .{ test_fns[at - 1].name, term });
+        }
         from = at + 1;
     }
     if (crashes != 0) {
@@ -211,6 +238,64 @@ fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
     }
     std.process.exit(code);
 }
+
+/// `MNML_TEST_WEDGE_SECS`: how long one test may run before the parent
+/// calls it wedged. 300 unless set; 0 turns the watchdog off.
+fn wedgeSecs(init: std.process.Init.Minimal) u32 {
+    if (builtin.os.tag == .windows) return 0;
+    const text = init.environ.getPosix("MNML_TEST_WEDGE_SECS") orelse return 300;
+    return std.fmt.parseUnsigned(u32, std.mem.trim(u8, text, " \n"), 10) catch 300;
+}
+
+/// The parent's watch on the child: the progress file's mtime is when the
+/// current test started. Stalled past the limit, the child's threads are
+/// sampled (macOS) and it is killed; `wait` in the parent then sees a
+/// signal and the crash path names the test, as `WEDGED` rather than
+/// `CRASH`. A plain thread, not a task: it has to outlive any Io wedge.
+const Watchdog = struct {
+    io: Io,
+    progress_path: []const u8,
+    pid: std.process.Child.Id,
+    started: Io.Timestamp,
+    limit_ns: i96,
+    done: std.atomic.Value(bool) = .init(false),
+    fired: std.atomic.Value(bool) = .init(false),
+
+    fn run(w: *Watchdog) void {
+        while (!w.done.load(.acquire)) {
+            var ts: std.c.timespec = .{ .sec = 1, .nsec = 0 };
+            _ = std.c.nanosleep(&ts, null);
+            if (w.done.load(.acquire)) return;
+            const since = if (Io.Dir.cwd().statFile(w.io, w.progress_path, .{})) |st| st.mtime else |_| w.started;
+            const now = Io.Timestamp.now(w.io, .real);
+            if (now.nanoseconds - since.nanoseconds < w.limit_ns) continue;
+            w.fired.store(true, .release);
+            std.debug.print("  WEDGED: no progress for {d} s; sampling pid {d} before killing it\n", .{ @divTrunc(w.limit_ns, std.time.ns_per_s), w.pid });
+            w.sample();
+            // The sample took a second; a test that finished meanwhile is
+            // slow, not wedged, and its pid is not ours to signal.
+            if (w.done.load(.acquire)) return;
+            _ = std.c.kill(w.pid, .KILL);
+            return;
+        }
+    }
+
+    /// Every thread's stack, from the outside: what a wedge needs and a
+    /// step timeout throws away. macOS only; elsewhere the name is all.
+    /// To stdout, in the log — never `sample`'s default file under /tmp.
+    fn sample(w: *Watchdog) void {
+        if (builtin.os.tag != .macos) return;
+        var pid_buf: [16]u8 = undefined;
+        const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{w.pid}) catch return;
+        var proc = std.process.spawn(w.io, .{
+            .argv = &.{ "/usr/bin/sample", pid, "1", "-mayDie", "-file", "/dev/stdout" },
+            .stdin = .ignore,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch return;
+        _ = proc.wait(w.io) catch {};
+    }
+};
 
 /// The runner's own Io, for the progress file: `testing.io` belongs to
 /// the test and is torn down between them.
