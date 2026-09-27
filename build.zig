@@ -164,6 +164,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Frame pointers stay in every mode: a wedged test on a runner is
+        // sampled from the outside, and without them the sample is dyld noise.
+        .omit_frame_pointer = false,
         // Io.Threaded can only interrupt a blocked tty read (cancelation
         // via pthread_kill(SIGIO)) when libc is linked.
         .link_libc = true,
@@ -823,6 +826,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
         .target = target,
         .optimize = optimize,
+        // Frame pointers stay in every mode: a wedged test on a runner is
+        // sampled from the outside, and without them the sample is dyld noise.
+        .omit_frame_pointer = false,
         // `warm.zig` probes a pid with `std.c.kill` / `std.c.getpid`.
         // macOS always links libc, so that compiles there without
         // asking; on Linux it is a compile error unless the dependency
