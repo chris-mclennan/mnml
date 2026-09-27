@@ -68,7 +68,13 @@ expect screen contains "3 Reported by me"
 # The vars are chips on the header, beside the door that edits them.
 expect screen contains " project: ENG "
 expect screen contains " versions: 13.15.0 +1 "
-expect screen contains " E edit "
+expect screen contains " J edit "
+# ...and the chip names the key that opens the editor: J (on a tab with
+# vars; `E` is expand-all on the tree).
+key J
+expect within 3000 screen contains " vars — QA Actionable now "
+key esc
+expect within 3000 screen lacks " vars — QA Actionable now "
 # q ends the pane.
 key q
 wait 500

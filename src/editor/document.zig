@@ -184,6 +184,9 @@ pub const PrefSource = enum { config, editorconfig, local };
 /// the one `editor.tab_width`.
 pub const PrefSources = struct {
     tab_width: PrefSource = .config,
+    /// Only `.local` is ever read: a `:setlocal et` / `noet` that an
+    /// `.editorconfig`'s `indent_style` must not undo on the next sync.
+    use_tabs: PrefSource = .config,
     auto_indent: PrefSource = .config,
     trim_trailing_ws_on_save: PrefSource = .config,
     ensure_trailing_newline: PrefSource = .config,

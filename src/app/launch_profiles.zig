@@ -10,7 +10,7 @@
 //! (`.cmd` on Windows), written on demand right before the spawn: it
 //! exports the env, then `exec`s the binary with the args and whatever
 //! the caller appends. The shim is the pty's argv[0], so a profile
-//! session is recognisable by name (`isProfileArgv`) and a user can
+//! session is recognisable by name (`isProductArgv`) and a user can
 //! run the same thing from any shell.
 //!
 //! // changed: Rust read `[[launch_profile]]` from the integration

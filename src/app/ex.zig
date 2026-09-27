@@ -1568,7 +1568,8 @@ fn setOption(app: *App, opt: []const u8, name_in: []const u8, value: ?[]const u8
 /// which a config change — a reload, `:set`, Settings — no longer moves
 /// (`Document.pref_source`). The buffer prefs only: `ts` / `tabstop`
 /// (the display width of a tab), `sw` / `shiftwidth` (the indent unit),
-/// `ai` / `autoindent` and their `no` forms.
+/// `ai` / `autoindent`, `et` / `expandtab`, and `wrap` — this editor's
+/// own, over `ui.wrap` — with their `no` forms.
 fn setLocal(app: *App, args: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const e = try editor(app, ":setlocal");
@@ -1596,7 +1597,12 @@ fn setLocal(app: *App, args: []const u8) CommandError!void {
         } else if (eqAny(name, &.{ "ai", "autoindent" })) {
             doc.auto_indent = !off;
             doc.pref_source.auto_indent = .local;
-        } else return app.diag.fail(arena, ":setlocal {s} — not one of ts, sw, ai", .{opt});
+        } else if (eqAny(name, &.{ "et", "expandtab" })) {
+            e.buf.setIndent(doc.tab_width, doc.indent_unit, off);
+            doc.pref_source.use_tabs = .local;
+        } else if (eqAny(name, &.{"wrap"})) {
+            e.wrap = !off;
+        } else return app.diag.fail(arena, ":setlocal {s} — not one of ts, sw, ai, et, wrap", .{opt});
         app.toast(":setlocal {s}", .{opt_in});
     }
     if (!any) return app.diag.fail(arena, ":setlocal {{option}}…", .{});

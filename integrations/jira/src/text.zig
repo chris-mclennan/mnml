@@ -24,7 +24,7 @@ pub fn width(s: []const u8) u16 {
 /// The longest prefix of `s` that fits in `max` cells, plus `…` when
 /// something was cut. The slice is borrowed; the ellipsis is not, so the
 /// result is written into `buf` (which must hold `max * 4 + 3` bytes to
-/// be safe; `fitInto` sizes it for you).
+/// be safe).
 pub fn fit(buf: []u8, s: []const u8, max: u16) []const u8 {
     if (max == 0) return "";
     if (width(s) <= max) {

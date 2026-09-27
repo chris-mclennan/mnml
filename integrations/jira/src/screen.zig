@@ -435,11 +435,11 @@ pub const Painter = struct {
         try out.append(arena, .{ .text_ = " jql ", .target = .jql, .style = if (t.show_jql) p.s.chip_active else p.s.chip_style });
         // An editable tab wears its vars: the values the JQL
         // interpolates are what changes, so they are on the header
-        // rather than a level down, and `E` (or any of them) opens the
-        // editor.
+        // rather than a level down, and `J` (or any of them) opens the
+        // editor — the key `keymap.zig` binds to `vars_editor`.
         if (t.cfg.isEditableJql()) {
             for (t.vars) |v| try out.append(arena, .{ .text_ = try chipText(arena, v.name, try varSummary(arena, v)), .target = .vars, .style = p.s.chip_style });
-            try out.append(arena, .{ .text_ = " E edit ", .target = .vars, .style = p.s.chip_style });
+            try out.append(arena, .{ .text_ = " J edit ", .target = .vars, .style = p.s.chip_style });
         }
         try out.append(arena, .{ .text_ = search_text, .target = .search, .style = search_style, .pill = true });
         try out.append(arena, .{ .text_ = try chipText(arena, "assignee", try p.assigneeLabel(t)), .target = .assignee, .style = if (t.active_assignees.count() > 0) p.s.chip_active else p.s.chip_style });
