@@ -131,6 +131,10 @@ pub const Editor = struct {
     ensure_trailing_newline: bool = true,
     /// Vim's `timeoutlen`; clamped to `chord_timeout_ms_min..max` on load.
     chord_timeout_ms: u16 = 500,
+    /// Vim's `'report'`: a change of more than this many lines says
+    /// `N fewer lines` / `N more lines` (vim profile). A large value
+    /// silences it.
+    report: u16 = 2,
     wheel_moves_cursor: WheelMovesCursor = .auto,
     scroll_accel: ScrollAccel = .normal,
     // changed: the Rust config had no switch for persistent undo (it was

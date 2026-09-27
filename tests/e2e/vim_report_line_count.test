@@ -1,0 +1,22 @@
+# A change of more than `'report'` (2) lines says so (Neovim 0.12.5 on
+# eight lines: 3dd -> "3 fewer lines", 2dd -> nothing, 3yyP -> "3 more
+# lines", u after 3dd -> "3 more lines; before #1 ..."). mnml said
+# nothing.
+write f.txt "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"
+open f.txt
+command editor.use_vim
+key 2
+key d
+key d
+expect screen lacks "fewer lines"
+key 3
+key d
+key d
+expect screen contains "3 fewer lines"
+key u
+expect screen contains "3 more lines"
+key 4
+key y
+key y
+key P
+expect screen contains "4 more lines"
