@@ -188,7 +188,7 @@ fn loadConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map, workspace: 
     var loaded = try config.load.load(gpa, io, .{
         .explicit = parseConfigFlag(argv),
         .workspace = workspace,
-        .trust = .ask,
+        .trust = e2eTrust(io, env, workspace),
         .data_root = data_root,
         .env = cfg_env,
     });
@@ -895,6 +895,53 @@ fn parseOnly(gpa: Allocator, io: Io, roots: []const []const u8, w: *Io.Writer) !
 
 /// `mnml-zig [WORKSPACE] --headless [--stub]` — the virtual screen driven
 /// through `<ws>/.mnml/<subdir>/`. `MNML_COLS` / `MNML_ROWS` size it,
+/// The workspace's trust at launch: `.ask` — the store, then the
+/// dialog — unless `MNML_E2E_WORKSPACE` names this very workspace, in
+/// which case it is `.trusted` outright, as the `.test` runner's own
+/// App is. The runner exports that variable for the file it is
+/// driving, and so does the real-window harness (`tools/tour`), whose
+/// scripts write a DAP adapter or an LSP server into the workspace
+/// config AFTER launch and expect it read: under `.ask` a workspace
+/// with no layer at launch is never marked trusted, and the config
+/// written later is silently ignored. Whoever sets that variable
+/// launched the process; it grants nothing to anyone else, and only
+/// for the one path it names (compared by realpath).
+fn e2eTrust(io: Io, env: *const std.process.Environ.Map, workspace: []const u8) config.Trust {
+    const named = env.get("MNML_E2E_WORKSPACE") orelse return .ask;
+    if (named.len == 0) return .ask;
+    var buf_a: [std.fs.max_path_bytes]u8 = undefined;
+    var buf_b: [std.fs.max_path_bytes]u8 = undefined;
+    const na = Io.Dir.cwd().realPathFile(io, named, &buf_a) catch return .ask;
+    const nb = Io.Dir.cwd().realPathFile(io, workspace, &buf_b) catch return .ask;
+    return if (std.mem.eql(u8, buf_a[0..na], buf_b[0..nb])) .trusted else .ask;
+}
+
+test "MNML_E2E_WORKSPACE naming this workspace makes it trusted at launch; another path, or none, asks" {
+    const t = std.testing;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.createDirPath(t.io, "other");
+    var obuf: [std.fs.max_path_bytes]u8 = undefined;
+    const other = obuf[0..try tmp.dir.realPath(t.io, &obuf)];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try t.expectEqual(config.Trust.ask, e2eTrust(t.io, &env, ws));
+    try env.put("MNML_E2E_WORKSPACE", ws);
+    try t.expectEqual(config.Trust.trusted, e2eTrust(t.io, &env, ws));
+    // The same directory through a different spelling still matches.
+    const dotted = try std.fmt.allocPrint(t.allocator, "{s}/.", .{ws});
+    defer t.allocator.free(dotted);
+    try t.expectEqual(config.Trust.trusted, e2eTrust(t.io, &env, dotted));
+    const elsewhere = try std.fmt.allocPrint(t.allocator, "{s}/other", .{other});
+    defer t.allocator.free(elsewhere);
+    try env.put("MNML_E2E_WORKSPACE", elsewhere);
+    try t.expectEqual(config.Trust.ask, e2eTrust(t.io, &env, ws));
+    try env.put("MNML_E2E_WORKSPACE", "");
+    try t.expectEqual(config.Trust.ask, e2eTrust(t.io, &env, ws));
+}
+
 /// `MNML_IPC_DIR` relocates the channel. Exit 75 asks the wrapper to
 /// rebuild and relaunch.
 fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
