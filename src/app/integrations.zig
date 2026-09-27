@@ -2822,9 +2822,13 @@ pub fn removeAccept(app: *App, id: []const u8) Allocator.Error!void {
     if (!launcher and app.data_root.len > 0 and !binaryStillUsed(app, manifest_binary, id)) {
         const name = std.fs.path.basename(try expandEnv(app, arena, manifest_binary));
         const link = try std.fs.path.join(arena, &.{ app.data_root, "bin", name });
-        if (Io.Dir.cwd().deleteFile(app.io, link)) |_| {
-            link_went = true;
-        } else |_| {}
+        // `existingProgram`'s answer: on Windows the link an install made
+        // is `<name>.exe`, the manifest's bare name without it.
+        if (existingProgram(app.io, arena, link)) |found| {
+            if (Io.Dir.cwd().deleteFile(app.io, found)) |_| {
+                link_went = true;
+            } else |_| {}
+        }
     }
     const copy = try arena.dupe(u8, id);
     try refresh(app);
