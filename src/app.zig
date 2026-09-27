@@ -1632,9 +1632,10 @@ pub const App = struct {
         try app.hooks.subscribe(.save_post, .{ .zig = &cmd_script.onSavePost });
         try app.hooks.subscribe(.save_post, .{ .zig = &scripts_mod.onSavePost });
         // The session comes back before anything else the startup hook
-        // does, so the update toast and the picker land on the restored frame.
+        // does, so the picker lands on the restored frame. The update
+        // check is not a subscriber: it reaches GitHub, so only the
+        // terminal loop starts it (`update.startupCheck`).
         try app.hooks.subscribe(.startup, .{ .zig = &session.onStartup });
-        try app.hooks.subscribe(.startup, .{ .zig = &update.onStartup });
         try app.hooks.subscribe(.startup, .{ .zig = &startup_picker.onStartup });
         try app.hooks.subscribe(.exit, .{ .zig = &session.onExit });
         try app.hooks.subscribe(.open, .{ .zig = &undo_store.onOpen });
