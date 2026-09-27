@@ -237,6 +237,7 @@ resolved by hand from the same file.
 | `ctrl+m` | `editor.action.toggleTabFocusMode` | missing | — | no mnml command |
 | `ctrl+n` | `workbench.action.files.newUntitledFile` | different | `file.new` | mnml has `scratch.new` (no standard chord); `Ut?…:2092` on the desktop |
 | `ctrl+s` | `workbench.action.files.save` | same | `file.save` |  |
+| `ctrl+shift+s` | `workbench.action.files.saveAs` | same | `file.save_as` |  |
 | `ctrl+shift+[` | `editor.fold` | different | `editor.toggle_fold` | mnml has `editor.close_fold` (no standard chord) |
 | `ctrl+shift+]` | `editor.unfold` | different | `editor.unfold_all` | mnml has `editor.open_fold` (no standard chord) |
 | `ctrl+shift+a` | `editor.action.blockComment` | different | `toast.run_action` | no mnml command |
