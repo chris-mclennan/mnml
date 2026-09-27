@@ -5,7 +5,7 @@ own, records the pid and the window id, and every verb it runs re-checks
 that the window is still ITS window. What it does not do is type: `key`
 and `type` need the harness to be the active application, which takes
 the keyboard from the person at the machine. So this module drives the
-app the other way — JSONL lines appended to `<ws>/.mnml/ipc-zig/command`
+app the other way — JSONL lines appended to `<run>/ipc/command` (`--ipc-dir`)
 with `ipc.allow_input` on (`mnml-drive launch --allow-input`) — and
 uses the driver only for what needs the window: launch, shot, pixel,
 quit. The window's own mouse reporting is off (`--no-mouse`): the
@@ -39,7 +39,7 @@ DRIVE = os.path.join(REPO, "zig-out", "bin", "mnml-drive")
 # to know what it is running in, and they describe the harness window,
 # not the developer.
 TERMINAL_VARS = ("TERM", "TERMINFO", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM",
-                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_PROFILE")
+                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_PROFILE", "MNML_IPC_DIR")
 
 CLEAN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -105,7 +105,10 @@ class Window:
         self.data_root = os.path.join(self.run_dir, "data")
         self.home = os.path.join(self.run_dir, "home")
         self.tmp = os.path.join(self.run_dir, "tmp")
-        self.ipc = os.path.join(self.ws, ".mnml", "ipc-zig")
+        # Beside the run, never inside the workspace: a `.mnml/` planted
+        # in the fixture is a tree row the script did not write (two
+        # "delete the first row" scripts deleted the channel itself).
+        self.ipc = os.path.join(self.run_dir, "ipc")
         self.app_env = dict(app_env or {})
         self.app_args = list(app_args)
         self.log = log or (lambda msg: None)
@@ -149,6 +152,7 @@ class Window:
             "TMPDIR": self.tmp,
         }
         cmd = [DRIVE, "launch", "--workspace", self.ws, "--data-root", self.data_root,
+               "--ipc-dir", self.ipc,
                "--cols", str(self.cols), "--rows", str(self.rows), "--exe", wrapper,
                "--allow-input", "--no-mouse", "--timeout", str(self.timeout_ms)]
         r = subprocess.run(cmd, env=drive_env, capture_output=True, text=True)
@@ -275,10 +279,16 @@ class Window:
 
     def status(self):
         try:
-            with open(os.path.join(self.ipc, "status.json"), encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
+            return json.loads(self.status_text() or "{}")
+        except ValueError:
             return {}
+
+    def status_text(self):
+        try:
+            with open(os.path.join(self.ipc, "status.json"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
 
     def settle(self, quiet_ms=300, cap_ms=3000):
         """Until screen.txt has not changed for `quiet_ms` (or `cap_ms`
@@ -299,7 +309,11 @@ class Window:
     def wait_for(self, text, present=True, timeout_ms=3000, where="screen"):
         deadline = now_ms() + timeout_ms
         while True:
-            hay = self.screen() if where == "screen" else json.dumps(self.status())
+            # The status is matched as the app WROTE it (compact, the
+            # runner's key order), never re-serialised: `json.dumps` puts
+            # a space after every colon, and `"cursorShape":"bar"` never
+            # matched — 191 of the first sweep's 546 misses were that.
+            hay = self.screen() if where == "screen" else self.status_text()
             if (text in hay) == present:
                 return True
             if now_ms() > deadline:
