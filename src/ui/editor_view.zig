@@ -142,6 +142,9 @@ pub const Doc = struct {
     tab_width: u8,
     line_numbers: bool = true,
     cursor_shape: CursorShape = .block,
+    /// The cursor sits on the LAST cell of a Tab's span, as Neovim's
+    /// Normal and Visual do; else (Insert, Replace, modeless) the first.
+    cursor_on_tab_end: bool = false,
     focused: bool,
     /// Paint a rectangle from anchor→cursor instead of a byte range.
     visual_block: bool = false,
@@ -1258,8 +1261,10 @@ fn drawInner(ui: Ui, pane: PaneId, area: Rect, view: *ViewState, doc: Doc) Alloc
                 if (var_hit) |vh| ui.hit(cell_rect, .{ .script_hit = .{ .pane = pane, .id = vh } }); // {{VAR}} hook
                 painted_x = sx + c.w;
 
-                if (is_cursor_line and found == null and c.off == cursor_off and cursor_line_real == cursor_line) {
-                    found = .{ .x = sx, .y = y };
+                if (is_cursor_line and c.off == cursor_off and cursor_line_real == cursor_line) {
+                    // A Tab's later cells move a Normal-mode cursor on
+                    // to the span's last one.
+                    if (found == null or (doc.cursor_on_tab_end and c.tab and found.?.y == y)) found = .{ .x = sx, .y = y };
                 }
             }
 
@@ -2691,4 +2696,32 @@ test "colOfOff answers what the laid-out cells say" {
     const s = "a\tb漢\x91e\u{301}\t\u{200B}z";
     const cells = try layoutLine(f.ui(), s, 4);
     for (0..s.len + 1) |off| try testing.expectEqual(cellX(cells, @intCast(off)), colOfOff(f.ui(), s, 4, @intCast(off)));
+}
+
+test "a Normal-mode cursor on a Tab sits on the span's last cell, an Insert one on its first" {
+    // Neovim 0.12.5, `set nonu`: `wincol()` on the Tab of `\tx` and of
+    // `ab\tc` is 4 at ts=4 and 8 at ts=8 in Normal mode.
+    var f = try Fixture.init(24, 2);
+    defer f.deinit();
+    for ([_]u8{ 4, 8 }) |ts| {
+        var view: ViewState = .{};
+        var d = mkDoc("\tx\nab\tc");
+        d.line_numbers = false;
+        d.tab_width = ts;
+        d.cursor_on_tab_end = true;
+        d.cursor = 0;
+        try testing.expectEqual(Cursor{ .x = ts - 1, .y = 0 }, draw(f.ui(), 3, f.full(), &view, d).?);
+        d.cursor = 5; // the Tab after `ab`
+        try testing.expectEqual(Cursor{ .x = ts - 1, .y = 1 }, draw(f.ui(), 3, f.full(), &view, d).?);
+        // Insert: the first cell.
+        d.cursor_on_tab_end = false;
+        d.cursor = 0;
+        try testing.expectEqual(Cursor{ .x = 0, .y = 0 }, draw(f.ui(), 3, f.full(), &view, d).?);
+        d.cursor = 5;
+        try testing.expectEqual(Cursor{ .x = 2, .y = 1 }, draw(f.ui(), 3, f.full(), &view, d).?);
+        // A cursor on a plain character is unaffected.
+        d.cursor_on_tab_end = true;
+        d.cursor = 1; // `x`
+        try testing.expectEqual(Cursor{ .x = ts, .y = 0 }, draw(f.ui(), 3, f.full(), &view, d).?);
+    }
 }

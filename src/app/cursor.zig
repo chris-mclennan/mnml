@@ -113,6 +113,16 @@ pub fn forModeOp(mode: EditingMode, operator_pending: bool) Shape {
     return forMode(mode);
 }
 
+/// Whether the cursor sits on the last cell of a Tab's span: Neovim's
+/// Normal and Visual modes (`wincol()` on a Tab at ts=4 / 8 is 4 / 8);
+/// Insert, Replace and the modeless profile sit on its first cell.
+pub fn onTabEnd(mode: EditingMode) bool {
+    return switch (mode) {
+        .normal, .visual, .visual_line, .visual_block => true,
+        .insert, .replace, .none => false,
+    };
+}
+
 /// The editor's shape for an editing mode. Modeless (`none`) editing is
 /// an insert caret the whole time, so it is a bar.
 pub fn forMode(mode: EditingMode) Shape {
@@ -188,4 +198,9 @@ test "decscusr: blink picks the blinking variant, and only that" {
     try t.expectEqual(vaxis.Cell.CursorShape.beam_blink, decscusr(.bar, true));
     try t.expectEqual(vaxis.Cell.CursorShape.underline, decscusr(.underline, false));
     try t.expectEqual(vaxis.Cell.CursorShape.underline_blink, decscusr(.underline, true));
+}
+
+test "onTabEnd: Normal and Visual sit on a Tab's last cell; Insert, Replace and modeless on its first" {
+    try std.testing.expect(onTabEnd(.normal) and onTabEnd(.visual) and onTabEnd(.visual_line) and onTabEnd(.visual_block));
+    try std.testing.expect(!onTabEnd(.insert) and !onTabEnd(.replace) and !onTabEnd(.none));
 }
