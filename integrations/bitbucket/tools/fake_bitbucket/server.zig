@@ -116,6 +116,10 @@ pub const State = struct {
     /// since the epoch; the listener stamps the real one before each
     /// request, a test sets its own.
     now_secs: i64 = 1_789_500_000,
+    /// Titles a test changed (`POST /__retitle/<id>`, the body the new
+    /// title): the one way to make a pull request MOVE without a write
+    /// the pane itself makes — what an event feed exists to report.
+    retitled: [4]Retitle = @splat(.{}),
 
     pub const Vote = enum { none, approved, changes_requested };
 
@@ -125,6 +129,26 @@ pub const State = struct {
         path: []const u8 = "",
         line: i64 = 0,
     };
+
+    pub const Retitle = struct {
+        id: u32 = 0,
+        buf: [96]u8 = undefined,
+        len: u8 = 0,
+    };
+
+    pub fn titleFor(self: *const State, f: *const Fixture) []const u8 {
+        for (&self.retitled) |*r| if (r.id == f.id and r.len > 0) return r.buf[0..r.len];
+        return f.title;
+    }
+
+    fn retitle(self: *State, id: u32, title: []const u8) void {
+        const slot = for (&self.retitled) |*r| {
+            if (r.id == id or r.id == 0) break r;
+        } else &self.retitled[0];
+        const n: u8 = @intCast(@min(title.len, slot.buf.len));
+        @memcpy(slot.buf[0..n], title[0..n]);
+        slot.* = .{ .id = id, .buf = slot.buf, .len = n };
+    }
 
     fn voteSlot(self: *State, id: u32) *Vote {
         return &self.votes[@as(usize, id) % self.votes.len];
@@ -452,6 +476,14 @@ fn etagOf(arena: Allocator, body: []const u8) Allocator.Error![]const u8 {
 }
 
 fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
+    // The test's own door, before auth: `POST /__retitle/<id>` with the
+    // new title as the body. Not Bitbucket; a test's way to move a PR.
+    if (req.method == .POST and std.mem.startsWith(u8, req.target, "/__retitle/")) {
+        const id = std.fmt.parseInt(u32, req.target["/__retitle/".len..], 10) catch return notFound(arena);
+        if (find("", id) == null) return notFound(arena);
+        st.retitle(id, req.body);
+        return .{ .status = 204 };
+    }
     st.served += 1;
     const cred = classify(req.authorization);
     st.last_credential = cred;
@@ -858,7 +890,7 @@ const Shape = enum { list, detail };
 
 fn writePr(w: *std.Io.Writer, f: *const Fixture, st: *const State, shape: Shape) Allocator.Error!void {
     w.print("{{\"type\":\"pullrequest\",\"id\":{d},\"title\":", .{f.id}) catch return error.OutOfMemory;
-    try writeJsonString(w, f.title);
+    try writeJsonString(w, st.titleFor(f));
     w.print(",\"state\":\"{s}\",\"draft\":{s},\"updated_on\":\"", .{
         effectiveState(f, st),
         if (f.draft) "true" else "false",
@@ -1526,4 +1558,20 @@ test "a GET carrying the tag it was given is answered 304 with no body" {
     const wrote = try handle(a, &st, .{ .method = .POST, .target = "/2.0/repositories/acme/api/pullrequests/1198/approve", .authorization = "Bearer ATCTT-x", .if_none_match = first.etag });
     try t.expect(wrote.status != 304);
     try t.expectEqualStrings("", wrote.etag);
+}
+
+test "a retitled pull request reads its new title on the listing and on its own" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var st: State = .{};
+    const before = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests/1234", "");
+    try t.expect(std.mem.indexOf(u8, before.body, "Fix the login redirect") != null);
+    const r = try handle(a, &st, .{ .method = .POST, .target = "/__retitle/1234", .body = "Fix the login redirect, again" });
+    try t.expectEqual(@as(u16, 204), r.status);
+    const after = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests/1234", "");
+    try t.expect(std.mem.indexOf(u8, after.body, "Fix the login redirect, again") != null);
+    const list = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
+    try t.expect(std.mem.indexOf(u8, list.body, "Fix the login redirect, again") != null);
+    try t.expectEqual(@as(u16, 404), (try handle(a, &st, .{ .method = .POST, .target = "/__retitle/77", .body = "x" })).status);
 }

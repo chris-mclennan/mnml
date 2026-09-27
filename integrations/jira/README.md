@@ -66,6 +66,9 @@ example.
 | `jira_url = "…"` | `.jira_url = "…"` | no trailing slash |
 | `email = "…"` | `.email = "…"` | the account the token belongs to |
 | `refresh_interval_secs = 60` | `.refresh_interval_secs = 60` | `0` turns the auto-refresh off |
+| — | `.poll_max_secs = 120` | no TOML twin: the adaptive poller's cap — the interval doubles from `refresh_interval_secs` while nothing changes (see Polling below) |
+| — | `.feed = .{ .file = "", .stale_secs = 300, .sweep_secs = 600 }` | no TOML twin: an event file that names changed tickets; empty is off |
+| — | `.budget = .{ .shared_bucket = "" }` | no TOML twin: a machine-wide token bucket file; empty is none |
 | `release_cut = false` | `.release_cut = false` | turns the tabs' `bumps.release_cut` rules on |
 | `team_field_id = "customfield_10056"` | `.team_field_id = "…"` | the team select's id, read on every issue |
 | `team_field_name = "Team"` | `.team_field_name = "…"` | the JQL name of that field |
@@ -214,6 +217,48 @@ already holds, against a read that carried a body) and calls today ·
 yesterday · last 7 days, from `<data root>/budget/jira.tally`, which
 every process on the data root adds to. A click on it stops a pause;
 so do `Ctrl+X` and the host's `integrations.cancel_wait`.
+
+### Polling, the event feed and the shared bucket
+
+**The poller backs off while nothing changes.** `refresh_interval_secs`
+is the base; every auto-refresh that comes back the same as the last
+one (a window that found nothing moved, or the same tickets at the same `updated` stamps) doubles the interval, up to `poll_max_secs` (120; at or
+below the base the interval stays fixed): `5 s → 10 → 20 → 40 → 80 →
+120`. A change, a key, a click, the wheel, a paste, the pane taking
+focus, or `r` puts it straight back to the base. The budget chip adds
+the interval in force (`37/h · 40s`); its hover says the base, the cap
+and how many quiet polls in a row got it there.
+
+**An event feed**, when something on the machine knows what changed:
+
+```zig
+.feed = .{ .file = "~/feeds/jira.jsonl", .stale_secs = 300, .sweep_secs = 600 },
+```
+
+Anything may append one JSON line per change —
+`{"kind":"issue","key":"ENG-12","at":1790000000,"source":"relay"}` — and the pane fetches only those tickets (one search, `key in (…)` inside the tab's own query, so a ticket that has left the query drops off the tab), once however many lines
+name it, through the same budget as everything else. While the file is
+live the chip says `· feed` and the listing is only swept every
+`sweep_secs`, in case a line was lost. If the file goes missing, or has
+had no line (an event or a `{"kind":"heartbeat",…}`) for `stale_secs`,
+the pane goes back to adaptive polling and the hover says why. A
+relative path is taken against this config's directory. The format is
+a public contract: `docs/SDK.md` → "The event line".
+
+**A shared bucket file**, when several tools on the machine must share
+one allowance:
+
+```zig
+.budget = .{ .shared_bucket = "~/buckets/jira.json" },
+```
+
+Every request takes one token from it under an exclusive file lock; an
+empty bucket skips the round (nothing is sent, the hint line says
+`waiting on the shared rate-limit bucket`) and a 429 is written into it
+as a cooldown every other reader honours. A missing or unparsable file
+is no bucket — it can slow the pane, never take its API away. The
+chip's hover shows its tokens and any cooldown. The format:
+`docs/SDK.md` → "The shared bucket file".
 
 Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row

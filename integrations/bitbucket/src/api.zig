@@ -74,6 +74,7 @@ pub const Failure = struct {
     /// The reference's short row label: `429 · retry in 30s`, `auth
     /// failed`, `no such repo`, `HTTP 400 · <why>`, `network error`.
     pub fn shortLabel(self: Failure, buf: []u8) []const u8 {
+        if (sdk.budget.isBucketRefusal(self.message)) return fit(buf, "waiting on the shared bucket");
         const status = self.status orelse return fit(buf, "network error");
         return switch (status) {
             429 => if (self.retry_after_secs) |s|
@@ -184,6 +185,10 @@ pub const Client = struct {
     /// Requests actually sent, retries included — the diagnostics and
     /// the rate-limit tests both read it.
     sent: u32 = 0,
+    /// Where a listing refresh folds every GET's answer, to learn
+    /// whether the listing moved (`sdk.feed`'s adaptive poller). Null
+    /// outside one.
+    digest: ?*std.hash.Wyhash = null,
     /// The pane's API budget (`mnml_sdk.budget`): the headers, the
     /// 429 pause, the hit ratio, the tally, dry run. Null — a one-shot
     /// command-line run — gets a budget of its own per request, so a
@@ -231,8 +236,25 @@ pub const Client = struct {
     }
 
     /// One request, gated and retried. `path` starts with `/` and
-    /// already carries its query.
+    /// already carries its query. Every GET's answer — a body off the
+    /// wire, a 304's held one, a cache's — is folded into `digest` when
+    /// one is set, so a listing refresh can say whether anything moved.
     pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+        const reply = try self.sendUnhashed(gpa, method, path, payload, side);
+        if (method == .GET) if (self.digest) |d| {
+            d.update(path);
+            switch (reply) {
+                .ok => |b| d.update(b.bytes),
+                .failed => |f| {
+                    d.update("\x00failed");
+                    d.update(f.message);
+                },
+            }
+        };
+        return reply;
+    }
+
+    fn sendUnhashed(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
         const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
         defer gpa.free(url);
         var own_budget: sdk.Budget = .{};
@@ -288,6 +310,10 @@ pub const Client = struct {
                 .go => {},
                 .paused => return pausedFailure(gpa, budget),
                 .cancelled => return .{ .failed = .{ .status = 429, .message = try gpa.dupe(u8, "stopped waiting out the rate limit") } },
+                // The machine's shared bucket file is empty or cooling
+                // down: this round is skipped, nothing goes out, and
+                // the pane says it is waiting rather than failing.
+                .bucket_empty, .bucket_cooldown => |g| return .{ .failed = .{ .status = null, .message = try gpa.dupe(u8, sdk.Budget.refusalText(g)) } },
             }
             // Spacing, before the bucket. A reader waits for nothing;
             // a warm sweep waits its turn (`mnml_sdk.warm.Gate`).

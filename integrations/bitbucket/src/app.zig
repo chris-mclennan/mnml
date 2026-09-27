@@ -182,6 +182,43 @@ const Carried = struct { data: tabs.TabData, items: ?usize = null, why: []const 
 /// result's arena), its error label dropped — the failure is said once,
 /// in the header, rather than clipped into a STATE cell. A repo that
 /// never answered keeps its error row. `why_buf` backs `why`.
+/// What the hint row says while the shared bucket file is refusing.
+pub const bucket_wait_text = "waiting on the shared rate-limit bucket — this round was skipped, nothing was sent";
+
+/// Is a pull request in `state` one a listing fetched with `loaded`
+/// holds?
+fn stateLoaded(loaded: filters.ApiStates, state: []const u8) bool {
+    if (std.ascii.eqlIgnoreCase(state, "OPEN")) return loaded.open;
+    if (std.ascii.eqlIgnoreCase(state, "MERGED")) return loaded.merged;
+    if (std.ascii.eqlIgnoreCase(state, "DECLINED") or std.ascii.eqlIgnoreCase(state, "SUPERSEDED")) return loaded.declined;
+    return false;
+}
+
+/// Put `pr` where the listing has it — same repo, same id — when its
+/// state still belongs to the listing. False: it is not there, or no
+/// longer belongs, and the caller asks for the listing instead. The
+/// rows live on arenas this app owns, so writing one in place is
+/// writing its own memory.
+pub fn patchPr(ts: *TabState, repo: []const u8, pr: model.PullRequest) bool {
+    if (!stateLoaded(ts.loaded_states, pr.state)) return false;
+    switch (ts.data) {
+        .repo_pr_tree => |repos| for (repos) |r| {
+            if (!std.mem.eql(u8, r.slug, repo)) continue;
+            for (r.prs, 0..) |old, i| if (old.id == pr.id) {
+                @constCast(r.prs)[i] = pr;
+                return true;
+            };
+        },
+        .pull_requests => |prs| for (prs, 0..) |old, i| {
+            if (old.id != pr.id or !std.mem.eql(u8, old.repoSlug(), repo)) continue;
+            @constCast(prs)[i] = pr;
+            return true;
+        },
+        else => {},
+    }
+    return false;
+}
+
 fn carryFailedRepos(a: Allocator, old: tabs.TabData, fresh: tabs.TabData, why_buf: []u8) Allocator.Error!Carried {
     switch (fresh) {
         .repo_pr_tree => |rows| {
@@ -262,8 +299,20 @@ pub const TabState = struct {
     /// Status change is compared against to decide whether it costs a
     /// fetch (`ApiStates.covers`).
     loaded_states: filters.ApiStates = .{},
+    /// The last listing's digest (`fetch.RefreshResult.digest`): the
+    /// next one matching it is a poll that found nothing new.
+    digest: ?u64 = null,
+    /// Arenas holding pull requests an event feed replaced in place;
+    /// they go when the data they were patched into does.
+    patches: std.ArrayListUnmanaged(std.heap.ArenaAllocator) = .empty,
+
+    fn dropPatches(ts: *TabState, gpa: Allocator) void {
+        for (ts.patches.items) |*a| a.deinit();
+        ts.patches.clearAndFree(gpa);
+    }
 
     fn deinit(ts: *TabState, gpa: Allocator) void {
+        ts.dropPatches(gpa);
         if (ts.data_arena) |*a| a.deinit();
         ts.expanded.deinit();
         gpa.free(ts.error_text);
@@ -425,6 +474,18 @@ pub const App = struct {
     frame_arena: std.heap.ArenaAllocator,
     hits: hit.HitMap,
     last_refresh_secs: i64 = 0,
+    /// When to ask again, and what an event feed says changed
+    /// (`sdk.feed`): the adaptive poller, and the JSONL file when one
+    /// is configured. `main` builds it from the config; the default
+    /// polls never, which is what a test gets.
+    watch: sdk.feed.Watcher = .{ .poll = .init(0, 0) },
+    /// Pull requests fetched one at a time because the feed named them.
+    feed_fetches: u32 = 0,
+    /// Those fetches still out, keyed `ws/repo#id`: a pull request the
+    /// feed names again (or names another way — `api#12` and
+    /// `acme/api#12` are one) before its answer lands is not asked for
+    /// twice.
+    feed_in_flight: std.StringHashMapUnmanaged(void) = .empty,
     /// May each open pull request merge, keyed `slug#id`. Filled for
     /// the row the cursor lands on, one cached look each.
     readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
@@ -582,6 +643,9 @@ pub const App = struct {
 
     pub fn deinit(app: *App) void {
         const gpa = app.gpa;
+        var ffit = app.feed_in_flight.keyIterator();
+        while (ffit.next()) |k| gpa.free(k.*);
+        app.feed_in_flight.deinit(gpa);
         for (app.tabs) |*ts| ts.deinit(gpa);
         gpa.free(app.tabs);
         for (app.hidden.items) |h| gpa.free(h);
@@ -683,6 +747,7 @@ pub const App = struct {
         }
         try app.requestValues();
         app.last_refresh_secs = app.now_secs;
+        app.watch.started(app.now_secs * 1000);
     }
 
     fn scopeInputs(app: *App, workspace: []const u8) fetch.ScopeInputs {
@@ -800,10 +865,22 @@ pub const App = struct {
     pub fn tick(app: *App, now_secs: i64) Allocator.Error!void {
         app.now_secs = now_secs;
         if (app.actions.anyRunning()) app.spin +%= 1;
-        const every: i64 = app.config.refresh_interval_secs;
-        if (every > 0 and now_secs - app.last_refresh_secs >= every and !app.activeTab().loading) {
-            try app.refreshActive();
+        // The poller and the event feed (`sdk.feed`). Nothing is asked
+        // while the tab is already loading: the feed's lines stay in its
+        // file until the pane can act on them.
+        const now_ms = now_secs * 1000;
+        if (!app.activeTab().loading) {
+            _ = app.frame_arena.reset(.retain_capacity);
+            const look = try app.watch.look(app.frame_arena.allocator(), now_ms);
+            if (look.sweep) {
+                try app.refreshTabMode(app.active, false);
+                app.last_refresh_secs = now_secs;
+                app.watch.started(now_ms);
+            } else if (look.changed.len > 0) {
+                try app.feedChanged(look.changed);
+            }
         }
+        app.budget.setFeed(app.watch.state(now_ms));
         if (app.values != null and now_secs - app.values_at_secs >= values_every_secs and !app.values_requested) try app.requestValues();
     }
 
@@ -1099,6 +1176,7 @@ pub const App = struct {
 
     /// One key from mnml. False means the pane is done.
     pub fn keyPress(app: *App, spec: []const u8) Allocator.Error!bool {
+        app.touched();
         _ = app.frame_arena.reset(.retain_capacity);
         const a = app.frame_arena.allocator();
         switch (app.mode) {
@@ -1967,6 +2045,52 @@ pub const App = struct {
     pub fn refreshActiveMode(app: *App, full: bool) Allocator.Error!void {
         try app.refreshTabMode(app.active, full);
         app.last_refresh_secs = app.now_secs;
+        // A refresh somebody asked for is a poll, and a sign somebody
+        // is looking: the poller starts over from its base.
+        app.watch.touch();
+        app.watch.started(app.now_secs * 1000);
+    }
+
+    /// The reader did something — a key, a click, the wheel, a paste,
+    /// the pane taking focus: the poller comes back to its base.
+    pub fn touched(app: *App) void {
+        app.watch.touch();
+    }
+
+    /// The pull requests an event feed named. On the tab on screen,
+    /// each is asked for once, alone, and its row replaced in place.
+    pub fn feedChanged(app: *App, changes: []const sdk.feed.Change) Allocator.Error!void {
+        const ts = app.activeTab();
+        if (ts.spec.kind.family() != .prs) return;
+        for (changes) |c| {
+            const key = parseFeedKey(c.key, ts.spec.workspace, app.config.workspace) orelse continue;
+            // The detail the reader may have open for it is stale now.
+            var kb: [256]u8 = undefined;
+            const kt = keyText(&kb, key);
+            if (app.feed_in_flight.contains(kt)) continue;
+            if (app.details.fetchRemove(kt)) |kv| {
+                app.gpa.free(kv.key);
+                kv.value.arena.deinit();
+                app.gpa.destroy(kv.value);
+            }
+            try app.feed_in_flight.put(app.gpa, try app.gpa.dupe(u8, kt), {});
+            try app.enqueueFor(.{ .pr_changed = .{ .tab = app.active, .key = key } }, .delta);
+            app.feed_fetches += 1;
+        }
+    }
+
+    /// `api#12` or `acme/api#12`, as a pull request's key. The workspace
+    /// is the tab's, else the config's, when the line names none.
+    pub fn parseFeedKey(key: []const u8, tab_workspace: []const u8, default_workspace: []const u8) ?fetch.PrKey {
+        const hash = std.mem.lastIndexOfScalar(u8, key, '#') orelse return null;
+        const id = std.fmt.parseInt(i64, key[hash + 1 ..], 10) catch return null;
+        if (id <= 0) return null;
+        const left = key[0..hash];
+        const slash = std.mem.lastIndexOfScalar(u8, left, '/');
+        const repo = if (slash) |i| left[i + 1 ..] else left;
+        const ws = if (slash) |i| left[0..i] else if (tab_workspace.len > 0) tab_workspace else default_workspace;
+        if (repo.len == 0 or ws.len == 0) return null;
+        return .{ .workspace = ws, .repo = repo, .id = id };
     }
 
     pub fn refreshTab(app: *App, idx: usize) Allocator.Error!void {
@@ -2428,7 +2552,9 @@ pub const App = struct {
         switch (res.payload) {
             .whoami => |w| {
                 if (w.error_text.len > 0) {
-                    app.say(.warn, "{s}", .{w.error_text});
+                    if (sdk.budget.isBucketRefusal(w.error_text)) {
+                        app.setStatus("{s}", .{bucket_wait_text});
+                    } else app.say(.warn, "{s}", .{w.error_text});
                 } else {
                     app.gpa.free(app.me_account_id);
                     app.me_account_id = try app.gpa.dupe(u8, w.account_id);
@@ -2448,6 +2574,14 @@ pub const App = struct {
                 const ts = &app.tabs[r.tab];
                 ts.loading = false;
                 app.refreshes_landed += 1;
+                // The adaptive poller (`sdk.feed`): the same listing
+                // back is a quiet poll, a different one a change. A
+                // round the shared bucket skipped is neither.
+                if (!r.refused and r.data != null) {
+                    const changed = if (ts.digest) |d| d != r.digest else true;
+                    ts.digest = r.digest;
+                    if (r.tab == app.active) app.watch.settled(changed);
+                }
                 if (r.data) |fresh| {
                     // A repo whose fetch failed this time keeps the rows
                     // it had: they are still the last thing the server
@@ -2457,6 +2591,7 @@ pub const App = struct {
                     const carried = try carryFailedRepos(res.arena.allocator(), ts.data, fresh, &why_buf);
                     const data = carried.data;
                     if (ts.data_arena) |*old| old.deinit();
+                    ts.dropPatches(app.gpa);
                     ts.data_arena = res.arena;
                     keep_arena = true;
                     ts.data = data;
@@ -2505,9 +2640,16 @@ pub const App = struct {
                     // the shape of the answer: the list on screen is
                     // stale and nothing on it says so. It gets the same
                     // offer as one that failed outright.
-                    if (r.errored > 0 and r.items == 0) {
+                    if (r.refused) {
+                        // Not a failure: the machine's shared bucket
+                        // is empty, so this round was skipped and the
+                        // next one asks again.
+                        app.setStatus("{s}", .{bucket_wait_text});
+                    } else if (r.errored > 0 and r.items == 0) {
                         app.toastWithAction(.err, retry_action, "error: {s}", .{ts.status});
                     }
+                } else if (r.refused) {
+                    app.setStatus("{s}", .{bucket_wait_text});
                 } else {
                     try TabState.setText(app.gpa, &ts.error_text, r.error_text);
                     try TabState.setText(app.gpa, &ts.status, r.status);
@@ -2535,6 +2677,29 @@ pub const App = struct {
                 // waiting for: the active tab's, which is the one the
                 // reader is looking at.
                 try app.tryFocus(r.tab == app.active);
+            },
+            .pr_changed => |c| {
+                var kb: [256]u8 = undefined;
+                if (app.feed_in_flight.fetchRemove(keyText(&kb, c.key))) |kv| app.gpa.free(kv.key);
+                if (c.tab >= app.tabs.len) return;
+                const ts = &app.tabs[c.tab];
+                const pr = c.pr orelse {
+                    if (c.refused) {
+                        app.setStatus("{s}", .{bucket_wait_text});
+                    } else app.setStatus("{s}", .{c.error_text});
+                    return;
+                };
+                // A listing already on its way will carry it.
+                if (ts.loading) return;
+                if (patchPr(ts, c.key.repo, pr)) {
+                    try ts.patches.append(app.gpa, res.arena);
+                    keep_arena = true;
+                    app.setStatus("{s}#{d} changed — updated from the event feed", .{ c.key.repo, c.key.id });
+                } else {
+                    // New to this listing, or gone out of it: the
+                    // listing is asked again, conditionally.
+                    try app.refreshTab(c.tab);
+                }
             },
             .detail => |d| {
                 var buf: [256]u8 = undefined;
@@ -2685,6 +2850,7 @@ pub const App = struct {
 
     /// A bracketed paste lands in the filter when it has the keys.
     pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
+        app.touched();
         if (app.mode != .filter) return;
         var clean: std.ArrayList(u8) = .empty;
         defer clean.deinit(app.gpa);
@@ -2844,6 +3010,7 @@ pub const App = struct {
 
     /// A click, routed through the hit map the last paint registered.
     pub fn click(app: *App, col: u16, row: u16, button: Button) Allocator.Error!bool {
+        app.touched();
         _ = app.frame_arena.reset(.retain_capacity);
         const a = app.frame_arena.allocator();
         const target = app.hits.at(col, row);
@@ -3030,6 +3197,7 @@ pub const App = struct {
     }
 
     pub fn wheel(app: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
+        app.touched();
         _ = app.frame_arena.reset(.retain_capacity);
         const a = app.frame_arena.allocator();
         if (app.mode == .help) {
@@ -3945,4 +4113,45 @@ test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a 
     _ = try r.key("ctrl+x");
     try t.expectEqual(@as(i64, 0), r.app.budget.snapshot(r.app.now_secs).paused_until);
     try t.expect(std.mem.indexOf(u8, r.app.status.items, "stopped waiting") != null);
+}
+
+test "a feed key reads as a pull request in either spelling, and nothing else does" {
+    const k = App.parseFeedKey("api#1234", "", "acme").?;
+    try t.expectEqualStrings("acme", k.workspace);
+    try t.expectEqualStrings("api", k.repo);
+    try t.expectEqual(@as(i64, 1234), k.id);
+    const w = App.parseFeedKey("other/web#7", "acme", "acme").?;
+    try t.expectEqualStrings("other", w.workspace);
+    try t.expectEqualStrings("web", w.repo);
+    try t.expectEqualStrings("tabws", App.parseFeedKey("api#1", "tabws", "acme").?.workspace);
+    try t.expect(App.parseFeedKey("api", "", "acme") == null);
+    try t.expect(App.parseFeedKey("api#x", "", "acme") == null);
+    try t.expect(App.parseFeedKey("#12", "", "acme") == null);
+    try t.expect(App.parseFeedKey("api#0", "", "acme") == null);
+}
+
+test "a changed pull request replaces its row in place while its state still belongs to the listing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const prs = try a.alloc(model.PullRequest, 2);
+    prs[0] = .{ .id = 1, .title = "one", .state = "OPEN" };
+    prs[1] = .{ .id = 2, .title = "two", .state = "OPEN" };
+    const repos = try a.alloc(model.RepoPrs, 1);
+    repos[0] = .{ .slug = "api", .prs = prs };
+    var ts: TabState = .{
+        .spec = .{ .kind = .workspace_open_prs, .name = "Open", .workspace = "acme" },
+        .data = .{ .repo_pr_tree = repos },
+        .expanded = tabs.Expanded.init(t.allocator),
+        .loaded_states = .{ .open = true },
+    };
+    defer ts.expanded.deinit();
+    try t.expect(patchPr(&ts, "api", .{ .id = 2, .title = "two, again", .state = "OPEN" }));
+    try t.expectEqualStrings("two, again", ts.data.repo_pr_tree[0].prs[1].title);
+    // Merged since: it no longer belongs to an open listing.
+    try t.expect(!patchPr(&ts, "api", .{ .id = 1, .title = "one", .state = "MERGED" }));
+    try t.expectEqualStrings("one", ts.data.repo_pr_tree[0].prs[0].title);
+    // Not in this listing at all.
+    try t.expect(!patchPr(&ts, "api", .{ .id = 9, .title = "new", .state = "OPEN" }));
+    try t.expect(!patchPr(&ts, "web", .{ .id = 2, .title = "x", .state = "OPEN" }));
 }

@@ -1,0 +1,35 @@
+# width: 120
+# height: 40
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The tracker pane on a machine-wide shared bucket file
+# (`budget.shared_bucket`): empty, the pane waits and says so, and the
+# fake's log proves nothing was sent; with tokens, `R` loads the tab.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/shared.json "{\"rate_per_sec\":0,\"burst\":50,\"tokens\":0,\"updated_at\":0,\"cooldown_until\":null,\"last_429_at\":null}"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .budget = .{ .shared_bucket = \"shared.json\" }, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+command view.focus_pane
+expect within 30000 screen contains "waiting on the shared"
+wait 1500
+shell test ! -s jira.log || { cat jira.log; exit 1; }
+expect file .mnml/integrations/jira/shared.json contains "\"tokens\":0"
+
+write .mnml/integrations/jira/shared.json "{\"rate_per_sec\":0,\"burst\":50,\"tokens\":50,\"updated_at\":0,\"cooldown_until\":null,\"last_429_at\":null}"
+key shift+r
+expect within 20000 screen contains "JIRA WORK (3)"
+expect file jira.log contains "search/jql"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

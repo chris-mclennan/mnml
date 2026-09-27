@@ -1,0 +1,42 @@
+# width: 120
+# height: 40
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# The tracker pane's poller backs off while nothing moves
+# (`sdk.feed.Schedule`), and a change brings it back. The base interval
+# is one second and the cap eight; each poll is a window
+# (`updated >= -…`) the fake answers with nothing while no ticket has
+# moved, so the polls spread 1, 2, 4, 8 seconds apart — counted off the
+# fake's own log. Then a teammate moves a ticket: the next poll finds
+# it, and the pace is back to one second.
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 1, .poll_max_secs = 8, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+expect within 30000 screen contains "JIRA WORK (3)"
+expect within 30000 file jira.log contains "issueId=10005"
+
+# Twelve quiet seconds: a dozen polls at the base pace, four at most
+# backing off. A poll's window is the tab's own query plus `updated >=`.
+shell : > jira.log
+wait 12000
+shell n=$(grep 'search/jql' jira.log | grep 'currentUser' | grep -c 'updated >= -'); echo "polls in 12s: $n"; test "$n" -ge 1 && test "$n" -le 5
+expect within 10000 screen contains "· 8s"
+
+# A teammate moves ENG-2 on to Testing: the next poll finds it, and the
+# pace snaps back to the base.
+shell curl -s -o /dev/null -u fake@acme.com:fake-token -H 'Content-Type: application/json' -d '{"transition":{"id":"51"}}' "$(cat jira.url)/rest/api/3/issue/ENG-2/transitions"
+expect within 15000 screen contains "· 1s"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

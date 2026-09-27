@@ -62,6 +62,9 @@ pub const TabState = struct {
     /// `max_delta_generations`, past which a refetch is full whatever
     /// was asked for — an unbounded chain is a leak with a nicer name.
     deltas: std.ArrayListUnmanaged(std.heap.ArenaAllocator) = .empty,
+    /// The rows' digest after the last refetch landed (`issuesDigest`):
+    /// the next one matching it is a poll that found nothing new.
+    digest: ?u64 = null,
     last_error: []const u8 = "",
     tree: ?tree.State = null,
     sprints: ?[]const model.Sprint = null,
@@ -166,6 +169,10 @@ pub const RefreshJob = struct {
     /// window onto the query alone cannot see a ticket that no longer
     /// matches it. On the job's arena.
     shown_keys: []const []const u8 = &.{},
+    /// An event feed named these tickets (`sdk.feed`): `jql` asks for
+    /// just them within the tab's query, and any not in the answer have
+    /// left it. On the job's arena.
+    feed_keys: []const []const u8 = &.{},
     /// What the request log calls this fetch — the first load of a tab
     /// and a refetch of one cost the same requests and mean different
     /// things when the log is read back.
@@ -193,6 +200,9 @@ pub const RefreshResult = struct {
     departed: []const []const u8 = &.{},
     /// Empty when the search answered.
     error_text: []const u8 = "",
+    /// This answered an event feed's keys, not a poll: it says nothing
+    /// about whether the listing as a whole moved.
+    feed: bool = false,
 
     pub fn drop(r: RefreshResult) void {
         var arena = r.arena;
@@ -345,6 +355,12 @@ pub const App = struct {
     cols: u16 = 80,
     rows: u16 = 24,
     last_refresh_ms: i64 = 0,
+    /// When to ask again, and what an event feed says changed
+    /// (`sdk.feed`). `main` builds it from the config; the default
+    /// never polls, which is what a test gets.
+    watch: sdk.feed.Watcher = .{ .poll = .init(0, 0) },
+    /// Tickets refetched on their own because the feed named them.
+    feed_fetches: u32 = 0,
     /// The one refetch in flight, and the group it runs on. With no
     /// group — a test, `--dump` — a refetch runs inline, which is what
     /// makes those two deterministic.
@@ -814,12 +830,70 @@ pub const App = struct {
 
     /// The auto-refresh, on the reference's cadence.
     pub fn tick(a: *App, now: i64) Allocator.Error!void {
-        const secs = a.cfg.refresh_interval_secs;
-        if (secs == 0 or !a.hasTabs()) return;
-        if (a.last_refresh_ms == 0 or now - a.last_refresh_ms < @as(i64, secs) * 1000) return;
-        // The interval is the commonest refetch of all and the one
-        // nobody is watching: a window, like `r`.
-        try a.refreshActiveMode(.delta);
+        defer a.budget.setFeed(a.watch.state(now));
+        if (!a.hasTabs() or a.last_refresh_ms == 0) return;
+        // One refetch at a time: while one is out, the feed's lines
+        // stay in its file for the next look.
+        if (a.refresh.busy()) return;
+        var scratch = std.heap.ArenaAllocator.init(a.gpa);
+        defer scratch.deinit();
+        const look = try a.watch.look(scratch.allocator(), now);
+        if (look.sweep) {
+            // The interval is the commonest refetch of all and the one
+            // nobody is watching: a window, like `r`.
+            try a.refreshTabMode(a.active, .delta);
+            a.last_refresh_ms = now;
+            a.watch.started(now);
+        } else if (look.changed.len > 0) {
+            try a.feedChanged(look.changed);
+        }
+    }
+
+    /// The reader did something — a key, a click, the wheel, a paste,
+    /// the pane taking focus: the poller comes back to its base.
+    pub fn touched(a: *App) void {
+        a.watch.touch();
+    }
+
+    /// The tickets an event feed named: one search for all of them,
+    /// inside the active tab's own query, merged in like a window.
+    pub fn feedChanged(a: *App, changes: []const sdk.feed.Change) Allocator.Error!void {
+        const t = a.tab();
+        if (!t.fetched) return;
+        // A board is asked through the agile endpoint, whose query is a
+        // list of clauses: it is swept whole instead.
+        if (t.board_id != 0 or t.deltas.items.len >= max_delta_generations) {
+            try a.refreshTabMode(a.active, .full);
+            return;
+        }
+        var job = (try a.prepareRefresh(a.active, .full)) orelse return;
+        const ar = job.arena.allocator();
+        var q: Io.Writer.Allocating = .init(ar);
+        q.writer.print("({s}) AND key in (", .{job.base_jql}) catch return error.OutOfMemory;
+        const keys = try ar.alloc([]const u8, changes.len);
+        var n: usize = 0;
+        for (changes) |c| {
+            // A key is letters, digits, `-` and `_`: anything else is
+            // not one and is not spliced into a query.
+            const ok = c.key.len > 0 and for (c.key) |ch| {
+                if (!(std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_')) break false;
+            } else true;
+            if (!ok) continue;
+            if (n > 0) q.writer.writeAll(", ") catch return error.OutOfMemory;
+            q.writer.print("\"{s}\"", .{c.key}) catch return error.OutOfMemory;
+            keys[n] = try ar.dupe(u8, c.key);
+            n += 1;
+        }
+        if (n == 0) {
+            job.deinit();
+            return;
+        }
+        q.writer.writeAll(")") catch return error.OutOfMemory;
+        job.jql = q.written();
+        job.feed_keys = keys[0..n];
+        job.reason = .delta;
+        a.feed_fetches += @intCast(n);
+        try a.runJob(job);
     }
 
     /// Fetch the active tab if it has not been.
@@ -872,6 +946,10 @@ pub const App = struct {
         if (!a.hasTabs()) return;
         try a.refreshTabMode(a.active, mode);
         a.last_refresh_ms = a.nowMs();
+        // A refetch somebody asked for is a poll, and a sign somebody is
+        // looking: the poller starts over from its base.
+        a.watch.touch();
+        a.watch.started(a.last_refresh_ms);
     }
 
     /// Start a refetch of `idx`. With a group it goes to a worker and
@@ -882,7 +960,14 @@ pub const App = struct {
     }
 
     pub fn refreshTabMode(a: *App, idx: usize, mode: RefreshMode) Allocator.Error!void {
-        var job = (try a.prepareRefresh(idx, mode)) orelse return;
+        const job = (try a.prepareRefresh(idx, mode)) orelse return;
+        try a.runJob(job);
+    }
+
+    /// Hand a prepared refetch to a worker, or run it here with no
+    /// group.
+    fn runJob(a: *App, job_in: RefreshJob) Allocator.Error!void {
+        var job = job_in;
         if (a.group) |g| {
             if (!a.refresh.claim()) {
                 // One is already in flight; a second would only race it.
@@ -1014,6 +1099,19 @@ pub const App = struct {
                 };
                 var delta = job.delta_since.len > 0;
                 var departed: []const []const u8 = &.{};
+                if (job.feed_keys.len > 0) {
+                    // The feed's tickets that the tab's query no longer
+                    // answers for have left it.
+                    var gone: std.ArrayList([]const u8) = .empty;
+                    for (job.feed_keys) |k| {
+                        const still = for (issues) |iss| {
+                            if (std.mem.eql(u8, iss.key, k)) break true;
+                        } else false;
+                        if (!still) gone.append(ar, ar.dupe(u8, k) catch "") catch {};
+                    }
+                    const base = ar.dupe(u8, job.base_jql) catch "";
+                    return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = true, .base_jql = base, .departed = gone.items, .feed = true };
+                }
                 if (delta and job.shown_keys.len > 0) {
                     switch (departures(&client, ar, job, issues)) {
                         .ok => |d| departed = d,
@@ -1290,6 +1388,23 @@ pub const App = struct {
         return out.toOwnedSlice(arena);
     }
 
+    /// What a listing is, for telling one poll from the next: every
+    /// ticket's key, `updated` stamp, status and summary, in order.
+    pub fn issuesDigest(issues: []const Issue) u64 {
+        var h = std.hash.Wyhash.init(0);
+        for (issues) |iss| {
+            h.update(iss.key);
+            h.update("\x00");
+            h.update(iss.updated);
+            h.update("\x00");
+            h.update(iss.status);
+            h.update("\x00");
+            h.update(iss.summary);
+            h.update("\x01");
+        }
+        return h.final();
+    }
+
     /// Take a finished refetch, if one has landed, and apply it.
     pub fn drainRefresh(a: *App) Allocator.Error!void {
         var res = a.refresh.take(a.io) orelse return;
@@ -1316,6 +1431,13 @@ pub const App = struct {
             return;
         }
         if (res.error_text.len > 0) {
+            // The machine's shared bucket skipped this round: nothing
+            // was sent, the rows stand, and the next round asks again.
+            if (sdk.budget.isBucketRefusal(res.error_text)) {
+                a.setStatus("waiting on the shared rate-limit bucket — this round was skipped, nothing was sent", .{});
+                res.drop();
+                return;
+            }
             t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "{s}", .{res.error_text});
             a.sayWithAction(retry_action, "error: {s}", .{res.error_text});
             res.drop();
@@ -1339,6 +1461,13 @@ pub const App = struct {
         t.fetched = true;
         t.fetched_at = a.nowSecs();
         t.last_error = "";
+        // The adaptive poller (`sdk.feed`): the same rows back is a
+        // quiet poll, different rows a change. A feed's own answer is
+        // neither — it only ever asked about what it named.
+        const digest = issuesDigest(t.issues);
+        if (!res.feed and idx == a.active) a.watch.settled(if (t.digest) |d| d != digest else true);
+        t.digest = digest;
+        if (res.feed) a.setStatus("{d} {s} changed — updated from the event feed", .{ res.issues.len + res.departed.len, sdk.pane.text.noun(res.issues.len + res.departed.len, "ticket", "tickets") });
         // An action's message outlives the refetch it triggers;
         // an empty status gets the tab's summary.
         if (a.status.items.len == 0) a.setStatus("{s} · {d} {s}", .{ t.cfg.name, t.issues.len, sdk.pane.text.noun(t.issues.len, "issue", "issues") });
@@ -3566,6 +3695,7 @@ pub const App = struct {
 
     /// One key from the host. Returns false when nothing took it.
     pub fn onKey(a: *App, spec: []const u8) Allocator.Error!bool {
+        a.touched();
         // The confirm owns the keyboard while it is up: it is the only
         // overlay behind which something irreversible is waiting.
         if (a.merge != null) {
@@ -3780,6 +3910,7 @@ pub const App = struct {
     }
 
     pub fn paste(a: *App, text_in: []const u8) Allocator.Error!void {
+        a.touched();
         if (a.vars) |*v| {
             if (v.edit) |*t| try t.insert(text_in);
             return;
@@ -3793,6 +3924,7 @@ pub const App = struct {
 
     /// A press, routed by the hit map the last paint filled.
     pub fn click(a: *App, col: u16, row: u16, right: bool) Allocator.Error!void {
+        a.touched();
         const target = a.hits.at(col, row);
         if (a.help) {
             a.help = false;
@@ -4123,6 +4255,7 @@ pub const App = struct {
     }
 
     pub fn wheel(a: *App, col: u16, row: u16, dy: i16) Allocator.Error!void {
+        a.touched();
         const steps: i32 = if (dy > 0) -3 else 3;
         if (a.modal != null) {
             a.modalScroll(steps);
@@ -5717,4 +5850,17 @@ test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a 
     _ = try h.app.onKey("ctrl+x");
     try testing.expectEqual(@as(i64, 0), h.app.budget.snapshot(h.app.nowSecs()).paused_until);
     try testing.expect(std.mem.indexOf(u8, h.app.status.items, "stopped waiting") != null);
+}
+
+test "a listing's digest moves with a ticket's status, stamp, summary or membership, and nothing else" {
+    const one = [_]Issue{ .{ .key = "ENG-1", .updated = "u1", .status = "To Do", .summary = "a" }, .{ .key = "ENG-2", .updated = "u2", .status = "Done", .summary = "b" } };
+    const same = one;
+    var moved = one;
+    moved[0].status = "In Progress";
+    var restamped = one;
+    restamped[1].updated = "u3";
+    try testing.expectEqual(App.issuesDigest(&one), App.issuesDigest(&same));
+    try testing.expect(App.issuesDigest(&one) != App.issuesDigest(&moved));
+    try testing.expect(App.issuesDigest(&one) != App.issuesDigest(&restamped));
+    try testing.expect(App.issuesDigest(&one) != App.issuesDigest(one[0..1]));
 }

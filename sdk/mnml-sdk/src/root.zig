@@ -27,6 +27,10 @@
 //!             rate-limit headers, a 429's pause (Retry-After, else a
 //!             jittered exponential backoff), cache hits and misses, a
 //!             daily tally shared across processes, and dry run
+//!   feed      what changed, and when to ask: the adaptive poll
+//!             interval (backs off while nothing moves, snaps back on
+//!             a change or a key), and a JSONL event file anything can
+//!             append to — one seam, two sources (`docs/SDK.md`)
 //!   base_url  the `$<SERVICE>_BASE_URL` override a test points an
 //!             integration at its fake with — a URL or `@<file>`; a
 //!             file that never arrives is an error, never a fallback
@@ -56,6 +60,7 @@ pub const broker = @import("broker.zig");
 pub const ratelimit = @import("ratelimit.zig");
 pub const request_log = @import("request_log.zig");
 pub const budget = @import("budget.zig");
+pub const feed = @import("feed.zig");
 pub const store = @import("store.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
@@ -101,6 +106,7 @@ test {
     _ = ratelimit;
     _ = request_log;
     _ = budget;
+    _ = feed;
     _ = store;
     _ = warm;
     _ = pane;

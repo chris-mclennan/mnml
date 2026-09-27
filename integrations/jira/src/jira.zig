@@ -175,6 +175,9 @@ pub const Client = struct {
                 .go => {},
                 .paused => return pausedRaw(arena, c.io, budget),
                 .cancelled => return synthetic(arena, 429, "stopped waiting out the rate limit"),
+                // The machine's shared bucket file is empty or cooling
+                // down: this round is skipped and nothing goes out.
+                .bucket_empty, .bucket_cooldown => |g| return synthetic(arena, 429, sdk.Budget.refusalText(g)),
             }
             const raw = try c.once(arena, method, url, body, reason, budget, read);
             if (raw.status != 429) return raw;

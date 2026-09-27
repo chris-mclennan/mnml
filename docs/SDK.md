@@ -938,10 +938,189 @@ client.budget = &app.budget;
 - **`snapshot(now)`**: what the chip and its hover read —
   `chipWords` (`812/1000`, `37/h`, `DRY`, `paused until 14:03:22`),
   `tier()` on the host usage meter's 60 / 85 thresholds, `helpBody`.
+  With a feed seam set (`setFeed`, below) the words gain what the poller
+  is doing: `812/1000 · feed` while an event file is live, `37/h · 20s`
+  while polling. The hover says the interval and how it moves, why a
+  feed degraded, and — with a shared bucket — its tokens, its cooldown
+  and how many requests were skipped waiting on it.
+- **A shared bucket file** (`.shared_bucket`, below): `waitOut` takes a
+  token from it after the pause check. An empty bucket is
+  `.bucket_empty`, a cooling one `.bucket_cooldown` — the request is
+  not sent, and the caller answers `Budget.refusalText(gate)`
+  (`isBucketRefusal` tells a pane's skipped round from a failure, so the
+  first is a quiet status line and never a toast). `throttled` writes a
+  429 into the file as a cooldown.
 
 `ratelimit.Retry` and `parseRetryAfter` are still there for a client
 that has no budget; both first-party integrations answer a 429 through
 the budget.
+
+## When to ask — adaptive polling and the event feed (`mnml_sdk.feed`)
+
+A pane that lists things from an API has to learn when one of them
+moved. Asking is the default, and asking a quiet listing every few
+seconds is most of what a pane spends in a day. `mnml_sdk.feed` is one
+seam with two sources behind it, so a pane asks one question —
+"what changed since my last look?" — whichever answers.
+
+**The poller backs off.** `Schedule` holds the interval. A poll whose
+answer is the same as the last one (a `304`, the same `ETag`, the same
+content hash — the Bitbucket pane folds every GET's answer into one
+digest, the Jira pane asks for a window and counts what came back)
+doubles it, from the base up to a cap; a poll that found a change, a
+key, a click, the wheel, a paste, the pane taking focus, or `r` puts it
+back to the base. The first load is the pane's own, never the poller's.
+Both panes read the same two keys:
+
+```zig
+.refresh_interval_secs = 5,   // the base; 0 turns polling off
+.poll_max_secs = 120,         // the cap: 5 → 10 → 20 → 40 → 80 → 120
+```
+
+A cap at or below the base keeps the interval fixed.
+
+**The event file.** `feed.file` names a JSONL file any process on the
+machine may append to — a webhook relay, a gateway reader, a script
+tailing a queue. The pane tails it by byte offset (complete lines only,
+the way the host's IPC reader does), coalesces what it read by key,
+and fetches **only those items**, through the same client and budget as
+everything else. While the file is live the poller does not stop: it
+drops to a safety sweep every `sweep_secs`, because a feed that lost one
+line must not leave a row wrong forever. When the file is missing, or
+nothing has been written to it for `stale_secs` — no event and no
+heartbeat — the pane goes back to adaptive polling from the base, and
+the budget chip's hover says which.
+
+```zig
+.feed = .{ .file = "~/feeds/bitbucket.jsonl", .stale_secs = 300, .sweep_secs = 600 },
+```
+
+A relative `file` is taken against the config file's directory; `~/`
+is the home directory. Empty (the default) is off.
+
+### The event line — a public contract
+
+One JSON object per line, UTF-8, `\n`-terminated. Append whole lines
+(`O_APPEND`, one `write` per line); a line with no newline yet is left
+for the next look.
+
+```json
+{"kind":"pr","key":"api#1234","at":1790000000,"source":"relay"}
+{"kind":"issue","key":"ENG-12","at":1790000003.5,"source":"relay"}
+{"kind":"heartbeat","at":1790000060,"source":"relay"}
+```
+
+| key | type | meaning |
+| --- | --- | --- |
+| `kind` | string | `pr` (a pull request), `issue` (a tracker issue), `heartbeat` (nothing changed; the writer is alive). Required. |
+| `key` | string | Which item, keyed the way the pane keys its rows: `<repo>#<id>` for a pull request (`<workspace>/<repo>#<id>` also works; the workspace defaults to the tab's, else the config's), the issue key for an issue (`ENG-12`). Required for `pr` and `issue`; at most 200 bytes, no control characters. |
+| `at` | number | When it changed, epoch seconds (fractions allowed). Kept for the record; ordering is the file's. |
+| `source` | string | Who wrote it — the hover names the last one. Optional. |
+
+The rules a reader follows, so a writer knows what it can rely on:
+
+- A pane opening on an existing file starts at its end: what was there
+  before is history its own first load already covers.
+- Any well-formed line — an event of any kind, a heartbeat, a `kind`
+  this reader does not know — proves the writer is alive. A line that
+  is not a JSON object with a string `kind` does not, and is skipped.
+  A writer with nothing to say should write a heartbeat at least every
+  `stale_secs` (default 300 s) or the pane will stop trusting it.
+- Keys are coalesced: twenty lines about `api#1234` between two looks
+  are one fetch. A key whose fetch is still out is not asked for again.
+- A pull request that no longer belongs to the listing on screen (merged
+  out of an open list), or is not in it yet, costs one conditional GET
+  of the listing instead of the item.
+- The file may be truncated or replaced at any time (rotation): a size
+  below the reader's offset starts it over from the first byte. A file
+  that disappears and comes back is read from its first byte.
+- Kinds other than the ones a pane wants are ignored by that pane. The
+  Bitbucket pane reads `pr`; the Jira pane reads `issue`. Both may share
+  one file.
+
+```zig
+var w: sdk.feed.Watcher = .init(io, .pr, cfg.refresh_interval_secs, cfg.poll_max_secs, cfg.feed, resolved_path);
+// every tick, while the listing is not already loading:
+const look = try w.look(arena, now_ms);
+if (look.sweep) { refreshListing(); w.started(now_ms); }
+else for (look.changed) |c| fetchOne(c.key);
+budget.setFeed(w.state(now_ms));
+// when a listing lands: w.settled(changed); on a key or a click: w.touch();
+```
+
+`Feed` is the interface both sources sit behind (`PollFeed.feed()`,
+`FileFeed.feed()`); `Watcher` is the rule between them.
+
+## The shared bucket file — a public contract
+
+`budget.shared_bucket` names a file holding one token bucket that every
+caller on the machine draws from — mnml's panes, and anything else that
+agrees to the format (a fleet of scripts, another tool's poller). It is
+separate from `ratelimit`'s per-service state file, whose six keys the
+Rust crate and `bb_ratelimit.py` already share; this one is opt-in, per
+config, and names its own path.
+
+```json
+{"rate_per_sec":0.25,"burst":40,"tokens":12.5,"updated_at":1790000000.25,"cooldown_until":null,"last_429_at":null}
+```
+
+| key | type | meaning |
+| --- | --- | --- |
+| `rate_per_sec` | number | Tokens added per second. `≥ 0`. |
+| `burst` | integer | The most the bucket holds. |
+| `tokens` | number | What was left at `updated_at`. |
+| `updated_at` | number | Epoch seconds, fractional — when `tokens` was last written. |
+| `cooldown_until` | number or `null` | While in the future, every caller is refused. |
+| `last_429_at` | number or `null` | When a caller last met a 429. |
+
+Every access is **one read-modify-write under an exclusive advisory
+lock** on the file (`flock` on Unix, `LockFileEx` on Windows; a reader
+that only looks takes a shared one):
+
+1. Refill: `tokens = min(burst, tokens + (now − updated_at) × rate_per_sec)`,
+   `updated_at = now` (a clock behind `updated_at` refills nothing).
+2. If `cooldown_until` is in the future: refused — skip this round.
+3. Else if `tokens ≥ 1`: take one (`tokens −= 1`) and send.
+4. Else: refused — skip this round. Nothing is sent and nothing waits
+   inside the request; the pane says `waiting on the shared rate-limit
+   bucket` and asks again on its next round.
+5. On a 429: `cooldown_until = max(cooldown_until, now + Retry-After)`
+   (else the budget's own backoff), `last_429_at = now`, `tokens = 0`.
+6. Write the document back whole, **keeping every key you do not know**.
+
+One token per request that would reach the wire — a retry is a request;
+a cache answer and a dry run are not. **This code never creates the
+file**, and a missing file, a file that is not a JSON object, or one
+missing any of the four numeric keys is **no bucket**: the request goes
+as if none were configured. A bad file can slow a pane; it can never
+take its API away.
+
+```zig
+.budget = .{ .shared_bucket = "~/buckets/bitbucket.json" },
+```
+
+**The file this machine may already share.** `ratelimit`'s
+`<service>-ratelimit.json` — the one the Rust crate `mnml-ratelimit`
+and `bb_ratelimit.py` read and write — is the same bucket under older
+names, and `shared_bucket` reads it too:
+
+| `ratelimit`'s key | is read as |
+| --- | --- |
+| `ts` | `updated_at` |
+| `rate` | `rate_per_sec` |
+| `tokens` | `tokens` |
+| `cooldown_until` (`0` = none) | `cooldown_until` |
+| `last_429` (`0` = none) | `last_429_at` |
+| `throttles` | kept; a 429 adds one |
+
+That file carries no burst, so it stands for the service's own
+capacity (`ratelimit.Config`: 40 for Bitbucket, 60 for Jira). A file is
+written back in the names it was read in, so the processes already on
+it keep reading it. **On a machine that already shares one, pointing
+`budget.shared_bucket` at it is the expected setup** — every pane, the
+statusline poller and the fleet's scripts then draw on one allowance
+under one lock, rather than on two buckets that each think they are
+the whole budget.
 
 ## The warmer — pacing, one warmer per service, windows
 
@@ -1332,7 +1511,10 @@ sdk/mnml-sdk/src/
   ratelimit.zig  one cross-process token bucket per service
   request_log.zig  one JSON line per request, with its reason
   budget.zig     the API budget a pane shows and obeys: headers, a
-                 429's pause, hit ratio, the daily tally, dry run
+                 429's pause, hit ratio, the daily tally, dry run, the
+                 shared bucket file
+  feed.zig       when to ask: the adaptive poll schedule, the JSONL
+                 event file, and the Watcher that picks between them
   store.zig      bodies kept between runs, keyed by the server's stamp
   zon_edit.zig   saving a hand-written ZON file in place, comments kept —
                  the splice the host's settings write through too

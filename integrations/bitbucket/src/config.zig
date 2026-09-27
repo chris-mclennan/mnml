@@ -119,8 +119,19 @@ pub const Config = struct {
     /// A scoped access token cannot read `/2.0/user`; naming the
     /// account here skips that call.
     account_id: []const u8 = "",
-    /// 0 disables the auto-refresh; `r` still works.
+    /// 0 disables the auto-refresh; `r` still works. The poller's base:
+    /// it doubles while polls come back unchanged, up to `poll_max_secs`,
+    /// and snaps back here on a change, a key, a click or a focus.
     refresh_interval_secs: u32 = 60,
+    /// The ceiling on that doubling. At or below the base the interval
+    /// stays fixed.
+    poll_max_secs: u32 = 120,
+    /// An event file anything can append "this pull request changed" to
+    /// (`sdk.feed`, the JSONL contract in `docs/SDK.md`). Empty is off.
+    feed: sdk.feed.Config = .{},
+    /// `shared_bucket`: a machine-wide token bucket file every caller on
+    /// the machine draws from (`sdk.budget.Bucket`). Empty is none.
+    budget: sdk.budget.Settings = .{},
     /// Which repos the workspace-wide tabs see.
     scope: Scope = .recent,
     /// A repo with activity in the last this-many days is "recent".
@@ -356,8 +367,19 @@ pub const template =
     \\    // here to skip that call.
     \\    // .account_id = "",
     \\
-    \\    // Auto-refresh in seconds; 0 disables (`r` still works).
+    \\    // Auto-refresh in seconds; 0 disables (`r` still works). It
+    \\    // doubles while nothing changes, up to `poll_max_secs`, and
+    \\    // snaps back on a change or a key.
     \\    .refresh_interval_secs = 60,
+    \\    .poll_max_secs = 120,
+    \\
+    \\    // An event file that says which pull requests changed (one JSON
+    \\    // line each: {"kind":"pr","key":"api#12","at":…,"source":…}).
+    \\    // While it is live the listing is only swept every `sweep_secs`.
+    \\    // .feed = .{ .file = "~/feeds/bitbucket.jsonl", .stale_secs = 300, .sweep_secs = 600 },
+    \\
+    \\    // A machine-wide token bucket file shared with other tools.
+    \\    // .budget = .{ .shared_bucket = "~/buckets/bitbucket.json" },
     \\
     \\    // How often each kind of thing is kept fresh. A listing
     \\    // drifts; a pipeline mid-run does not wait; whether a pull

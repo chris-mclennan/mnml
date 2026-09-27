@@ -488,6 +488,9 @@ pub const Rate = struct {
 pub const Config = struct {
     jira_url: []const u8 = "",
     email: []const u8 = "",
+    /// The poller's base; 0 turns the auto-refresh off. It doubles
+    /// while polls find nothing new, up to `poll_max_secs`, and snaps
+    /// back here on a change, a key, a click or a focus (`sdk.feed`).
     refresh_interval_secs: u32 = 60,
     release_cut: bool = false,
     team_field_id: []const u8 = "",
@@ -508,6 +511,15 @@ pub const Config = struct {
     /// `Shift+N` (or `integrations.toggle_dry_run`) flips it for the
     /// session; the header's budget chip says `DRY` while it is on.
     dry_run: bool = false,
+    /// The adaptive poller's ceiling. At or below the base the interval
+    /// stays fixed.
+    poll_max_secs: u32 = 120,
+    /// An event file anything can append "this ticket changed" to
+    /// (`sdk.feed`, the JSONL contract in `docs/SDK.md`). Empty is off.
+    feed: sdk.feed.Config = .{},
+    /// `shared_bucket`: a machine-wide token bucket file every caller on
+    /// the machine draws from (`sdk.budget.Bucket`). Empty is none.
+    budget: sdk.budget.Settings = .{},
     /// How often each kind of thing is kept fresh. A listing drifts,
     /// a pipeline mid-run does not wait, and whether a pull request
     /// may merge is only ever asked about the row under the cursor —
@@ -735,7 +747,17 @@ pub const example =
     \\    .email = "you@example.com",
     \\    // The token is never written here: $JIRA_API_TOKEN, or .token_file.
     \\    // .token_file = "~/.config/mnml-tracker-jira/token",
+    \\    // Auto-refresh in seconds (0 turns it off). It doubles while
+    \\    // nothing changes, up to `poll_max_secs`, and snaps back on a
+    \\    // change or a key.
     \\    .refresh_interval_secs = 60,
+    \\    .poll_max_secs = 120,
+    \\    // An event file that names changed tickets, one JSON line each:
+    \\    // {"kind":"issue","key":"ENG-12","at":…,"source":…}. While it is
+    \\    // live the tabs are only swept every `sweep_secs`.
+    \\    // .feed = .{ .file = "~/feeds/jira.jsonl", .stale_secs = 300, .sweep_secs = 600 },
+    \\    // A machine-wide token bucket file shared with other tools.
+    \\    // .budget = .{ .shared_bucket = "~/buckets/jira.json" },
     \\    // How often each kind of thing is kept fresh. A listing
     \\    // drifts; a pipeline mid-run does not wait; whether a pull
     \\    // request may merge is only asked about the row under the

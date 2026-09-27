@@ -451,6 +451,9 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // with every process on this data root), dry run.
     const budget_root = try sdk.request_log.dataRoot(gpa, env);
     defer gpa.free(budget_root);
+    // The config's two paths — the shared bucket, the event feed —
+    // relative to the config's own directory, `~/` to home.
+    const config_dir = std.fs.path.dirname(rd.path) orelse "";
     app.budget.configure(io, .{
         .label = "Jira",
         .service = ratelimit.service,
@@ -458,7 +461,10 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .hourly_budget = @intFromFloat(@max(rd.cfg.rate.per_sec, 0) * 3600),
         .dry_run = rd.cfg.dry_run,
         .backoff = jira.backoffFor(rd.cfg.rate),
+        .shared_bucket = try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.budget.shared_bucket),
     });
+    // When to ask again, and what an event file says changed.
+    app.watch = .init(io, .issue, rd.cfg.refresh_interval_secs, rd.cfg.poll_max_secs, rd.cfg.feed, try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.feed.file));
     client.budget = &app.budget;
     // What the last run learned about each ticket's linked PRs, keyed
     // by the ticket's own `updated` stamp: a tab that has not moved
@@ -519,6 +525,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // answers keys, rather than freezing on a socket.
     try app.ensureLoaded();
     app.last_refresh_ms = app.nowMs();
+    app.watch.started(app.last_refresh_ms);
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
     publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, ui.ascii or !ui.nerd);
@@ -533,7 +540,12 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
             };
             switch (msg) {
                 .hello => {},
-                .focus => |f| app.focused = f,
+                .focus => |f| {
+                    app.focused = f;
+                    // Focus is somebody looking: the poller comes back
+                    // to its base.
+                    if (f) app.touched();
+                },
                 // A row of the hover pressed while this pane is
                 // already the open one: the cursor moves, rather than
                 // a second pane opening beside it.
@@ -559,7 +571,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                         // The host's info view, told what is under the
                         // pointer (sent only when it changed).
                         // Room for the budget chip's hover, the longest.
-                        var hb: [640]u8 = undefined;
+                        var hb: [1024]u8 = undefined;
                         const help = app.helpAt(h.col, h.row, &hb);
                         mount.hover(help.title, help.body) catch {};
                     },
