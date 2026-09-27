@@ -1,5 +1,6 @@
-//! Every command mnml-zig knows about — 795 Rust ids plus 140 Zig-only, titles, palette groups
-//! and default chords per keymap profile (D4b). Data only: no function
+//! Every command mnml-zig knows about — the Rust ids plus the Zig-only
+//! ones (the count test at the bottom pins the total), titles, palette
+//! groups and default chords per keymap profile (D4b). Data only: no function
 //! pointers. Runners live in each subsystem's `pub const table` and are
 //! merged into `command.runners` at comptime.
 //!
