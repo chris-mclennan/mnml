@@ -362,7 +362,13 @@ fn scanFile(io: Io, gpa: Allocator, arena: Allocator, dir: Io.Dir, basename: []c
         line_no += 1;
         const line = std.mem.trimEnd(u8, raw, "\r");
         const found = matchLine(line, isMarkdown(basename), keywords) orelse continue;
-        if (path == null) path = try arena.dupe(u8, rel);
+        if (path == null) {
+            // `/` between the parts on every platform, as the other
+            // workspace lists (SEARCH, the tree) spell a relative path.
+            const own = try arena.dupe(u8, rel);
+            std.mem.replaceScalar(u8, own, '\\', '/');
+            path = own;
+        }
         try items.append(arena, .{
             .tag = found.tag,
             .marker = try arena.dupe(u8, found.marker),
@@ -1016,6 +1022,7 @@ fn clipLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const kw: []const []const u8 = &@import("config/Config.zig").default_todo_keywords;
 
@@ -1165,7 +1172,7 @@ test "scanInto finds markers across files, skips noisy dirs and binaries, record
             seen_a += 1;
             try testing.expect(it.line == 2 or it.line == 3);
         } else {
-            try testing.expectEqualStrings("docs/notes.md", it.path);
+            try sdk_testing.expectPath("docs/notes.md", it.path);
             try testing.expectEqualStrings("buy milk", it.title);
         }
     }

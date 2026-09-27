@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const Key = app_mod.Key;
@@ -302,12 +303,13 @@ pub const Tree = struct {
         var rel: []const u8 = undefined;
         var base: []const u8 = app.workspace;
         if (underRoot(app.workspace, abs)) |r| {
-            rel = r;
+            rel = try rowRel(arena, r);
         } else {
             var found = false;
             for (self.roots.items, 0..) |r, i| if (underRoot(r.path, abs) != null) {
                 root = @intCast(i + 1);
-                rel = abs;
+                // An extra root's rows are native absolute paths.
+                rel = try nativeRel(arena, abs);
                 base = r.path;
                 found = true;
                 break;
@@ -473,7 +475,7 @@ pub const Tree = struct {
         if (root == 0) return rel_dir;
         const base = self.roots.items[root - 1].path;
         _ = app;
-        if (std.mem.startsWith(u8, rel_dir, base) and rel_dir.len > base.len and rel_dir[base.len] == '/') return rel_dir[base.len + 1 ..];
+        if (std.mem.startsWith(u8, rel_dir, base) and rel_dir.len > base.len and std.fs.path.isSep(rel_dir[base.len])) return rel_dir[base.len + 1 ..];
         return "";
     }
 
@@ -487,7 +489,9 @@ pub const Tree = struct {
         try self.noteDirStamp(app, abs);
         // This directory's `.gitignore` joins the stack while its
         // entries are read; the rules name paths relative to the root.
-        const here = self.rootRel(app, rel_dir, root);
+        // Root-relative and `/`-joined: what a `.gitignore` rule reads
+        // (an extra root's rows are native absolute paths).
+        const here = try rowRel(arena, self.rootRel(app, rel_dir, root));
         var pushed = false;
         if (dir.readFileAlloc(app.io, ".gitignore", gpa, .limited(256 * 1024))) |text| {
             defer gpa.free(text);
@@ -509,10 +513,22 @@ pub const Tree = struct {
             const is_dir = entry.kind == .directory or (link and linkIsDir(app, dir, entry.name));
             if (is_dir and std.mem.eql(u8, entry.name, ".git")) continue;
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            const here_rel = if (here.len == 0) entry.name else try std.fs.path.join(arena, &.{ here, entry.name });
+            // A row's `rel` joins with `/` on every platform: the
+            // `.gitignore` rules, the git status map and every prefix
+            // test in this file read it that way, and Windows opens a
+            // `/`-joined path as readily as a `\`-joined one.
+            const here_rel = if (here.len == 0) entry.name else try std.fmt.allocPrint(arena, "{s}/{s}", .{ here, entry.name });
             const ignored = under_ignored or (is_dir and self.artifactHidden(app, entry.name)) or ignores.ignored(here_rel, is_dir);
             if (ignored and !self.show_ignored) continue;
-            const rel = if (rel_dir.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel_dir, entry.name });
+            // Under an extra root the row is its absolute path, joined
+            // natively like any other absolute path; under the workspace
+            // it is `/`-joined.
+            const rel = if (rel_dir.len == 0)
+                try gpa.dupe(u8, entry.name)
+            else if (std.fs.path.isAbsolute(rel_dir))
+                try std.fs.path.join(gpa, &.{ rel_dir, entry.name })
+            else
+                try std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel_dir, entry.name });
             errdefer gpa.free(rel);
             try names.append(gpa, .{ .rel = rel, .depth = depth, .is_dir = is_dir, .root = root, .ignored = ignored, .link = link });
         }
@@ -1148,8 +1164,25 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
 
 /// `path` below `base`, relative to it; null when it is not under it.
 pub fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
-    if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and path[base.len] == '/') return path[base.len + 1 ..];
+    if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and std.fs.path.isSep(path[base.len])) return path[base.len + 1 ..];
     return null;
+}
+
+/// `path` with Windows' own separator throughout (itself elsewhere).
+fn nativeRel(arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    if (builtin.os.tag != .windows or std.mem.indexOfScalar(u8, path, '/') == null) return path;
+    const out = try arena.dupe(u8, path);
+    std.mem.replaceScalar(u8, out, '/', '\\');
+    return out;
+}
+
+/// `rel` spelled as a row spells it: `/` between the parts (Windows'
+/// own paths come in with `\`). On the frame arena when it had to change.
+fn rowRel(arena: Allocator, rel: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, rel, '\\') == null or builtin.os.tag != .windows) return rel;
+    const out = try arena.dupe(u8, rel);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }
 
 /// `name` in `dir` is a link whose target is a directory.
@@ -1496,7 +1529,7 @@ pub fn confirmMove(app: *App, from_idx: usize, into_idx: usize, copy: bool) Allo
     const from = app.tree.rows.items[from_idx];
     const into = app.tree.rows.items[into_idx];
     if (!into.is_dir or from_idx == into_idx) return;
-    if (std.mem.startsWith(u8, into.rel, from.rel) and (into.rel.len == from.rel.len or into.rel[from.rel.len] == '/')) return;
+    if (std.mem.startsWith(u8, into.rel, from.rel) and (into.rel.len == from.rel.len or std.fs.path.isSep(into.rel[from.rel.len]))) return;
     const from_rel = try app.gpa.dupe(u8, from.rel);
     errdefer app.gpa.free(from_rel);
     const into_rel = try app.gpa.dupe(u8, into.rel);
@@ -1650,7 +1683,7 @@ pub fn retargetBuffers(app: *App, from_abs: []const u8, to_abs: []const u8) Allo
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
         if (std.mem.eql(u8, bp, from_abs)) {
             try e.buf.setPath(to_abs);
-        } else if (std.mem.startsWith(u8, bp, from_abs) and bp.len > from_abs.len and bp[from_abs.len] == '/') {
+        } else if (std.mem.startsWith(u8, bp, from_abs) and bp.len > from_abs.len and std.fs.path.isSep(bp[from_abs.len])) {
             const moved = try std.fs.path.join(app.frame.allocator(), &.{ to_abs, bp[from_abs.len + 1 ..] });
             try e.buf.setPath(moved);
         }
@@ -1746,6 +1779,7 @@ fn expandAll(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "tree: lists dirs first, expands on Enter, opens a file, shows dot entries until H hides them" {
     var tmp = t.tmpDir(.{});
@@ -2321,7 +2355,7 @@ test "multi-root: view.add_workspace prompts, Tab completes a directory segment 
     try tmp.dir.createDirPath(t.io, "ws/inner");
     try acceptAddWorkspace(&app, "inner");
     try t.expectEqual(@as(usize, 2), app.tree.roots.items.len);
-    try t.expect(std.mem.endsWith(u8, app.tree.roots.items[1].path, "/ws/inner"));
+    try t.expect(sdk_testing.pathEndsWith(app.tree.roots.items[1].path, "/ws/inner"));
     // view.switch_workspace lists primary + both roots; picking the second opens it.
     try command.run(&app, .{ .static = .@"view.switch_workspace" });
     try t.expect(app.overlay == .picker);

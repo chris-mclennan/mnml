@@ -954,9 +954,9 @@ fn openLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, rate
     return l;
 }
 
-/// This process, for a draw line. Zero where there is no pid to name.
+/// This process, for a draw line.
 fn selfPid() i32 {
-    return if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid());
+    return sdk.warm.selfPid();
 }
 
 /// The FORGE's bucket — `bitbucket`, not `jira`. The pipeline and

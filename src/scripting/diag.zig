@@ -151,6 +151,7 @@ pub fn jump(app: *App) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "parse: chunk, line and message; a traceback's first line; a chunk without a line is null" {
     const p = parse("/home/me/.mnml/init.lua:12: attempt to call a nil value (field 'nope')\nstack traceback:\n\t[C]: in ?").?;
@@ -190,7 +191,7 @@ test "report: an error naming the workspace init.lua lands as its diagnostic; a 
     try testing.expectEqualStrings("attempt to index a nil value", list[0].message);
     try testing.expectEqualStrings(source, list[0].source.?);
     toast(lua, "hook", msg, true);
-    try testing.expectEqualStrings("hook: .mnml/init.lua:2: attempt to index a nil value", app.lastToast().?);
+    try sdk_testing.expectPath("hook: .mnml/init.lua:2: attempt to index a nil value", app.lastToast().?);
     try testing.expectEqualStrings(toast_id, app.toasts.items[app.toasts.items.len - 1].id.?);
     // A later error replaces the line; the same toast id, so one toast.
     const msg2 = try std.fmt.allocPrint(testing.allocator, "{s}:5: boom", .{ws_init});

@@ -440,10 +440,16 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
 
     const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
     defer t.allocator.free(events);
+    // The two paths as the events carry them: joined natively (`\` on
+    // Windows) and JSON-escaped.
+    const ipc_path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "ipc-zig" });
+    defer t.allocator.free(ipc_path);
+    const hello_path = try std.fs.path.join(t.allocator, &.{ ws, "hello.txt" });
+    defer t.allocator.free(hello_path);
     const expected = try std.fmt.allocPrint(t.allocator,
-        \\{{"event":"start","mode":"headless","cols":20,"rows":3,"ipc":"{s}/.mnml/ipc-zig"}}
+        \\{{"event":"start","mode":"headless","cols":20,"rows":3,"ipc":{f}}}
         \\{{"event":"plugin-command","id":"p.a"}}
-        \\{{"event":"open","path":"{s}/hello.txt"}}
+        \\{{"event":"open","path":{f}}}
         \\{{"event":"type","text":"AB"}}
         \\{{"event":"click","button":"Right","col":"5","row":"2"}}
         \\{{"event":"expect_screen","mode":"contains","text":"Hello","ok":"true"}}
@@ -475,7 +481,7 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
         \\{{"event":"quit"}}
         \\{{"event":"exit"}}
         \\
-    , .{ ws, ws });
+    , .{ std.json.fmt(ipc_path, .{}), std.json.fmt(hello_path, .{}) });
     defer t.allocator.free(expected);
     try t.expectEqualStrings(expected, events);
 

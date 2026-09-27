@@ -2652,7 +2652,12 @@ test "the built-in netcoredbg row: a .cs file derives its launch body from the c
     const found = (try builtinAdapterFor(&app, program)).?;
     try testing.expectEqualStrings("netcoredbg", found.cfg.cmd);
     try testing.expectEqualStrings("--interpreter=vscode", found.cfg.args[0]);
-    const expected = try std.fmt.allocPrint(testing.allocator, "{{\"program\":\"{s}/src/App/bin/Debug/net9.0/Acme.App.dll\",\"cwd\":\"{s}/src/App\",\"stopAtEntry\":false}}", .{ root, root });
+    // Both paths joined natively (`\` on Windows) and JSON-escaped.
+    const dll = try std.fs.path.join(testing.allocator, &.{ root, "src", "App", "bin", "Debug", "net9.0", "Acme.App.dll" });
+    defer testing.allocator.free(dll);
+    const cwd = try std.fs.path.join(testing.allocator, &.{ root, "src", "App" });
+    defer testing.allocator.free(cwd);
+    const expected = try std.fmt.allocPrint(testing.allocator, "{{\"program\":{f},\"cwd\":{f},\"stopAtEntry\":false}}", .{ std.json.fmt(dll, .{}), std.json.fmt(cwd, .{}) });
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, found.body.?);
     // A .cs with no project: the reason names the file.

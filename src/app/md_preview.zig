@@ -287,6 +287,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, m: *MdPreviewPane, area: Rect) Alloca
 // ── tests ──
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 fn screenText(app: *App) ![]u8 {
@@ -390,7 +391,7 @@ test "inline images: the preview reserves md_image_rows per image on a transport
     try testing.expect(std.mem.startsWith(u8, req.png, "\x89PNG"));
     const cache = &app.panes.get(pid).?.md_preview.images;
     try testing.expectEqual(@as(usize, 1), cache.items.len);
-    try testing.expect(std.mem.endsWith(u8, cache.items[0].path, "img/cat.png"));
+    try testing.expect(sdk_testing.pathEndsWith(cache.items[0].path, "img/cat.png"));
     // A second frame reuses the cache and the same key.
     const key = req.key;
     try app.render();

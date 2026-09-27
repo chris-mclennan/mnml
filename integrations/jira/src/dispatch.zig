@@ -242,7 +242,7 @@ fn fileExists(io: Io, path: []const u8) bool {
 fn appendLine(arena: Allocator, io: Io, dir: []const u8, name: []const u8, line: []const u8) !void {
     Io.Dir.cwd().createDirPath(io, dir) catch {};
     const path = try std.fs.path.join(arena, &.{ dir, name });
-    const file = try Io.Dir.cwd().createFile(io, path, .{ .truncate = false });
+    const file = try Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = false });
     defer file.close(io);
     const end = try file.length(io);
     const with_nl = try std.mem.concat(arena, u8, &.{ line, "\n" });

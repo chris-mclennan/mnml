@@ -211,7 +211,9 @@ pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) S
         defer gpa.free(head);
         try items.append(arena, .{
             .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - 3]),
-            .path = try std.fs.path.join(arena, &.{ dir_rel, entry.name }),
+            // `/`-joined on every platform: `isUnderDir` and the other
+            // workspace lists read a relative path that way.
+            .path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_rel, entry.name }),
             .title = try arena.dupe(u8, titleOf(head)),
             .mtime = st.mtime.toSeconds(),
             .bytes = st.size,
@@ -636,6 +638,7 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "titleOf: the first heading wins over an earlier line; else the first line; empty stays empty" {
     try testing.expectEqualStrings("Plan", titleOf("intro line\n\n## Plan\nmore"));
@@ -704,7 +707,7 @@ test "scanInto lists the notes directory's markdown files with titles; a missing
         try testing.expect(it.mtime > 0);
         if (std.mem.eql(u8, it.name, "note-1")) {
             try testing.expectEqualStrings("Ship it", it.title);
-            try testing.expectEqualStrings(".mnml/notes/note-1.md", it.path);
+            try sdk_testing.expectPath(".mnml/notes/note-1.md", it.path);
         } else {
             try testing.expectEqualStrings("ideas", it.name);
             try testing.expectEqualStrings("loose thought", it.title);

@@ -1070,6 +1070,7 @@ pub fn cancel(app: *App) Allocator.Error!void {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Fixture = @import("../ui/test_fixture.zig");
 
 fn readOrNull(dir: std.testing.TmpDir, rel: []const u8) !?[]u8 {
@@ -1191,7 +1192,7 @@ test "a row a later layer also sets says which file wins, and saving it says so 
     try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden by ") != null);
     try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "extra.zon"));
     app.overlay.settings.ui.cursor = theme_item.?;
-    try t.expect(std.mem.endsWith(u8, (try footer(&app, arena, list)).?, "overridden by .mnml/config.zon"));
+    try t.expect(sdk_testing.pathEndsWith((try footer(&app, arena, list)).?, "overridden by .mnml/config.zon"));
     // …and a row nothing else sets does not claim one.
     app.overlay.settings.ui.cursor = dots_item.?;
     try t.expect(std.mem.indexOf(u8, (try footer(&app, arena, list)).?, "overridden") == null);
@@ -1343,7 +1344,7 @@ test "the overlay renders the sections and the footer names the target file" {
     try t.expect(std.mem.indexOf(u8, text, " Settings ") != null);
     try t.expect(std.mem.indexOf(u8, text, "── UI ──") != null);
     try t.expect(std.mem.indexOf(u8, text, "▸ Line numbers:") != null);
-    try t.expect(std.mem.indexOf(u8, text, " Settings · → .mnml/config.zon ") != null);
+    try t.expect(sdk_testing.pathContains(text, " Settings · → .mnml/config.zon "));
     // The box caps at ~70 % of the screen and UI is the longest section,
     // so no terminal this side of 90 rows shows a second header on open;
     // the section below UI has to be scrolled to before it renders.
@@ -1364,12 +1365,12 @@ test "the overlay renders the sections and the footer names the target file" {
     };
     {
         const sub = (try footer(&app, app.frame.allocator(), try items(&app, app.frame.allocator()))).?;
-        try t.expectEqualStrings("→ ~/home/config.zon", sub);
+        try sdk_testing.expectPath("→ ~/home/config.zon", sub);
     }
     try app.render();
     const home_title = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(home_title);
-    try t.expect(std.mem.indexOf(u8, home_title, " Settings · → ~/home/config.zon ") != null);
+    try t.expect(sdk_testing.pathContains(home_title, " Settings · → ~/home/config.zon "));
     // click outside closes and keeps
     try app.handle(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .none);
@@ -1474,7 +1475,10 @@ test "the AI section: the ghost-text row writes the token and the runtime overri
     try setRow(&app, rowId("ai.suggest_backend"), 2);
     try t.expectEqual(suggest.Backend.claude_api, app.ai.backend_override.?);
     try t.expectEqual(@as(usize, 2), rowIndex(&app, "ai.suggest_backend"));
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".suggest_backend = \"claude-api\"") != null);
@@ -1539,7 +1543,10 @@ test "the UI section's Terminal icon row: three choices, the ghost the shipped o
     try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.terminal_glyph"));
     try setRow(&app, rowId("ui.terminal_glyph"), 1);
     try t.expectEqual(Config.TerminalGlyph.terminal, app.cfg.ui.terminal_glyph);
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".terminal_glyph = .terminal") != null);
@@ -1565,7 +1572,10 @@ test "the UI section's Claude icon row: three choices, the figure the shipped on
     try t.expectEqual(@as(usize, 0), rowIndex(&app, "ui.claude_mark"));
     try setRow(&app, rowId("ui.claude_mark"), 1);
     try t.expectEqual(Config.ClaudeMark.spark, app.cfg.ui.claude_mark);
-    const home = (try configPath(&app, .home)).?;
+    // Owned: `configPath` answers on the frame arena, and the steps
+    // below render frames before it is read again.
+    const home = try t.allocator.dupe(u8, (try configPath(&app, .home)).?);
+    defer t.allocator.free(home);
     const text = try Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".claude_mark = .spark") != null);

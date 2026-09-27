@@ -2544,7 +2544,15 @@ pub const App = struct {
         return self.openPathOpts(path, .{});
     }
 
-    pub fn openPathOpts(self: *App, path: []const u8, opts: OpenOpts) !PaneId {
+    pub fn openPathOpts(self: *App, path_in: []const u8, opts: OpenOpts) !PaneId {
+        // One spelling per file on Windows, where `D:\ws\a` and
+        // `D:\ws/a` name the same one: the native separator throughout,
+        // so an open finds the pane the other spelling made.
+        const path = if (builtin.os.tag == .windows and std.mem.indexOfScalar(u8, path_in, '/') != null) blk: {
+            const own = try self.frame.allocator().dupe(u8, path_in);
+            std.mem.replaceScalar(u8, own, '/', '\\');
+            break :blk own;
+        } else path_in;
         try self.noteRecent(path);
         // A request file opens as a request pane on its first block; a
         // file the parser cannot read falls through to the editor.
@@ -3027,18 +3035,27 @@ pub const App = struct {
         return config.sandbox.state(&self.env, self.data_root);
     }
 
-    /// Workspace-relative when inside it, else the path itself.
+    /// Workspace-relative when inside it, else the path itself. The
+    /// separator after the workspace is either one on Windows: a path
+    /// `absPath` joined there reads `<ws>\<rel>`, and a `/` never matched
+    /// it, so every toast and title named the whole path.
     pub fn relPath(self: *const App, path: []const u8) []const u8 {
-        if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and path[self.workspace.len] == '/') {
+        if (std.mem.startsWith(u8, path, self.workspace) and path.len > self.workspace.len and std.fs.path.isSep(path[self.workspace.len])) {
             return path[self.workspace.len + 1 ..];
         }
         return path;
     }
 
     /// `<workspace>/<rel>` on the frame arena; absolute input passes through.
+    /// On Windows the result takes the native separator throughout: the
+    /// workspace-relative names the lists keep are `/`-joined, and a
+    /// mixed `D:\ws\lib/bb.txt` compares unequal to the buffer's own
+    /// `D:\ws\lib\bb.txt` (a delete then left the buffer open).
     pub fn absPath(self: *App, rel: []const u8) Allocator.Error![]const u8 {
         if (std.fs.path.isAbsolute(rel)) return rel;
-        return std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+        const joined = try std.fs.path.join(self.frame.allocator(), &.{ self.workspace, rel });
+        if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, joined, '/', '\\');
+        return joined;
     }
 
     /// `ui.auto_equalize_splits`: a split just opened or closed — even

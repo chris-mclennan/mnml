@@ -287,7 +287,9 @@ pub fn scanInto(io: Io, gpa: Allocator, workspace: []const u8, r: *ScanResult) S
         const meta = parseHead(head);
         try items.append(arena, .{
             .name = try arena.dupe(u8, entry.name[0 .. entry.name.len - 3]),
-            .path = try std.fs.path.join(arena, &.{ dir_rel, entry.name }),
+            // `/`-joined on every platform: `isUnderDir` and the other
+            // workspace lists read a relative path that way.
+            .path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_rel, entry.name }),
             .title = try arena.dupe(u8, meta.title),
             .severity = meta.severity,
             .status = meta.status,
@@ -821,6 +823,7 @@ fn paintRow(ui: Ui, r: Rect, row: Item, selected: bool) void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "parseHead: frontmatter severity + status + title, aliases, a bare Severity: line, and no metadata at all" {
     const a = parseHead("---\nseverity: SEV-2\nstatus: Fixed\n---\n# Picker panics\n\nbody\n");
@@ -924,7 +927,7 @@ test "scanInto lists .mnml/findings/*.md with severity + status; a missing direc
             try testing.expectEqual(Severity.high, it.severity);
             try testing.expectEqual(Status.open, it.status);
             try testing.expectEqualStrings("Crash below 30 cols", it.title);
-            try testing.expectEqualStrings(".mnml/findings/finding-1.md", it.path);
+            try sdk_testing.expectPath(".mnml/findings/finding-1.md", it.path);
         } else {
             try testing.expectEqualStrings("r2", it.name);
             try testing.expectEqual(Severity.unknown, it.severity);

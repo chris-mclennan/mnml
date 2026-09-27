@@ -2352,6 +2352,9 @@ test "a ghost is Insert's: in vim Normal a Tab drops it and edits nothing; with 
 }
 
 test "the strip's AI chip: a click shows SESSIONS, and starts a session only when that product has none running" {
+    // The CLI's stand-in (`tools/shims/ai/claude`) is a POSIX shell
+    // script, which a Windows pty cannot start.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const build_options = @import("build_options");
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
