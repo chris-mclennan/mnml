@@ -524,12 +524,42 @@ fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u1
     return @max(g.tabs_right -| w, area.x);
 }
 
+/// The fewest cells the tabs may be left before the furniture gives way.
+const narrow_room: u16 = 12;
+
+/// A leaf too narrow for its furniture and the active tab together —
+/// the chevrons, the 󰐕, the split cluster leave the tabs less than the
+/// active chip (or `narrow_room`) — paints the active tab alone across
+/// the strip, cut if it must be: the name on the strip is always the
+/// pane's, and the other tabs are elided. Null when the strip is wide
+/// enough, when dropping the furniture would gain nothing, or when
+/// nothing is active.
+fn narrowActive(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) ?usize {
+    const active = for (tabs, 0..) |tab, i| {
+        if (tab.active) break i;
+    } else return null;
+    const room = stripRight(ui, area, tabs, opts, g) -| area.x;
+    if (room >= @min(chipWidth(ui, tabs[active]), narrow_room)) return null;
+    // Nothing to give way: the strip is already all the tabs have (the
+    // 󰐕's slot stays carved, as it always is).
+    if (narrowWidth(area) <= room) return null;
+    return active;
+}
+
+/// The cells the active chip takes on a narrow strip: all of it but
+/// the 󰐕's slot, which Rust carves before the tabs whether or not a 󰐕
+/// paints there.
+fn narrowWidth(area: Rect) u16 {
+    return area.w -| plus_w;
+}
+
 /// The offset to paint from when the active tab changed: `current` when
 /// the active tab is already in view, else the active tab itself (the
 /// clamp pulls it back so the tail fills the strip).
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
     const g = geometry(ui, area, tabs.len, opts);
+    if (narrowActive(ui, area, tabs, opts, g)) |a| return a;
     const room = stripRight(ui, area, tabs, opts, g) -| area.x;
     const first = clampScroll(ui, tabs, room, current);
     var active: usize = 0;
@@ -547,6 +577,10 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     if (area.isEmpty()) return .{};
     const y = area.y;
     const g = geometry(ui, area, tabs.len, opts);
+    if (narrowActive(ui, area, tabs, opts, g)) |a| {
+        _ = paintChip(ui, area.x, y, narrowWidth(area), tabs[a], opts.leaf, @intCast(a), opts.focused);
+        return .{ .first = a, .painted = 1, .hidden_left = a, .hidden_right = tabs.len - a - 1 };
+    }
 
     // The tabs from the clamped offset, a cell of strip between chips —
     // against the edge ` +N hidden ` leaves them (`stripRight`).
@@ -1261,4 +1295,38 @@ test "focus cue: the active chip's name dims on a leaf whose pane does not have 
     ui.focus_cue = .rail;
     _ = draw(ui, f.full(), &tabs, .{ .focused = false });
     try testing.expect(f.fgEql(3, 0, .{ .fg = f.theme.palette.fg }));
+}
+
+test "a 20-column leaf always shows its active tab, whole or cut, and elides the rest" {
+    const tabs = [_]Tab{
+        .{ .id = 1, .title = "alpha.txt", .glyph = "x" },
+        .{ .id = 2, .title = "bravo.txt", .glyph = "x", .active = true },
+        .{ .id = 3, .title = "charlie.txt", .glyph = "x" },
+    };
+    // As render hands it over: the + , the chevrons, the split cluster
+    // and the hidden chip's button — more furniture than 20 cells hold.
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .split = split_ids, .hidden_button = 8 };
+    for ([_]usize{ 0, 1, 2 }) |stale| {
+        var f = try Fixture.init(20, 1);
+        defer f.deinit();
+        var o = opts;
+        o.first = fitActive(f.ui(), f.full(), &tabs, stale, opts);
+        const w = draw(f.ui(), f.full(), &tabs, o);
+        try f.expectContains("bravo");
+        try f.expectLacks("alpha");
+        try f.expectLacks("charlie");
+        try testing.expect(hasTab(&f, 1));
+        try testing.expect(!hasTab(&f, 0) and !hasTab(&f, 2));
+        try testing.expectEqual(@as(usize, 1), w.first);
+        try testing.expectEqual(@as(usize, 1), w.painted);
+    }
+    // A stale offset the caller did not re-fit (the leaf narrowed under
+    // it) still paints the active tab, not the one at the offset.
+    var g = try Fixture.init(20, 1);
+    defer g.deinit();
+    var o = opts;
+    o.first = 0;
+    _ = draw(g.ui(), g.full(), &tabs, o);
+    try g.expectContains("bravo");
+    try g.expectLacks("alpha");
 }
