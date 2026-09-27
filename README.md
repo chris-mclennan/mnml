@@ -10,8 +10,9 @@ nothing behind a modifier. LSP, DAP, git, terminal and AI panes, a baked-in
 HTTP client, and a headless `.test` harness — one static binary, no runtime.
 
 This repository is mnml 0.3.0 and onward. mnml 0.2.x is the Rust build at
-[chris-mclennan/mnml](https://github.com/chris-mclennan/mnml), frozen at
-0.2.22; the two run side by side until cutover (`docs/DESIGN.md`, "Side-by-side
+[chris-mclennan/mnml](https://github.com/chris-mclennan/mnml), to be frozen
+at 0.2.22 (0.2.21 is its latest release; 0.2.22 is the planned last one); the
+two run side by side until cutover (`docs/DESIGN.md`, "Side-by-side
 mechanics"). Same commands, same `.test` corpus, same asset names minus the
 `-rs`.
 
@@ -76,7 +77,8 @@ verified by hash; there is no system library to install.
 ```sh
 zig build                                   # zig-out/bin/mnml-zig, Debug
 zig build -Doptimize=ReleaseSafe            # what ships
-zig build test                              # the unit suite (leak = failure)
+zig build test                              # the unit suite, then the e2e gate (leak = failure)
+zig build unit                              # the unit suite alone
 zig build test -Doptimize=ReleaseSafe
 zig build gate-build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
                                             # cross-compile exe + every test binary, no run
@@ -134,7 +136,7 @@ ReleaseSafe build, the width sweep and the corpus on that build,
 `docs/commands.md` unchanged — plus the chrome and hover audits, the
 cursor pty check and `tools/ui-diff.sh` when the change reaches them.
 `./run.sh check` is a subset in one line: fmt, the unit tests in Debug
-and ReleaseSafe, the ReleaseSafe build, the sweep, the corpus, the
+and ReleaseSafe, the e2e gate in Debug, the ReleaseSafe build, the sweep, the corpus, the
 glyph, chrome and hover audits, `zig build gate-targets` (every
 shipped target compiled), `tools/run-sh-check.sh` and
 `tools/run-ps1-check.py`. `tools/linux/run.sh all` runs the build, the
@@ -205,8 +207,9 @@ The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | status | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
-codebase; it is the definition of parity: 1012 `.test` files, every one
-run at 120x40 but the `# requires: network` file. `zig build test
+codebase; it is the definition of parity: 1040 `.test` files (2026-09-26, the
+`http/` and `http_panel/` subfolders included), every one run at 120x40
+but the `# requires: network` file. `zig build test
 --summary all` prints the unit suite's count.
 
 ```sh

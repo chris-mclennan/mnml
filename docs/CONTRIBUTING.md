@@ -707,8 +707,8 @@ Beyond the chain, run these when the change reaches what they check:
   (`docs/INSTALL-CHECKLIST.md` → *Windows 11*, step W-0).
 
 `./run.sh check` is a one-line subset on this machine: `zig fmt --check
-src build.zig tools`, the unit suite in Debug and in ReleaseSafe, the
-ReleaseSafe build, the sweep, the corpus (with `MNML_E2E_ALLOW_SHELL=1`),
+src build.zig tools`, the unit suite in Debug (`tools/debug-suite-check.sh`),
+the e2e gate in Debug, the unit suite in ReleaseSafe, the ReleaseSafe build, the sweep, the corpus (with `MNML_E2E_ALLOW_SHELL=1`),
 glyph-audit, chrome-audit, hover-audit, `zig build gate-targets`,
 `tools/run-sh-check.sh` and `tools/run-ps1-check.py`. `zig build check` is the older one-step form
 (fmt, Debug + ReleaseSafe unit tests, the gate, the sweep,

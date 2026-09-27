@@ -14,16 +14,19 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 
 1. **vim reserves** `ctrl+w g d u e y r n h j t f b o` — each has an insert- or
    normal-mode meaning the editor must receive. Any default chord starting
-   with one of these is `standard` only.
+   with one of these is `standard` only — except the three NvChad itself
+   maps in normal mode, which the vim profile binds as NvChad does:
+   `ctrl+n` (`view.toggle_tree`) and `ctrl+h` / `ctrl+j` (with `ctrl+k` /
+   `ctrl+l`, `view.focus_left` / `down` / `up` / `right`).
 2. **`ctrl+k …` menus are the standard leader.** NvChad uses `ctrl+k` for
    window-up; the vim profile keeps `space` as its only which-key leader.
    A bare `ctrl+k` is therefore bound on its own (`whichkey.leader`) AND
-   is the prefix of twenty `ctrl+k …` chords. **Chord resolution wins:**
+   is the prefix of forty-two `ctrl+k …` chords (2026-09-26). **Chord resolution wins:**
    `keymap.resolveSeq` answers `pending_with_fallback`, the tail key
    completes the chord, and the popup is only the `timeoutlen` fallback
    for a `ctrl+k` nothing followed. Anything that expires a pending chain
    without reading the deadline turns that on its head — the popup opens
-   on the `ctrl+k` and eats the tail, and none of the twenty can fire.
+   on the `ctrl+k` and eats the tail, and none of them can fire.
    That is what the `.test` runner and the headless loop used to do, so
    `Ctrl+K Ctrl+I` (hover, which the Info panel advertises) could not be
    driven at all; `app/driver.zig`'s `expireChords` hook reads the same

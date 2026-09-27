@@ -23,7 +23,7 @@ port was built against.
 ▌     ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
 ▌ To Do (1)
 ▌     ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with a voucher  [ Triage ] [ Fix ]
- ENG-5: 0 linked PR(s)  t transition · a assignee · S select · f fix version · d detail · . actions · / filter · ? keys
+ ENG-5: 0 linked PR(s)  t transition · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys
 ```
 
 Column 0 is the app-colour gutter the pane toolkit paints — Work blue,
@@ -73,7 +73,7 @@ example.
 | `team_field_id = "customfield_10056"` | `.team_field_id = "…"` | the team select's id, read on every issue |
 | `team_field_name = "Team"` | `.team_field_name = "…"` | the JQL name of that field |
 | `dispatch_workspace = "/path"` | `.dispatch_workspace = "/path"` | where `queue.jsonl` and the `term` line go |
-| `projects = ["TE"]` | `.projects = .{ "TE" }` | scopes `--values` and the default JQLs |
+| `projects = ["TE"]` | `.projects = .{ "TE" }` | scopes `--values` (both counts); the pane's tabs are not narrowed |
 | `[detail_modal] fields = [...]` | `.detail_modal = .{ .fields = .{ .{ .id = "type" }, .{ .id = "customfield_1", .label = "Severity" } } }` | a bare TOML string becomes `.{ .id = … }` |
 | `[detail_modal.field_alias] Severity = "customfield_1"` | `.detail_modal = .{ .field_alias = .{ .{ .name = "Severity", .id = "customfield_1" } } }` | |
 | `[[tabs]] name` | `.tabs = .{ .{ .name = "…", … } }` | |
@@ -124,16 +124,16 @@ config's site — is asked instead.
 **Jira Work / Jira Fix Versions — the tree.** The caps header with the
 count (`JIRA WORK (3)`, `(1 of 3)` under a filter), the tab strip with
 the marker on the active tab, the toolbar as mode chips (`basic`,
-`jql`, the search pill, `assignee: Me`, `type: —`,
+`jql`, the search pill, `assignee: All` (a board tab opens on `Me`), `type: —`,
 `status: All`, and on a release tab `fixVersion: 13.16.0` with its `ⓧ`)
 that wrap to a second row instead of clipping, the column header, then
 one group per status in the tab's `status_order`, each ticket under it
 with its columns, unresolved tickets auto-expanded with their linked PRs
 (`MERGED` / `OPEN` / `DECLINED`, the title, `[ Open ] [ Review ] [ Merge ]`
 on an open one, `[ Open ]` on the rest), a merged PR expandable to its
-post-merge pipelines, three PRs per ticket then a `Show all N PRs ↴`
+post-merge pipelines, three PRs per ticket then a `⋯  Show more (N)`
 row. A ticket a bump rule promoted carries `★` after its key and sits in
-the target group with its real status in the STATUS column. The last
+the target group; its STATUS cell reads that group too. The last
 row is the status text and a hint row generated from the bindings.
 
 **Jira Boards — the kanban.** `board: <name>`, `sprint: <name>`, the
@@ -266,8 +266,10 @@ toggles its selection.
 
 ### The three Work tabs the scaffold ships
 
-`--write-config` writes three tabs, because these are the three
-questions a working day asks:
+`--write-config` writes seven tabs: four Work tabs — the three below,
+because these are the three questions a working day asks, plus **Recently
+Done** — a Fix Versions tab (**Current Release**) and two board tabs
+(**Sprint**, **Backlog**):
 
 | tab | kind | what it answers |
 | --- | --- | --- |
@@ -386,7 +388,7 @@ action button write one JSON line — `{kind, issue_key, issue_type,
 summary, jira_url, pr_url?, queued_at}` — to
 `<dispatch_workspace>/.claude/queue.jsonl` and one `term` line
 (`claude <<'MNML_EOF' /agents:developer KEY … MNML_EOF`) to
-`<dispatch_workspace>/.mnml/ipc/command`, each channel only when its
+`$MNML_IPC_DIR/command` (else `<dispatch_workspace>/.mnml/ipc-zig/command`), each channel only when its
 directory exists; the status says which fired.
 
 The button then **follows the session it started**. mnml tells the pane
@@ -400,7 +402,8 @@ session to the front rather than starting a second one.
 ## Tests
 
 ```sh
-cd integrations/jira && zig build test         # the unit suite: every module, the fake server
+(cd integrations/jira && zig build test)       # the unit suite: every module, the fake server
+# the next two from the repo root
 zig build && ./zig-out/bin/mnml-zig test tests/e2e/integrations_jira_*.test   # the corpus scripts
 tools/jira-diff.sh [work|fix-versions|boards]  # the reference vs the port, by content
 ```
