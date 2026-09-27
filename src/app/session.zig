@@ -237,7 +237,12 @@ pub const Saved = struct {
     active: ?u32 = null,
     tree_visible: bool = true,
     tree_width: u16 = 30,
-    tree_show_hidden: bool = false,
+    /// The tree lists dotfiles unless the person turned them off (`H`):
+    /// its default is on, and a session written before this field
+    /// existed — or by hand, without it — must not turn them off on
+    /// restore. (It did: `.gitignore` vanished from the tree after every
+    /// restart of an older session.)
+    tree_show_hidden: bool = true,
     tree_expanded: []const []const u8 = &.{},
     /// The right column's width; `tree_width` is the left's.
     right_panel_width: u16 = 32,
@@ -2316,6 +2321,40 @@ test "session: a query-shaped pane whose subject is gone is skipped — no pane,
         // The Search pane's subject is the query, which cannot vanish:
         // it comes back and finds nothing, which is an answer.
         try t.expect(app.panes.findKind(.grep) != null);
+    }
+}
+
+test "session: a saved file without `tree_show_hidden` restores with dotfiles SHOWN — the tree's default, not off" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "hello\n" });
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = ".gitignore", .data = "*.log\n" });
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Written by a build that had no `tree_show_hidden`.
+    const old = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{f}\", .tree_width = 33 }}", .{std.zig.fmtString(f.root)}, 0);
+    const parsed = try parse(arena, old);
+    try t.expect(parsed.tree_show_hidden);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try t.expect(app.tree.show_hidden);
+        try apply(&app, arena, parsed);
+        try t.expect(app.tree.show_hidden);
+        try app.tree.refresh(&app);
+        try t.expect(app.tree.rowOf(".gitignore") != null);
+    }
+    // One that says off — the person pressed `H` — still restores off.
+    const off = try std.fmt.allocPrintSentinel(arena, ".{{ .version = 1, .workspace = \"{f}\", .tree_show_hidden = false }}", .{std.zig.fmtString(f.root)}, 0);
+    {
+        var app = try f.app();
+        defer app.deinit();
+        try apply(&app, arena, try parse(arena, off));
+        try t.expect(!app.tree.show_hidden);
+        try app.tree.refresh(&app);
+        try t.expect(app.tree.rowOf(".gitignore") == null);
     }
 }
 
