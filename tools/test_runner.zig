@@ -299,12 +299,26 @@ const Watchdog = struct {
 
     /// Every thread's stack, from the outside: what a wedge needs and a
     /// step timeout throws away. macOS only; elsewhere the name is all.
-    /// To stderr, where the build runner forwards a test step's output
-    /// (its stdout it keeps) — never `sample`'s default file under /tmp.
+    /// lldb first — it unwinds by the binary's own unwind tables, where
+    /// `sample`'s first runner report was fifty frames of dyld noise —
+    /// then `sample` as the fallback. Both to stderr, where the build
+    /// runner forwards a test step's output (its stdout it keeps), and
+    /// never to `sample`'s default file under /tmp.
     fn sample(w: *Watchdog) void {
         if (builtin.os.tag != .macos) return;
         var pid_buf: [16]u8 = undefined;
         const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{w.pid}) catch return;
+        // lldb prints to stdout; `1>&2` moves it where the log is.
+        if (std.process.spawn(w.io, .{
+            .argv = &.{ "/bin/sh", "-c", "exec /usr/bin/xcrun lldb --batch -p \"$1\" -o 'thread backtrace all' -o detach -o quit 1>&2", "sh", pid },
+            .stdin = .ignore,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        })) |proc| {
+            var p = proc;
+            const term = p.wait(w.io) catch null;
+            if (term) |t| if (t == .exited and t.exited == 0) return;
+        } else |_| {}
         var proc = std.process.spawn(w.io, .{
             .argv = &.{ "/usr/bin/sample", pid, "1", "-mayDie", "-file", "/dev/stderr" },
             .stdin = .ignore,
