@@ -279,10 +279,16 @@ class Window:
 
     def status(self):
         try:
-            with open(os.path.join(self.ipc, "status.json"), encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
+            return json.loads(self.status_text() or "{}")
+        except ValueError:
             return {}
+
+    def status_text(self):
+        try:
+            with open(os.path.join(self.ipc, "status.json"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
 
     def settle(self, quiet_ms=300, cap_ms=3000):
         """Until screen.txt has not changed for `quiet_ms` (or `cap_ms`
@@ -303,7 +309,11 @@ class Window:
     def wait_for(self, text, present=True, timeout_ms=3000, where="screen"):
         deadline = now_ms() + timeout_ms
         while True:
-            hay = self.screen() if where == "screen" else json.dumps(self.status())
+            # The status is matched as the app WROTE it (compact, the
+            # runner's key order), never re-serialised: `json.dumps` puts
+            # a space after every colon, and `"cursorShape":"bar"` never
+            # matched — 191 of the first sweep's 546 misses were that.
+            hay = self.screen() if where == "screen" else self.status_text()
             if (text in hay) == present:
                 return True
             if now_ms() > deadline:

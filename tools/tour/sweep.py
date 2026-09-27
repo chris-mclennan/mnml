@@ -273,6 +273,14 @@ class FileRun:
             val = expand(v, scope)
             env[k] = val
             scope[k] = val
+        # `$MNML_DATA_ROOT` in a `shell` step is where the APP reads —
+        # the runner exports the file's own root. The driver starts the
+        # app with `MNML_DATA_ROOT=<run>/data` under `MNML_PROFILE=dev`,
+        # which the app resolves to `<run>/data-dev`; a shell that wrote
+        # to `<run>/data` was writing where nothing reads (the REQUESTS
+        # view found no files). Shell scope only: the app's own comes
+        # through the driver, and a second copy would suffix it twice.
+        scope["MNML_DATA_ROOT"] = data_root + "-dev"
         self.shell_env = scope
         return env
 
@@ -315,9 +323,18 @@ class FileRun:
         # `<ws>/.mnml/`: the headless runner plants nothing in the
         # workspace, so a script that acts on "the first row of the tree"
         # means the first file it wrote, and `.mnml/` would be that row.
-        cfg = ".{ .editor = .{ .breadcrumb = false }"
+        # `e2e_defaults` is only `breadcrumb = false`; the menu bar is
+        # pinned off besides, because headless has no bar in its default
+        # `auto` and the real window does — every `click X Y` in the
+        # corpus counts rows from the strip, and a bar shifts them all.
+        # And no broker: the terminal loop hosts one by default, headless
+        # hosts nothing unless a script asks (`MNML_BROKER=1`), and the
+        # REQUESTS view says which — `broker — jira off` is the corpus's
+        # premise.
+        cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }, .ui = .{ .menu_bar = .hidden"
         if header["ascii"]:
-            cfg += ", .ui = .{ .ascii_icons = true }"
+            cfg += ", .ascii_icons = true"
+        cfg += " }"
         e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
         with open(e2e_cfg, "w", encoding="utf-8") as f:
             f.write(cfg + " }\n")
@@ -447,6 +464,17 @@ class FileRun:
             return
         if not self.win.wait_for(unescape(text), present=(op == "contains"), timeout_ms=budget, where=kind):
             self.soft_misses.append(f"line {ln}: expect {kind} {op} {text[:60]}")
+            # The frame the miss was judged on, beside the shot: a miss
+            # with no frame is a number to argue about, one with its
+            # frame is a drift or a wait you can read. The last shot
+            # is the END of the script, which is not this moment.
+            try:
+                frame = self.win.screen() if kind == "screen" else self.win.status()
+                with open(os.path.join(self.out, f"{self.name}.miss-{ln}.txt"), "w", encoding="utf-8") as f:
+                    f.write(f"# line {ln}: expect {kind} {op} {text}\n")
+                    f.write(frame if isinstance(frame, str) else json.dumps(frame, indent=1))
+            except Exception as e:  # never turns a miss into an error
+                self.notes.append(f"line {ln}: could not keep the missed frame ({type(e).__name__})")
 
 
 # ─── the sweep ─────────────────────────────────────────────────────────
