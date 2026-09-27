@@ -315,28 +315,31 @@ class FileRun:
         self.servers = [(srv, spec, ln) for (srv, spec), ln in zip(specs, serve_lines)]
         if os.path.exists(self.run_dir):
             shutil.rmtree(self.run_dir)
-        os.makedirs(self.ws)
+        os.makedirs(os.path.join(self.ws, ".mnml"))
         os.makedirs(os.path.join(self.run_dir, "no-usage"))
         # The `.test` runner's App config (`e2e_defaults`): the breadcrumb
-        # off, and `# ascii` as the `--ascii` switch. Handed to the app as
-        # its explicit `--config` layer, beside the run — NOT written into
-        # `<ws>/.mnml/`: the headless runner plants nothing in the
-        # workspace, so a script that acts on "the first row of the tree"
-        # means the first file it wrote, and `.mnml/` would be that row.
-        # `e2e_defaults` is only `breadcrumb = false`; the menu bar is
-        # pinned off besides, because headless has no bar in its default
-        # `auto` and the real window does — every `click X Y` in the
-        # corpus counts rows from the strip, and a bar shifts them all.
-        # And no broker: the terminal loop hosts one by default, headless
-        # hosts nothing unless a script asks (`MNML_BROKER=1`), and the
-        # REQUESTS view says which — `broker — jira off` is the corpus's
-        # premise.
-        cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }, .ui = .{ .menu_bar = .hidden"
+        # off, and `# ascii` as the `--ascii` switch. Written into
+        # `<ws>/.mnml/config.zon` on purpose, though it puts a `.mnml/`
+        # row in the tree that headless never has (two "delete the first
+        # row" scripts feel it): the headless runner TRUSTS its workspace,
+        # and the real app decides trust only when a workspace layer
+        # exists at launch — with none, `workspace_trusted` stays false
+        # and the config a script writes later (a DAP adapter, an LSP
+        # server, `init.lua`) is never re-read. A claims-free layer at
+        # launch is decided trusted, and a later write is re-read. (The
+        # app-side wart — a workspace with nothing to distrust counted as
+        # untrusted — is worth its own fix.)
+        # `e2e_defaults` is only `breadcrumb = false`. No broker besides:
+        # the terminal loop hosts one by default, headless hosts nothing
+        # unless a script asks (`MNML_BROKER=1`), and the REQUESTS view
+        # says which — `broker — jira off` is the corpus's premise. (The
+        # menu bar is NOT pinned: headless draws it too, on the strip's
+        # row, and pinning it off cost every menu-bar script.)
+        cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }"
         if header["ascii"]:
-            cfg += ", .ascii_icons = true"
+            cfg += ", .ui = .{ .ascii_icons = true }"
         cfg += " }"
-        e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
-        with open(e2e_cfg, "w", encoding="utf-8") as f:
+        with open(os.path.join(self.ws, ".mnml", "config.zon"), "w", encoding="utf-8") as f:
             f.write(cfg + " }\n")
         cols = max(80, header["width"] or 120)
         rows = max(24, header["height"] or 40)
@@ -345,8 +348,7 @@ class FileRun:
         self.start_group()
         try:
             env = self.build_env(header)
-            self.win = Window(self.run_dir, self.ws, exe=self.args.exe, cols=cols, rows=rows, app_env=env,
-                              app_args=["--config", e2e_cfg])
+            self.win = Window(self.run_dir, self.ws, exe=self.args.exe, cols=cols, rows=rows, app_env=env)
             self.win.launch()
             quit_seen = False
             for ln, head, rest in steps:

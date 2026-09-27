@@ -129,6 +129,10 @@ class Window:
         parts.append(shlex.quote(self.exe))
         parts += [shlex.quote(a) for a in self.app_args]
         parts.append('"$@"')
+        # The app's stderr, kept: a panic's trace goes there, and the
+        # terminal it ran in is gone by the time anyone asks why the
+        # app "exited before the last frame".
+        parts.append('2>>' + shlex.quote(os.path.join(self.run_dir, "app-stderr.log")))
         path = os.path.join(self.run_dir, "app.sh")
         with open(path, "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\n# Written by tools/tour: the app's whole environment, nothing inherited.\n")
