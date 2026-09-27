@@ -16,6 +16,13 @@ on:
         type: boolean
         default: false
 
+# A newer push supersedes its own branch's or pull request's run still
+# in flight — main included, which is pushed rarely. Stacked runs on the
+# shared runner queue starved every other branch's jobs for half an hour.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Checkout and build only; the token needs nothing but read.
 permissions:
   contents: read
@@ -47,6 +54,23 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
           cache-key: ${{ matrix.os }}
 
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
+
       - name: zig fmt --check
         shell: bash
         run: zig fmt --check build.zig build.zig.zon src themes tools integrations sdk
@@ -54,12 +78,18 @@ jobs:
       # Leak = FAIL: every unit test runs on std.testing.allocator. Windows
       # runs the same command; the POSIX-gated pty / tui suites are simply
       # not in its graph (build.zig, `pty_supported`).
+      # Windows runs `unit` with every test's name streamed as it starts:
+      # the suite's first Windows runs sat silent for fifty minutes on a
+      # test nobody could name. The e2e gate that `test` adds runs as its
+      # own step below, where its lines stream too.
       - name: zig build test (Debug)
         shell: bash
-        run: zig build -j2 test -Doptimize=Debug --summary failures
+        timeout-minutes: 60
+        run: zig build -j2 ${{ matrix.os == 'windows-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
 
       - name: zig build test (ReleaseSafe — what ships)
         shell: bash
+        timeout-minutes: 40
         run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
 
       # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
@@ -99,6 +129,7 @@ jobs:
       # its parent. Each file runs on a DebugAllocator with safety on.
       - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
         shell: bash
+        timeout-minutes: 40
         env:
           MNML_E2E_ALLOW_SHELL: "1"
         run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
@@ -124,6 +155,23 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: linux-native
+
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
 
       - name: zig build
         run: zig build -j2 --summary failures
@@ -181,7 +229,12 @@ jobs:
           - aarch64-linux-gnu
           - x86_64-windows-gnu
           - x86_64-macos
-          - aarch64-macos
+          # aarch64-macos is not cross-built here: on the 7 GB ubuntu
+          # runner that entry was killed for memory after 23 silent
+          # minutes even at -j2, and it would only repeat work the
+          # `check` job on macos-latest (arm64) already does natively —
+          # its ReleaseSafe `zig build test` and `zig build` compile the
+          # exe and every test binary gate-build installs.
     steps:
       - uses: actions/checkout@v7
       - name: Install zig ${{ env.ZIG_VERSION }}
@@ -189,7 +242,27 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: cross-${{ matrix.target }}
+
+      # The dependency tree comes from github and three other hosts; one
+      # dropped connection ("invalid HTTP response: HttpConnectionClosed")
+      # failed a whole run once. Fetch it first, retried, so the build
+      # steps below never touch the network. `zig build -l` runs the
+      # configure phase, which is what fetches the lazy dependencies this
+      # build graph asks for; `--fetch` alone skips those, and
+      # `--fetch=all` pulls ~1 GB of ghostty's app-only packages.
+      - name: Fetch dependencies (retried)
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            zig build -l -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe > /dev/null && exit 0
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
+      # -j1: one ReleaseSafe LLVM compile of the exe peaks at 9 GB for
+      # aarch64 (measured locally), and gate-build has six of that size;
+      # two at once is what the runner was shut down for at 12 minutes.
       - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
-        run: zig build -j2 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j1 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
       - name: What was built
         run: ls -la zig-out/gate/

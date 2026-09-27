@@ -459,8 +459,32 @@ pub const Buffer = struct {
         };
         self.stampUndoCursor(undo_before, cursor_before);
         self.syncInsertSession(undo_before);
+        if (result == .ops) self.clampMotionOffPhantom(result.ops, cursor_before);
         self.clampNormalCursor();
         return ev;
+    }
+
+    /// Normal and Visual have no line after the final `\n` (the view
+    /// does not paint one): a motion that runs off the end — `w` on the
+    /// last word, `5w`, `)` — stops ON the last line's last char (`:help
+    /// w`: the motion fails there). Only a pure motion that brought the
+    /// cursor there: an edit can leave a real empty last line in a file
+    /// with no final newline (`A<CR><Esc>` on `ab`, Neovim 2:1), and
+    /// Insert and the standard profile (VS Code's Ctrl+End) keep it.
+    fn clampMotionOffPhantom(self: *Buffer, list: []const EditOp, cursor_before: usize) void {
+        const v = switch (self.input) {
+            .vim => |*v| v,
+            .standard => return,
+        };
+        if (v.vmode == .insert or v.vmode == .replace or v.insert_oneshot_normal) return;
+        const ed = self.editor;
+        const n = ed.len();
+        if (n == 0 or ed.cursor < n or ed.bytes()[n - 1] != '\n' or cursor_before >= n) return;
+        for (list) |o| if (o.isMutation()) return;
+        const last = ed.lineCount() - 1;
+        const bol = ed.lineStart(last);
+        const eol = ed.lineEnd(last);
+        ed.cursor = if (eol == bol) eol else ed.prevBoundary(eol);
     }
 
     /// The undo entry a key pushed remembers where the change began:
@@ -508,8 +532,8 @@ pub const Buffer = struct {
             .vim => |*v| v,
             .standard => return,
         };
-        if (v.vmode != .normal or v.insert_oneshot_normal) return;
         const ed = self.editor;
+        if (v.vmode != .normal or v.insert_oneshot_normal) return;
         if (ed.anchor != null or ed.block_anchor != null) return;
         const line = ed.currentLine();
         const bol = ed.lineStart(line);
@@ -565,7 +589,7 @@ pub const Buffer = struct {
         var op = list[head];
         if (op == .repeat) op = op.repeat.inner.*;
         return switch (op) {
-            .move_up, .move_down, .move_left, .move_right, .move_down_first_non_ws, .move_up_first_non_ws => true,
+            .move_up, .move_down, .move_left, .move_right, .move_left_wrap, .move_right_wrap, .move_down_first_non_ws, .move_up_first_non_ws => true,
             .move_word_left, .move_word_right, .move_word_end, .move_word_end_back => true,
             .move_big_word_left, .move_big_word_right, .move_big_word_end, .move_big_word_end_back => true,
             .find_char_on_line, .move_to_unmatched => true,
@@ -695,18 +719,7 @@ pub const Buffer = struct {
                 else => null,
             };
             if (vertical) |down| {
-                var line = self.visibleRow(cur);
-                for (0..n) |_| {
-                    if (down) {
-                        const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
-                        if (next >= count) break;
-                        line = next;
-                    } else {
-                        if (line == 0) break;
-                        line = self.visibleRow(line - 1);
-                    }
-                }
-                const steps = if (down) line -| cur else cur -| line;
+                const steps = self.foldSteps(cur, down, n);
                 if (steps == n) return list;
                 if (steps == 0) return list[0..head];
                 const ptr = try arena.create(EditOp);
@@ -718,7 +731,25 @@ pub const Buffer = struct {
             }
         }
 
-        // `dd` / `<n>dd` / `dj` / `yy` / `<n>yy`.
+        // An operator's `j` / `k` (`dj`, `>2k`): the counted motion after
+        // `select_start` walks visible lines the way a bare `j` does.
+        if (body.len >= 2 and body[0] == .select_start and body[1] == .repeat) {
+            const r = body[1].repeat;
+            const down: ?bool = switch (r.inner.*) {
+                .move_down, .move_down_first_non_ws => true,
+                .move_up, .move_up_first_non_ws => false,
+                else => null,
+            };
+            if (down) |d| {
+                const steps = self.foldSteps(cur, d, r.count);
+                if (steps == r.count) return list;
+                const out = try arena.dupe(EditOp, list);
+                out[head + 1] = .{ .repeat = .{ .count = @intCast(steps), .inner = r.inner } };
+                return out;
+            }
+        }
+
+        // `dd` / `<n>dd` / `yy` / `<n>yy`.
         const Kind = enum { delete, yank };
         var kind: Kind = .delete;
         var n: usize = 0;
@@ -767,6 +798,25 @@ pub const Buffer = struct {
             .yank => try out.append(arena, .{ .yank_lines_count = covered }),
         }
         return out.items;
+    }
+
+    /// How many buffer lines `n` visible-line steps from `cur` cover:
+    /// a closed fold is one step (`:help fold-behavior`), and the walk
+    /// stops at the buffer's first / last line.
+    fn foldSteps(self: *const Buffer, cur: usize, down: bool, n: usize) usize {
+        const count = self.editor.lineCount();
+        var line = self.visibleRow(cur);
+        for (0..n) |_| {
+            if (down) {
+                const next = (if (self.foldAt(line)) |f| f[1] else line) + 1;
+                if (next >= count) break;
+                line = next;
+            } else {
+                if (line == 0) break;
+                line = self.visibleRow(line - 1);
+            }
+        }
+        return if (down) line -| cur else cur -| line;
     }
 
     // ─── dot-repeat ───
@@ -966,8 +1016,22 @@ pub const Buffer = struct {
         }
         const tok = try self.editor.beginAtomic();
         var changed = false;
-        for (0..times) |_| {
-            if (try self.applyOps(d, clip, viewport_rows, arena)) changed = true;
+        // `3.` after `i1<Esc>` is `3i1<Esc>`: the copies follow one
+        // another, and only the last one's Esc steps back (Neovim:
+        // `1111aaa`, cursor 1:3) — not three inserts each stepping left.
+        // The move that entered Insert (`a`'s step right) runs once; an
+        // `o` / `O` record opens a line per copy, so it replays whole.
+        const esc_tail = d.len > 1 and std.meta.activeTag(d[d.len - 1]) == .move_left_no_cross_line;
+        var first_typed: usize = 0;
+        while (first_typed < d.len and !d[first_typed].isMutation()) first_typed += 1;
+        const opens_line = for (d) |o| {
+            if (o == .insert_newline_below or o == .insert_newline_above) break true;
+        } else false;
+        for (0..times) |i| {
+            const from = if (esc_tail and !opens_line and i > 0) first_typed else 0;
+            const to = if (esc_tail and i + 1 < times) d.len - 1 else d.len;
+            if (from >= to) continue;
+            if (try self.applyOps(d[from..to], clip, viewport_rows, arena)) changed = true;
         }
         self.editor.endAtomic(tok);
         if (!changed) self.editor.popCheckpoint();
@@ -1106,45 +1170,38 @@ pub const Buffer = struct {
                 if (self.macros_by_app) return .{ .app = cmd };
                 return self.macroReplay(m.reg, m.count, m.recorded, clip, viewport_rows, wrap_width, arena);
             },
-            .operator_to_mark => |m| return self.operatorToMark(m.op, m.mark, m.exact, clip, viewport_rows, arena),
+            .operator_to_mark => |m| return self.operatorToMark(m.mark, m.exact, clip, viewport_rows, wrap_width, arena),
+            .operator_motion => |m| return self.finishPendingMotion(m.motion, m.linewise, clip, viewport_rows, wrap_width, arena),
             else => return .{ .app = cmd },
         }
     }
 
-    /// `d'a` / `` y`a `` / `c'a` (`:help '`): the range from the cursor to
-    /// the mark — whole lines for `'`, charwise and exclusive for the
-    /// backtick — as the op list the operator would have built from a
-    /// motion, so folds, `.` and the registers see the usual shape. A
-    /// mark that is not set does nothing (Vim: E20).
-    fn operatorToMark(self: *Buffer, op: u8, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, arena: Allocator) Allocator.Error!BufferEvent {
+    /// `d'a` / `` y`a `` / `>'a` (`:help '`): the mark is the end of the
+    /// pending operator's motion — linewise for `'`, exclusive for the
+    /// backtick — and the handler finishes the operator the way it does
+    /// after any motion, so folds, `.` and the registers see the usual
+    /// shape. A mark that is not set drops the operator (Vim: E20).
+    fn operatorToMark(self: *Buffer, mark: u8, exact: bool, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
         const ed = self.editor;
-        const mark_byte = @min(self.doc.marks.get(mark) orelse return .noop, ed.len());
-        const row = ed.lineOfByte(mark_byte);
-        var list: std.ArrayList(EditOp) = .empty;
-        if (exact) {
-            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = @min(ed.cursor, mark_byte) }, .select_start, .{ .set_cursor_byte = @max(ed.cursor, mark_byte) } });
-        } else {
-            const lo = @min(ed.currentLine(), row);
-            const hi = @max(ed.currentLine(), row);
-            try list.appendSlice(arena, &.{ .{ .set_cursor_byte = ed.lineStart(lo) }, .select_start, .{ .set_cursor_byte = ed.lineEnd(hi) } });
-        }
-        switch (op) {
-            'd' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection);
-                try list.append(arena, .delete_selection);
-            },
-            'y' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection);
-                try list.appendSlice(arena, &.{ if (exact) .yank_selection else .yank_selection_linewise, .move_cursor_to_selection_start, .select_clear });
-            },
-            'c' => {
-                if (!exact) try list.append(arena, .normalize_linewise_selection_inner);
-                try list.appendSlice(arena, &.{ .{ .replace_selection = "" }, .continue_insert_run });
-                self.input.requestInsertMode();
-            },
-            else => return .noop,
-        }
-        return self.applyHandlerOps(list.items, null, clip, viewport_rows, arena);
+        const mark_byte = @min(self.doc.marks.get(mark) orelse {
+            self.input.onBlur();
+            return .noop;
+        }, ed.len());
+        return self.finishPendingMotion(&.{.{ .set_cursor_byte = mark_byte }}, !exact, clip, viewport_rows, wrap_width, arena);
+    }
+
+    /// The handler's pending operator, finished with `motion` as its
+    /// motion (`InputHandler.finishPendingMotion`).
+    fn finishPendingMotion(self: *Buffer, motion: []const EditOp, linewise: bool, clip: *Clipboard, viewport_rows: usize, wrap_width: ?usize, arena: Allocator) Allocator.Error!BufferEvent {
+        const undo_before = self.editor.doc.history.undoLen();
+        const ctx = self.makeCtx(wrap_width, clip);
+        const r = (try self.input.finishPendingMotion(motion, linewise, ctx, arena)) orelse return .noop;
+        const ev = switch (r) {
+            .ops => |list| try self.applyHandlerOps(list, null, clip, viewport_rows, arena),
+            else => .redraw,
+        };
+        self.syncInsertSession(undo_before);
+        return ev;
     }
 };
 
@@ -1603,11 +1660,11 @@ test "vim registers, yank and put" {
     try vim("yljp", "|ab\n\nc", "ab\n|a\nc"); // charwise p on an empty line puts on that line
     try vim("yljP", "|ab\n\nc", "ab\n|a\nc");
     try vim("2yyGp", "|a\nb\nc", "a\nb\nc\n|a\nb");
-    try vim("ywP", "|ab cd", "ab |ab cd");
+    try vim("ywP", "|ab cd", "ab| ab cd"); // on the put text's last char (`:help p`)
     try vim("yw$p", "|ab cd", "ab cdab| "); // `p` ends on the put text's last char
     try vim("yiwwviwp", "|ab cd", "ab a|b");
     try vim("ddp", "|a\nb", "b\n|a");
-    try vim("dwwP", "|a b c", "b a |c");
+    try vim("dwwP", "|a b c", "b a| c"); // Neovim 1:4
     try vim("\"ayyj\"ap", "|a\nb", "a\nb\n|a");
     try vim("\"ayyj\"Ayy\"ap", "|a\nb", "a\nb\n|a\nb");
     try vim("\"_dd", "|a\nb", "|b");
@@ -1701,13 +1758,16 @@ test "closed folds are one line to j / k and to dd / yy" {
 test "round two: count p, ci\" forward, dd at EOF, Visual Ctrl-A, gv linewise, d'a, marks follow edits" {
     // `[count]p` puts the text count times in a row (`:help p`).
     try vim("yy3p", "|a\nb", "a\n|a\na\na\nb");
-    try vim("yiw3p", "|ab", "aababab|b"); // the put leaves the cursor after the text
+    try vim("yiw3p", "|ab", "aababa|bb"); // on the put text's last char (`:help p`)
     // `ci"` before the first quote takes the first quoted string after it.
     try vim("0ci\"X<esc>", "|x = \"y\"", "x = \"|X\"");
     // `dd` on the last line lands on the new last line, never past it.
     try vim("Gdd", "|a\nb\n", "|a\n");
     try vim("j3dd", "|a\nb\nc\nd\n", "|a\n");
-    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\n|c\n"); // the count takes what is there
+    // On the last line a count fails: `{n}dd` is `d{n-1}j` (Neovim:
+    // `G3dd` changes nothing); from above it takes what is there.
+    try vim("G3dd", "a\n|b\nc\nd\n", "a\nb\nc\n|d\n");
+    try vim("jj3dd", "|a\nb\nc\nd\n", "a\n|b\n");
     // `v_CTRL-A` bumps every selected line's first number; `g` makes a progression.
     try vim("Vj<c-a>", "|x 1\ny 1", "|x 2\ny 2");
     try vim("Vjg<c-a>", "|x 1\ny 1", "|x 2\ny 3");
@@ -1767,7 +1827,7 @@ test "vim marks, macros and visual mode" {
     try vim("vjJ", "|a\nb", "a| b");
     try vim("vlrX", "|abc", "|XXc");
     try vim("vlp", "|abc", "a|bc"); // nothing to put: nothing deleted (Vim: E353); Rust dropped the selection
-    try vim("ylvlp", "|abc", "a|c");
+    try vim("ylvlp", "|abc", "|ac"); // Neovim 1:1: on the put char
     try vim("vVd", "a\n|b\nc", "a\n|c");
     try vim("Vvd", "a\n|bc\nd", "a\n|c\nd");
     try vim("vv", "|abc", "|abc");

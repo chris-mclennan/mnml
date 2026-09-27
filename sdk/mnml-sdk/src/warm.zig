@@ -577,10 +577,13 @@ pub fn isStale(h: Lock.Holder, now_secs: f64) bool {
     return !pidAlive(h.pid);
 }
 
-/// This process, as a lock names it. Windows has no pid worth probing
-/// here, so it gets 0 and the heartbeat's age decides everything.
+/// This process, as a lock names it. On Windows it is the process id
+/// too: `pidAlive` cannot probe it there, so the heartbeat's age decides
+/// whether the holder is gone — but a zero would have made every lock
+/// stale on sight (`isStale`), and two warmers would both have taken it.
 pub fn selfPid() i32 {
-    return if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid());
+    if (@import("builtin").os.tag == .windows) return @intCast(std.os.windows.GetCurrentProcessId());
+    return @intCast(std.c.getpid());
 }
 
 /// Is that process still there? Signal 0 is the POSIX liveness probe:
@@ -647,6 +650,7 @@ fn parseHolder(text: []const u8, name_out: []u8) ?Lock.Holder {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "the gap is the bucket's own rate, widened — and a nonsense rate is a second, not a crash" {
     // Bitbucket's 0.22/s is 4.55 s between requests; the margin makes
@@ -838,7 +842,7 @@ test "one warmer per service: the second process reads the cache, and a dead hol
     defer t.allocator.free(state);
     const path = try Lock.pathFor(t.allocator, state, "bitbucket");
     defer t.allocator.free(path);
-    try t.expect(std.mem.endsWith(u8, path, "/bitbucket-warm.lock"));
+    try t.expect(sdk_testing.pathEndsWith(path, "/bitbucket-warm.lock"));
 
     // This process: a lock whose pid is alive is a lock that is held,
     // and only a real pid proves that.

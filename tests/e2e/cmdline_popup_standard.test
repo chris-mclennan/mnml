@@ -20,11 +20,13 @@ type "do"
 expect screen contains ":do▏"
 expect screen contains "│ dock.add_preset"
 
-# Tab writes the first row; Shift+Tab walks back, and from the first
-# row that wraps to the last — `dock`, the ex verb under the ids.
+# Tab writes the first row — `dock`, the ex verb, heads the ids — the
+# next Tab the second; Shift+Tab walks back.
+key tab
+expect screen contains ":dock▏"
+expect screen contains "│ dock.close_all"
 key tab
 expect screen contains ":dock.add_preset▏"
-expect screen contains "│ dock.close_all"
 key shift+tab
 expect screen contains ":dock▏"
 key enter
@@ -34,11 +36,11 @@ command view.dock_toggle
 
 # ── a click on a row writes it ──
 # The frame is rows 28..38 (eight rows, the hint, the border); row 0
-# is on 29, its text from column 2.
+# (`dock`) is on 29, row 1 on 30, their text from column 2.
 key ctrl+;
 type "do"
 expect screen contains "│ dock.add_preset"
-click 4 29
+click 4 30
 expect screen contains ":dock.add_preset▏"
 expect screen contains "│ dock.close_all"
 

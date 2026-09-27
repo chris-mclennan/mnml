@@ -1,0 +1,11 @@
+# Neovim: a charwise put that spans lines leaves the cursor at the START
+# of the put text (`:help p`). ab/cd, vjy$p -> cursor 1:3; mnml 2:1.
+write f.txt "ab\ncd\n"
+open f.txt
+command editor.use_vim
+key v
+key j
+key y
+key $
+key p
+expect status contains "\"cursor\":{\"line\":1,\"col\":3}"

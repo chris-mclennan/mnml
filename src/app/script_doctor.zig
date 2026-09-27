@@ -193,7 +193,7 @@ test "script.doctor names each installed script's require root and the folders i
     try t.expect(std.mem.indexOf(u8, text, installed) != null);
     try t.expect(std.mem.indexOf(u8, text, market) != null);
     try t.expect(std.mem.indexOf(u8, text, dev) != null);
-    const want = try std.fmt.allocPrint(t.allocator, "require root {s}/greeter", .{installed});
+    const want = try std.fmt.allocPrint(t.allocator, "require root {s}{c}greeter", .{ installed, std.fs.path.sep });
     defer t.allocator.free(want);
     if (std.mem.indexOf(u8, text, want) == null) {
         std.debug.print("wanted `{s}` in:\n{s}\n", .{ want, text });

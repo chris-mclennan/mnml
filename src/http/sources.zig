@@ -138,8 +138,11 @@ pub fn check(gpa: Allocator, io: Io, workspace: []const u8, normalize: bool) ![]
         defer walker.deinit();
         while (walker.next(io) catch null) |entry| {
             if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".curl")) continue;
-            if (seen.get(entry.path) == null) {
-                try appendFmt(a, &trace, "  - {s}\n", .{entry.path});
+            // The stubs' names are `/`-joined; Windows' walker writes `\`.
+            const rel = try a.dupe(u8, entry.path);
+            std.mem.replaceScalar(u8, rel, '\\', '/');
+            if (seen.get(rel) == null) {
+                try appendFmt(a, &trace, "  - {s}\n", .{rel});
                 drift += 1;
             }
         }
@@ -157,14 +160,15 @@ fn appendFmt(a: Allocator, list: *std.ArrayListUnmanaged(u8), comptime fmt: []co
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "parseText resolves relative url / out against the workspace; bad entries are skipped" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const list = try parseText(arena.allocator(), "/ws", "[{\"name\":\"pets\",\"kind\":\"swagger\",\"url\":\"openapi/pets.yaml\"},{\"name\":\"remote\",\"kind\":\"swagger\",\"url\":\"https://x/spec.json\",\"out\":\"/abs/out\",\"base_url_override\":\"https://dev\"},{\"kind\":\"swagger\"}]");
     try testing.expectEqual(@as(usize, 2), list.len);
-    try testing.expectEqualStrings("/ws/openapi/pets.yaml", list[0].url);
-    try testing.expectEqualStrings("/ws/.rqst/requests/pets", list[0].out);
+    try sdk_testing.expectPath("/ws/openapi/pets.yaml", list[0].url);
+    try sdk_testing.expectPath("/ws/.rqst/requests/pets", list[0].out);
     try testing.expectEqualStrings("/abs/out", list[1].out);
     try testing.expectEqualStrings("https://dev", list[1].base_url.?);
     try testing.expectError(error.NotAnArray, parseText(arena.allocator(), "/ws", "{}"));
@@ -185,7 +189,7 @@ test "sync writes the stubs and check reports no drift, then a change" {
     try testing.expect(std.mem.endsWith(u8, trace, "ok — 1 stubs written\n"));
     const stub = try tmp.dir.readFileAlloc(testing.io, "stubs/t/getA.curl", testing.allocator, .limited(4096));
     defer testing.allocator.free(stub);
-    try testing.expect(std.mem.indexOf(u8, stub, "curl '{{BASE_URL}}/a'") != null);
+    try testing.expect(sdk_testing.pathContains(stub, "curl '{{BASE_URL}}/a'"));
     const clean = try check(testing.allocator, testing.io, ws, false);
     defer testing.allocator.free(clean);
     try testing.expect(std.mem.indexOf(u8, clean, "no drift") != null);
@@ -193,8 +197,8 @@ test "sync writes the stubs and check reports no drift, then a change" {
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "stubs/t/stale.curl", .data = "old\n" });
     const dirty = try check(testing.allocator, testing.io, ws, false);
     defer testing.allocator.free(dirty);
-    try testing.expect(std.mem.indexOf(u8, dirty, "  ~ t/getA.curl") != null);
-    try testing.expect(std.mem.indexOf(u8, dirty, "  - t/stale.curl") != null);
+    try testing.expect(sdk_testing.pathContains(dirty, "  ~ t/getA.curl"));
+    try testing.expect(sdk_testing.pathContains(dirty, "  - t/stale.curl"));
     try testing.expect(std.mem.indexOf(u8, dirty, "2 file(s) differ") != null);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

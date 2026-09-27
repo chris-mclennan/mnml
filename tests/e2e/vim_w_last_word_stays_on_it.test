@@ -1,0 +1,19 @@
+# `w` (and W, ), {count}w) on the last word of the last line stays on
+# its last char in Neovim; mnml parks on a line past the end, and `i`
+# there makes a new line.
+write f.txt "aaa bbb\nccc\n"
+open f.txt
+command editor.use_vim
+key j
+key w
+expect status contains "\"cursor\":{\"line\":2,\"col\":3}"
+key i
+type ZZ
+key esc
+ex w
+expect file f.txt contains "ccZZc\n"
+key u
+key j
+key 5
+key w
+expect status contains "\"cursor\":{\"line\":2,\"col\":3}"

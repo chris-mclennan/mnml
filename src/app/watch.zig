@@ -79,7 +79,10 @@ pub fn check(app: *App) Allocator.Error!void {
         todos.noteFileChanged(app);
         const rel = app.relPath(path);
         if (e.buf.doc.dirty) {
-            app.toast("{s} changed on disk — :e! to discard / save to overwrite", .{rel});
+            if (app.input_style == .vim)
+                app.toast("{s} changed on disk — :e! to discard / save to overwrite", .{rel})
+            else
+                app.toast("{s} changed on disk — Save overwrites it; close without saving to take the disk's version", .{rel});
             e.buf.doc.disk = now_on_disk;
             continue;
         }
@@ -205,7 +208,7 @@ test "a clean buffer reloads when the file changes on disk; the cursor row survi
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "notes.txt", .data = "changed again\n" });
     f.app.dismissToasts();
     try tick(&f.app, 3 * interval_ms);
-    try t.expectEqualStrings("notes.txt changed on disk — :e! to discard / save to overwrite", f.app.lastToast().?);
+    try t.expectEqualStrings("notes.txt changed on disk — Save overwrites it; close without saving to take the disk's version", f.app.lastToast().?);
     try t.expect(std.mem.indexOf(u8, e.buf.editor.bytes(), "EDIT") != null);
     f.app.dismissToasts();
     try tick(&f.app, 4 * interval_ms);

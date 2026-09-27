@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# A refresh while the Jira pane is in dry run keeps what it shows: the
+# count in the caps header and the DRY chip, as the Bitbucket pane (same
+# SDK) does. The refused refresh used to read as a failed load ("fetch
+# failed: dry run — nothing sent", "error:" on the message line), and at
+# the stock layout (the sidebar open) the header dropped "(3)" and the
+# DRY chip to make room (round-7 hunt).
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --log-file jira.log --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command jira_work.open
+expect within 30000 screen contains "JIRA WORK (3)"
+command view.focus_pane
+command integrations.toggle_dry_run
+expect within 10000 screen contains " DRY "
+key r
+wait 3000
+expect screen lacks "fetch failed"
+expect screen lacks "error:"
+expect screen contains " DRY "
+expect screen contains "JIRA WORK (3)"
+expect screen contains "nothing sent"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

@@ -374,6 +374,10 @@ fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8
     const name = @errorName(err);
     switch (err) {
         error.ConnectionRefused, error.ConnectionResetByPeer, error.ConnectionTimedOut, error.NetworkUnreachable, error.HostUnreachable, error.UnknownHostName, error.NameServerFailure, error.TemporaryNameServerFailure, error.HostLacksNetworkAddresses, error.NoAddressReturned, error.ResolvConfParseFailed, error.DetectingNetworkConfigurationFailed => return std.fmt.allocPrint(gpa, "connection failed: error sending request for url ({s}): {s}", .{ url, name }),
+        // Zig 0.16's Windows connect has no mapping for
+        // CONNECTION_REFUSED (a closed port) and answers `Unexpected`;
+        // the name stays in the message, the kind is the one it is.
+        error.Unexpected => if (@import("builtin").os.tag == .windows) return std.fmt.allocPrint(gpa, "connection failed: error sending request for url ({s}): {s}", .{ url, name }),
         else => {},
     }
     const prefix: []const u8 = switch (err) {

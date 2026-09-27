@@ -34,12 +34,18 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             switch (r.inner.*) {
                 .select_inner_bracket => |b| return select.bracketCount(ed, b, false, r.count),
                 .select_around_bracket => |b| return select.bracketCount(ed, b, true, r.count),
+                // `d2it`: the second enclosing tag.
+                .select_inner_tag => return select.tagCount(ed, false, r.count),
+                .select_around_tag => return select.tagCount(ed, true, r.count),
                 // `5fx`: the fifth `x` or nowhere, never the last one found.
                 .find_char_on_line => |f| return motion.findCharOnLine(ed, f.ch, f.forward, f.before, f.inclusive, f.repeat, r.count),
                 else => {},
             }
             // `{count}dd` past the end takes what is there (`:help dd`),
             // never a line above the one it started on.
+            // On the last line a count fails outright: `{n}dd` is
+            // `d{n-1}j`, and `j` cannot move there.
+            if (r.inner.* == .delete_line and r.count > 1 and ed.currentLine() + 1 >= ed.lineCount()) return;
             const count: u32 = if (r.inner.* == .delete_line) @intCast(@min(r.count, @max(ed.lineCount() -| ed.currentLine(), 1))) else r.count;
             if (r.inner.isMutation() and count > 1) {
                 const tok = try ed.beginAtomic();
@@ -85,6 +91,14 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
             motion.rightNoCrossLine(ed);
             try mc.moveExtras(ed, motion.rightNoCrossLine);
         },
+        .move_right_wrap => {
+            motion.rightWrap(ed);
+            try mc.moveExtras(ed, motion.rightWrap);
+        },
+        .move_left_wrap => {
+            motion.leftWrap(ed);
+            try mc.moveExtras(ed, motion.leftWrap);
+        },
         .move_left_no_cross_line => {
             motion.leftNoCrossLine(ed);
             try mc.moveExtras(ed, motion.leftNoCrossLine);
@@ -122,6 +136,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .move_line_end => {
             motion.lineEnd(ed);
             try mc.moveExtras(ed, motion.lineEnd);
+        },
+        .move_bracket_match => if (!motion.bracketMatch(ed)) {
+            out.aborted = true;
+        },
+        .move_to_find_match => |fwd| if (!motion.toFindMatch(ed, fwd)) {
+            out.aborted = true;
         },
         .move_line_last_char => {
             motion.lineLastChar(ed);
@@ -178,6 +198,14 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .abort_unless_selection => if (ed.anchor == null) {
             out.aborted = true;
         },
+        .abort_unless_moved => if (ed.anchor == null or ed.anchor.? == ed.cursor) {
+            ed.anchor = null;
+            out.aborted = true;
+        },
+        .mark_operator_start => select.markOperatorStart(ed),
+        .cursor_to_operator_start => select.cursorToOperatorStart(ed),
+        .select_count_lines => |n| select.selectCountLines(ed, n),
+        .exclusive_motion_rule => select.exclusiveMotionRule(ed),
         .select_find_match => |m| select.selectFindMatch(ed, m.forward, m.inclusive, m.extend, out),
         .if_lines_object => |c| for (if (ed.object_lines) c.lines else c.chars) |o| try applyOne(ed, o, vp, clip, out),
 
@@ -211,6 +239,9 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .block_join => |j| try block.join(ed, j.keep_space, out),
         .block_other_end_of_row => block.otherEndOfRow(ed),
         .replace_chars_with_newline => |n| try line.replaceCharsWithNewline(ed, n, out),
+        .replace_chars => |r| if (!try delete.replaceChars(ed, r.ch, r.count, out)) {
+            out.aborted = true;
+        },
         .undo_line => try line.undoLine(ed, out),
         .delete_to_line_start_in_insert => try delete.deleteBackInInsert(ed, .line, out),
         .delete_word_right => try delete.deleteWordRight(ed, out),
@@ -218,6 +249,8 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .delete_to_line_end => try delete.deleteToLineEnd(ed, out),
         .delete_line => try delete.deleteLine(ed, clip, out),
         .delete_selection => try delete.deleteSelection(ed, clip, out),
+        .delete_selection_linewise => try delete.deleteSelectionLinewise(ed, clip, out),
+        .register_selection_delete => |l| try delete.registerSelectionDelete(ed, l, clip, out),
         .replace_selection => |s| try delete.replaceSelection(ed, s, out),
         .replace_char_at_cursor => |c| try delete.replaceCharAtCursor(ed, c, out),
         .overwrite_char_and_advance => |c| try insert.overwriteCharAndAdvance(ed, c, out),
@@ -257,6 +290,7 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .paste_after_indent => try register.pasteAfterIndent(ed, clip, out),
         .paste_before_indent => try register.pasteBeforeIndent(ed, clip, out),
         .paste => try register.paste(ed, clip, out),
+        .put_over_selection => |p| try register.putOverSelection(ed, clip, p.swap, p.linewise, out),
 
         // ── history ──
         .undo => try undo.undoOp(ed, out),
@@ -417,7 +451,10 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .restore_last_selection = .linewise },                               .{ .restore_last_selection = .block },                  .{ .change_numbers_in_selection = .{ .delta = -2, .progressive = true } },                                       .{ .move_to_line_keep_col = 2 },
         .delete_word_left_in_insert,                                            .delete_to_line_start_in_insert,                        .{ .block_case = .upper },                                                                                       .{ .block_shift = .{ .left = false, .count = 2 } },
         .{ .block_shift = .{ .left = true, .count = 1 } },                      .{ .block_join = .{ .keep_space = true } },             .block_other_end_of_row,                                                                                         .{ .replace_chars_with_newline = 2 },
-        .undo_line,
+        .undo_line,                                                             .abort_unless_moved,                                    .mark_operator_start,                                                                                            .cursor_to_operator_start,
+        .{ .select_count_lines = 2 },                                           .move_right_wrap,                                       .move_left_wrap,                                                                                                 .{ .put_over_selection = .{ .swap = true, .linewise = false } },
+        .{ .replace_chars = .{ .ch = 'x', .count = 2 } },                       .move_bracket_match,                                    .{ .move_to_find_match = true },                                                                                 .exclusive_motion_rule,
+        .delete_selection_linewise,                                             .{ .register_selection_delete = true },                 .{ .register_selection_delete = false },
     };
     for (0..3000) |_| {
         const op = ops[rnd.uintLessThan(usize, ops.len)];

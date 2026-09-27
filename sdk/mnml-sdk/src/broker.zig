@@ -1136,8 +1136,15 @@ fn talk(io: Io, path: []const u8, req: Request) ?Line {
     // broker used to listen — is "no broker", the same as a missing one.
     // Asked to connect to it the kernel answers ENOTSOCK, which a Debug
     // build's `Io.Threaded` treats as a programmer bug and aborts on.
-    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
-    if (st.kind != .unix_domain_socket) return null;
+    //
+    // Windows keeps an AF_UNIX socket as a reparse point: following it
+    // fails (IO_REPARSE_TAG_NOT_HANDLED), and `std` reports the point
+    // itself as `.unknown`, having no kind for that tag. A stale regular
+    // file there is still `.file`.
+    const windows = builtin.os.tag == .windows;
+    const socket_kind: Io.File.Kind = if (windows) .unknown else .unix_domain_socket;
+    const st = Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = !windows }) catch return null;
+    if (st.kind != socket_kind) return null;
     const addr = Io.net.UnixAddress.init(path) catch return null;
     const stream = addr.connect(io) catch return null;
     defer stream.close(io);
@@ -1164,6 +1171,7 @@ pub fn clientName(buf: []u8, program: []const u8, pid: i32) []const u8 {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "the classes are declared front to back, so the enum's own order is the priority" {
     try t.expectEqual(@as(u2, 0), @intFromEnum(Class.interactive));
@@ -1414,10 +1422,10 @@ test "the socket sits beside the bucket it fronts, and the environment can name 
     {
         const p = try socketPath(t.allocator, t.io, &env, "bitbucket");
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.sock", p);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.sock", p);
         const lock = try lockPath(t.allocator, p);
         defer t.allocator.free(lock);
-        try t.expectEqualStrings("/data/ratelimit/bitbucket-broker.lock", lock);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.lock", lock);
     }
     // The shared interop directory: beside the file the Rust crate and
     // the Python script already agree about.
@@ -1425,7 +1433,7 @@ test "the socket sits beside the bucket it fronts, and the environment can name 
     {
         const p = try socketPath(t.allocator, t.io, &env, "jira");
         defer t.allocator.free(p);
-        try t.expectEqualStrings("/shared/jira-broker.sock", p);
+        try sdk_testing.expectPath("/shared/jira-broker.sock", p);
     }
     try env.put("JIRA_BROKER_SOCKET", "/tmp/x.sock");
     {
@@ -1671,6 +1679,20 @@ const Got = struct {
     served_ms: i64 = 0,
 };
 
+/// Until `n` clients have joined the queue (or been served from it),
+/// for at most five seconds.
+fn waitJoined(shared: *Shared, n: usize) !void {
+    var waited: u32 = 0;
+    while (waited < 5000) : (waited += 2) {
+        shared.mu.lockUncancelable(shared.io);
+        const queued = shared.queue.items().len;
+        shared.mu.unlock(shared.io);
+        if (queued + shared.served.load(.monotonic) >= n) return;
+        try shared.io.sleep(.fromMilliseconds(2), .awake);
+    }
+    return error.@"a client never joined the queue";
+}
+
 fn oneClient(io: Io, path: []const u8, g: *Got, timeout_ms: u32) void {
     g.reply = ask(io, path, .{
         .op = .acquire,
@@ -1685,10 +1707,11 @@ fn oneClient(io: Io, path: []const u8, g: *Got, timeout_ms: u32) void {
 
 test "a real broker on a private socket serves the pane before the batch script that queued first" {
     if (!supported) return error.SkipZigTest;
-    // A bucket with nothing in it that refills ten times a second, so
-    // the order is decided by the queue and the test takes under a
-    // second rather than three minutes.
-    var h = try Harness.init("bitbucket", .{ .rate = 4.0, .capacity = 6.0, .max_block_secs = 20.0 }, 0);
+    // A bucket with nothing in it that refills once a second, so the
+    // order is decided by the queue: all four are queued well before the
+    // first token lands, even on a runner that stalls for a few hundred
+    // milliseconds, and the test takes four seconds, not three minutes.
+    var h = try Harness.init("bitbucket", .{ .rate = 1.0, .capacity = 6.0, .max_block_secs = 20.0 }, 0);
     defer h.deinit();
     const io = t.io;
     const path = h.server.path();
@@ -1703,13 +1726,17 @@ test "a real broker on a private socket serves the pane before the batch script 
     };
     var group: Io.Group = .init;
     defer group.cancel(io);
-    for (&gots) |*g| {
+    for (&gots, 1..) |*g, n| {
         try group.concurrent(io, oneClient, .{ io, path, g, @as(u32, 8000) });
-        // Enough to be sure each has joined the queue before the next
-        // does: the tie-break inside a class is arrival order, and
+        // Each has joined the queue before the next connects — watched,
+        // not slept on: a fixed pause lost the order on a slow macOS
+        // runner. The tie-break inside a class is arrival order, and
         // this test is about the order BETWEEN classes.
-        try io.sleep(.fromMilliseconds(30), .awake);
+        try waitJoined(&h.server.shared, n);
     }
+    // The order is only the queue's if nobody was served before the
+    // last one joined.
+    try t.expectEqual(@as(u64, 0), h.server.shared.served.load(.monotonic));
     try group.await(io);
 
     for (&gots) |*g| {

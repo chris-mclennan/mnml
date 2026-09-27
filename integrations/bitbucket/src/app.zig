@@ -2598,7 +2598,10 @@ pub const App = struct {
                     ts.fetched = true;
                     // `as of` is the last time EVERY repo answered; a
                     // partial failure does not make the rows fresh.
-                    if (r.errored == 0 or ts.fetched_at == 0) ts.fetched_at = app.now_secs;
+                    // A dry run answered from what was held: nothing
+                    // new came off the wire, so the rows are as old as
+                    // they were.
+                    if (ts.fetched_at == 0 or (r.errored == 0 and !app.budget.isDry())) ts.fetched_at = app.now_secs;
                     ts.show_all = false;
                     ts.repos = r.repos;
                     ts.items = if (carried.items) |n| n else r.items;
@@ -4054,6 +4057,41 @@ test "a pane that does not hold the machine's warm lock fetches only its own tab
         else => {},
     };
     try t.expectEqual(@as(usize, 1), refreshes);
+}
+
+test "a dry-run refresh answered from the held tags keeps `as of`: the rows are as old as they were" {
+    // Round-7 hunt: with dry run on, `r` answered every GET from the
+    // ETag store — rows right, nothing on the wire — and stamped the
+    // tab fresh ("as of 2s ago").
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
+    defer t.allocator.free(store_path);
+    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
+    defer etags.deinit();
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    r.client.etags = &etags;
+    r.app.budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    r.client.budget = &r.app.budget;
+    // A live refresh files every listing under its tag.
+    try r.app.refreshTab(0);
+    try r.drain();
+    const ts = &r.app.tabs[0];
+    const stamp = ts.fetched_at;
+    const items = ts.items;
+    try t.expect(stamp > 0 and items > 0);
+    _ = try r.key("shift+n");
+    const served = r.srv.snapshot().served;
+    r.app.now_secs += 600;
+    try r.app.refreshTab(0);
+    try r.drain();
+    try t.expectEqual(served, r.srv.snapshot().served);
+    try t.expectEqual(items, ts.items);
+    try t.expectEqual(@as(usize, 0), ts.errored);
+    try t.expectEqual(stamp, ts.fetched_at);
 }
 
 test "Shift+N turns dry run on and a refresh then sends nothing; Ctrl+X stops a rate-limit pause" {

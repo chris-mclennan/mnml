@@ -415,6 +415,7 @@ pub fn acceptFind(app: *App, i: usize) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const Key = @import("../core/key.zig").Key;
 
 const Fixture = struct {
@@ -478,7 +479,7 @@ test "rename: a block's ### line from the panel row (the open pane follows); a s
     try command.run(&f.app, .{ .static = .@"http.rename_request" });
     try testing.expect(f.app.overlay == .prompt);
     try testing.expectEqualStrings("two", f.app.overlay.prompt.state.text());
-    try testing.expect(std.mem.indexOf(u8, f.app.overlay.prompt.state.title, "block `two` of api/r.http") != null);
+    try testing.expect(sdk_testing.pathContains(f.app.overlay.prompt.state.title, "block `two` of api/r.http"));
     try f.app.handle(.{ .key = Key.char('d') });
     try f.app.handle(.{ .key = Key.char('u') });
     try f.app.handle(.{ .key = Key.char('o') });
@@ -500,7 +501,7 @@ test "rename: a block's ### line from the panel row (the open pane follows); a s
     try f.app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(f.tmp.dir.access(testing.io, "api/alone.http", .{}) != error.FileNotFound);
     try testing.expectError(error.FileNotFound, f.tmp.dir.access(testing.io, "api/solo.http", .{}));
-    try testing.expect(std.mem.endsWith(u8, http.activeRequest(&f.app).?.source_path.?, "/api/alone.http"));
+    try testing.expect(sdk_testing.pathEndsWith(http.activeRequest(&f.app).?.source_path.?, "/api/alone.http"));
 }
 
 test "duplicate and delete: the block cloned as name-copy, the delete confirmed and the others intact, the last block takes the file with it; the file forms" {
@@ -577,7 +578,7 @@ test "move: a block into another collection's file of the same name, a file into
     const dst = try f.read("smoke/r.http");
     defer testing.allocator.free(dst);
     try testing.expectEqualStrings("### ping\nGET https://x/ping\n\n### two\n# @tags smoke users\nPOST https://x/two\n\n{}\n", dst);
-    try testing.expectEqualStrings("moved block → smoke/r.http", f.app.lastToast().?);
+    try sdk_testing.expectPath("moved block → smoke/r.http", f.app.lastToast().?);
     // The file: into `api`, the open pane following.
     const loose = try std.fs.path.join(testing.allocator, &.{ f.root, "loose.http" });
     defer testing.allocator.free(loose);
@@ -588,7 +589,7 @@ test "move: a block into another collection's file of the same name, a file into
     try testing.expect(f.tmp.dir.access(testing.io, "api/loose.http", .{}) != error.FileNotFound);
     var moved = false;
     for (f.app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .request => |*rp| if (rp.source_path) |sp| if (std.mem.endsWith(u8, sp, "/api/loose.http")) {
+        .request => |*rp| if (rp.source_path) |sp| if (sdk_testing.pathEndsWith(sp, "/api/loose.http")) {
             moved = true;
         },
         else => {},
@@ -610,8 +611,8 @@ test "find: one row per block of every file, `METHOD · name · file`, the tags 
     try testing.expect(f.app.overlay == .picker);
     const p = &f.app.overlay.picker;
     try testing.expectEqual(@as(usize, 4), p.labels.len);
-    try testing.expectEqualStrings("GET \u{00b7} one \u{00b7} api/r.http", p.labels[0]);
-    try testing.expectEqualStrings("POST \u{00b7} two \u{00b7} api/r.http", p.labels[1]);
+    try sdk_testing.expectPath("GET \u{00b7} one \u{00b7} api/r.http", p.labels[0]);
+    try sdk_testing.expectPath("POST \u{00b7} two \u{00b7} api/r.http", p.labels[1]);
     try testing.expectEqualStrings("#smoke #users", p.details[1]);
     try testing.expectEqualStrings("", p.details[0]);
     try testing.expectEqualStrings("GET \u{00b7} Solo one \u{00b7} solo.curl", p.labels[3]);
@@ -619,7 +620,7 @@ test "find: one row per block of every file, `METHOD · name · file`, the tags 
     const rp = http.activeRequest(&f.app).?;
     try testing.expectEqualStrings("https://x/two", rp.url.items);
     try testing.expectEqualStrings("two", rp.block_name.?);
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/api/r.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/api/r.http"));
     // The same block again is the same pane.
     const before = f.app.panes.count();
     try command.run(&f.app, .{ .static = .@"http.find_request" });

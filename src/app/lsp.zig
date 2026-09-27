@@ -506,7 +506,7 @@ fn walkUp(app: *App, arena: Allocator, start: []const u8, markers: []const []con
 /// Is `path` `dir` or somewhere below it?
 fn pathUnder(path: []const u8, dir: []const u8) bool {
     if (!std.mem.startsWith(u8, path, dir)) return false;
-    return path.len == dir.len or path[dir.len] == '/' or (dir.len > 0 and dir[dir.len - 1] == '/');
+    return path.len == dir.len or std.fs.path.isSep(path[dir.len]) or (dir.len > 0 and dir[dir.len - 1] == '/');
 }
 
 /// Is `path` inside a toolchain's, a package manager's or an
@@ -2052,6 +2052,11 @@ fn gotoResult(app: *App, kind: ReqKind, ctx: Ctx, result: ?Value) Allocator.Erro
 fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.Error!void {
     const path = try app.frame.allocator().dupe(u8, loc.path);
     const cur = app.active;
+    // The answer lands after the key that asked, so the key's own jump
+    // bookkeeping never saw it: `gd` records where it was pressed, the
+    // way Neovim's `vim.lsp.buf.definition` does, and `Ctrl-O` comes
+    // back. (A jump to another file is recorded by the open itself.)
+    const before = try @import("jumplist.zig").current(app);
     app.lsp.lender = lender: {
         const e = app.panes.editor(from orelse cur orelse break :lender null) orelse break :lender null;
         const s = serverFor(app, e.buf.doc.path orelse break :lender null) orelse break :lender null;
@@ -2076,6 +2081,10 @@ fn jumpTo(app: *App, loc: types.Location, split: bool, from: ?PaneId) Allocator.
         e.buf.editor.anchor = null;
         e.buf.editor.setCursor(types.byteOf(e.buf.editor.bytes(), loc.range.start, enc));
         e.view.scroll_line = @intCast(e.buf.editor.currentLine() -| app.pane_rows / 2);
+        if (before) |b| if (std.mem.eql(u8, b.path, path)) {
+            const at = e.buf.editor.rowCol();
+            if (at.row != b.row or at.col != b.col) try @import("jumplist.zig").record(app, b);
+        };
     }
     app.needs_render = true;
 }
@@ -3228,6 +3237,7 @@ fn applyHighlights(app: *App, s: *Server, ctx: Ctx, result: ?Value) Allocator.Er
             return a.start < b.start;
         }
     }.lt);
+    e.find.stampText(text);
     app.toast("{d} usage(s) highlighted", .{e.find.matches.items.len});
     app.needs_render = true;
 }
@@ -4398,6 +4408,8 @@ test "lsp lend: a jump the running server answered is served by that server, wha
     const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
     defer gpa.free(a);
     const in_std = try std.fs.path.join(gpa, &.{ top, std_dir, "m.fk" });
+    // One spelling, as an opened path has on Windows (native throughout).
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, in_std, '/', '\\');
     defer gpa.free(in_std);
     const in_dep = try std.fs.path.join(gpa, &.{ top, "deps", "serde", "m.fk" });
     defer gpa.free(in_dep);
@@ -4439,6 +4451,8 @@ test "lsp lend: a file opened by hand under a toolchain's own marker (zls into l
     const a = try std.fs.path.join(gpa, &.{ ws, "a.fk" });
     defer gpa.free(a);
     const in_std = try std.fs.path.join(gpa, &.{ top, "Cellar/zig/0.16.0/lib/zig/std", "m.fk" });
+    // One spelling, as an opened path has on Windows (native throughout).
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, in_std, '/', '\\');
     defer gpa.free(in_std);
     const other_root = try std.fs.path.join(gpa, &.{ top, "other" });
     defer gpa.free(other_root);
@@ -4516,8 +4530,11 @@ test "a python server starts with the project's .venv interpreter in its setting
         var pbuf: [std.fs.max_path_bytes]u8 = undefined;
         const ws = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
         try tmp.dir.createDirPath(io, ".mnml");
-        try tmp.dir.createDirPath(io, ".venv/bin");
-        try tmp.dir.writeFile(io, .{ .sub_path = ".venv/bin/python", .data = "" });
+        // The platform's own venv layout: `Scripts\python.exe` on Windows.
+        const venv_dir = if (builtin.os.tag == .windows) ".venv/Scripts" else ".venv/bin";
+        const venv_py = if (builtin.os.tag == .windows) ".venv/Scripts/python.exe" else ".venv/bin/python";
+        try tmp.dir.createDirPath(io, venv_dir);
+        try tmp.dir.writeFile(io, .{ .sub_path = venv_py, .data = "" });
         try tmp.dir.writeFile(io, .{ .sub_path = "m.py", .data = "import black\n" });
         try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/config.zon", .data = if (configured)
             ".{ .lsp = .{ .python = .{ .cmd = \"$MNML_FAKE_LSP\", .extensions = .{ \"py\" }, .settings = .{ .python = .{ .pythonPath = \"/opt/mine/python\" } } } } }"
@@ -4545,7 +4562,12 @@ test "a python server starts with the project's .venv interpreter in its setting
         if (configured) {
             try testing.expectEqualStrings("{\"python\":{\"pythonPath\":\"/opt/mine/python\"}}", settings);
         } else {
-            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":\"{s}/.venv/bin/python\"}}}}", .{ws});
+            const py = if (builtin.os.tag == .windows)
+                try std.fs.path.join(gpa, &.{ ws, ".venv", "Scripts", "python.exe" })
+            else
+                try std.fs.path.join(gpa, &.{ ws, ".venv", "bin", "python" });
+            defer gpa.free(py);
+            const want = try std.fmt.allocPrint(gpa, "{{\"python\":{{\"pythonPath\":{f}}}}}", .{std.json.fmt(py, .{})});
             defer gpa.free(want);
             try testing.expectEqualStrings(want, settings);
         }

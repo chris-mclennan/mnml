@@ -945,6 +945,7 @@ fn copyIdFocused(app: *App) CommandError!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 /// A tiny HTTP server that answers by path from a table. Shared with
@@ -1104,8 +1105,8 @@ test "a mnml catalogue installs by linking the binary and running --install; the
 
     try tmp.dir.createDirPath(io, "cat");
     const cat_text = try std.fmt.allocPrint(gpa,
-        \\.{{ .entries = .{{ .{{ .id = "sample", .label = "Sample", .description = "The counter", .category = "sample", .version = "0.1.0", .binary = "{s}" }} }} }}
-    , .{exe});
+        \\.{{ .entries = .{{ .{{ .id = "sample", .label = "Sample", .description = "The counter", .category = "sample", .version = "0.1.0", .binary = "{f}" }} }} }}
+    , .{std.zig.fmtString(exe)});
     defer gpa.free(cat_text);
     try tmp.dir.writeFile(io, .{ .sub_path = "cat/marketplace.zon", .data = cat_text });
     const cat_path = try std.fs.path.join(gpa, &.{ root, "cat", "marketplace.zon" });
@@ -1285,7 +1286,7 @@ test "a fetch lists launchers and apps from a local server; a launcher installs 
     try testing.expectEqual(Kind.launcher, st.entries[0].kind);
     try testing.expectEqualStrings("mnml-jira", st.entries[1].id);
     try testing.expectEqual(Kind.app, st.entries[1].kind);
-    try testing.expectEqualStrings("apps/mnml-jira", st.entries[1].subpath);
+    try sdk_testing.expectPath("apps/mnml-jira", st.entries[1].subpath);
     // broken.zon and the crates source are problems, not rows.
     try testing.expectEqual(@as(usize, 2), st.problems.len);
     // The section's Marketplace tab lists both, with their source.

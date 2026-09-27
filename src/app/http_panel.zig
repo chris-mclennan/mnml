@@ -278,14 +278,23 @@ fn walkWorkspace(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8
             },
             .file => {
                 if (std.mem.endsWith(u8, entry.basename, ".mock.json")) {
-                    try mocks.append(arena, try arena.dupe(u8, entry.path));
+                    try mocks.append(arena, try slashRel(arena, entry.path));
                 } else if (parse.isRequestPath(entry.basename)) {
-                    try files.append(arena, try arena.dupe(u8, entry.path));
+                    try files.append(arena, try slashRel(arena, entry.path));
                 }
             },
             else => {},
         }
     }
+}
+
+/// A walked path with `/` between its parts on every platform: the
+/// folder grouping and the rows read a collection's path that way, and
+/// Windows' walker writes `\`.
+fn slashRel(arena: Allocator, path: []const u8) Allocator.Error![]u8 {
+    const out = try arena.dupe(u8, path);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
 }
 
 /// `.mnml/collections/<name>/**`: the hidden collections, which the
@@ -305,7 +314,7 @@ fn walkHidden(io: Io, gpa: Allocator, arena: Allocator, workspace: []const u8, f
         switch (entry.kind) {
             .directory => walker.enter(io, entry) catch {},
             .file => if (parse.isRequestPath(entry.basename)) {
-                try files.append(arena, try std.fs.path.join(arena, &.{ hidden_root, entry.path }));
+                try files.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ hidden_root, try slashRel(arena, entry.path) }));
             },
             else => {},
         }
@@ -1281,6 +1290,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 const panel_ids = panel;
 
 const Fixture = struct {
@@ -1371,7 +1381,7 @@ test "refresh lists every section; collections group by folder with the hidden o
     const st = &f.app.http_panel;
     var kb: [64]Kind = undefined;
     try testing.expectEqual(@as(usize, 4), st.files.len);
-    try testing.expectEqualStrings(".mnml/collections/smoke/ping.http", st.files[0]);
+    try sdk_testing.expectPath(".mnml/collections/smoke/ping.http", st.files[0]);
     try testing.expectEqual(@as(usize, 2), st.folders.len);
     try testing.expectEqualStrings("smoke", st.folders[0].name);
     try testing.expect(st.folders[0].hidden);
@@ -1393,7 +1403,7 @@ test "refresh lists every section; collections group by folder with the hidden o
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .item, .link, .gap }, kinds(st, .envs, &kb));
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .link, .gap }, kinds(st, .chains, &kb));
     try testing.expectEqualSlices(Kind, &.{ .header, .item, .gap }, kinds(st, .mocks, &kb));
-    try testing.expectEqualStrings("api/orders.curl", st.rows.items[f.rowOf(.mocks, .item, null).?].label);
+    try sdk_testing.expectPath("api/orders.curl", st.rows.items[f.rowOf(.mocks, .item, null).?].label);
     // The three action links close the list.
     const n = st.rows.items.len;
     try testing.expectEqual(Link.new_request, st.rows.items[n - 3].link);
@@ -1554,7 +1564,7 @@ test "headless: the panel paints the blank row under the filter, seven headers w
     var lines = std.mem.splitScalar(u8, txt, '\n');
     _ = lines.next();
     try testing.expect(std.mem.indexOf(u8, lines.next().?, "HTTP (12)") != null);
-    try testing.expect(std.mem.indexOf(u8, lines.next().?, "/ filter") != null);
+    try testing.expect(sdk_testing.pathContains(lines.next().?, "/ filter"));
     _ = lines.next();
     var x: u16 = 4;
     while (x < 30) : (x += 1) try testing.expectEqualStrings(" ", f.app.screen.readCell(x, 3).?.char.grapheme);
@@ -1581,9 +1591,9 @@ test "headless: the panel paints the blank row under the filter, seven headers w
     const tail = try f.screen();
     defer testing.allocator.free(tail);
     for ([_]Section{ .cookies, .recent, .captured }) |s| try testing.expect(std.mem.indexOf(u8, tail, s.label()) != null);
-    try testing.expect(std.mem.indexOf(u8, tail, "201 POST x/login") != null);
+    try testing.expect(sdk_testing.pathContains(tail, "201 POST x/login"));
     try testing.expect(std.mem.indexOf(u8, tail, "session  x.test") != null);
-    try testing.expect(std.mem.indexOf(u8, tail, "GET  cdn.test/app.js") != null);
+    try testing.expect(sdk_testing.pathContains(tail, "GET  cdn.test/app.js"));
     try testing.expect(std.mem.indexOf(u8, tail, "+ New request") != null);
     try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Paste curl…") != null);
     try testing.expect(std.mem.indexOf(u8, tail, "\u{2193} Import…") != null);
@@ -1642,7 +1652,7 @@ test "clicks: a header chip acts (ENVS + opens the prompt, RECENT ✕ truncates 
     }.p).?;
     try f.app.handle(.{ .mouse = .{ .x = folder_new.x + 1, .y = folder_new.y, .kind = .press, .button = .left } });
     const rp = http.activeRequest(&f.app).?;
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/api/req-1.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/api/req-1.http"));
     try testing.expectEqualStrings("req-1.http", rp.title());
     // RECENT is below the first screenful: G scrolls the tail in.
     focusPanel(&f.app);
@@ -1707,7 +1717,7 @@ test "one left press on a request row opens it, as a tree file does; a folder ro
     try testing.expect(found);
     // No second press waited for: the pane is open and it is the row's.
     const rp = http.activeRequest(&f.app).?;
-    try testing.expect(std.mem.endsWith(u8, rp.source_path.?, "/loose.http"));
+    try testing.expect(sdk_testing.pathEndsWith(rp.source_path.?, "/loose.http"));
     try testing.expectEqual(item_idx, st.list.cursor);
 }
 

@@ -139,14 +139,20 @@ pub fn validName(name: []const u8) bool {
 
 /// The manifest text a `script.install` writes beside a copied
 /// directory that had none, and what `docs/LUA.md` shows.
+///
+/// Every string goes out as a ZON string literal, escaped: the url of a
+/// directory install is its source path, and a Windows path's `\` (or
+/// a `"` in a description) spliced in raw left a file that did not
+/// parse — the script was installed and never found.
 pub fn render(w: *std.Io.Writer, m: Manifest) std.Io.Writer.Error!void {
-    try w.print(".{{\n    .name = \"{s}\",\n    .version = \"{s}\",\n    .api = {d},\n", .{ m.name, m.version, m.api });
-    try w.print("    .description = \"{s}\",\n    .author = \"{s}\",\n", .{ m.description, m.author });
+    const s = std.zig.fmtString;
+    try w.print(".{{\n    .name = \"{f}\",\n    .version = \"{f}\",\n    .api = {d},\n", .{ s(m.name), s(m.version), m.api });
+    try w.print("    .description = \"{f}\",\n    .author = \"{f}\",\n", .{ s(m.description), s(m.author) });
     try w.writeAll("    .commands = .{");
-    for (m.commands, 0..) |c, i| try w.print("{s} \"{s}\"{s}", .{ if (i == 0) "" else ",", c, if (i + 1 == m.commands.len) " " else "" });
+    for (m.commands, 0..) |c, i| try w.print("{s} \"{f}\"{s}", .{ if (i == 0) "" else ",", s(c), if (i + 1 == m.commands.len) " " else "" });
     try w.writeAll("},\n    .hooks = .{");
-    for (m.hooks, 0..) |h, i| try w.print("{s} \"{s}\"{s}", .{ if (i == 0) "" else ",", h, if (i + 1 == m.hooks.len) " " else "" });
-    try w.print("}},\n    .source = .{t},\n    .url = \"{s}\",\n}}\n", .{ m.source, m.url });
+    for (m.hooks, 0..) |h, i| try w.print("{s} \"{f}\"{s}", .{ if (i == 0) "" else ",", s(h), if (i + 1 == m.hooks.len) " " else "" });
+    try w.print("}},\n    .source = .{t},\n    .url = \"{f}\",\n}}\n", .{ m.source, s(m.url) });
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -257,4 +263,29 @@ test "render round-trips through parse" {
     try t.expectEqual(@as(usize, 1), m.hooks.len);
     try t.expectEqual(Source.dev, m.source);
     try t.expectEqualStrings("/tmp/dev/todo-list", m.url);
+}
+
+test "render escapes what it writes: a Windows path and a quoted description round-trip" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var buf: [1024]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try render(&w, .{
+        .name = "greeter",
+        .version = "1.0.0",
+        .api = 1,
+        .description = "says \"hi\"",
+        .author = "a\\b",
+        .commands = &.{},
+        .hooks = &.{},
+        .source = .community,
+        .url = "D:\\a\\src\\greeter",
+    });
+    const text = try arena.dupeZ(u8, w.buffered());
+    var why: []const u8 = "";
+    const m = try parse(arena, text, &why);
+    try t.expectEqualStrings("D:\\a\\src\\greeter", m.url);
+    try t.expectEqualStrings("says \"hi\"", m.description);
+    try t.expectEqualStrings("a\\b", m.author);
 }

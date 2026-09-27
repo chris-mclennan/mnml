@@ -90,7 +90,7 @@ test "the opener and the clipboard tool are the platform's own" {
             try t.expectEqualStrings("pbcopy", (try copyArgv(a, false))[0]);
         },
         .windows => {
-            try t.expectEqualStrings("cmd", open[0]);
+            try t.expectEqualStrings("rundll32", open[0]);
             try t.expectEqualStrings("clip", (try copyArgv(a, false))[0]);
         },
         else => {

@@ -1,0 +1,13 @@
+# Insert-mode Ctrl-T indents the line and keeps the cursor on the same
+# TEXT: Neovim wi<C-t>X<Esc> on "foo bar" -> "<indent>foo Xbar". mnml
+# leaves the cursor at the old column, so X lands inside the indent.
+write f.txt "foo bar\n"
+open f.txt
+command editor.use_vim
+key w
+key i
+key ctrl+t
+type X
+key esc
+ex w
+expect file f.txt contains "foo Xbar"

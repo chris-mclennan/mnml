@@ -377,7 +377,7 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     // So every draw on the shared bucket says who took it. Without
     // this the bucket says only how much is left, which is the half of
     // the answer that does not help.
-    try limiter.identify(ratelimit.service, "mnml-bitbucket", if (@import("builtin").os.tag == .windows) 0 else @intCast(std.c.getpid()));
+    try limiter.identify(ratelimit.service, "mnml-bitbucket", sdk.warm.selfPid());
     var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-bitbucket");
     errdefer log.deinit();
     var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);

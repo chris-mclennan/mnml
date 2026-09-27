@@ -197,7 +197,7 @@ fn dirtyUnder(app: *App, path: []const u8) struct { n: usize, first: ?[]const u8
     var n: usize = 0;
     var first: ?[]const u8 = null;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.asEditor()) |e| if (e.buf.doc.path) |bp| {
-        const under = std.mem.eql(u8, bp, path) or (std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/');
+        const under = std.mem.eql(u8, bp, path) or (std.mem.startsWith(u8, bp, path) and bp.len > path.len and std.fs.path.isSep(bp[path.len]));
         if (under and p.dirty()) {
             n += 1;
             if (first == null) first = bp;
@@ -216,7 +216,7 @@ fn keepUnsaved(app: *App, path: []const u8, dest: []const u8) Allocator.Error!vo
         if (!p.dirty()) continue;
         const target = if (std.mem.eql(u8, bp, path))
             dest
-        else if (std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/')
+        else if (std.mem.startsWith(u8, bp, path) and bp.len > path.len and std.fs.path.isSep(bp[path.len]))
             try std.fs.path.join(arena, &.{ dest, bp[path.len + 1 ..] })
         else
             continue;
@@ -468,7 +468,7 @@ fn closeBuffersUnder(app: *App, path: []const u8, is_dir: bool) Allocator.Error!
         const p = &(app.panes.slots.items[i] orelse continue);
         const e = p.asEditor() orelse continue;
         const bp = e.buf.doc.path orelse continue;
-        if (std.mem.eql(u8, bp, path) or (is_dir and std.mem.startsWith(u8, bp, path) and bp.len > path.len and bp[path.len] == '/')) {
+        if (std.mem.eql(u8, bp, path) or (is_dir and std.mem.startsWith(u8, bp, path) and bp.len > path.len and std.fs.path.isSep(bp[path.len]))) {
             try app.forceClosePane(@intCast(i));
         }
     }
@@ -478,7 +478,7 @@ fn dropRecent(app: *App, path: []const u8, is_dir: bool) void {
     var i: usize = 0;
     while (i < app.recent.items.len) {
         const r = app.recent.items[i];
-        if (std.mem.eql(u8, r, path) or (is_dir and std.mem.startsWith(u8, r, path) and r.len > path.len and r[path.len] == '/')) {
+        if (std.mem.eql(u8, r, path) or (is_dir and std.mem.startsWith(u8, r, path) and r.len > path.len and std.fs.path.isSep(r[path.len]))) {
             app.gpa.free(app.recent.orderedRemove(i));
         } else i += 1;
     }
@@ -630,6 +630,7 @@ pub fn acceptEmpty(app: *App, choice: usize) Allocator.Error!void {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 const Env = struct {
     tmp: std.testing.TmpDir,
@@ -754,7 +755,7 @@ test "a trashed file with unsaved edits: the confirm says so and the trash keeps
     const eb = app.activeEditor().?;
     _ = try app.applyOps(eb, &.{.{ .insert_str = "EDIT" }});
     try confirmDelete(&app, &.{lib});
-    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.state.message, "unsaved changes in lib/b.txt") != null);
+    try t.expect(sdk_testing.pathContains(app.overlay.confirm.state.message, "unsaved changes in lib/b.txt"));
     try app.handle(.{ .key = Key.char('d') });
     try t.expect(!exists(&app, lib));
     var d2 = try Io.Dir.cwd().openDir(t.io, td, .{ .iterate = true });
@@ -867,6 +868,11 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
 }
 
 test "a trash delete the trash cannot take is not removed: the box asks again, naming why" {
+    // The fixture blocks the trash with a FILE where its directory goes.
+    // Windows answers a rename through a file with INVALID_PARAMETER,
+    // which Zig 0.16's Debug build panics on as a "programmer bug"
+    // rather than returning; the refusal cannot be staged there.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var env = try Env.init();
     defer env.deinit();
     var app = try env.app();

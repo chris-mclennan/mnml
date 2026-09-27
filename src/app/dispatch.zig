@@ -1354,9 +1354,9 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             else => {},
         },
         .set_panel_sort => |s| switch (s.panel) {
-            .todos => try todos.setSort(app, s.sort),
-            .notes => try notes.setSort(app, s.sort),
-            .findings => try findings.setSort(app, s.sort),
+            .todos => try todos.pickSort(app, s.sort),
+            .notes => try notes.pickSort(app, s.sort),
+            .findings => try findings.pickSort(app, s.sort),
             .integrations => try integrations.setSort(app, s.sort),
             .sessions, .git, .diagnostics, .http, .outline, .debug, .scripts, .search, .script, .jobs => {},
         },
@@ -1470,7 +1470,7 @@ fn overlayKey(app: *App, k: Key) Allocator.Error!void {
             // destination — completes folders on Tab; any other key ends
             // the cycle. The worktree prompt is `<path> [branch]`: its
             // path is the first word.
-            const path_prompt: ?bool = if (p.purpose == .add_workspace or p.purpose == .rename or p.purpose == .move_paths) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
+            const path_prompt: ?bool = if (p.purpose == .add_workspace or p.purpose == .rename or p.purpose == .move_paths or p.purpose == .save_as) false else if (p.purpose == .git and app.git.prompt == .worktree_add) true else null;
             if (path_prompt) |first_word| {
                 if (k.code == .tab) return promptPathComplete(app, &p.state, first_word);
                 dropComplete(app);
@@ -1715,6 +1715,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             else => if (app.diag.msg) |m| app.toast("{s}", .{m}) else app.toast("todo: {s}", .{@errorName(err)}),
         },
         .new_file => |dir| try tree_mod.acceptNewFile(app, dir, text),
+        .save_as => |id| try @import("cmd_file.zig").acceptSaveAs(app, id, text),
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
@@ -3909,7 +3910,8 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
         .jump_to_mark_line => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, false),
         .jump_to_mark_exact => |c| if (marks_store.isGlobal(c)) try marks_store.jump(app, c, true),
         // Buffer-local; the buffer answered them before we got here.
-        .dot_repeat, .macro_record_into, .operator_to_mark => {},
+        .dot_repeat, .macro_record_into, .operator_to_mark, .operator_motion => {},
+        .operator_search => |o| try cmd_find.openBarForOperator(app, o.backward),
         .macro_replay_from => |m| try macro_replay.run(app, pane_id, m.reg, m.count, m.recorded),
         .block_insert_start => |b| try beginBlockInsert(app, pane_id, e, b.append, false),
         .block_change_start => try beginBlockInsert(app, pane_id, e, false, true),
@@ -4165,6 +4167,10 @@ pub fn finishDeferredInserts(app: *App) Allocator.Error!void {
         const typed = try app.frame.allocator().dupe(u8, ed.bytes()[r.start_byte .. r.start_byte + typed_len]);
         const line = ed.lineOfByte(r.start_byte);
         if (r.kind.opensLine()) {
+            // The cursor ends on the LAST copy, in its column (Neovim:
+            // `3ohi<Esc>` -> 4:2, `3Ohi<Esc>` -> 3:2).
+            const col = ed.cursor -| ed.lineStart(line);
+            defer if (r.count > 1) ed.setCursor(@min(ed.lineStart(line + r.count - 1) + col, ed.lineEnd(line + r.count - 1)));
             var i: u32 = 1;
             while (i < r.count) : (i += 1) {
                 if (r.kind == .open_above) {
@@ -4305,7 +4311,9 @@ fn filterThroughShell(app: *App, cmd: []const u8) Allocator.Error!void {
 
 // ── the `:` line ──
 
-const ex_names = [_][]const u8{ "write", "wq", "quit", "edit", "bdelete", "bnext", "bprev", "sort", "retab", "substitute", "delete", "yank", "set", "registers", "marks", "abbreviate", "unabbreviate", "noh", "tabclose", "tabnew", "tabnext", "tabprev", "tabfirst", "tablast", "global", "vglobal", "normal", "command", "delcommand", "read", "dock", "sidebar" };
+/// The ex verbs `ex.run` answers, by their full Neovim names — what
+/// `:vs<Tab>` completes to (`getcompletion("vs", "cmdline")` = vsplit).
+const ex_names = [_][]const u8{ "abbreviate", "bdelete", "bfirst", "blast", "bnext", "bprevious", "buffer", "buffers", "bwipeout", "cclose", "changes", "cexpr", "cfirst", "clast", "clist", "close", "colorscheme", "command", "copen", "copy", "cnext", "cprevious", "cquit", "cwindow", "delcommand", "delete", "delmarks", "display", "dock", "echo", "edit", "enew", "exit", "global", "grep", "join", "jumps", "layout", "lclose", "lexpr", "lfirst", "llast", "lnext", "lopen", "lprevious", "marks", "messages", "move", "new", "nohlsearch", "normal", "only", "quit", "quitall", "read", "registers", "resize", "retab", "saveas", "set", "sidebar", "sort", "split", "substitute", "tabclose", "tabedit", "tabfirst", "tablast", "tabmove", "tabnew", "tabnext", "tabonly", "tabprevious", "tabs", "terminal", "unabbreviate", "update", "vertical", "vglobal", "vimgrep", "vnew", "vsplit", "wall", "wqall", "write", "wq", "xit", "yank" };
 const path_commands = [_][]const u8{ "e", "edit", "w", "write", "sp", "split", "vs", "vsplit", "tabe", "tabedit", "r", "read", "cd", "saveas" };
 
 /// Tab on the `:` line: the ring for the text so far (built by the
@@ -4332,8 +4340,8 @@ fn cmdlineTabComplete(app: *App, e: *EditorPane) Allocator.Error!void {
 /// and each string; empty when nothing matches). `<cmd> <partial>`
 /// completes what the command takes — `:set` its options, a path
 /// command the workspace's entries — spelled as whole lines
-/// (`e apple.md`); a lone token completes registry ids (prefix 300 /
-/// contains 200), the ex names (150) and the user's own `:command`s
+/// (`e apple.md`); a lone token completes the ex names (350), registry
+/// ids (prefix 300 / contains 200) and the user's own `:command`s
 /// (400), ties alphabetical.
 pub fn cmdlineCandidates(app: *App, gpa: Allocator, line: []const u8) Allocator.Error![][]u8 {
     var cands: std.ArrayListUnmanaged([]u8) = .empty;
@@ -4380,7 +4388,9 @@ pub fn cmdlineCandidates(app: *App, gpa: Allocator, line: []const u8) Allocator.
             try scored.append(gpa, .{ .name = id, .score = 200 });
         }
     }
-    for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 150 });
+    // An ex verb the text begins outranks every registry id: `:vs<Tab>`
+    // is `:vsplit` (Neovim), not `:http.fan_envs`, which only contains it.
+    for (ex_names) |n| if (std.mem.startsWith(u8, n, line)) try scored.append(gpa, .{ .name = n, .score = 350 });
     // User `:command`s outrank the registry: they are the user's own words.
     for (try ex_verbs.sortedNames(app, app.frame.allocator(), line)) |n| try scored.append(gpa, .{ .name = n, .score = 400 });
     std.mem.sort(Scored, scored.items, {}, struct {

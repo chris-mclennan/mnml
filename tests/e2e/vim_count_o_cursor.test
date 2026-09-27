@@ -1,0 +1,28 @@
+# Neovim: after 3ohi<Esc> the cursor is on the LAST inserted line (4:2);
+# after 3Ohi<Esc> on the last copy above (3:2); after i1<Esc>3. on "aaa"
+# on the last inserted char (1:3, "1111aaa"). mnml: 2:2 / 1:2 / 1:1.
+write f.txt "x\n"
+open f.txt
+command editor.use_vim
+key 3
+key o
+type hi
+key esc
+expect status contains "\"cursor\":{\"line\":4,\"col\":2}"
+write g.txt "x\n"
+open g.txt
+key 3
+key O
+type hi
+key esc
+expect status contains "\"cursor\":{\"line\":3,\"col\":2}"
+write h.txt "aaa\n"
+open h.txt
+key i
+type 1
+key esc
+key 3
+key .
+ex w
+expect file h.txt contains "1111aaa"
+expect status contains "\"cursor\":{\"line\":1,\"col\":3}"

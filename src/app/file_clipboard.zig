@@ -156,7 +156,7 @@ fn pasteCmd(app: *App) CommandError!void {
             continue;
         }
         // A folder into itself is a loop.
-        if (std.mem.startsWith(u8, dest, src) and dest.len > src.len and dest[src.len] == '/') {
+        if (std.mem.startsWith(u8, dest, src) and dest.len > src.len and std.fs.path.isSep(dest[src.len])) {
             app.toast("cannot paste {s} into itself", .{name});
             continue;
         }

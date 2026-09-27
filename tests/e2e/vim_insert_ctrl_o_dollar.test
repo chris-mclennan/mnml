@@ -1,0 +1,13 @@
+# Insert-mode Ctrl-O $ puts the cursor PAST the last char (it is still
+# Insert): Neovim i<C-o>$X on "foo bar" -> "foo barX". mnml clamps to the
+# last char like Normal mode -> "foo baXr".
+write f.txt "foo bar\n"
+open f.txt
+command editor.use_vim
+key i
+key ctrl+o
+key $
+type X
+key esc
+ex w
+expect file f.txt contains "foo barX"

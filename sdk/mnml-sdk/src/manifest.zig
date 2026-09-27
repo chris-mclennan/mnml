@@ -304,6 +304,7 @@ pub fn remove(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, id: [
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const sdk_testing = @import("testing.zig");
 
 test "ids are file names" {
     try validateId("jira");
@@ -352,18 +353,18 @@ test "the data root follows MNML_DATA_ROOT, XDG, HOME" {
     try env.put("HOME", "/h");
     const a = (try dataRoot(testing.allocator, &env)).?;
     defer testing.allocator.free(a);
-    try testing.expectEqualStrings("/h/.config/mnml", a);
+    try sdk_testing.expectPath("/h/.config/mnml", a);
     try env.put("XDG_CONFIG_HOME", "/x");
     const b = (try dataRoot(testing.allocator, &env)).?;
     defer testing.allocator.free(b);
-    try testing.expectEqualStrings("/x/mnml", b);
+    try sdk_testing.expectPath("/x/mnml", b);
     try env.put("MNML_DATA_ROOT", "/r");
     const c = (try dataRoot(testing.allocator, &env)).?;
     defer testing.allocator.free(c);
     try testing.expectEqualStrings("/r", c);
     const p = try path(testing.allocator, &env, "jira");
     defer testing.allocator.free(p);
-    try testing.expectEqualStrings("/r/integrations/jira.zon", p);
+    try sdk_testing.expectPath("/r/integrations/jira.zon", p);
 }
 
 test "USERPROFILE is the home where HOME is not set" {
@@ -406,7 +407,7 @@ test "write renders ZON that parses back with the same shape" {
     };
     const p = try writeUnder(testing.allocator, testing.io, root, m);
     defer testing.allocator.free(p);
-    try testing.expect(std.mem.endsWith(u8, p, "/integrations/hello.zon"));
+    try testing.expect(sdk_testing.pathEndsWith(p, "/integrations/hello.zon"));
     const text = try Io.Dir.cwd().readFileAllocOptions(testing.io, p, testing.allocator, .unlimited, .of(u8), 0);
     defer testing.allocator.free(text);
     try testing.expect(std.mem.startsWith(u8, text, "// Written by `mnml-hello --install`"));

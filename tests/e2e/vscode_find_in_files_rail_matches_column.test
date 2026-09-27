@@ -1,0 +1,16 @@
+# width: 120
+# height: 30
+# Ctrl+Shift+F runs Find in files into a Search pane beside the editor.
+# The rail's mark jumped to Search while the column went on showing the
+# Explorer tree — the rail and the column disagreed about what was up
+# (round-7 hunt). A column showing a section keeps the mark.
+write a.txt "hello add\n"
+open a.txt
+key ctrl+shift+f
+type add
+key enter
+expect within 5000 screen contains "1 match in 1 file"
+expect screen lacks "▌󰍉 │"
+expect screen contains " 󰍉 │"
+command view.activity_search
+expect screen contains "▌󰍉 │"

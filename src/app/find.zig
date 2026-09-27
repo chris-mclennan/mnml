@@ -95,6 +95,11 @@ pub const FindState = struct {
     /// the pattern `\<word\>` (`:help star`) — and the standard bar's
     /// Alt+W. `setQuery` clears it.
     whole_word: bool = false,
+    /// The text `matches` were found in: its length and a hash, so a
+    /// consumer can tell they went stale under an edit (`refresh`) —
+    /// byte offsets are only good for the text they were taken from.
+    found_len: usize = 0,
+    found_hash: u64 = 0,
 
     pub fn init(gpa: Allocator) FindState {
         return .{ .gpa = gpa };
@@ -118,6 +123,8 @@ pub const FindState = struct {
         out.offset = self.offset;
         out.seen_edit = self.seen_edit;
         out.whole_word = self.whole_word;
+        out.found_len = self.found_len;
+        out.found_hash = self.found_hash;
         return out;
     }
 
@@ -157,6 +164,7 @@ pub const FindState = struct {
         self.matches.clearRetainingCapacity();
         self.current = null;
         self.bad_pattern = null;
+        self.stampText(text);
         if (self.query.items.len == 0) return;
         if (self.regex) {
             var re = regex.Regex.compile(self.query.items, .{ .ignore_case = !self.case_sensitive, .dialect = self.dialect }) catch |err| switch (err) {
@@ -185,6 +193,24 @@ pub const FindState = struct {
             }
             self.matches.shrinkRetainingCapacity(kept);
         }
+    }
+
+    /// Find the matches again when `text` is not the text they were found
+    /// in; true when it was stale. A fresh set forgets `current`, so a
+    /// step after an edit searches from the cursor. Every match is then
+    /// in range and on the needle's bytes.
+    pub fn refresh(self: *FindState, text: []const u8) Allocator.Error!bool {
+        if (!self.isActive()) return false;
+        if (text.len == self.found_len and std.hash.Wyhash.hash(0, text) == self.found_hash) return false;
+        try self.recompute(text);
+        return true;
+    }
+
+    /// `matches` were just filled against `text` by someone else (an LSP
+    /// server's highlights): they are that text's.
+    pub fn stampText(self: *FindState, text: []const u8) void {
+        self.found_len = text.len;
+        self.found_hash = std.hash.Wyhash.hash(0, text);
     }
 
     /// The first match starting at or after `byte`, wrapping to 0.
@@ -348,4 +374,17 @@ test "find: smart case over a vim pattern skips escaped letters" {
     try std.testing.expect(patternHasUpper("\\SOO"));
     try std.testing.expect(patternHasUpper("\\cFoo"));
     try std.testing.expect(!patternHasUpper("abc\\"));
+}
+
+test "refresh: an edit under the matches finds them again; the same text keeps them" {
+    var f = FindState.init(std.testing.allocator);
+    defer f.deinit();
+    try f.setQuery("abc", "abchello", null);
+    f.current = 0;
+    try std.testing.expect(!(try f.refresh("abchello")));
+    try std.testing.expectEqual(@as(?usize, 0), f.current);
+    try std.testing.expect(try f.refresh("    abchello"));
+    try std.testing.expectEqual(@as(?usize, null), f.current);
+    try std.testing.expectEqual(@as(usize, 4), f.matches.items[0].start);
+    try std.testing.expectEqual(@as(usize, 7), f.matches.items[0].end);
 }
