@@ -1000,7 +1000,16 @@ fn serve(s: *Server, stream: Io.net.Stream) Io.Cancelable!void {
     var wbuf: [max_line]u8 = undefined;
     var r = stream.reader(s.io, &rbuf);
     var w = stream.writer(s.io, &wbuf);
-    const line = r.interface.takeDelimiterExclusive('\n') catch return;
+    // A read cut short by the broker going down is the cancel itself,
+    // and it has to be answered as one: a group task that swallows
+    // `error.Canceled` is marked canceled and parks at its next wait
+    // for good, and `stop`'s `group.cancel` never returns (the runtime's
+    // cancel is a one-shot handshake). Any other short read is a client
+    // that hung up, which ends this connection and nothing else.
+    const line = r.interface.takeDelimiterExclusive('\n') catch {
+        if (r.err) |e| if (e == error.Canceled) return error.Canceled;
+        return;
+    };
 
     var out: [max_line]u8 = undefined;
     const req = Request.parse(line) orelse return reply(&w, (Reply{ .why = .bad_request }).render(&out));
@@ -1044,12 +1053,18 @@ fn serve(s: *Server, stream: Io.net.Stream) Io.Cancelable!void {
     if (!tk.done.load(.acquire) or !tk.ok) {
         return reply(&w, (Reply{ .ok = false, .wait_ms = waited, .why = .closed }).render(&out));
     }
-    reply(&w, (Reply{ .ok = true, .wait_ms = waited, .remaining = tk.remaining }).render(&out));
+    try reply(&w, (Reply{ .ok = true, .wait_ms = waited, .remaining = tk.remaining }).render(&out));
 }
 
-fn reply(w: *Io.net.Stream.Writer, line: []const u8) void {
-    w.interface.writeAll(line) catch return;
-    w.interface.flush() catch return;
+fn reply(w: *Io.net.Stream.Writer, line: []const u8) Io.Cancelable!void {
+    w.interface.writeAll(line) catch return cancelOr(w);
+    w.interface.flush() catch return cancelOr(w);
+}
+
+/// A write that failed because the task was cancelled propagates the
+/// cancel (see `serve`); one the client would not take is nothing.
+fn cancelOr(w: *Io.net.Stream.Writer) Io.Cancelable!void {
+    if (w.err) |e| if (e == error.Canceled) return error.Canceled;
 }
 
 /// The dispatcher: while anybody is waiting, draw a token from the
