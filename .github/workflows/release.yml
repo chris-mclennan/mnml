@@ -104,6 +104,42 @@ jobs:
       - name: zig build dist -Dversion=${{ steps.ver.outputs.version }}
         run: zig build dist -Dversion=${{ steps.ver.outputs.version }} --summary all
 
+      # The release index. Nothing is bundled in the mnml archive: each
+      # integration is its own `<id>-v<version>` release
+      # (release-integration.yml), and `integrations.json` says which of
+      # them this mnml offers — integrations/index.zon's rows, each
+      # joined with its release's own integration.json and the
+      # catalogue's label and chip (tools/integrations_index.zig). A
+      # publishing run refuses to go on without every one of them: push
+      # the integration tags first (docs/RELEASE.md, "Integrations"). The
+      # dry run lists whatever releases exist.
+      - name: integrations.json (the release index)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          PUBLISHING: ${{ steps.ver.outputs.publishing }}
+        run: |
+          set -eu
+          rel="$RUNNER_TEMP/integration-releases"
+          mkdir -p "$rel"
+          zig run tools/integrations_index.zig -- --list > "$RUNNER_TEMP/index-rows.txt"
+          while read -r id ver; do
+            [ -n "$id" ] || continue
+            if gh release download "$id-v$ver" --pattern integration.json --dir "$rel/$id"; then
+              echo "$id-v$ver: integration.json"
+            else
+              echo "::warning::no release $id-v$ver (or it carries no integration.json)"
+            fi
+          done < "$RUNNER_TEMP/index-rows.txt"
+          allow=""
+          [ "$PUBLISHING" = "true" ] || allow="--allow-missing"
+          zig run tools/integrations_index.zig -- \
+            --mnml-version "$VERSION" --releases "$rel" \
+            --out zig-out/dist/integrations.json $allow
+          python3 -m json.tool zig-out/dist/integrations.json > /dev/null
+          cat zig-out/dist/integrations.json
+
       - name: The assets
         run: |
           ls -la zig-out/dist/
@@ -172,10 +208,10 @@ jobs:
         run: gh release upload "$TAG" mnml-x86_64-pc-windows-gnu.msi mnml-x86_64-pc-windows-gnu.msi.sha256 --clobber
 
   # A green run is not enough — count what the release actually carries.
-  # 16 here: five archives, five .sha256, sha256.sum, two installers, the
-  # manifest, the MSI and its .sha256. package-linux.yml adds four more
-  # later; scripts/dist-check.sh's default (20) is the number to check by
-  # hand once everything has run.
+  # 17 here: five archives, five .sha256, sha256.sum, two installers, the
+  # manifest, integrations.json, the MSI and its .sha256.
+  # package-linux.yml adds four more later; scripts/dist-check.sh's
+  # default (21) is the number to check by hand once everything has run.
   verify:
     name: Count the assets
     needs: [build, msi]
@@ -188,4 +224,4 @@ jobs:
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: scripts/dist-check.sh "${{ needs.build.outputs.tag }}" --min 16 --without-linux-packages
+        run: scripts/dist-check.sh "${{ needs.build.outputs.tag }}" --min 17 --without-linux-packages

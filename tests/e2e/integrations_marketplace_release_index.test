@@ -1,0 +1,28 @@
+# env: MNML_MARKETPLACE_INDEX=http://127.0.0.1:${SERVE_PORT}/integrations.json
+# The Marketplace tab's default source for a released mnml is its
+# release's `integrations.json`; MNML_MARKETPLACE_INDEX points the tab at
+# one served here instead (and replaces every other source). The index
+# names the sample integration, archived the way
+# `scripts/package-integration.sh` archives a release, with its sha256.
+# Install downloads it from the second server, checks the sum, unpacks
+# the binary into the file's private data root, links it and runs
+# `--install` — and the row turns installed.
+shell mkdir -p pkg/mnml-sample-any && cp "$MNML_SAMPLE_INTEGRATION" pkg/mnml-sample-any/ && (cd pkg && tar -cf - mnml-sample-any | xz -1 > ../mnml-sample.tar.xz)
+shell sum=$( (sha256sum mnml-sample.tar.xz 2>/dev/null || shasum -a 256 mnml-sample.tar.xz) | cut -d' ' -f1 ) && sdk=$(sed -n 's/^ *\.version = "\([^"]*\)".*/\1/p' "$MNML_REPO/sdk/mnml-sdk/build.zig.zon" | head -1) && a='' && for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu; do a="$a${a:+,}{\"target\":\"$t\",\"name\":\"mnml-sample-$t.tar.xz\",\"url\":\"http://127.0.0.1:${SERVE_PORT_2}/mnml-sample.tar.xz\",\"sha256\":\"$sum\"}"; done && printf '{"schema":1,"mnml":"0.0.0","sdk":"%s","integrations":[{"id":"sample","label":"Sample","description":"The sample, from a release index","version":"0.1.0","sdk":"%s","binary":"mnml-sample","tag":"sample-v0.1.0","assets":[%s]},{"id":"futuristic","label":"Futuristic","version":"1.0.0","sdk":"99.0.0","binary":"mnml-futuristic","assets":[%s]}]}' "$sdk" "$sdk" "$a" "$a" > integrations.json
+serve 0 200 @file integrations.json
+serve 0 200 @file mnml-sample.tar.xz
+command integrations.show_marketplace
+expect within 5000 screen contains "Mkt (1)"
+drag 30 5 70 5
+expect screen contains "[app] Sample"
+expect screen contains "(index)"
+expect screen contains "The sample, from a release index"
+expect screen contains "Official"
+# Built on an SDK this mnml is not compatible with: not offered at all.
+expect screen lacks "Futuristic"
+key i
+expect within 15000 screen contains "installed sample"
+expect screen contains "sha256 checked"
+shell test -x "$MNML_DATA_ROOT/integrations/sample/bin/$(basename "$MNML_SAMPLE_INTEGRATION")" && test -e "$MNML_DATA_ROOT/bin/$(basename "$MNML_SAMPLE_INTEGRATION")" && test -f "$MNML_DATA_ROOT/integrations/sample.zon"
+command integrations.show_installed
+expect screen contains "Sample  0.1.0"

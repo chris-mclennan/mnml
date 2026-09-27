@@ -51,6 +51,52 @@
 //!
 //! A minimal integration is `sdk/examples/hello`.
 
+/// The SDK's own version — `build.zig.zon`'s `.version`, as a value an
+/// integration and the host can both read. An integration built on this
+/// SDK is offered by an mnml whose SDK is compatible with it
+/// (`compatible`): the same major, and for a 0.x SDK the same minor —
+/// what a patch release may change without breaking a binary built on
+/// the one before. The release index (`integrations.json`) records it
+/// per integration; mnml's host test holds this string to the file.
+pub const version = "0.1.0";
+
+/// Whether an integration built on SDK `built_on` runs under a host
+/// whose SDK is `host`: the same major, and for a 0.x SDK the same
+/// minor. A version that does not parse is never compatible.
+pub fn compatible(host: []const u8, built_on: []const u8) bool {
+    const h = majorMinor(host) orelse return false;
+    const b = majorMinor(built_on) orelse return false;
+    if (h[0] != b[0]) return false;
+    return h[0] != 0 or h[1] == b[1];
+}
+
+fn majorMinor(v: []const u8) ?[2]u32 {
+    const core = v[0 .. std.mem.indexOfAny(u8, v, "-+") orelse v.len];
+    var it = std.mem.splitScalar(u8, core, '.');
+    const major = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
+    const minor = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
+    const patch = it.next() orelse return null;
+    _ = std.fmt.parseInt(u32, patch, 10) catch return null;
+    if (it.next() != null) return null;
+    return .{ major, minor };
+}
+
+test "compatible: same major, and the same minor below 1.0" {
+    const t = std.testing;
+    try t.expect(compatible("0.1.0", "0.1.0"));
+    try t.expect(compatible("0.1.3", "0.1.0"));
+    try t.expect(!compatible("0.2.0", "0.1.0"));
+    try t.expect(!compatible("0.1.0", "0.2.0"));
+    try t.expect(compatible("1.4.0", "1.0.2"));
+    try t.expect(!compatible("2.0.0", "1.9.9"));
+    try t.expect(compatible("0.1.0-rc1", "0.1.0"));
+    try t.expect(!compatible("0.1", "0.1.0"));
+    try t.expect(!compatible("", "0.1.0"));
+    try t.expect(!compatible("0.1.0", "x.y.z"));
+    try t.expect(compatible(version, version));
+}
+
+const std = @import("std");
 pub const wire = @import("wire.zig");
 pub const client = @import("client.zig");
 pub const frame = @import("frame.zig");

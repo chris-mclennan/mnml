@@ -7,3 +7,5 @@
 *.ttf binary
 *.gif binary
 *.bundle binary
+*.xz binary
+*.zip binary

@@ -48,6 +48,14 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnm
 winget install ChrisMcLennan.mnml
 ```
 
+That installs mnml and nothing else — one binary per platform. The
+integrations (Jira, Bitbucket, the SDK sample) are released on their
+own tags in this repo; the first-launch setup offers Jira and Bitbucket
+as checkboxes, and the INTEGRATIONS section's Marketplace tab lists the
+rest. Either installs the build for your platform from the index that
+ships with your mnml release, checking its sha256 first
+(`docs/RELEASE.md`, "Integrations").
+
 Debian / Ubuntu and Fedora / RHEL packages sit on every release as
 `mnml-<triple>.deb` / `.rpm`; the raw archives (`mnml-<triple>.tar.xz`,
 `.zip` on Windows) each come with a `.sha256`. Every shipped binary is a

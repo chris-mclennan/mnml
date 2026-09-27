@@ -18,6 +18,15 @@
 //! opens a pane, closes the wizard for it without persisting anything,
 //! and the wizard comes back on the pane's exit with the section's
 //! detection re-run.
+//!
+//! The Integrations section offers the first-party set
+//! (`first_party_integrations`: Jira, Bitbucket) as checkboxes, nothing
+//! checked. Space — or Enter, on the way out — installs the checked ones
+//! on the spot through the marketplace's own install
+//! (`marketplace.enqueue`): the release index's download for a released
+//! mnml, the checkout's build for a dev one. The wizard stays open and
+//! each row follows it (queued → installing… → installed). Esc, or
+//! nothing checked, installs nothing.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -32,6 +41,15 @@ const settings = @import("settings.zig");
 const install = @import("first_launch_install.zig");
 const key_doctor = @import("key_doctor.zig");
 const setup = @import("setup.zig");
+const marketplace = @import("marketplace.zig");
+const integrations_mod = @import("integrations.zig");
+
+/// The integrations the setup offers: mnml's own, released beside it.
+pub const FirstParty = struct { id: []const u8, label: []const u8 };
+pub const first_party_integrations = [_]FirstParty{
+    .{ .id = "jira", .label = "Jira" },
+    .{ .id = "bitbucket", .label = "Bitbucket" },
+};
 
 pub const Section = wizard.Section;
 
@@ -54,6 +72,10 @@ pub const State = struct {
     /// What Space did on the Keyboard section, for the row under it.
     kb_note: [note_cap]u8 = undefined,
     kb_note_len: u8 = 0,
+    /// The Integrations section: which boxes are checked (none to
+    /// start), and which row ←→ / y / n / Tab act on.
+    integ_checked: [first_party_integrations.len]bool = .{false} ** first_party_integrations.len,
+    integ_row: u8 = 0,
 
     pub const note_cap = 200;
 
@@ -104,6 +126,73 @@ pub fn show(app: *App) Allocator.Error!void {
     detect(app, &app.overlay.wizard);
     app.focus = .overlay;
     app.needs_render = true;
+    listIntegrations(app);
+}
+
+/// Ask the marketplace for its listing when it has none yet, so the
+/// Integrations rows can say what is on offer. A marketplace that is
+/// off, or has nothing to fetch, leaves the rows `not offered`.
+fn listIntegrations(app: *App) void {
+    const mk = &app.marketplace;
+    if (!app.cfg.marketplace.enabled or mk.fetching or mk.fetched_at_ms != null) return;
+    marketplace.refresh(app) catch {};
+}
+
+/// Each first-party integration's row: checked or not, and what the
+/// marketplace listing says about it.
+pub fn integrationRows(app: *App, arena: Allocator) Allocator.Error![]wizard.IntegrationRow {
+    const st = &app.overlay.wizard;
+    const mk = &app.marketplace;
+    const rows = try arena.alloc(wizard.IntegrationRow, first_party_integrations.len);
+    for (first_party_integrations, rows, 0..) |fp, *row, i| {
+        row.* = .{ .label = fp.label, .checked = st.integ_checked[i] };
+        const idx = marketplace.find(app, fp.id) orelse {
+            row.status = if (mk.fetching) .checking else .unavailable;
+            if (isQueued(app, fp.id)) row.status = .queued;
+            continue;
+        };
+        const e = mk.entries[idx];
+        row.version = e.version;
+        row.status = switch (try integrations_mod.catalogueState(app, arena, e.binary, e.version)) {
+            .not_installed => .available,
+            .installed => .installed,
+            .update => .update,
+        };
+        if (isQueued(app, fp.id)) row.status = .queued;
+        if (mk.installing) |cur| if (std.mem.eql(u8, cur, fp.id)) {
+            row.status = .installing;
+        };
+    }
+    return rows;
+}
+
+fn isQueued(app: *App, id: []const u8) bool {
+    for (app.marketplace.queue.items) |q| if (std.mem.eql(u8, q, id)) return true;
+    return false;
+}
+
+/// Install every checked integration that is not installed already —
+/// an update counts — through the marketplace's queue. Returns how many
+/// were asked for.
+pub fn installChecked(app: *App) command.CommandError!usize {
+    const st = &app.overlay.wizard;
+    const arena = app.frame.allocator();
+    const rows = try integrationRows(app, arena);
+    var asked: usize = 0;
+    for (first_party_integrations, rows, 0..) |fp, row, i| {
+        if (!st.integ_checked[i]) continue;
+        switch (row.status) {
+            .installed, .queued, .installing => continue,
+            .unavailable => {
+                app.toast("{s} is not offered for this mnml — nothing to install", .{fp.label});
+                continue;
+            },
+            .available, .update, .checking => {},
+        }
+        try marketplace.enqueue(app, fp.id);
+        asked += 1;
+    }
+    return asked;
 }
 
 /// Open on start when nobody has finished it yet.
@@ -134,6 +223,8 @@ pub fn model(app: *App) wizard.Model {
         .route_codex = st.route_codex,
         .ai_row = st.ai_row,
         .ghost_text = st.ghost_text,
+        .integrations = integrationRows(app, app.frame.allocator()) catch &.{},
+        .integration_row = st.integ_row,
     };
 }
 
@@ -146,7 +237,11 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         .adjust => |d| adjust(app, st.ui.section, d),
         .answer => |yes| answer(app, st.ui.section, yes),
         .probe => |i| st.keys_seen[i] = true,
-        .other_row => st.ai_row +%= 1,
+        .other_row => if (st.ui.section == .integrations) {
+            st.integ_row = @intCast((st.integ_row + 1) % first_party_integrations.len);
+        } else {
+            st.ai_row +%= 1;
+        },
         .action => try action(app, st.ui.section),
     }
     app.needs_render = true;
@@ -163,6 +258,19 @@ fn action(app: *App, section: wizard.Section) Allocator.Error!void {
         .vscode_shim => try toastOnFail(app, install.installCodeShim(app)),
         .keyboard => try applyKeyboardFix(app),
         .input_style, .ai_routing, .ai_ghost_text => adjust(app, section, 1),
+        .integrations => {
+            const n = installChecked(app) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => blk: {
+                    if (app.diag.msg) |m| app.toast("{s}", .{m});
+                    break :blk 0;
+                },
+            };
+            const any_checked = for (st.integ_checked) |c| {
+                if (c) break true;
+            } else false;
+            if (!any_checked) app.toast("Check an integration first — y or → on its row.", .{}) else if (n > 0) app.toast("Installing {d} integration(s) — the rows follow along.", .{n});
+        },
     }
 }
 
@@ -213,6 +321,10 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
                 .ai_routing => st.ai_row = @intCast(c.choice & 1),
                 .nerd_font => if (c.choice == 2) try action(app, .nerd_font) else answer(app, c.section, c.choice == 1),
                 .claude_codex, .vscode_shim => try action(app, c.section),
+                .integrations => if (c.choice < first_party_integrations.len) {
+                    st.integ_row = @intCast(c.choice);
+                    st.integ_checked[c.choice] = !st.integ_checked[c.choice];
+                },
                 else => answer(app, c.section, c.choice == 1),
             }
         },
@@ -262,6 +374,7 @@ fn adjust(app: *App, section: wizard.Section, delta: i8) void {
             cur.* = @enumFromInt(if (delta < 0) (i + n - 1) % n else (i + 1) % n);
             st.routes_touched[st.ai_row] = true;
         },
+        .integrations => st.integ_checked[st.integ_row] = !st.integ_checked[st.integ_row],
         .keyboard, .claude_codex, .vscode_shim => {},
     }
 }
@@ -280,6 +393,7 @@ fn answer(app: *App, section: wizard.Section, yes: bool) void {
             st.ghost_text = yes;
             st.ghost_touched = true;
         },
+        .integrations => st.integ_checked[st.integ_row] = yes,
         .keyboard, .claude_codex, .ai_routing, .vscode_shim => {},
     }
 }
@@ -292,8 +406,13 @@ fn later(app: *App) void {
     app.needs_render = true;
 }
 
-/// Enter: apply the touched answers, write them home, mark it done.
+/// Enter: apply the touched answers, write them home, mark it done —
+/// and install the checked integrations, as Space would have.
 fn finish(app: *App) Allocator.Error!void {
+    const installing = installChecked(app) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => 0,
+    };
     const st = app.overlay.wizard;
     app.overlay.deinit(app.gpa);
     app.focus = if (app.active) |a| .{ .pane = a } else .tree;
@@ -320,7 +439,10 @@ fn finish(app: *App) Allocator.Error!void {
     }
     app.cfg.ui.first_launch_complete = true;
     if (try settings.persist(app, .home, &.{ "ui", "first_launch_complete" }, true)) writes += 1;
-    app.toast("Setup saved ({d} setting(s)). Reopen anytime with `first_launch.show`.", .{writes});
+    if (installing > 0)
+        app.toast("Setup saved ({d} setting(s)); installing {d} integration(s) — INTEGRATIONS shows them as they land. Reopen anytime with `first_launch.show`.", .{ writes, installing })
+    else
+        app.toast("Setup saved ({d} setting(s)). Reopen anytime with `first_launch.show`.", .{writes});
     app.needs_render = true;
 }
 
@@ -654,4 +776,169 @@ test "Space on Keyboard: in ghostty on macOS with no Option chord seen the fix i
         try app.handle(.{ .key = Key.char(' ') });
         try t.expectEqualStrings("Option+→ already arrives — nothing to fix.", app.overlay.wizard.keyboardNote());
     }
+}
+
+/// The Integrations section's rig: an index listing Jira and Bitbucket,
+/// served by a fetcher table — no socket anywhere. Jira's archive is the
+/// release fixture (a script whose `--install` writes a manifest);
+/// Bitbucket's is bytes that fail their sha256, counted if fetched.
+const IntegRig = struct {
+    tmp: std.testing.TmpDir,
+    root: []u8,
+    env: std.process.Environ.Map,
+    index: []u8,
+    routes: [3]release.FakeFetcher.Route = undefined,
+    fake: release.FakeFetcher,
+
+    const release = @import("marketplace_release.zig");
+    const tar = @embedFile("testdata/marketplace/mnml-demo.tar.xz");
+    const index_url = "https://fake.invalid/integrations.json";
+    const jira_url = "https://fake.invalid/jira.tar.xz";
+    const bitbucket_url = "https://fake.invalid/bitbucket.tar.xz";
+
+    fn init(r: *IntegRig) !void {
+        r.tmp = t.tmpDir(.{});
+        errdefer r.tmp.cleanup();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const n = try r.tmp.dir.realPath(t.io, &buf);
+        r.root = try t.allocator.dupe(u8, buf[0..n]);
+        errdefer t.allocator.free(r.root);
+        const sha = release.sha256Hex(tar);
+        const triple = release.host_triple orelse return error.SkipZigTest;
+        r.index = try std.fmt.allocPrint(t.allocator,
+            \\{{"schema":1,"integrations":[
+            \\ {{"id":"jira","label":"Jira","version":"0.2.0","sdk":"{s}","binary":"mnml-demo","assets":[{{"target":"{s}","name":"jira.tar.xz","url":"{s}","sha256":"{s}"}}]}},
+            \\ {{"id":"bitbucket","label":"Bitbucket","version":"0.2.0","sdk":"{s}","binary":"mnml-bb","assets":[{{"target":"{s}","name":"bitbucket.tar.xz","url":"{s}","sha256":"{s}"}}]}}]}}
+        , .{ release.host_sdk, triple, jira_url, &sha, release.host_sdk, triple, bitbucket_url, &sha });
+        errdefer t.allocator.free(r.index);
+        r.fake = .{ .routes = &.{} };
+        r.env = std.process.Environ.Map.init(t.allocator);
+        try r.env.put("MNML_MARKETPLACE_INDEX", index_url);
+        try r.env.put("PATH", "/bin:/usr/bin");
+    }
+
+    fn deinit(r: *IntegRig) void {
+        r.env.deinit();
+        t.allocator.free(r.index);
+        t.allocator.free(r.root);
+        r.tmp.cleanup();
+    }
+
+    fn app(r: *IntegRig) !App {
+        var a = try App.initWith(t.allocator, t.io, .{ .workspace = r.root, .data_root = r.root, .cols = 120, .rows = 60, .env = &r.env });
+        a.tree.visible = false;
+        r.routes = .{
+            .{ .url = index_url, .body = r.index },
+            .{ .url = jira_url, .body = tar },
+            // Served, so a fetch of it is counted — and refused by its sum.
+            .{ .url = bitbucket_url, .body = "not the archive the index names" },
+        };
+        r.fake.routes = &r.routes;
+        a.marketplace.fetcher = r.fake.fetcher();
+        return a;
+    }
+};
+
+fn settleMarket(app: *App) !void {
+    var waited: u32 = 0;
+    while ((app.marketplace.fetching or app.marketplace.installing != null or app.marketplace.queue.items.len > 0) and waited < 30_000) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    if (app.marketplace.fetching or app.marketplace.installing != null) return error.Timeout;
+}
+
+test "Integrations: nothing checked installs nothing; Space installs just the checked one through the marketplace; Esc after checking installs nothing" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest; // the fixture binary is a shell script
+    var rig: IntegRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    // Opening the setup asks the marketplace for its listing.
+    try settleMarket(&app);
+    try t.expectEqual(@as(u32, 1), rig.fake.hitsOf(IntegRig.index_url));
+    {
+        const rows = try integrationRows(&app, app.frame.allocator());
+        try t.expectEqual(wizard.IntegrationRow.Status.available, rows[0].status);
+        try t.expectEqualStrings("0.2.0", rows[0].version);
+        try t.expectEqual(wizard.IntegrationRow.Status.available, rows[1].status);
+        try t.expect(!rows[0].checked and !rows[1].checked);
+    }
+    try app.handle(.{ .key = Key.char('8') });
+    try t.expect(app.overlay.wizard.ui.section == .integrations);
+    try app.render();
+    {
+        const screen = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+        defer t.allocator.free(screen);
+        try t.expect(std.mem.indexOf(u8, screen, "[ ] Jira") != null);
+        try t.expect(std.mem.indexOf(u8, screen, "[ ] Bitbucket") != null);
+    }
+
+    // Space with nothing checked: nothing asked for, nothing fetched.
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "Check an integration first") != null);
+    try t.expect(app.marketplace.installing == null and app.marketplace.queue.items.len == 0);
+    try t.expectEqual(@as(u32, 0), rig.fake.hitsOf(IntegRig.jira_url));
+
+    // y checks Jira (the first row); Space installs it and only it.
+    try app.handle(.{ .key = Key.char('y') });
+    try t.expect(app.overlay.wizard.integ_checked[0] and !app.overlay.wizard.integ_checked[1]);
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .wizard); // the setup stays open and follows along
+    try t.expectEqualStrings("jira", app.marketplace.installing.?);
+    try settleMarket(&app);
+    try t.expectEqual(@as(u32, 1), rig.fake.hitsOf(IntegRig.jira_url));
+    try t.expectEqual(@as(u32, 0), rig.fake.hitsOf(IntegRig.bitbucket_url));
+    {
+        const rows = try integrationRows(&app, app.frame.allocator());
+        try t.expectEqual(wizard.IntegrationRow.Status.installed, rows[0].status);
+        try t.expectEqual(wizard.IntegrationRow.Status.available, rows[1].status);
+    }
+    try std.Io.Dir.cwd().access(t.io, try std.fs.path.join(app.frame.allocator(), &.{ rig.root, "bin", "mnml-demo" }), .{});
+    // Space again: Jira is installed, so nothing more is fetched.
+    try app.handle(.{ .key = Key.char(' ') });
+    try settleMarket(&app);
+    try t.expectEqual(@as(u32, 1), rig.fake.hitsOf(IntegRig.jira_url));
+
+    // Tab to Bitbucket, check it, then Esc: skip installs nothing.
+    try app.handle(.{ .key = Key.named(.tab) });
+    try app.handle(.{ .key = Key.char('y') });
+    try t.expect(app.overlay.wizard.integ_checked[1]);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try settleMarket(&app);
+    try t.expectEqual(@as(u32, 0), rig.fake.hitsOf(IntegRig.bitbucket_url));
+    try t.expect(app.marketplace.installing == null and app.marketplace.queue.items.len == 0);
+    try t.expect(!app.cfg.ui.first_launch_complete);
+}
+
+test "Integrations: Enter installs the checked ones on the way out, and says so" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var rig: IntegRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    try settleMarket(&app);
+    try app.handle(.{ .key = Key.char('8') });
+    // A click on Jira's row checks it.
+    try app.render();
+    var jira_hit: ?@import("../ui/rect.zig") = null;
+    for (app.hits.items.items) |h| if (h.target == .overlay_item) if (wizard.decodeHit(h.target.overlay_item)) |hit| if (hit == .chip and hit.chip.section == .integrations and hit.chip.choice == 0) {
+        jira_hit = h.rect;
+    };
+    try app.handle(.{ .mouse = .{ .x = jira_hit.?.x + 4, .y = jira_hit.?.y, .kind = .press, .button = .left } });
+    try t.expect(app.overlay.wizard.integ_checked[0]);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(app.cfg.ui.first_launch_complete);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "installing 1 integration(s)") != null);
+    try settleMarket(&app);
+    try t.expectEqual(@as(u32, 1), rig.fake.hitsOf(IntegRig.jira_url));
+    try t.expectEqual(@as(u32, 0), rig.fake.hitsOf(IntegRig.bitbucket_url));
+    try t.expectEqual(@as(usize, 1), app.integrations.list.len);
 }

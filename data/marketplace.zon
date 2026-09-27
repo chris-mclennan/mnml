@@ -1,5 +1,8 @@
-// The mnml catalogue — the integrations mnml itself ships, and the
-// Marketplace tab's default source (`mnml`). One entry per binary, not
+// The mnml catalogue — the integrations this repo builds, listed as the
+// `mnml` source (a dev build's default; a released mnml lists its
+// release index first, and a row both carry installs from the index).
+// `tools/integrations_index.zig` also reads each row's label,
+// description, docs and chip into a release's `integrations.json`. One entry per binary, not
 // per manifest: `mnml-jira --install` writes three manifests, so Jira
 // is one row here and three chips once installed.
 //

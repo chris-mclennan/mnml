@@ -1,5 +1,8 @@
-//! The `mnml` source — the catalogue of integrations mnml itself
-//! ships, and the Marketplace tab's default source.
+//! The `mnml` source — the catalogue of integrations this checkout
+//! builds. The Marketplace tab's default source for a released mnml is
+//! its release index (`marketplace_release.zig`); a dev build, which has
+//! no release, lists this instead, and a catalogue row the index also
+//! lists is dropped in favour of the index's download.
 //!
 //! The catalogue is one ZON file, `data/marketplace.zon` in the repo,
 //! packaged as `share/mnml/marketplace.zon` beside the binary the way

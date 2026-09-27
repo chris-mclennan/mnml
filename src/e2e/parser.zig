@@ -24,7 +24,9 @@
 //!                                #   line, the body) or just the body; delay= waits before
 //!                                #   the body goes out (a server that never finishes);
 //!                                #   the text `@echo` answers with the request as it
-//!                                #   arrived (request line, headers, body) as text/plain.
+//!                                #   arrived (request line, headers, body) as text/plain;
+//!                                #   `@file <relpath>` answers with that workspace
+//!                                #   file's bytes, read when the step runs.
 //!                                #   Port 0 is the one to use: the runner binds a free
 //!                                #   port for each `serve 0` when the file starts, and
 //!                                #   `${SERVE_PORT}` (the first) / `${SERVE_PORT_<n>}`

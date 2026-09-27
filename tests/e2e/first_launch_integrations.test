@@ -1,0 +1,26 @@
+# The first-launch setup's Integrations section (8): the first-party
+# integrations as checkboxes, none checked, each with what the
+# marketplace says about it. A dev build's marketplace is the checkout's
+# catalogue, so Jira and Bitbucket are listed and not installed in the
+# file's fresh data root. Checking one and pressing Esc ("ask me later")
+# installs nothing and writes nothing — the skip is clean.
+command first_launch.show
+expect screen contains "First-launch setup"
+key 8
+expect screen contains "8 · Integrations"
+expect within 5000 screen contains "[ ] Jira"
+expect screen contains "[ ] Bitbucket"
+expect screen contains "not installed"
+expect screen contains "Space installs the checked now"
+# y checks the focused row (Jira); Tab moves to Bitbucket; n leaves it.
+key y
+expect screen contains "[x] Jira"
+key tab
+key n
+expect screen contains "[ ] Bitbucket"
+# Skip: the box goes, nothing is installed, the gate stays open.
+key esc
+expect screen lacks "First-launch setup"
+expect screen contains "Setup skipped"
+expect screen lacks "installing"
+shell test ! -e "$MNML_DATA_ROOT/integrations/jira.zon" && test ! -e "$MNML_DATA_ROOT/bin/mnml-jira" && test ! -e "$MNML_DATA_ROOT/config.zon"
