@@ -198,14 +198,17 @@ fn supervise(init: std.process.Init.Minimal, args: []const [:0]const u8) void {
         var watch: Watchdog = .{
             .io = io,
             .progress_path = progress_path,
-            .pid = proc.id orelse 0,
-            .started = Io.Timestamp.now(io, .real),
+            .pid = undefined,
+            .started = Io.Clock.awake.now(io),
             .limit_ns = @as(i96, wedge_secs) * std.time.ns_per_s,
         };
-        const watcher: ?std.Thread = if (wedge_secs > 0 and builtin.os.tag != .windows and watch.pid != 0)
-            std.Thread.spawn(.{}, Watchdog.run, .{&watch}) catch null
-        else
-            null;
+        // Windows is left out at comptime: `Child.Id` is a handle there,
+        // and the watchdog signals a pid. (Its Debug step streams names
+        // live, and that is what named the first Windows wedge.)
+        const watcher: ?std.Thread = if (builtin.os.tag != .windows and wedge_secs > 0) blk: {
+            watch.pid = proc.id orelse break :blk null;
+            break :blk std.Thread.spawn(.{}, Watchdog.run, .{&watch}) catch null;
+        } else null;
         const term = proc.wait(io) catch |err| std.debug.panic("test runner: lost the suite: {t}", .{err});
         watch.done.store(true, .release);
         if (watcher) |th| th.join();
@@ -262,13 +265,27 @@ const Watchdog = struct {
     fired: std.atomic.Value(bool) = .init(false),
 
     fn run(w: *Watchdog) void {
+        // The awake clock, not the wall clock and not the file's mtime: a
+        // laptop that slept for an hour mid-suite wakes with every test
+        // "stalled" by an hour on either of those, and the first night
+        // this ran it called a 2.5-second test WEDGED that way.
+        var last_text: [24]u8 = undefined;
+        var last_len: usize = 0;
+        var last_change = w.started;
         while (!w.done.load(.acquire)) {
             var ts: std.c.timespec = .{ .sec = 1, .nsec = 0 };
             _ = std.c.nanosleep(&ts, null);
             if (w.done.load(.acquire)) return;
-            const since = if (Io.Dir.cwd().statFile(w.io, w.progress_path, .{})) |st| st.mtime else |_| w.started;
-            const now = Io.Timestamp.now(w.io, .real);
-            if (now.nanoseconds - since.nanoseconds < w.limit_ns) continue;
+            var buf: [24]u8 = undefined;
+            const text = Io.Dir.cwd().readFile(w.io, w.progress_path, &buf) catch "";
+            const now = Io.Clock.awake.now(w.io);
+            if (!std.mem.eql(u8, text, last_text[0..last_len])) {
+                last_len = @min(text.len, last_text.len);
+                @memcpy(last_text[0..last_len], text[0..last_len]);
+                last_change = now;
+                continue;
+            }
+            if (now.nanoseconds - last_change.nanoseconds < w.limit_ns) continue;
             w.fired.store(true, .release);
             std.debug.print("  WEDGED: no progress for {d} s; sampling pid {d} before killing it\n", .{ @divTrunc(w.limit_ns, std.time.ns_per_s), w.pid });
             w.sample();
@@ -282,13 +299,14 @@ const Watchdog = struct {
 
     /// Every thread's stack, from the outside: what a wedge needs and a
     /// step timeout throws away. macOS only; elsewhere the name is all.
-    /// To stdout, in the log — never `sample`'s default file under /tmp.
+    /// To stderr, where the build runner forwards a test step's output
+    /// (its stdout it keeps) — never `sample`'s default file under /tmp.
     fn sample(w: *Watchdog) void {
         if (builtin.os.tag != .macos) return;
         var pid_buf: [16]u8 = undefined;
         const pid = std.fmt.bufPrint(&pid_buf, "{d}", .{w.pid}) catch return;
         var proc = std.process.spawn(w.io, .{
-            .argv = &.{ "/usr/bin/sample", pid, "1", "-mayDie", "-file", "/dev/stdout" },
+            .argv = &.{ "/usr/bin/sample", pid, "1", "-mayDie", "-file", "/dev/stderr" },
             .stdin = .ignore,
             .stdout = .inherit,
             .stderr = .inherit,
