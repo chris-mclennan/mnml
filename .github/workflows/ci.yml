@@ -78,19 +78,23 @@ jobs:
       # Leak = FAIL: every unit test runs on std.testing.allocator. Windows
       # runs the same command; the POSIX-gated pty / tui suites are simply
       # not in its graph (build.zig, `pty_supported`).
-      # Windows runs `unit` with every test's name streamed as it starts:
-      # the suite's first Windows runs sat silent for fifty minutes on a
-      # test nobody could name. The e2e gate that `test` adds runs as its
-      # own step below, where its lines stream too.
+      # Windows and macOS run `unit` with every test's name streamed as it
+      # starts: the suite's first Windows runs sat silent for fifty minutes
+      # on a test nobody could name, and a macOS run then did the same for
+      # an hour (2026-09-27, #4). The e2e gate that `test` adds runs as its
+      # own step below, where its lines stream too; ubuntu keeps `test`.
       - name: zig build test (Debug)
         shell: bash
         timeout-minutes: 60
-        run: zig build -j2 ${{ matrix.os == 'windows-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
+        run: zig build -j2 ${{ matrix.os != 'ubuntu-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
 
+      # macOS: the same streamed `unit` in ReleaseSafe. #7's own run had
+      # the shipped-mode `test` binary fail with no text and the step hang
+      # to its timeout; the ReleaseSafe gate runs as the `--gate` step below.
       - name: zig build test (ReleaseSafe — what ships)
         shell: bash
         timeout-minutes: 40
-        run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 ${{ matrix.os == 'macos-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=ReleaseSafe --summary failures
 
       # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
       # files, and the corpus's timings are the shipped build's
