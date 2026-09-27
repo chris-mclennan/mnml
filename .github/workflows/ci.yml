@@ -88,10 +88,13 @@ jobs:
         timeout-minutes: 60
         run: zig build -j2 ${{ matrix.os != 'ubuntu-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=Debug --summary failures
 
+      # macOS: the same streamed `unit` in ReleaseSafe. #7's own run had
+      # the shipped-mode `test` binary fail with no text and the step hang
+      # to its timeout; the ReleaseSafe gate runs as the `--gate` step below.
       - name: zig build test (ReleaseSafe — what ships)
         shell: bash
         timeout-minutes: 40
-        run: zig build -j2 test -Doptimize=ReleaseSafe --summary failures
+        run: zig build -j2 ${{ matrix.os == 'macos-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=ReleaseSafe --summary failures
 
       # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
       # files, and the corpus's timings are the shipped build's
