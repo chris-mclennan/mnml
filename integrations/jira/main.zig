@@ -480,6 +480,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     // The host sets this for every integration it spawns; a dispatched
     // `term` line goes to that channel and nowhere else.
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
+    app.setOpenUrlRoute(env.get(sdk.platform.open_url_env));
     // `--focus ENG-2`: remembered now, landed at the first listing
     // that can hold it.
     if (args.focus.len > 0) app.setFocusKey(args.focus);
@@ -1299,6 +1300,7 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     defer sync_store.deinit();
     app.setSyncStore(&sync_store);
     app.setIpcDir(env.get("MNML_IPC_DIR") orelse "");
+    app.setOpenUrlRoute(env.get(sdk.platform.open_url_env));
     if (args.focus.len > 0) app.setFocusKey(args.focus);
     defer app.deinit();
     app.resize(cols, rows);

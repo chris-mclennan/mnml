@@ -85,9 +85,16 @@ pub fn openArgv(arena: Allocator, configured: []const u8, url: []const u8) Alloc
 }
 
 /// Open `url` in whatever the machine calls a browser. Detached: the
-/// pane must not wait on a browser starting up.
-pub fn open(io: Io, arena: Allocator, configured: []const u8, url: []const u8) Outcome {
+/// pane must not wait on a browser starting up. `route` is
+/// `$MNML_OPEN_URL` (`sdk.platform.divertOpenUrl`): `none` or a log
+/// file, and no opener is started — the configured one included.
+pub fn open(io: Io, arena: Allocator, configured: []const u8, route: ?[]const u8, url: []const u8) Outcome {
     if (!looksSafe(url)) return .{ .failed = "that is not an http(s) URL" };
+    switch (@import("mnml_sdk").platform.divertOpenUrl(io, route, url)) {
+        .spawn => {},
+        .dropped, .logged => return .{ .ok = "opened" },
+        .log_failed => return .{ .failed = "could not write the $MNML_OPEN_URL log" },
+    }
     const argv = openArgv(arena, configured, url) catch return .{ .failed = "out of memory" };
     var child = std.process.spawn(io, .{
         .argv = argv,
@@ -145,4 +152,25 @@ test "the clipboard tool list has a first choice and, off macOS and Windows, fal
         try testing.expectEqualStrings("wl-copy", clipboardArgv()[0]);
         try testing.expectEqual(@as(usize, 2), clipboardFallbacks().len);
     }
+}
+
+test "MNML_OPEN_URL set to a file: the URL lands there, even over a configured opener, and nothing starts" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &root);
+    const log = try std.fmt.allocPrint(testing.allocator, "{s}/opened-urls.log", .{root[0..n]});
+    defer testing.allocator.free(log);
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    // A configured opener that does not exist: had it been started, the
+    // outcome would be `.failed`.
+    const missing = "mnml-jira-no-such-opener";
+    try testing.expect(open(testing.io, a.allocator(), missing, null, "https://x.test/control") == .failed);
+    try testing.expect(open(testing.io, a.allocator(), missing, log, "https://x.test/browse/ENG-1") == .ok);
+    try testing.expect(open(testing.io, a.allocator(), missing, "none", "https://x.test/dropped") == .ok);
+    const body = try tmp.dir.readFileAlloc(testing.io, "opened-urls.log", testing.allocator, .unlimited);
+    defer testing.allocator.free(body);
+    try testing.expect(std.mem.endsWith(u8, body, "\thttps://x.test/browse/ENG-1\n"));
+    try testing.expect(std.mem.indexOf(u8, body, "dropped") == null);
 }

@@ -1575,7 +1575,7 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
             }
         },
         .open_url => |url| {
-            if (os.openUrl(gpa, io, url)) |whynot| mount.toast(.warn, whynot) catch {};
+            if (os.openUrl(gpa, io, env, url)) |whynot| mount.toast(.warn, whynot) catch {};
         },
         .copy => |text| {
             if (os.copy(gpa, io, env, text)) |whynot| mount.toast(.warn, whynot) catch {};

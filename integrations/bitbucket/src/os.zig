@@ -28,11 +28,31 @@ pub fn copyArgv(arena: Allocator, wayland: bool) Allocator.Error![]const []const
 }
 
 /// Open `url`. The error is the tool's name and what went wrong.
-pub fn openUrl(gpa: Allocator, io: Io, url: []const u8) ?[]const u8 {
+/// `MNML_OPEN_URL` in `env` comes first (`sdk.platform.divertOpenUrl`):
+/// `none` or a log file, and no opener is started.
+pub fn openUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, url: []const u8) ?[]const u8 {
+    return openUrlVia(gpa, io, env, url, openArgv);
+}
+
+/// `openUrl` with the argv it would start named by `argvFn` — a test's
+/// stand-in, so proving no opener started never needs a real one.
+fn openUrlVia(
+    gpa: Allocator,
+    io: Io,
+    env: *const std.process.Environ.Map,
+    url: []const u8,
+    comptime argvFn: fn (Allocator, []const u8) Allocator.Error![]const []const u8,
+) ?[]const u8 {
+    const platform = @import("mnml_sdk").platform;
+    switch (platform.divertOpenUrl(io, env.get(platform.open_url_env), url)) {
+        .spawn => {},
+        .dropped, .logged => return null,
+        .log_failed => return "could not write the $MNML_OPEN_URL log",
+    }
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const argv = openArgv(arena.allocator(), url) catch return "out of memory";
-    const res = std.process.run(gpa, io, .{ .argv = argv, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) }) catch |err| switch (err) {
+    const argv = argvFn(arena.allocator(), url) catch return "out of memory";
+    const res = std.process.run(gpa, io, .{ .argv = argv, .environ_map = env, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) }) catch |err| switch (err) {
         error.FileNotFound => return "no browser opener on PATH",
         else => return @errorName(err),
     };
@@ -112,4 +132,37 @@ test "a missing tool is a reason, not a crash" {
     };
     t.allocator.free(res.stdout);
     t.allocator.free(res.stderr);
+}
+
+test "MNML_OPEN_URL set to a file: the URL lands there and no opener is started" {
+    // The opener is a program that does not exist: had one been
+    // started, `openUrlVia` would say it was not found. The real
+    // `open` / `xdg-open` never runs in this test.
+    const Missing = struct {
+        fn argv(arena: Allocator, url: []const u8) Allocator.Error![]const []const u8 {
+            return arena.dupe([]const u8, &.{ "mnml-bitbucket-no-such-opener", url });
+        }
+    };
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var root: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &root);
+    const log = try std.fmt.allocPrint(t.allocator, "{s}/opened-urls.log", .{root[0..n]});
+    defer t.allocator.free(log);
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    // The control: unset, it does try to start the opener.
+    try t.expect(openUrlVia(t.allocator, t.io, &env, "https://x.test/control", Missing.argv) != null);
+    try env.put("MNML_OPEN_URL", log);
+    try t.expectEqual(@as(?[]const u8, null), openUrlVia(t.allocator, t.io, &env, "https://x.test/acme/api/pipelines", Missing.argv));
+    const body = try tmp.dir.readFileAlloc(t.io, "opened-urls.log", t.allocator, .unlimited);
+    defer t.allocator.free(body);
+    try t.expect(std.mem.endsWith(u8, body, "\thttps://x.test/acme/api/pipelines\n"));
+    try t.expect(std.mem.indexOf(u8, body, "control") == null);
+    // `none`: nothing written, nothing started.
+    try env.put("MNML_OPEN_URL", "none");
+    try t.expectEqual(@as(?[]const u8, null), openUrlVia(t.allocator, t.io, &env, "https://x.test/dropped", Missing.argv));
+    const again = try tmp.dir.readFileAlloc(t.io, "opened-urls.log", t.allocator, .unlimited);
+    defer t.allocator.free(again);
+    try t.expectEqualStrings(body, again);
 }

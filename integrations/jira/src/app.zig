@@ -320,6 +320,10 @@ pub const App = struct {
     /// where a dispatched `term` line has to go. Borrowed from the
     /// environment, empty outside a host.
     ipc_dir: []const u8 = "",
+    /// `$MNML_OPEN_URL`: whether a URL reaches a browser at all
+    /// (`sdk.platform.openUrlRoute`). Borrowed from the environment;
+    /// null outside a host.
+    open_url_route: ?[]const u8 = null,
     /// The config file this pane was loaded from — where a saved vars
     /// edit is spliced back into. Empty means the editor can still run
     /// but cannot save, and says so.
@@ -514,6 +518,11 @@ pub const App = struct {
     /// line. Set by the caller right after `init`; empty outside a host.
     pub fn setIpcDir(a: *App, dir: []const u8) void {
         a.ipc_dir = dir;
+    }
+
+    /// `$MNML_OPEN_URL`, off the environment right after `init`.
+    pub fn setOpenUrlRoute(a: *App, route: ?[]const u8) void {
+        a.open_url_route = route;
     }
 
     /// `--focus ENG-2` off the argv, before anything has loaded. The
@@ -2603,7 +2612,7 @@ pub const App = struct {
     pub fn openUrl(a: *App, url: []const u8) Allocator.Error!void {
         var scratch = std.heap.ArenaAllocator.init(a.gpa);
         defer scratch.deinit();
-        switch (os.open(a.io, scratch.allocator(), a.cfg.open_command, url)) {
+        switch (os.open(a.io, scratch.allocator(), a.cfg.open_command, a.open_url_route, url)) {
             .ok => a.say("opened {s}", .{url}),
             .failed => |why| a.say("open failed: {s}", .{why}),
         }
