@@ -179,7 +179,13 @@ pub fn load(gpa: Allocator, io: Io, opts: Options) Allocator.Error!Loaded {
         .home_path = try data_root.homeConfigPath(arena, io, opts.env),
         .workspace_path = try std.fs.path.join(arena, &.{ opts.workspace, ".mnml", data_root.config_file }),
         .explicit_path = if (opts.explicit) |p| try arena.dupe(u8, p) else null,
-        .workspace_trusted = opts.trust == .trusted,
+        // A workspace with no layer, no `init.lua` and no manifests has
+        // nothing to distrust: under `.ask` it is trusted, as
+        // `decideTrust` says of a layer with no claims. (It used to stay
+        // false, and a DAP adapter or LSP server written into the
+        // config AFTER launch was then never re-read until a restart.)
+        // A layer below decides otherwise when it exists.
+        .workspace_trusted = opts.trust != .untrusted,
         .opts = .{
             .explicit = if (opts.explicit) |p| try arena.dupe(u8, p) else null,
             .workspace = try arena.dupe(u8, opts.workspace),
@@ -690,6 +696,31 @@ test "docs config example parses clean" {
     try t.expectEqual(@as(usize, 2), cfg.ai.claude_accounts.len);
     try t.expectEqualStrings("work", cfg.ai.claude_accounts[1].name);
     try t.expect(cfg.ai.claude_accounts[1].active);
+}
+
+test "load: a workspace with nothing to distrust is trusted under .ask; explicit distrust stays untrusted" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var vars = std.process.Environ.Map.init(t.allocator);
+    defer vars.deinit();
+    // No `.mnml/` at all.
+    var bare = try load(t.allocator, t.io, .{ .workspace = root, .trust = .ask, .env = .{ .vars = &vars } });
+    defer bare.deinit();
+    try t.expect(bare.workspace_trusted);
+    try t.expect(bare.trust_prompt == null);
+    // A `.mnml/config.zon` with no exec-bearing claim: the same answer.
+    try tmp.dir.createDirPath(t.io, ".mnml");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = ".mnml/config.zon", .data = ".{ .editor = .{ .tab_width = 2 } }" });
+    var plain = try load(t.allocator, t.io, .{ .workspace = root, .trust = .ask, .env = .{ .vars = &vars } });
+    defer plain.deinit();
+    try t.expect(plain.workspace_trusted);
+    // Told untrusted, a bare workspace is untrusted.
+    var no = try load(t.allocator, t.io, .{ .workspace = root, .trust = .untrusted, .env = .{ .vars = &vars } });
+    defer no.deinit();
+    try t.expect(!no.workspace_trusted);
 }
 
 test "load: a workspace with only .mnml/init.lua still asks for trust" {
