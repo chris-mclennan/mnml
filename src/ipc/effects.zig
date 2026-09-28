@@ -247,7 +247,12 @@ pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usi
             const pa = ctx.segs[a].priority;
             const pb = ctx.segs[b].priority;
             if (pa != pb) return pa > pb;
-            return a < b;
+            // Equal priorities order by id, never by arrival: two
+            // integrations' chips at 60 landed in either order depending
+            // on which pane answered first, and in a lane too narrow for
+            // both the one that came second lost its count — the same
+            // screen laid out two ways from one run to the next.
+            return std.mem.lessThan(u8, ctx.segs[a].id, ctx.segs[b].id);
         }
     };
     std.mem.sort(u32, order.items, Ctx{ .segs = segments }, Ctx.lt);
@@ -799,6 +804,32 @@ test "segments: set replaces in place, clear removes, badges drop at zero" {
     try t.expectEqual(@as(usize, known_sections.len - 1), st.badges.count());
     try st.setBadge(t.allocator, "my-mount", 1);
     try t.expectEqual(@as(u32, 1), st.badge("my-mount"));
+}
+
+test "pack: equal priorities lay out by id whichever arrived first — one screen, not two" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // Two integrations' chips at the same priority, in a lane with room
+    // for one of them whole; the corpus's Jira and Bitbucket chips.
+    var first: State = .{};
+    defer first.deinit(t.allocator);
+    try first.setSegment(t.allocator, .{ .id = "jira_work.assigned", .text = "J 3", .priority = 60, .min_width = 2 });
+    try first.setSegment(t.allocator, .{ .id = "bitbucket_prs.prs_mine", .text = "B 2(1)", .priority = 60, .min_width = 2 });
+    var second: State = .{};
+    defer second.deinit(t.allocator);
+    try second.setSegment(t.allocator, .{ .id = "bitbucket_prs.prs_mine", .text = "B 2(1)", .priority = 60, .min_width = 2 });
+    try second.setSegment(t.allocator, .{ .id = "jira_work.assigned", .text = "J 3", .priority = 60, .min_width = 2 });
+    const budget: usize = 12; // "B 2(1)" + 2 = 8, then 4 left: "J 3" needs 3 + 2
+    const one = try pack(a, first.segments.items, .right, budget, false);
+    const two = try pack(a, second.segments.items, .right, budget, false);
+    try t.expectEqual(one.len, two.len);
+    for (one, two) |x, y| {
+        try t.expectEqualStrings(x.id, y.id);
+        try t.expectEqualStrings(x.text, y.text);
+    }
+    // And the order is the ids', not the arrivals'.
+    try t.expectEqualStrings("bitbucket_prs.prs_mine", one[0].id);
 }
 
 test "pack: priority order, max_width truncation, min_width drop" {
