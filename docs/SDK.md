@@ -1055,10 +1055,10 @@ budget.setFeed(w.state(now_ms));
 
 `budget.shared_bucket` names a file holding one token bucket that every
 caller on the machine draws from — mnml's panes, and anything else that
-agrees to the format (a fleet of scripts, another tool's poller). It is
-separate from `ratelimit`'s per-service state file, whose six keys the
-Rust crate and `bb_ratelimit.py` already share; this one is opt-in, per
-config, and names its own path.
+agrees to the format (a script, another tool's poller). It is
+separate from `ratelimit`'s per-service state file, whose six keys are
+the older contract below; this one is opt-in, per config, and names its
+own path.
 
 ```json
 {"rate_per_sec":0.25,"burst":40,"tokens":12.5,"updated_at":1790000000.25,"cooldown_until":null,"last_429_at":null}
@@ -1101,8 +1101,9 @@ take its API away.
 
 **The file this machine may already share.** `ratelimit`'s
 `<service>-ratelimit.json` — the one the Rust crate `mnml-ratelimit`
-and `bb_ratelimit.py` read and write — is the same bucket under older
-names, and `shared_bucket` reads it too:
+and any other tool on the machine that agrees to the file format read
+and write — is the same bucket under older names, and `shared_bucket`
+reads it too:
 
 | `ratelimit`'s key | is read as |
 | --- | --- |
@@ -1118,9 +1119,25 @@ capacity (`ratelimit.Config`: 40 for Bitbucket, 60 for Jira). A file is
 written back in the names it was read in, so the processes already on
 it keep reading it. **On a machine that already shares one, pointing
 `budget.shared_bucket` at it is the expected setup** — every pane, the
-statusline poller and the fleet's scripts then draw on one allowance
-under one lock, rather than on two buckets that each think they are
-the whole budget.
+statusline poller and any other tool on the machine that agrees to the
+file format then draw on one allowance under one lock, rather than on
+two buckets that each think they are the whole budget.
+
+**Where `ratelimit`'s state file is** (`ratelimit.statePath`), the
+first of:
+
+1. `<SERVICE>_RATELIMIT_STATE` — the file, named outright;
+2. `$MNML_SHARED_STATE_DIR/<service>-ratelimit.json` — the directory
+   holding state every process on the machine shares; point any other
+   tool that agrees to the file format at the same directory;
+3. `$MNML_DATA_ROOT/ratelimit/<service>.json`;
+4. `~/.config/mnml/ratelimit/<service>.json`.
+
+An empty variable counts as unset, and nothing under the home directory
+is probed for: with neither variable set the bucket is mnml's own. The
+file name `<service>-ratelimit.json` and its six keys are the contract;
+the broker's socket, the election lock and `<service>-draws.jsonl` sit
+beside whichever file this resolves.
 
 ## The warmer — pacing, one warmer per service, windows
 

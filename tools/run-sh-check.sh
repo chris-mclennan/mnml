@@ -411,7 +411,7 @@ wait "$INST_PID" 2>/dev/null
 # LENGTH was the problem, and the automatic /tmp fallback applies only
 # to the DERIVED path, never to an explicit override. Both verbs now
 # name the variable and both numbers. Private paths throughout: the
-# real bucket under ~/.tattle-claude-artifacts is never touched.
+# real bucket in $MNML_SHARED_STATE_DIR is never touched.
 BROKER_DIR="$TMP/broker"
 mkdir -p "$BROKER_DIR"
 export BITBUCKET_RATELIMIT_STATE="$BROKER_DIR/bitbucket-ratelimit.json"

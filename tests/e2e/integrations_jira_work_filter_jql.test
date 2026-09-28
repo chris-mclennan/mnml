@@ -3,8 +3,8 @@
 # resolved query in its box, Enter runs the edit and the tab re-fetches;
 # the scope chip is on the toolbar; a refresh keeps the cursor's ticket.
 # The pane's token bucket, private to this file. Without it the
-# bucket resolves to a machine-wide shared file (the fleet's
-# ~/.tattle-claude-artifacts/jira-ratelimit.json), where anything
+# bucket may resolve to a machine-wide shared file
+# ($MNML_SHARED_STATE_DIR/jira-ratelimit.json), where anything
 # else on the machine can drain it and leave the pane on
 # `loading…` for a minute — a flake with no cause on screen.
 # env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json

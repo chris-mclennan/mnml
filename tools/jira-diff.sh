@@ -67,7 +67,7 @@ for fam in "${families[@]}"; do
     rdir="$out/rust-$fam"
     mkdir -p "$rdir"
     python3 tools/jira-capture.py --bin "$ref" --out "$rdir" --size 120x40 --home "$home" \
-        --env "TATTLE_ARTIFACTS_ROOT=$out/ratelimit" --env "BITBUCKET_ACCESS_TOKEN=fake-forge" \
+        --env "MNML_SHARED_STATE_DIR=$out/ratelimit" --env "BITBUCKET_ACCESS_TOKEN=fake-forge" \
         --steps "tools/jira-diff/rust-$fam.steps" -- --config "$home/.config/mnml-tracker-jira.toml" --only "$fam" \
         > "$out/rust-$fam.log" 2>&1 || { echo "jira-diff: the reference failed on $fam (see $out/rust-$fam.log)"; status=1; }
     echo "jira-diff: $fam — the port"

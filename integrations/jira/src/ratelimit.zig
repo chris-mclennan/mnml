@@ -5,8 +5,8 @@
 //! Jira panes and the statusline poller each held their own idea of the
 //! budget, so four processes pacing themselves perfectly still spent
 //! four times the allowance and Atlassian answered all four with a 429.
-//! The bucket now lives in one file — `jira-ratelimit.json` in a
-//! shared folder, or `ratelimit/jira.json` under mnml's data root
+//! The bucket now lives in one file — `jira-ratelimit.json` in
+//! `$MNML_SHARED_STATE_DIR`, or `ratelimit/jira.json` under mnml's data root
 //! (`statePath` in the SDK module) — flock'd, with the same six keys the Bitbucket bucket and the Rust
 //! crate use — so every pane, the poller and anything else on the
 //! machine take turns on ONE allowance, and one 429 parks all of them.
@@ -90,11 +90,11 @@ test "the Jira bucket is the SDK's, at this service's own file" {
         defer testing.allocator.free(p);
         try sdk_testing.expectPath("/data/ratelimit/jira.json", p);
     }
-    try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
     const p = try statePath(testing.allocator, testing.io, &env);
     defer testing.allocator.free(p);
-    // The name the Rust crate and the Python script write, so a pane, a
-    // poller and a script all land on one file.
+    // The format contract's file name, so a pane, a poller and any
+    // other tool that agrees to the format all land on one file.
     try sdk_testing.expectPath("/shared/jira-ratelimit.json", p);
 }
 

@@ -3,14 +3,14 @@
 //!
 //! Bitbucket counts per account and per IP, so the pane is one of
 //! several things on this machine drawing on one budget: another pane,
-//! the statusline poller, the Rust reference, the Python
-//! `bb_ratelimit` scripts. They all take turns on ONE state file with
-//! the same six JSON keys and the same rules, so opening the pane while
-//! a script is mid-report never stacks requests into a 429 for both.
+//! the statusline poller, and any other tool on the machine that agrees
+//! to the file format. They all take turns on ONE state file with the
+//! same six JSON keys and the same rules, so opening the pane while a
+//! script is mid-report never stacks requests into a 429 for both.
 //! The SDK module holds the bucket; this file only says which service
 //! it is.
 //!
-//! The file is `bitbucket-ratelimit.json` in a shared folder, or
+//! The file is `bitbucket-ratelimit.json` in `$MNML_SHARED_STATE_DIR`, or
 //! `ratelimit/bitbucket.json` under mnml's data root; which one, and
 //! everything else about the mechanism, is in
 //! `sdk/mnml-sdk/src/ratelimit.zig` (`statePath`).
@@ -59,7 +59,7 @@ test "the Bitbucket bucket is the SDK's, at this service's path" {
         defer t.allocator.free(p);
         try sdk_testing.expectPath("/data/ratelimit/bitbucket.json", p);
     }
-    try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
     {
         const p = try statePath(t.allocator, t.io, &env);
         defer t.allocator.free(p);

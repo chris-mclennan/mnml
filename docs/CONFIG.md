@@ -290,8 +290,9 @@ otherwise. Copy what you need; leave the rest out.
         },
         .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
-        // The coverage chip reads `.tattle-claude-artifacts` under
-        // `MNML_ARTIFACTS_HOME` when that is set, else your home directory.
+        // The coverage chip reads `feature-coverage/_trends/trends.json` and
+        // `code-coverage/_trends/trends.json` under `$MNML_SHARED_STATE_DIR`
+        // (`MNML_ARTIFACTS_HOME` overrides it for tests); unset, no chip.
         .coverage_chip_mode = .feature, // .both | .feature | .code | .ticker
         // The background-jobs chip in the statusline: a spinner and a
         // count while a language server starts, a fetch runs, a test
@@ -1711,11 +1712,14 @@ request log land under the dev root without the integration knowing
 profiles exist.
 
 The one thing deliberately NOT per-profile is the cross-process
-rate-limit bucket (`$TATTLE_ARTIFACTS_ROOT` /
-`~/.tattle-claude-artifacts/<service>-ratelimit.json`, resolved ahead
-of the data root in `sdk/mnml-sdk/src/ratelimit.zig`). It is one
-budget per machine: two profiles each spending a full budget against
-the same API is the bug, not the feature.
+rate-limit bucket in the shared-state directory
+(`$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`, resolved ahead of
+the data root in `sdk/mnml-sdk/src/ratelimit.zig`). It is one budget
+per machine: two profiles each spending a full budget against the same
+API is the bug, not the feature. With `MNML_SHARED_STATE_DIR` unset
+the bucket falls back under the data root, which is the profile's —
+set the variable to have every profile, and any other tool on the
+machine that agrees to the file format, share one budget.
 
 ## Sandbox
 

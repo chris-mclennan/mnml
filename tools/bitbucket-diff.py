@@ -124,7 +124,7 @@ def run_rust(args, tmp, fake_url, family, steps, out_dir, name):
     only = {"prs": "prs", "pipelines": "pipelines", "mine": "prs-mine"}[family]
     first = "until:REPO / BRANCH" if family == "pipelines" else "until:REPO / #PR"
     cmd = [sys.executable, os.path.join(HERE, "rust-capture.py"), "--bin", args.oracle, "--arg=--only", f"--arg={only}",
-           "--env", "MNML_PANE=1", "--env", f"HOME={home}", "--env", f"TATTLE_ARTIFACTS_ROOT={os.path.join(tmp, 'rl')}",
+           "--env", "MNML_PANE=1", "--env", f"HOME={home}", "--env", f"MNML_SHARED_STATE_DIR={os.path.join(tmp, 'rl')}",
            "--env", f"BITBUCKET_BASE_URL={fake_url}", "--env", "BITBUCKET_API_TOKEN=x", "--env", f"MNML_BB_ORACLE_LOG={os.path.join(tmp, 'oracle.log')}",
            "--size", args.size, "--out-dir", out_dir, first] + steps + [f"snap:rust-{name}", "key:q", "wait:300"]
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

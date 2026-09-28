@@ -409,7 +409,7 @@ test "status says there is no broker rather than failing when nothing is listeni
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
-    try env.put("TATTLE_ARTIFACTS_ROOT", dir);
+    try env.put("MNML_SHARED_STATE_DIR", dir);
 
     var buf: [4096]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);

@@ -926,8 +926,8 @@ const Bench = struct {
         const root = try testing.allocator.dupe(u8, buf[0..n]);
         errdefer testing.allocator.free(root);
         try tmp.dir.createDirPath(testing.io, "ws/.git");
-        try tmp.dir.createDirPath(testing.io, ".tattle-claude-artifacts/feature-coverage/_trends");
-        try tmp.dir.writeFile(testing.io, .{ .sub_path = ".tattle-claude-artifacts/feature-coverage/_trends/trends.json", .data = trends });
+        try tmp.dir.createDirPath(testing.io, "feature-coverage/_trends");
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "feature-coverage/_trends/trends.json", .data = trends });
         const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
         errdefer testing.allocator.free(ws);
         var cfg: Config = .{};
