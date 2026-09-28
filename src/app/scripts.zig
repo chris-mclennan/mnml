@@ -1043,7 +1043,7 @@ test "two installed scripts run in their own states: one erroring leaves the oth
         \\ns = mnml.decor.namespace("blame")
         \\mnml.command{ id = "beta_go", run = function() mnml.toast("beta") end }
     );
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 100, .rows = 30 });
     defer app.deinit();
     try t.expectEqual(@as(usize, 2), app.scripts.entries.items.len);
     const alpha = app.scripts.find("alpha") orelse return notInstalled(&app, "alpha");
@@ -1116,7 +1116,7 @@ test "a script's require reaches only its own lib; `..`, a separator and an abso
     );
     try tmp.dir.createDirPath(t.io, "scripts/libbed/lib");
     try tmp.dir.writeFile(t.io, .{ .sub_path = "scripts/libbed/lib/helper.lua", .data = "return { greeting = 'hi from lib' }" });
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
     const e = app.scripts.find("libbed") orelse return notInstalled(&app, "libbed");
     try t.expect(e.err == null);
@@ -1273,7 +1273,7 @@ test "a typo'd field in script.zon loads the script and names the field in a war
     ,
         \\mnml.command{ id = "typo_go", run = function() end }
     );
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
     const e = app.scripts.find("typo") orelse return notInstalled(&app, "typo");
     try t.expect(e.state != null);
@@ -1296,7 +1296,7 @@ test "a manifest whose api is higher than this build's is a row that says so, an
     ,
         \\mnml.command{ id = "future_go", run = function() end }
     );
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 80, .rows = 24 });
     defer app.deinit();
     const e = app.scripts.find("future") orelse return notInstalled(&app, "future");
     try t.expect(!e.supported());
@@ -1409,7 +1409,7 @@ test "script.remove asks first, and the dialog it opens survives the frame it wa
     ,
         \\mnml.command{ id = "doomed_go", run = function() end }
     );
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 100, .rows = 30 });
     defer app.deinit();
     const panel = @import("scripts_panel.zig");
     try command.run(&app, .{ .static = .@"view.activity_scripts" });
@@ -1464,7 +1464,7 @@ test "script.reload takes the installed scripts with init.lua, and a vim operato
     );
     const script_ops = @import("../input/script_ops.zig");
     {
-        var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 100, .rows = 30 });
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 100, .rows = 30 });
         defer app.deinit();
         const e = app.scripts.find("surrounder") orelse return notInstalled(&app, "surrounder");
         try t.expect(e.state != null);
@@ -1489,7 +1489,7 @@ test "script.reload takes the installed scripts with init.lua, and a vim operato
     // same process therefore starts with an empty table rather than a
     // letter pointing at a stale operator index.
     {
-        var app2 = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+        var app2 = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
         defer app2.deinit();
         try t.expect(script_ops.lookup('w') == null);
         try t.expectEqual(@as(usize, 0), script_ops.count());

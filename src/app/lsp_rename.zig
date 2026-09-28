@@ -455,7 +455,7 @@ test "csharp-ls's rename shape — `documentChanges`, the open file versioned an
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
@@ -515,7 +515,7 @@ test "a rename's edits reach the server for every buffer they touched, not only 
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};

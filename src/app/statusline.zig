@@ -799,7 +799,7 @@ test "file counts: a file is added, changed or removed once, by its staged side;
 }
 
 test "the mode chip names the open line — CMD for the app's and for a buffer's" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
 

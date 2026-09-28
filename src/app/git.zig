@@ -2514,7 +2514,7 @@ pub fn commitLinesPrompt(app: *App, dp: *DiffPane) CommandError!void {
 test "openPromptOwned: a title built on the frame arena survives the next frame — the overlay owns a copy" {
     var frame_buf: [64 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     app.frame.deinit();
     app.frame = alloc_mod.FrameArena.init(fba.allocator());
@@ -2601,7 +2601,7 @@ pub fn openDiffRowMenu(app: *App, dp: *DiffPane, x: u16, y: u16) Allocator.Error
 test "openDiffRowMenu: the row labels survive the next frame — the menu owns them" {
     var frame_buf: [64 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&frame_buf);
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     // A fixed buffer, where a reset hands the SAME bytes back: a
     // DebugAllocator-backed arena would give the next frame fresh pages

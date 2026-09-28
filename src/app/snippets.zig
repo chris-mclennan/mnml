@@ -976,7 +976,7 @@ test "table: scope then global, replace on re-seed, config absorb" {
 }
 
 test "expansion places the cursor at $1, tab walks the stops, backtab returns to the typed end" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     try app.snippets.seed("global", "forr", "for $1 in $2 {\n    $0\n}");
@@ -1009,7 +1009,7 @@ test "expansion places the cursor at $1, tab walks the stops, backtab returns to
 }
 
 test "snippet.pick lists the file's scope and global sorted, pick_all every scope; Enter inserts the body at the cursor" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -1170,7 +1170,7 @@ test "grammar: variables expand, a default stands in for one with no value, a tr
 }
 
 test "mirrors follow the stop live; Tab through a nested placeholder types into the inner stop" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     try app.snippets.seed("global", "lt", "let ${1:name} = 1; use_$1($1);");

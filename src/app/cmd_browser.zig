@@ -485,7 +485,7 @@ pub fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8)
 const testing = std.testing;
 
 test "browser.open goes straight to a pane (no prompt) and says so when Chrome is missing; browser.open_url asks for the URL" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     browser.test_no_chrome = true;
     defer browser.test_no_chrome = false;

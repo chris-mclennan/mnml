@@ -231,7 +231,7 @@ const t = std.testing;
 fn termApp(vim: bool) !App {
     var cfg: app_mod.Config = .{};
     if (vim) cfg.editor.input_style = .vim;
-    return App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 60, .rows = 12 });
+    return App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
 }
 
 test "standard `:term printf hi` opens a pane below the editor and the grid shows hi" {
@@ -322,7 +322,7 @@ test "a tool's `term` line opens below in both profiles — the vim `:term` plac
 test "term.shell opens the login shell beside the active pane; focus_or_open_shell finds it again" {
     // `printf` and a login shell: POSIX.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -339,7 +339,7 @@ test "term.shell opens the login shell beside the active pane; focus_or_open_she
 test "a child's OSC 2 title names its tab until the user renames it" {
     // `printf` and a login shell: POSIX.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try app.runEx("term printf '\\033]2;build-watch\\007'; read x; printf '\\033]0;second\\007'; sleep 30");
@@ -364,7 +364,7 @@ test "a child's OSC 2 title names its tab until the user renames it" {
 
 test "term.rename relabels the tab through the prompt and through :rename" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30" }, .label = "sh", .kind = .command });
@@ -386,7 +386,7 @@ test "term.rename relabels the tab through the prompt and through :rename" {
 
 test "a file opened while the scratch strip has the focus opens in the editor area; hiding the strip leaves no split behind" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 14 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 14 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -421,7 +421,7 @@ test "a file opened while the scratch strip has the focus opens in the editor ar
 
 test "term.scratch_toggle: open below, hide when focused, focus when visible, show again alive" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 14 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 14 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();

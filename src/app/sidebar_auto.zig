@@ -498,7 +498,7 @@ fn point(app: *App, x: ?u16, y: u16, now: i64) !void {
 }
 
 test "reveal: the pointer at the column's edge opens it after the dwell, and not before" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     try point(&app, 60, 10, 1000);
@@ -515,7 +515,7 @@ test "reveal: the pointer at the column's edge opens it after the dwell, and not
 }
 
 test "hide: the pointer leaving the panel closes it after sidebar_hide_ms" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     try point(&app, 0, 10, 1000);
@@ -535,7 +535,7 @@ test "hide: the pointer leaving the panel closes it after sidebar_hide_ms" {
 }
 
 test "hide is refused while the panel is in use: a focused filter, an open menu, a drag, the keyboard" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     try side_mod.open(&app, .todos, false);
@@ -568,7 +568,7 @@ test "hide is refused while the panel is in use: a focused filter, an open menu,
 }
 
 test "no relayout: every pane keeps the rect it had docked while the overlay is up" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     // Hidden: the panes have the whole body.
@@ -590,7 +590,7 @@ test "no relayout: every pane keeps the rect it had docked while the overlay is 
 }
 
 test "pin: the column docks, ui.sidebar reads always for the session, and unpinning gives it back" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     try t.expectEqual(Config.Sidebar.auto, mode(&app));
@@ -612,7 +612,7 @@ test "pin: the column docks, ui.sidebar reads always for the session, and unpinn
 }
 
 test "ui.sidebar = .hidden: hover does nothing, view.toggle_tree gives a one-shot overlay that toggles away" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     app.cfg.ui.sidebar = .hidden;
@@ -627,7 +627,7 @@ test "ui.sidebar = .hidden: hover does nothing, view.toggle_tree gives a one-sho
 }
 
 test "the overlay's geometry: full docked width, the rail and strip inside it, the edge rule on the inner side; the slide moves the origin, never the content" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     const upper = Rect_.init(0, 1, 120, 37);
@@ -658,7 +658,7 @@ test "the overlay's geometry: full docked width, the rail and strip inside it, t
 }
 
 test "the overlay paints over the editor and swallows the press that no row claimed" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     try point(&app, 0, 10, 1000);
@@ -726,7 +726,7 @@ test "a click that opens a file hides the overlay at once; a fold arrow and a ri
 }
 
 test "a keyboard reveal waits for the pointer: a nudge of the mouse does not take it away, a key does" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try autoApp(&app);
     reveal(&app, .left, true);
@@ -745,7 +745,7 @@ test "a keyboard reveal waits for the pointer: a nudge of the mouse does not tak
 }
 
 test "ui.sidebar_auto_below: a docked column auto-hides on a narrow terminal and docks again when it widens" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     side_mod.place(&app, .explorer, false);
     _ = try app.openScratch();
@@ -779,7 +779,7 @@ test "ui.sidebar_auto_below: a docked column auto-hides on a narrow terminal and
 }
 
 test "ui.sidebar_auto_below leaves an explicit auto or hidden alone, and 0 turns the rule off" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     side_mod.place(&app, .explorer, false);
     // `.hidden` stays hidden: no hover reveal on a narrow screen either.
@@ -801,7 +801,7 @@ test "ui.sidebar_auto_below leaves an explicit auto or hidden alone, and 0 turns
 }
 
 test "a narrow terminal's auto column pins like a configured one, and the pin outlives a widen and a narrow again" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     side_mod.place(&app, .explorer, false);
     try togglePin(&app);
@@ -820,7 +820,7 @@ test "a narrow terminal's auto column pins like a configured one, and the pin ou
 test "the keys never stay in a column nobody can see: at launch on a narrow terminal, and on a resize down to one" {
     // Launch at 80x24, nothing open: the tree has the keys by default,
     // `ui.sidebar_auto_below` hides it, so the start surface takes them.
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     side_mod.place(&app, .explorer, false);
     app.focus = .tree;

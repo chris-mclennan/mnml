@@ -976,7 +976,7 @@ test "the six states the scan derives become the four a button can wear; a line 
 
 test "a binary that does not exist fails at open with a diag, not a pane" {
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 8 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 8 });
     defer app.deinit();
     try testing.expectError(error.Failed, open(&app, .{ .argv = &.{"/nonexistent/mnml-nope"} }));
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "cannot run") != null);
@@ -995,7 +995,7 @@ fn unplacedPane(app: *App) !PaneId {
 }
 
 test "integrations.open_as: a mount lands beside the active pane and the splits even out; .tab keeps it in the leaf" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const first = try app.openScratch();
     const layout = app.layouts.current();
@@ -1033,7 +1033,7 @@ test "integrations.open_as: a mount lands beside the active pane and the splits 
 }
 
 test "findOpen matches the whole command line: the same integration command focuses its pane, a different one gets its own" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     const gpa = testing.allocator;
     const id = try app.panes.add(.{ .mount = .{
@@ -1057,7 +1057,7 @@ test "findOpen matches the whole command line: the same integration command focu
 
 test "a deep link reaches the pane that is already open rather than a second one, and only for the same command" {
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     const gpa = testing.allocator;
     const id = try app.panes.add(.{ .mount = .{

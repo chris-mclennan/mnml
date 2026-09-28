@@ -183,7 +183,7 @@ const command = @import("../core/command.zig");
 const screen_mod = @import("../ipc/screen.zig");
 
 test "the enclosing fn header pins to the top once it scrolls off; the toggle toasts" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 8 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -231,7 +231,7 @@ test "the enclosing fn header pins to the top once it scrolls off; the toggle to
 }
 
 test "the chain is computed once per top line / text / parse, not per frame" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 8 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.ui.sticky_context = true;
@@ -282,7 +282,7 @@ test "the chain is computed once per top line / text / parse, not per frame" {
 }
 
 test "a file with a syntax error pins the scope that encloses the top line, from the line patterns" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 8 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.ui.sticky_context = true;

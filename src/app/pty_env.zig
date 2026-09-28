@@ -98,7 +98,7 @@ fn installPromptScript(app: *App) Allocator.Error!?[]const u8 {
 const t = std.testing;
 
 test "every child gets MNML_PANE and the workspace; a shell also gets the prompt's colours, and the script once there is a data root" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     var cmd = try build(&app, &.{"MNML_WORKSPACE=/tmp/worktree"}, null);
     defer cmd.deinit();
@@ -110,7 +110,7 @@ test "every child gets MNML_PANE and the workspace; a shell also gets the prompt
     var launch: Launch = .{};
     var sh = try build(&app, &.{}, &launch);
     defer sh.deinit();
-    try t.expectEqualStrings("/tmp", sh.get("MNML_WORKSPACE").?);
+    try t.expectEqualStrings(app.workspace, sh.get("MNML_WORKSPACE").?);
     try t.expectEqualStrings("mnml", sh.get("MNML_CONTEXT").?);
     const bg = sh.get("MNML_PROMPT_BG").?;
     try t.expectEqual(@as(usize, 7), bg.len);

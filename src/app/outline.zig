@@ -707,7 +707,7 @@ test "fallback: typescript arrows, classes, interfaces, types; c functions and t
 }
 
 test "outline.show opens a split beside the source, jumps on enter, and refreshes in place" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     const src = try app.openScratch();
@@ -742,7 +742,7 @@ test "outline.show opens a split beside the source, jumps on enter, and refreshe
 }
 
 test "the right column's strip: the outline's live title, the plus opens Add panel, the close closes the column" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     const e = app.activeEditor().?;

@@ -104,7 +104,7 @@ test "external_browser picks the application; empty is the OS default" {
     try std.testing.expectEqualStrings("rundll32", win_default[0]);
     try std.testing.expectEqualStrings("https://x.test/", win_default[2]);
     // Through the app: the config field drives it.
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     app.cfg.ui.external_browser = "Firefox";
     const via = try argv(&app, a, "https://y.test/");

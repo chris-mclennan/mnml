@@ -149,6 +149,7 @@ const file_clipboard = @import("app/file_clipboard.zig");
 const trash = @import("app/trash.zig");
 const transfers = @import("app/transfers.zig");
 const builtin = @import("builtin");
+const test_workspace = @import("app/test_workspace.zig");
 
 pub const PaneId = ids.PaneId;
 pub const PanelId = panel_mod.PanelId;
@@ -1135,6 +1136,9 @@ pub const App = struct {
     theme: theme_mod = theme_mod.default,
     /// Absolute. Owned.
     workspace: []u8,
+    /// `workspace` is the scratch folder `initWith` made for this App
+    /// (`scratch_workspace`); `deinit` removes it.
+    owns_workspace: bool = false,
     data_root: []u8,
     /// What a spawned child inherits. Owned.
     env: std.process.Environ.Map,
@@ -1540,11 +1544,20 @@ pub const App = struct {
         return initWith(gpa, io, .{});
     }
 
+    /// A test's "some directory": `initWith` makes a private empty
+    /// folder for this App (`app/test_workspace.zig`) and `deinit`
+    /// removes it. Tests only; the value is a marker, not a path.
+    pub const scratch_workspace: []const u8 = "<scratch workspace>";
+
     pub fn initWith(gpa: Allocator, io: Io, opts_in: InitOptions) !App {
         var opts = opts_in;
         errdefer if (opts.loaded) |*l| l.deinit();
-        const ws = try gpa.dupe(u8, opts.workspace);
-        errdefer gpa.free(ws);
+        const scratch = builtin.is_test and std.mem.eql(u8, opts.workspace, scratch_workspace);
+        const ws = if (scratch) try test_workspace.create(gpa, io) else try gpa.dupe(u8, opts.workspace);
+        errdefer {
+            if (scratch) test_workspace.remove(io, ws);
+            gpa.free(ws);
+        }
         const dr = try gpa.dupe(u8, opts.data_root);
         errdefer gpa.free(dr);
         var env = if (opts.env) |e| try e.clone(gpa) else try processEnv(gpa);
@@ -1600,6 +1613,7 @@ pub const App = struct {
         errdefer app.hooks.deinit();
         opts.loaded = null; // owned by `app` from here
         app.workspace_trusted = opts.workspace_trusted orelse (if (app.loaded) |l| l.workspace_trusted else false);
+        app.owns_workspace = scratch;
         app.native_notify = opts.native_notify;
         app.term_cursor = opts.term_cursor;
         app.live_frames = opts.live_frames;
@@ -2045,6 +2059,7 @@ pub const App = struct {
         self.frame.deinit();
         self.env.deinit();
         gpa.free(self.data_root);
+        if (self.owns_workspace) test_workspace.remove(self.io, self.workspace);
         gpa.free(self.workspace);
         // Last: `cfg` borrowed from it until here.
         if (self.loaded) |*l| l.deinit();
@@ -3855,7 +3870,7 @@ test {
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 10 });
     defer app.deinit();
     // A spec without a runner (found by scanning — every id this test
     // once named, `dock.close_all` last, has grown one) toasts and fails.
@@ -3897,7 +3912,7 @@ test "config → App: every behaviour-changing field flipped once" {
     c.ui.theme = "Gruvbox";
     try c.keys.global.put(arena, "ctrl+shift+x", "view.about");
     try c.keys.vim.put(arena, "ctrl+q", "none");
-    var app = try App.initWith(t.allocator, t.io, .{ .cfg = c, .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = c, .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
 
     // input_style: the buffers and the keymap follow the config's enum

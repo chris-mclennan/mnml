@@ -247,7 +247,7 @@ fn screenText(app: *App) ![]u8 {
 }
 
 test "a script section is a rail row after the one it names, a column like TODOS, and it folds, filters, sorts and goes on reload" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const lua = app.script();
     lua.runString(
@@ -354,7 +354,7 @@ test "a script section is a rail row after the one it names, a column like TODOS
 }
 
 test "a list in a pane: the same panel, its own keys, and closing the pane leaves the list alone" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 90, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 90, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();

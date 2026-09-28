@@ -169,7 +169,7 @@ pub fn integration(arena: Allocator, label: []const u8) Allocator.Error!Entry {
 const t = std.testing;
 
 test "plus: every row of the + menu — groups, leaves, the curation list — resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     const cm = @import("../../context_menus.zig");

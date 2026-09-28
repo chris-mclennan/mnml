@@ -263,7 +263,7 @@ test "the standard profile's which-key popup is its Ctrl+K chords: every row is 
     const keymap = @import("../core/keymap.zig");
     const Chord = @import("../core/key.zig").Chord;
     const specs = @import("../commands/specs.zig");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try t.expect(app.input_style != .vim);
     try command.run(&app, .{ .static = .@"whichkey.leader" });
@@ -329,7 +329,7 @@ test "the standard profile's which-key popup is its Ctrl+K chords: every row is 
 }
 
 test "the vim profile's which-key popup is still the leader tree" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
     try command.run(&app, .{ .static = .@"whichkey.leader" });
@@ -338,7 +338,7 @@ test "the vim profile's which-key popup is still the leader tree" {
 }
 
 test "app.quit asks first, clean or dirty" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     // // changed (quit-confirm): nothing unsaved still raises the box —
@@ -413,7 +413,7 @@ test "app.quit asks first, clean or dirty" {
 }
 
 test "ui.confirm_quit = false keeps the old quit: the box only when something is unsaved" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     app.cfg.ui.confirm_quit = false;
     _ = try app.openScratch();
@@ -432,7 +432,7 @@ test "ui.confirm_quit = false keeps the old quit: the box only when something is
 }
 
 test "the harness's exits are not gated by the box: the IPC quit and restart go straight out" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     // `run.sh stop` — the IPC `quit` command, the path `app.zig` takes
@@ -452,7 +452,7 @@ test "the harness's exits are not gated by the box: the IPC quit and restart go 
 }
 
 test "app.restart over unsaved work asks first — Save all / Restart anyway / Cancel — and a clean one restarts at once" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     const e = app.activeEditor().?;
@@ -1051,7 +1051,7 @@ const event = @import("../core/event.zig");
 test "an offer runs in a VISIBLE pane, the chord takes the newest one, and an unclaimed offer is freed" {
     // A real pty and a login shell: POSIX.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -1094,7 +1094,7 @@ test "an offer runs in a VISIBLE pane, the chord takes the newest one, and an un
 }
 
 test "keys.doctor opens the wizard on its Keyboard section" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"keys.doctor" });
     try t.expect(app.overlay == .wizard);
@@ -1103,7 +1103,7 @@ test "keys.doctor opens the wizard on its Keyboard section" {
 }
 
 test "the Codex glyph editor and the integration auto-updater are cut: each fails with the ledger toast" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const ids = [_]command.CommandId{
         .@"integrations.edit_codex_glyph",

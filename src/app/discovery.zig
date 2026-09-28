@@ -777,7 +777,7 @@ fn screenText(app: *App) ![]u8 {
 }
 
 test "describe: every hit kind has words; the statusline ids each say what a click does" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try app.openScratch();
@@ -809,7 +809,7 @@ test "describe: every hit kind has words; the statusline ids each say what a cli
 }
 
 test "view.discovery: Rust's panel — the families with their counts, a row press flashes, F1 / Esc / a press elsewhere close" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try app.handle(.{ .key = Key.named(.{ .f = 1 }) });
     try t.expect(app.overlay == .help);
@@ -845,7 +845,7 @@ test "view.discovery: Rust's panel — the families with their counts, a row pre
 }
 
 test "hover: the popup and the rail's info box wake on motion over a chip, and only on motion" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24, .cfg = .{ .ui = .{ .hover_tooltip = true } } });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24, .cfg = .{ .ui = .{ .hover_tooltip = true } } });
     defer app.deinit();
     _ = try app.openScratch();
     try app.render();

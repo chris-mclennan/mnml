@@ -2165,7 +2165,7 @@ const dap_app = @import("../app/dap.zig");
 const lsp_app = @import("../app/lsp.zig");
 
 test "mnml.command registers user.<id>, binds its keys, runs, and a reload unregisters it" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     try lua.runString(
@@ -2206,7 +2206,7 @@ test "mnml.command registers user.<id>, binds its keys, runs, and a reload unreg
 }
 
 test "mnml.buf.apply's change is the last change: vim's `.` repeats it" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("abc");
@@ -2222,7 +2222,7 @@ test "mnml.buf.apply's change is the last change: vim's `.` repeats it" {
 }
 
 test "mnml.on fires with the marshalled args; mnml.buf.apply goes through EditOp and undo works" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratch();
@@ -2269,7 +2269,7 @@ test "mnml.on fires with the marshalled args; mnml.buf.apply goes through EditOp
 }
 
 test "mnml.inspect: every type, the array part before the sorted keys, a cycle marked, a depth cap, and print still toasts" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const Case = struct { src: []const u8, want: []const u8 };
@@ -2319,7 +2319,7 @@ test "mnml.inspect: every type, the array part before the sorted keys, a cycle m
 }
 
 test "mnml.commands: every command, narrowed by the query, each row carrying its MRU rank" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     // Nothing has run yet: every row is rank-less, and `if row.rank`
@@ -2366,7 +2366,7 @@ test "a picker source that blows the script budget opens on (no matches), and th
     // The budget figure itself is pinned in `lua.zig`, and the shipped
     // example's real headroom by `lua_example_recent_commands.test`
     // against the built binary.
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     const lua = app.script();
     try lua.runString(
@@ -2395,7 +2395,7 @@ test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace
     try cfg.lsp.put(arena, "rust", .{ .cmd = "rust-analyzer", .extensions = &.{ "rs", "rst" } });
     try cfg.keys.global.put(arena, "ctrl+shift+x", "view.about");
     cfg.tools = .{ .object = &.{.{ .name = "jira", .value = .{ .object = &.{.{ .name = "url", .value = .{ .string = "https://x" } }} } }} };
-    var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     try lua.runString(
@@ -2409,13 +2409,13 @@ test "mnml.config.get walks structs, maps, optionals and Dynamic; mnml.workspace
         \\assert(mnml.config.get("nope.nope") == nil)
         \\assert(mnml.config.get("editor").tab_width == 3)
         \\assert(mnml.config.get().ui.tree_width ~= nil)
-        \\assert(mnml.workspace() == "/tmp")
     );
+    try lua.runString(try std.fmt.allocPrint(arena, "assert(mnml.workspace() == [[{s}]])", .{app.workspace}));
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }
 
 test "mnml.decor: the four decorations paint, anchored, in a namespace the reload drops" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     // A narrow screen with the column docked: this test is about
     // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
@@ -2503,7 +2503,7 @@ fn expectArgErrors(lua: *lua_mod.Lua, cases: []const ArgCase) !void {
 }
 
 test "mnml.decor: every argument error names the argument and the shape it wanted" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("alpha\nbeta\n");
@@ -2532,7 +2532,7 @@ test "mnml.decor: every argument error names the argument and the shape it wante
 }
 
 test "argument errors: the root functions name the call, the argument and the shape" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const cases = [_]ArgCase{
@@ -2566,7 +2566,7 @@ test "argument errors: the root functions name the call, the argument and the sh
 }
 
 test "argument errors: mnml.buf names the call, the argument and the shape" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("alpha\nbeta\n");
@@ -2591,7 +2591,7 @@ test "argument errors: mnml.buf names the call, the argument and the shape" {
 }
 
 test "argument errors: mnml.list, mnml.section and mnml.pane name the call, the argument and the shape" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const cases = [_]ArgCase{
@@ -2618,7 +2618,7 @@ test "argument errors: mnml.list, mnml.section and mnml.pane name the call, the 
 }
 
 test "argument errors: mnml.picker, mnml.statusline and mnml.task name the call, the argument and the shape" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const cases = [_]ArgCase{
@@ -2644,7 +2644,7 @@ test "argument errors: mnml.picker, mnml.statusline and mnml.task name the call,
 }
 
 test "argument errors: mnml.config and mnml.http name the call, the argument and the shape" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratch();
@@ -2660,7 +2660,7 @@ test "argument errors: mnml.config and mnml.http name the call, the argument and
 }
 
 test "mnml.decor.gutter: a script mark sits between a breakpoint and git's bar, and its priority moves it" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
@@ -2699,7 +2699,7 @@ fn firstSign(marks: []const @import("../ui/editor_view.zig").GutterMark, line: u
 }
 
 test "mnml.diagnostics: a script's findings reach the gutter, the statusline, the panel and ]d" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 16 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 90, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
@@ -2707,7 +2707,7 @@ test "mnml.diagnostics: a script's findings reach the gutter, the statusline, th
     const e = app.panes.editor(pane).?;
     // The file as the script's relative name resolves: under the
     // workspace, joined natively.
-    const path = try std.fs.path.join(testing.allocator, &.{ "/tmp", "app.js" });
+    const path = try std.fs.path.join(testing.allocator, &.{ app.workspace, "app.js" });
     defer testing.allocator.free(path);
     e.buf.doc.setPath(path) catch unreachable;
     try lua.runString(
@@ -2762,7 +2762,7 @@ test "mnml.diagnostics: a script's findings reach the gutter, the statusline, th
 }
 
 test "the budget applies to a decoration set in a hot loop" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("one\ntwo\n");
@@ -2781,7 +2781,7 @@ test "the budget applies to a decoration set in a hot loop" {
 
 test "lua/git-blame-line/init.lua loads, asks git on cursor_idle and paints what comes back" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
@@ -2826,7 +2826,7 @@ test "lua/git-blame-line/init.lua loads, asks git on cursor_idle and paints what
 
 test "lua/eslint/init.lua loads and turns compact output into diagnostics on save" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "lua/eslint/init.lua", testing.allocator, .limited(1 << 20));
@@ -2851,7 +2851,9 @@ test "lua/eslint/init.lua loads and turns compact output into diagnostics on sav
     try lua.runString("assert(cmd == nil)");
     app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
     try lua.runString("assert(cmd:find('eslint'), tostring(cmd))");
-    const list = lsp_app.diagnosticsFor(&app, "/tmp/app.js");
+    const js_path = try std.fs.path.join(testing.allocator, &.{ app.workspace, "app.js" });
+    defer testing.allocator.free(js_path);
+    const list = lsp_app.diagnosticsFor(&app, js_path);
     try testing.expectEqual(@as(usize, 2), list.len);
     try testing.expectEqual(types.Severity.warning, list[0].severity);
     try testing.expectEqual(@as(u32, 2), list[0].range.start.line);
@@ -2864,11 +2866,11 @@ test "lua/eslint/init.lua loads and turns compact output into diagnostics on sav
         \\mnml.task.run = function(o) o.on_done({ ok = true, code = 0 }) end
     );
     app.hooks.emit(&app, .{ .save_post = .{ .path = "app.js", .pane = 0, .bytes = 4 } });
-    try testing.expectEqual(@as(usize, 0), lsp_app.diagnosticsFor(&app, "/tmp/app.js").len);
+    try testing.expectEqual(@as(usize, 0), lsp_app.diagnosticsFor(&app, js_path).len);
 }
 
 test "docs/examples/init.lua loads and its surfaces are all there" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "docs/examples/init.lua", testing.allocator, .limited(1 << 20));
@@ -2928,7 +2930,9 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     // reference file's own debugging command is worth pinning.
     try command.runNamed(&app, "user.notes_debug");
     try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "{ notes = 1,"));
-    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "workspace = \"/tmp\"") != null);
+    const ws_line = try std.fmt.allocPrint(testing.allocator, "workspace = \"{s}\"", .{app.workspace});
+    defer testing.allocator.free(ws_line);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, ws_line) != null);
     // The operator, from the standard road: the word under the cursor
     // joins the notes.
     const e = app.activeEditor().?;
@@ -2939,7 +2943,7 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
 }
 
 test "mnml.buf.selection / range / word_at: the three modes, a clamped range, the word under a byte, and the argument errors" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratch();
@@ -2984,7 +2988,7 @@ test "mnml.buf.selection / range / word_at: the three modes, a clamped range, th
 }
 
 test "mnml.operator: vim's g<letter> takes a motion, a text object and a visual selection; standard's chord takes the selection or the cursor's word; one undo step either way" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratch();
@@ -3044,7 +3048,7 @@ test "mnml.operator: vim's g<letter> takes a motion, a text object and a visual 
 }
 
 test "mnml.operator: the argument errors name the shape, and land before anything is registered" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     try testing.expectError(error.Failed, lua.runString("mnml.operator{ id = 'a' }"));
@@ -3072,7 +3076,7 @@ test "mnml.operator: the argument errors name the shape, and land before anythin
 }
 
 test "mnml.picker.source: a live source is asked again as the query changes, debounced, and the old rows stay until the new ones land" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     const lua = app.script();
     lua.runString(
@@ -3130,7 +3134,7 @@ test "mnml.picker.source: a live source is asked again as the query changes, deb
 }
 
 test "mnml.picker.source: the preview column follows the cursor, multi-select hands on_accept the marked rows, and data comes back untouched" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
     defer app.deinit();
     const lua = app.script();
     lua.runString(
@@ -3196,7 +3200,7 @@ test "mnml.picker.source: the preview column follows the cursor, multi-select ha
 }
 
 test "mnml.picker.source: the argument errors name the shape and land before anything is registered" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     try testing.expectError(error.Failed, lua.runString("mnml.picker.source{ id = 'x', items = function() end, preview = 3 }"));

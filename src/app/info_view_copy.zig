@@ -427,7 +427,7 @@ test "the lint can fail: a key on an unbound command, a chord outside the litera
 }
 
 test "materialize: a command key becomes the profile's chord, an unbound one is dropped, the links keep their kinds and actions" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const a = app.frame.allocator();
     const e: Entry = .{
@@ -474,7 +474,7 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
     try t.expectEqualStrings("Ctrl+K Ctrl+I", try chordDisplay(a, "ctrl+k ctrl+i"));
     try t.expectEqualStrings("Ctrl+.", try chordDisplay(a, "ctrl+."));
     try t.expectEqualStrings("Space f f", try chordDisplay(a, "space f f"));
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     try t.expectEqualStrings("F12", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
     try t.expectEqualStrings("Ctrl+K Ctrl+I", (try chordOf(&app, a, .@"lsp.hover")).?);
@@ -486,7 +486,7 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
 }
 
 test "askPrompt carries the entry's words and the target's state" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const a = app.frame.allocator();
     const e: Entry = .{ .title = "Messages", .body = "The bell counts unread warnings and errors." };

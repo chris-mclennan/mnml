@@ -256,7 +256,7 @@ fn openBig(app: *App, text: []const u8) !*app_mod.EditorPane {
 
 test "a large document is parsed by a worker, never by a frame: it paints plain, the tree lands, an edit made meanwhile is told to it and a second pass catches up" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const text = try bigRust(gpa);
     defer gpa.free(text);
@@ -314,7 +314,7 @@ test "a large document is parsed by a worker, never by a frame: it paints plain,
 
 test "G, gg, page-down and a search on a large document start no parse and build no window wider than a viewport's" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
     const text = try bigRust(gpa);

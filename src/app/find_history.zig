@@ -256,7 +256,7 @@ test "find history: Enter remembers the query (de-duped, a miss too); ↑ / ↓ 
 }
 
 test "find history: vim's / recalls only the entries that start with the typed text; Down past the newest gives it back" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("foo bar\nbaz\nqux\nbar\n");

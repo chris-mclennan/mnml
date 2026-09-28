@@ -508,7 +508,7 @@ test "the terminal loop drains the plugin invocations every turn, through the sh
 
 test "ackPluginCommand keeps at most plugin_invocations_max undrained, dropping the oldest" {
     const gpa = std.testing.allocator;
-    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     var buf: [16]u8 = undefined;
     for (0..App.plugin_invocations_max + 10) |i| try app.ackPluginCommand(try std.fmt.bufPrint(&buf, "p.{d}", .{i}));

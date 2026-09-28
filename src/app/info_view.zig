@@ -1009,7 +1009,7 @@ test "the ladder under an overlay: the surface beneath, as Rust's focus never le
 }
 
 test "hover: a chip's copy carries a Run it link the app resolves; the kebab menu offers the toggle; the wheel scrolls within the paint's bound" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const arena = app.frame.allocator();
     const c = try chipCopy(&app, .refresh);
@@ -1056,7 +1056,7 @@ test "hover: a chip's copy carries a Run it link the app resolves; the kebab men
 }
 
 test "the box is sticky under the pointer: the entry and its links stay while the pointer crosses onto the box; a fallback carries the no-help aside; a Settings link opens the overlay on its row" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const arena = app.frame.allocator();
     try app.render();
@@ -1135,7 +1135,7 @@ test "a pty pane's copy: the title names the terminal and the shell, and the cho
 }
 
 test "an AI answer pane's copy names its own keys — it has no prompt to type at" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const id = try app.panes.add(.{ .ai = .{
         .gpa = t.allocator,
@@ -1320,7 +1320,7 @@ test "pin: the entry and its links outlive the frame and every hover until unpin
 }
 
 test "help.focus: the box takes the keys, Tab / Shift+Tab walk and wrap, Enter runs a shortcut's command or says a gesture runs nothing, Esc goes back and unpins" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.focus = .tree;
     // No box painted yet: the command says why instead of moving.

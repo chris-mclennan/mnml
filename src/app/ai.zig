@@ -2070,7 +2070,7 @@ fn screenText(app: *App) ![]u8 {
 }
 
 test "ghost text: Tab accepts at the cursor, ctrl+right a word, ctrl+down a line, any other key dismisses" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2107,7 +2107,7 @@ test "ghost text: Tab accepts at the cursor, ctrl+right a word, ctrl+down a line
 }
 
 test "ghost text: typing arms the debounce; a stale generation's result is dropped, the live one lands" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try app.openScratch();
@@ -2149,7 +2149,7 @@ test "ghost text: typing arms the debounce; a stale generation's result is dropp
 }
 
 test "the confirm channel: a worker parks on the job's queue; the UI's answer releases it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2198,7 +2198,7 @@ test "the confirm channel: a worker parks on the job's queue; the UI's answer re
 }
 
 test "a dismissed confirm box answers no, so the worker is never left parked" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2267,7 +2267,7 @@ test "the setup picker lists the backends and Esc leaves the config alone; a pic
 test "the session picker's accept on a session already running shows its pane — no second `--resume` of a live id" {
     // sess-resume-live-session-twice.
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     const live = try pty_pane.open(&app, .{ .argv = &.{ "/bin/sh", "-c", "sleep 30", "--resume", "sid-live" }, .label = "claude", .kind = .command, .placement = .tab });
@@ -2318,7 +2318,7 @@ test "encodeWorkspace: every byte that is not ASCII alphanumeric becomes '-', as
 }
 
 test "a ghost is Insert's: in vim Normal a Tab drops it and edits nothing; with the : line open too; in Insert it lands" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2397,7 +2397,7 @@ test "the strip's AI chip: a click shows SESSIONS, and starts a session only whe
 }
 
 test "ghost text is observable: the chip paints each phase, every request lands a `:messages` line, status.json says which" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try app.openScratch();
@@ -2494,7 +2494,7 @@ fn lastMessage(app: *App) []const u8 {
 
 test "ghost text: typing through a request kills the claude child, not just our interest in its answer" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 10 });
     defer app.deinit();
     // A worker on the ghost group, blocked in a child that sleeps far
     // longer than any test would wait for.
@@ -2619,7 +2619,7 @@ test "the API backend: MNML_ANTHROPIC_BASE_URL points it at a mock; a server tha
     defer group.cancel(io);
     try group.concurrent(io, Stall.serve, .{ io, &server });
 
-    var app = try App.initWith(t.allocator, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const base = try std.fmt.allocPrint(t.allocator, "http://127.0.0.1:{d}/", .{server.socket.address.getPort()});
     defer t.allocator.free(base);

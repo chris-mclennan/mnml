@@ -3387,7 +3387,7 @@ const testing = std.testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 test "no server: every request explains itself, and peek never arms pending_peek" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3407,7 +3407,7 @@ test "no server: every request explains itself, and peek never arms pending_peek
 }
 
 test "a missing binary toasts once with its install hint, and never again this session" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     var c: app_mod.Config = .{};
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
@@ -3429,7 +3429,7 @@ test "a missing binary toasts once with its install hint, and never again this s
 
 // // changed (lsp-defaults): the quiet missing-default path.
 test "a missing DEFAULT server is recorded once per session with no toast and no bell; .toast and .ignore do as they say; the record carries the hint" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     // Hermetic: whatever this machine has installed, the walk finds nothing.
     try app.env.put("PATH", "");
@@ -3457,7 +3457,7 @@ test "a missing DEFAULT server is recorded once per session with no toast and no
     try testing.expectEqual(toasts_before, app.toasts.items.len);
     // `.toast`: the warning a configured server gets, and the record.
     {
-        var app2 = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+        var app2 = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
         defer app2.deinit();
         try app2.env.put("PATH", "");
         app2.cfg.editor.lsp_missing_defaults = .toast;
@@ -3468,7 +3468,7 @@ test "a missing DEFAULT server is recorded once per session with no toast and no
     }
     // `.ignore`: nothing anywhere — but the miss is still a miss.
     {
-        var app3 = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+        var app3 = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
         defer app3.deinit();
         try app3.env.put("PATH", "");
         app3.cfg.editor.lsp_missing_defaults = .ignore;
@@ -3481,7 +3481,7 @@ test "a missing DEFAULT server is recorded once per session with no toast and no
 }
 
 test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file — unranked the nearest directory wins, ranked (csharp) the solution does" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3536,7 +3536,7 @@ test "the root walk takes a glob marker: `*.sln` above `*.csproj` above the file
 }
 
 test "a symbols reply refreshes the outline without marking the syntax dirty (no reparse for a repaint)" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     const src = try app.openScratch();
@@ -3564,7 +3564,7 @@ test "a symbols reply refreshes the outline without marking the syntax dirty (no
 }
 
 test "diagnostics: the snapshot, squiggles and gutter dots on the buffer, the statusline chip, next/prev" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3905,7 +3905,7 @@ fn unloadedServer(io: Io, gpa: Allocator, in: Io.File, out: Io.File, mode: Unloa
 /// paints and the file holds the loaded token — with no edit, ever.
 fn unloadedRun(mode: Unloaded, comptime name: []const u8) !void {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const io = app.io;
@@ -3959,7 +3959,7 @@ test "lsp refresh: a server that sends no refresh is asked again when its $/prog
 test "a server's string-id `workspace/configuration` (zls's) is answered under the same id, with the configured settings" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const io = app.io;
     const c2s = try Io.Threaded.pipe2(.{});
@@ -4127,7 +4127,7 @@ pub const TestRig = struct {
 
 test "codeAction echoes a published diagnostic whole — code, source, data, tags — and a linter's with what it has" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     const path = "/tmp/echo.ts";
     // As tsserver / bash-language-server publish: a numeric `code`, a
@@ -4158,7 +4158,7 @@ test "codeAction echoes a published diagnostic whole — code, source, data, tag
 }
 
 test "diagnostics from a server and a linter merge sorted, and each source replaces only its own" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     const path = "/tmp/merge.ts";
     var parsed = try std.json.parseFromSlice(Value, testing.allocator, "[{\"range\":{\"start\":{\"line\":3,\"character\":0},\"end\":{\"line\":3,\"character\":1}},\"severity\":1,\"message\":\"server\"}]", .{});
@@ -4576,7 +4576,7 @@ test "a python server starts with the project's .venv interpreter in its setting
 
 test "completion rows show labelDetails: the origin in a column before the detail, the signature after the label" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -4780,7 +4780,7 @@ test "mnml-fake-lsp: a rename's three edits undo with one `u` and redo with one 
 
 test "a completion popup whose anchor is past the cursor closes instead of slicing backwards; so does one whose pane is gone; a motion left of the anchor closes it on the key" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -4826,7 +4826,7 @@ test "a completion popup whose anchor is past the cursor closes instead of slici
 test "the completion auto-trigger: typing in INSERT opens the popup; `u` and `x` in NORMAL change the buffer but open nothing" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: TestRig = .{};
@@ -4883,7 +4883,7 @@ test "the completion auto-trigger: typing in INSERT opens the popup; `u` and `x`
 test "a scripted server through the app: attach + diagnostics, completion (a snippet), hover, peek, rename, symbols into the outline" {
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const file = TestRig.file();
@@ -5048,7 +5048,7 @@ test "a scripted server: references and symbols asked for while the server start
 test "a held command waits out the server's $/progress: sent at the last end, at the grace when nothing is loading, at the deadline regardless" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: TestRig = .{};
@@ -5202,7 +5202,7 @@ test "firstOfKind: the first action of the asked kind or under it; a kind-less o
 test "client/registerCapability for workspace/didChangeWatchedFiles marks the server; a save then reports the file to it" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: TestRig = .{};
@@ -5228,7 +5228,7 @@ test "client/registerCapability for workspace/didChangeWatchedFiles marks the se
 test "over the highlight ceiling no documentSymbol is asked and the outline says `outline off`; editor.highlight_this_file asks after all" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.editor.highlight_max_bytes = 64;

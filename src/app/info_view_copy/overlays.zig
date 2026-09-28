@@ -216,7 +216,7 @@ pub fn askContext(app: *App, arena: Allocator, id: u32) Allocator.Error!?[]const
 const t = std.testing;
 
 test "the quit box's buttons, the close box's, a picker row and the other overlays have entries" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     const msg = try app.gpa.dupe(u8, "Unsaved changes.");

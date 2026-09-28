@@ -617,7 +617,7 @@ const testing = std.testing;
 test "through the fake server: hints and swatches paint as virtual text, lenses as a row above; a lens runs by command, by resolve and by Enter; links underline and answer gx; the toggle clears the hints; an edit stales them" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
@@ -723,7 +723,7 @@ test "through the fake server: hints and swatches paint as virtual text, lenses 
 test "hints answering the request sent on OPEN paint on an untouched document (its head is 0), and the toggle paints them again without an edit" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
@@ -789,7 +789,7 @@ fn readonlyFile() []const u8 {
 test "a file only READ (edit-log head 0) has its lenses and tokens asked for on open and painted with no edit; a server that comes up again asks afresh" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};

@@ -162,7 +162,7 @@ pub fn askContext(app: *App, arena: Allocator, part: Part) Allocator.Error!?[]co
 const t = std.testing;
 
 test "every section, the gear, a pin and a script row have entries" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     inline for (comptime std.enums.values(Section)) |s| {

@@ -157,7 +157,7 @@ test "virtualPath round-trips through parse; a disk path is not virtual" {
 }
 
 test "open: the section renders as a preview pane on the virtual path, a second open reveals the same pane, and typing does not swap an editor in" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const id = try open(&app, .config, "The launcher dock");
     const pane = app.panes.get(id).?;

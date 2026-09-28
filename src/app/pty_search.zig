@@ -861,7 +861,7 @@ fn settleScan(app: *App, p: *PtyPane) !void {
 
 test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, highlights it, Enter selects it; `/` searches down and `?` up, n repeats the direction, N reverses it, a wrap says so" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -949,7 +949,7 @@ test "scrollback search (vim): `/` in terminal-normal finds one line of 3000, hi
 
 test "scrollback search (standard): Ctrl+F opens it, Enter steps up and Shift+Enter down (VS Code's terminal find) with wrap and scroll the match into view, Esc closes with the match selected" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"editor.use_standard" });
@@ -1042,7 +1042,7 @@ fn expectAll99(p: *PtyPane, last: u32) !u32 {
 
 test "scrollback search survives output: the oldest rows dropping shifts the matches with them, the current one is kept while it exists, new lines are searched" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 40, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"editor.use_standard" });
@@ -1095,7 +1095,7 @@ test "scrollback search survives output: the oldest rows dropping shifts the mat
 
 test "scrollback search: a pattern that does not compile matches nothing and Enter says so; an empty query clears; lower case matches either case, a capital only itself" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 40, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"editor.use_vim" });

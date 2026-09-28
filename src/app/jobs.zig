@@ -844,7 +844,7 @@ test "durText: seconds with a decimal, then minutes, then hours" {
 
 test "the .job event: progress from a worker, then its end, through the queue" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     // A worker can start its own job: the text is the label.
     post(app.events, app.io, gpa, .integration, 7, .running, "mnml-jira --values");
@@ -867,7 +867,7 @@ test "the .job event: progress from a worker, then its end, through the queue" {
 
 test "the overlay: jobs.show opens it, Enter on a job toasts its words, c cancels through the subsystem, Esc closes" {
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const Stop = struct {
         var called: u64 = 0;

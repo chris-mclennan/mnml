@@ -507,7 +507,7 @@ test "Esc persists nothing and the wizard reopens; Enter writes the touched answ
 }
 
 test "the wizard renders its sections on the 120x40 screen and walks them" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"first_launch.show" });
     const screen_mod = @import("../ipc/screen.zig");

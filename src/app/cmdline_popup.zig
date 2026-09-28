@@ -236,7 +236,7 @@ fn typeInto(app: *App, text: []const u8) !void {
 }
 
 test "typing on the app's : line builds the list; two or more show, one hides; Esc dismisses, then closes" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try dispatch.key(&app, Key.ctrl(';'));
@@ -296,7 +296,7 @@ test "typing on the app's : line builds the list; two or more show, one hides; E
 }
 
 test "Tab on the app's : line cycles the same list the popup shows, and a click writes a row" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try dispatch.key(&app, Key.ctrl(';'));
@@ -321,7 +321,7 @@ test "Tab on the app's : line cycles the same list the popup shows, and a click 
 }
 
 test "the vim : line: Up over the typed text is the history walk, prefix-filtered; after Tab it walks the popup; one Esc abandons it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try app.setInputStyle(.vim);
@@ -384,7 +384,7 @@ test "the vim : line: Up over the typed text is the history walk, prefix-filtere
 
 test "the painter is fed the list at the : line's row and paints above it" {
     const render = @import("render.zig");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try dispatch.key(&app, Key.ctrl(';'));

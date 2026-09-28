@@ -617,11 +617,11 @@ test "welcome: SHORTCUTS reads each profile's chords off the spec table — Spac
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var std_app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var std_app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer std_app.deinit();
     var cfg: app_mod.Config = .{};
     cfg.editor.input_style = .vim;
-    var vim_app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var vim_app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer vim_app.deinit();
     const Want = struct { id: command.CommandId, vim: ?[]const u8, standard: ?[]const u8 };
     const want = [_]Want{
@@ -788,7 +788,7 @@ test "welcome: SESSIONS lists this workspace's resumable sessions, newest first,
 test "welcome: ui.welcome = minimal is the logo and today's shortcut list; off is the bare ground" {
     var cfg: app_mod.Config = .{};
     cfg.ui.welcome = .minimal;
-    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const txt = try screenText(&app);
     defer t.allocator.free(txt);

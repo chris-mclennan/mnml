@@ -382,7 +382,7 @@ pub fn askContext(app: *App, arena: Allocator, seg: u32) Allocator.Error!?[]cons
 const t = std.testing;
 
 test "every fixed segment and every SegId has an entry; the branch entry names the branch" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     for ([_]u32{ sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, sl.seg_restricted }) |seg| try t.expect((try entry(&app, a, seg)) != null);

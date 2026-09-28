@@ -211,7 +211,7 @@ fn rowText(gpa: Allocator, row: []Segment) ![]u8 {
 }
 
 test "the preview numbers its lines, keeps the file's order and stops at the row budget" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(t.allocator);
@@ -233,7 +233,7 @@ test "the preview numbers its lines, keeps the file's order and stops at the row
 }
 
 test "a hit centres the window on its line and paints the match in the search style" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(t.allocator);
@@ -257,7 +257,7 @@ test "a hit centres the window on its line and paints the match in the search st
 }
 
 test "the read stops at 32 KiB on a line end, and tabs become spaces" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(t.allocator);
@@ -275,7 +275,7 @@ test "the read stops at 32 KiB on a line end, and tabs become spaces" {
 }
 
 test "a grammar colours the preview; plain text leaves it in the foreground" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const src = "const x = 1;\n";
     const zig_built = try build(&app, src, "a.zig", null);

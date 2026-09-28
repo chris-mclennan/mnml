@@ -153,7 +153,7 @@ fn bellRow(app: *App) ![]const u8 {
 }
 
 test "messages: every toast is recorded, capped, and the bell counts unread warn/err only" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.toast("plain", .{});
     try t.expectEqual(@as(usize, 1), app.messages.items.items.len);

@@ -538,7 +538,7 @@ fn expectCurated(app: *App) !void {
 }
 
 test "menu_bar: every row of every dropdown, each word's own menu and the pin's resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const cm = @import("../../context_menus.zig");
     const menu_bar = @import("../../menu_bar.zig");

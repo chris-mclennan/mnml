@@ -1789,12 +1789,12 @@ fn closeMenu(app: *App) void {
 }
 
 test "right-click: the workspace chip, the Ln/Col chip, the PR chip, the AI chips and the workspace headers open Rust's rows" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     // One repo: the repo rows stay out and the worktree picker leads.
     try openWorkspaceChipMenu(&app, 3, 3);
     try t.expect(app.overlay == .menu);
-    try t.expectEqualStrings("tmp", app.overlay.menu.title);
+    try t.expectEqualStrings("ws", app.overlay.menu.title);
     try t.expectEqualStrings("Worktrees…", app.overlay.menu.items[0].label);
     try t.expect(!app.overlay.menu.items[0].separator_before);
     closeMenu(&app);
@@ -1825,7 +1825,7 @@ test "right-click: the workspace chip, the Ln/Col chip, the PR chip, the AI chip
 }
 
 test "right-click: the chrome chips — a chip with a menu answers true, one without false; the theme pill ticks the painted theme" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(!try openButtonMenu(&app, @intFromEnum(render.Button.hidden_tabs), 3, 3));
@@ -1855,7 +1855,7 @@ test "right-click: the chrome chips — a chip with a menu answers true, one wit
 }
 
 test "right-click: the maximize chip lists its two modes and ticks the one a left click runs" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const render = @import("render.zig");
     const zen = @import("zen.zig");
@@ -1888,7 +1888,7 @@ test "right-click: the maximize chip lists its two modes and ticks the one a lef
 }
 
 test "right-click: the terminal chip's `Icon` submenu — the ghost first and ticked, the codicon under it, the bake below, and every id registered" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
@@ -1935,7 +1935,7 @@ test "right-click: the terminal chip's `Icon` submenu — the ghost first and ti
 }
 
 test "right-click: the Claude chip's `Icon` submenu — the figure and the spark drawn as themselves, the bake below them, the current one ticked, and the rows write the key" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const render = @import("render.zig");
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.ai_claude), 3, 3));
@@ -1990,7 +1990,7 @@ test "right-click: the Claude chip's `Icon` submenu — the figure and the spark
 }
 
 test "right-click: a copy_text row lands on the clipboard after the menu's own arena is gone" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     try openPositionMenu(&app, 3, 3);
@@ -2001,7 +2001,7 @@ test "right-click: a copy_text row lands on the clipboard after the menu's own a
 }
 
 test "the request field menu is titled by the field under the pointer" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     inline for (.{ .{ RequestField.url, "URL" }, .{ RequestField.body, "Body" }, .{ RequestField.response, "Response" } }) |case| {
         try openRequestFieldMenu(&app, case[0], 3, 3);
@@ -2014,7 +2014,7 @@ test "the request field menu is titled by the field under the pointer" {
 }
 
 test "tab menu: Save leads when dirty; close_others / close_right keep dirty tabs; copy_path reads the tree row" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     const b = try app.openScratch();
@@ -2045,7 +2045,7 @@ test "tab menu: Save leads when dirty; close_others / close_right keep dirty tab
 }
 
 test "a context menu: the pointer over a row moves the highlight there, the keyboard carries on from it, a hover past the last row changes nothing" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2085,7 +2085,7 @@ fn screenOf(app: *App) ![]u8 {
 }
 
 test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with Rust's icons, Reopen first when there is a closed tab; → opens a child hung from its row, ← steps back, Enter runs a child's row" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     // Rust's bare tree: no integration chip enabled.
@@ -2218,7 +2218,7 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
 }
 
 test "the + menu: the Integrations group lists the enabled integration chips with their own glyphs; a chip without a command is left out" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const icons = [_]Config.IntegrationIcon{

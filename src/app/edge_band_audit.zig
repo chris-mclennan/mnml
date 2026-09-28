@@ -206,7 +206,7 @@ test "the edge-band audit: no grip ever takes another surface's cell, and no con
         .{ .cols = 376, .rows = 92 },
     };
     for (sizes) |size| {
-        var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = size.cols, .rows = size.rows });
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = size.cols, .rows = size.rows });
         defer app.deinit();
         _ = try app.openScratch();
         for ([_]Config.DockEdge{ .bottom, .left, .right }) |dock_edge| {
@@ -270,7 +270,7 @@ test "the audit holds with sections hidden from the activity bar: the rail's row
         &.{ .explorer, .search, .git, .debug, .integrations, .sessions, .http, .notes, .todos, .findings, .scripts },
     };
     for (sizes) |size| {
-        var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = size.cols, .rows = size.rows });
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = size.cols, .rows = size.rows });
         defer app.deinit();
         _ = try app.openScratch();
         app.cfg.ui.dock.pins = &.{ "view.activity_todos", "view.activity_git" };
@@ -315,7 +315,7 @@ test "the audit holds with sections hidden from the activity bar: the rail's row
 }
 
 test "a side dock's band is the strip's own columns, reserved up or down, and everything else starts where it ends" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     const full = Rect.init(0, 0, 120, 40);
