@@ -119,6 +119,58 @@ def parse_steps(text):
     return steps
 
 
+def zon_str(s):
+    """A ZON string literal: `\\`, `"` and the control bytes escaped,
+    the rest as UTF-8."""
+    out = ['"']
+    for c in s:
+        if c == "\\":
+            out.append("\\\\")
+        elif c == '"':
+            out.append('\\"')
+        elif c == "\n":
+            out.append("\\n")
+        elif c == "\t":
+            out.append("\\t")
+        elif c == "\r":
+            out.append("\\r")
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            out.append("\\x%02x" % ord(c))
+        else:
+            out.append(c)
+    out.append('"')
+    return "".join(out)
+
+
+def snippet_config(steps):
+    """The file's `snippet <scope> <trigger> <body>` steps as the config's
+    `.snippets` section (`scope → trigger → body`), or "" for none.
+
+    The runner seeds its App's table directly (`app/driver.zig`
+    `vSnippet` → `snippets.State.seed`); the channel has no line for
+    that, so the sweep used to skip the step and every expansion in
+    `snippet_lsp_grammar.test` left its trigger in the text. The table
+    the config feeds is the same one (`snippets.State.absorbConfig`),
+    read at launch — so every snippet of the file exists from the first
+    step rather than from its own line. No corpus file types a trigger
+    before the `snippet` line that defines it."""
+    table = {}
+    for _, head, rest in steps:
+        if head != "snippet":
+            continue
+        scope, rest1 = split1(rest)
+        trigger, body = split1(rest1)
+        if scope and trigger:
+            table.setdefault(scope, {})[trigger] = unescape(body)
+    if not table:
+        return ""
+    parts = []
+    for scope, triggers in table.items():
+        inner = ", ".join(f".@{zon_str(t)} = {zon_str(b)}" for t, b in triggers.items())
+        parts.append(f".@{zon_str(scope)} = .{{ {inner} }}")
+    return ".{ " + ", ".join(parts) + " }"
+
+
 def coalesce_clicks(steps):
     """A run of identical `click X Y` lines is ONE burst of presses.
 
@@ -356,6 +408,9 @@ class FileRun:
         cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }"
         if header["ascii"]:
             cfg += ", .ui = .{ .ascii_icons = true }"
+        snippets = snippet_config(steps)
+        if snippets:
+            cfg += ", .snippets = " + snippets
         cfg += " }"
         e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
         with open(e2e_cfg, "w", encoding="utf-8") as f:
@@ -474,7 +529,7 @@ class FileRun:
                     spec.text = unescape(rest1)
                     spec.live = True
         elif head == "snippet":
-            self.notes.append(f"line {ln}: `snippet` has no channel line; skipped")
+            pass  # in the launch config already (`snippet_config`)
         elif head == "shot":
             w.shot(os.path.join(self.out, f"{self.name}--{rest.strip()}.png"))
         elif head == "expect":
