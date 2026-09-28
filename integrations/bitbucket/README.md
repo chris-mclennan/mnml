@@ -432,12 +432,11 @@ is green, and every comment is either resolved or replied to.
 
 ## Rate limiting
 
-Every request passes the shared token bucket the reference and the
-Python scripts on this machine already take turns on, 0.22 requests/s,
-a burst of 40. The file is the first of: `.rate.state_path`;
-`$BITBUCKET_RATELIMIT_STATE`; `bitbucket-ratelimit.json` under
-`$TATTLE_ARTIFACTS_ROOT`; the same name under
-`~/.tattle-claude-artifacts/`, when that folder exists;
+Every request passes the shared token bucket that any other tool on
+the machine that agrees to the file format takes turns on too, 0.22
+requests/s, a burst of 40. The file is the first of:
+`.rate.state_path`; `$BITBUCKET_RATELIMIT_STATE`;
+`bitbucket-ratelimit.json` under `$MNML_SHARED_STATE_DIR`;
 `<MNML_DATA_ROOT>/ratelimit/bitbucket.json`; and
 `~/.config/mnml/ratelimit/bitbucket.json` with no data root
 (`sdk/mnml-sdk/src/ratelimit.zig` `statePath`). The rate broker's

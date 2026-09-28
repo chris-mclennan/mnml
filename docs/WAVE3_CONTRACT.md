@@ -2272,8 +2272,9 @@ moved.
   choice list — a row asks only for its bracketed active value and the
   two window arrows, so the box stays the family's 60 % and
   `choiceWindow` does its job. Number rows and long lists are unchanged.
-- `// changed (app):` `coverage.readJson` resolves `.tattle-claude-artifacts`
-  under `MNML_ARTIFACTS_HOME` when set, else the home directory; the e2e
+- `// changed (app):` `coverage.readJson` resolves the trends files
+  under `MNML_ARTIFACTS_HOME` when set, else the shared-state directory
+  (`MNML_SHARED_STATE_DIR`; once the home directory); the e2e
   driver sets it to the test's data root, so a developer's real coverage
   never paints a chip into a test's statusline (it had shifted every
   hard-coded statusline column in `ui_statusline_clicks.test`).
