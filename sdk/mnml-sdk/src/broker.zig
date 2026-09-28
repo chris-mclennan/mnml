@@ -1442,9 +1442,9 @@ test "the socket sits beside the bucket it fronts, and the environment can name 
         defer t.allocator.free(lock);
         try sdk_testing.expectPath("/data/ratelimit/bitbucket-broker.lock", lock);
     }
-    // The shared interop directory: beside the file the Rust crate and
-    // the Python script already agree about.
-    try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
+    // The shared-state directory: beside the bucket file every process
+    // on the machine agrees about.
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
     {
         const p = try socketPath(t.allocator, t.io, &env, "jira");
         defer t.allocator.free(p);
@@ -1468,7 +1468,7 @@ test "a path too long for a sockaddr_un falls back to a short name both sides de
     defer deep.deinit(t.allocator);
     try deep.appendSlice(t.allocator, "/very");
     while (deep.items.len < 120) try deep.appendSlice(t.allocator, "/deep");
-    try env.put("TATTLE_ARTIFACTS_ROOT", deep.items);
+    try env.put("MNML_SHARED_STATE_DIR", deep.items);
     const p = try socketPath(t.allocator, t.io, &env, "bitbucket");
     defer t.allocator.free(p);
     // The short name, derived from the service and the long path: the
@@ -1506,8 +1506,8 @@ test "two deep buckets fall back to two sockets, so their brokers never meet" {
     var env_b = std.process.Environ.Map.init(t.allocator);
     defer env_b.deinit();
     const deep = "/very" ++ "/deep" ** 24;
-    try env_a.put("TATTLE_ARTIFACTS_ROOT", deep ++ "/a");
-    try env_b.put("TATTLE_ARTIFACTS_ROOT", deep ++ "/b");
+    try env_a.put("MNML_SHARED_STATE_DIR", deep ++ "/a");
+    try env_b.put("MNML_SHARED_STATE_DIR", deep ++ "/b");
     const a = try socketPath(t.allocator, t.io, &env_a, "bitbucket");
     defer t.allocator.free(a);
     const b = try socketPath(t.allocator, t.io, &env_b, "bitbucket");

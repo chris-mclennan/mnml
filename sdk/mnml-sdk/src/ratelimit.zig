@@ -9,12 +9,13 @@
 //! every process refills, spends and penalises it under an exclusive
 //! advisory lock.
 //!
-//! The file is the one the Rust crate `mnml-ratelimit` and the Python
-//! `bb_ratelimit.py` already share, key for key:
+//! The file's six keys are a public format contract (`docs/SDK.md`):
 //!
 //!     {"ts","tokens","rate","cooldown_until","throttles","last_429"}
 //!
-//! so a mixed fleet coordinates rather than racing. `Config.bitbucket`
+//! so mnml coordinates rather than races with any other tool on the
+//! machine that agrees to the file format — the Rust crate
+//! `mnml-ratelimit` is one. `Config.bitbucket`
 //! and `Config.jira` carry that crate's constants exactly; a service it
 //! has no preset for gets the Bitbucket one, as the crate does.
 //!
@@ -31,8 +32,7 @@
 //! who took it — and on this machine a dozen things draw on the same
 //! allowance, mnml's panes among them. So every `acquire` also appends
 //! one line to `<service>-draws.jsonl` BESIDE the state file, in the
-//! same interop directory the Rust crate and the Python script already
-//! share:
+//! same directory every process sharing the bucket resolves:
 //!
 //! ```
 //! {"ts":1789526218.411,"pid":48123,"program":"mnml-jira","service":"jira","reason":"pane_open","wait_ms":3030,"tokens_after":0.24}
@@ -40,19 +40,21 @@
 //!
 //! Seven keys, documented in `docs/SDK.md` as a contract, so anything
 //! else on the machine can append the same line and be counted. The
-//! state file itself is NEVER given a field for this: the Rust and
-//! Python writers rewrite those six keys wholesale and a seventh would
-//! be dropped or choke them.
+//! state file itself is NEVER given a field for this: other writers of
+//! the format rewrite those six keys wholesale and a seventh would be
+//! dropped or choke them.
 //!
-//! Where the file is, in order — the Rust crate's resolution, so both
-//! sides find the same bucket:
+//! Where the file is, in order:
 //!
 //!   1. `<SERVICE>_RATELIMIT_STATE` names the file outright
-//!   2. `$TATTLE_ARTIFACTS_ROOT/<service>-ratelimit.json`
-//!   3. `~/.tattle-claude-artifacts/<service>-ratelimit.json`, when
-//!      that folder already exists
-//!   4. `<MNML_DATA_ROOT>/ratelimit/<service>.json`
-//!   5. `~/.config/mnml/ratelimit/<service>.json`
+//!   2. `$MNML_SHARED_STATE_DIR/<service>-ratelimit.json` — the
+//!      directory holding state every process on the machine shares;
+//!      point any other tool that agrees to the file format at it
+//!   3. `<MNML_DATA_ROOT>/ratelimit/<service>.json`
+//!   4. `~/.config/mnml/ratelimit/<service>.json`
+//!
+//! Nothing under the home directory is probed for: with neither
+//! variable set, the bucket is mnml's own.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -839,15 +841,18 @@ fn sanitize(buf: []u8, service: []const u8) []const u8 {
     return buf[0..n];
 }
 
-/// Where the shared bucket lives. Owned.
+/// Where the shared bucket lives, in the order the module comment
+/// gives. A pure function of the environment: `io` is unused and kept
+/// so every caller's signature stays put. Owned.
 pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8) Allocator.Error![]u8 {
+    _ = io;
     var name_buf: [max_service_len + "_RATELIMIT_STATE".len]u8 = undefined;
     if (stateEnvName(&name_buf, service)) |name| {
         if (nonEmpty(env.get(name))) |p| return gpa.dupe(u8, p);
     }
     var svc_buf: [max_service_len]u8 = undefined;
     const svc = sanitize(&svc_buf, service);
-    // The Python side's file name; a mixed fleet shares it.
+    // The format contract's file name, in the shared directory.
     const shared_name = try std.fmt.allocPrint(gpa, "{s}-ratelimit.json", .{svc});
     defer gpa.free(shared_name);
     // mnml's own fallback lives under a `ratelimit/` directory instead.
@@ -856,14 +861,7 @@ pub fn statePath(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, se
 
     // `HOME`, else `USERPROFILE` (Windows sets no `HOME`).
     const home_dir = nonEmpty(env.get("HOME")) orelse nonEmpty(env.get("USERPROFILE"));
-    if (nonEmpty(env.get("TATTLE_ARTIFACTS_ROOT"))) |root| return std.fs.path.join(gpa, &.{ root, shared_name });
-    if (home_dir) |home| {
-        const shared = try std.fs.path.join(gpa, &.{ home, ".tattle-claude-artifacts" });
-        defer gpa.free(shared);
-        if (Io.Dir.cwd().access(io, shared, .{})) |_| {
-            return std.fs.path.join(gpa, &.{ shared, shared_name });
-        } else |_| {}
-    }
+    if (nonEmpty(env.get("MNML_SHARED_STATE_DIR"))) |dir| return std.fs.path.join(gpa, &.{ dir, shared_name });
     if (nonEmpty(env.get("MNML_DATA_ROOT"))) |root| return std.fs.path.join(gpa, &.{ root, "ratelimit", own_name });
     if (home_dir) |home| return std.fs.path.join(gpa, &.{ home, ".config", "mnml", "ratelimit", own_name });
     return std.fs.path.join(gpa, &.{ "ratelimit", own_name });
@@ -1030,7 +1028,7 @@ test "every draw is written beside the state file, where anything else on the ma
 
     const draws = (try pane.drawsPath(t.allocator)).?;
     defer t.allocator.free(draws);
-    // Beside the state file, in the interop directory, under the name
+    // Beside the state file, in the shared directory, under the name
     // the contract in docs/SDK.md gives.
     const want = try std.fs.path.join(t.allocator, &.{ dir, "jira-draws.jsonl" });
     defer t.allocator.free(want);
@@ -1268,10 +1266,17 @@ test "the state path falls back to USERPROFILE where there is no HOME (Windows)"
     try t.expectEqualStrings(want, q);
 }
 
-test "the state path follows the Rust crate's resolution order, per service" {
+test "the state path resolves in four steps: override, shared dir, data root, home config" {
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
     try env.put("HOME", "/nonexistent-home");
+    // 4. Nothing set but a home: mnml's own config directory.
+    {
+        const p = try statePath(t.allocator, t.io, &env, "jira");
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/nonexistent-home/.config/mnml/ratelimit/jira.json", p);
+    }
+    // 3. A data root is ahead of it.
     try env.put("MNML_DATA_ROOT", "/data");
     for ([_][2][]const u8{
         .{ "bitbucket", "/data/ratelimit/bitbucket.json" },
@@ -1281,7 +1286,9 @@ test "the state path follows the Rust crate's resolution order, per service" {
         defer t.allocator.free(p);
         try sdk_testing.expectPath(case[1], p);
     }
-    try env.put("TATTLE_ARTIFACTS_ROOT", "/shared");
+    // 2. The shared-state directory is ahead of that, under the format
+    // contract's file name.
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
     for ([_][2][]const u8{
         .{ "bitbucket", "/shared/bitbucket-ratelimit.json" },
         .{ "jira", "/shared/jira-ratelimit.json" },
@@ -1290,7 +1297,15 @@ test "the state path follows the Rust crate's resolution order, per service" {
         defer t.allocator.free(p);
         try sdk_testing.expectPath(case[1], p);
     }
-    // The per-service override wins, and only for its own service.
+    // An empty shared directory is no directory.
+    try env.put("MNML_SHARED_STATE_DIR", "");
+    {
+        const p = try statePath(t.allocator, t.io, &env, "jira");
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/data/ratelimit/jira.json", p);
+    }
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
+    // 1. The per-service override wins, and only for its own service.
     try env.put("JIRA_RATELIMIT_STATE", "/tmp/j.json");
     {
         const p = try statePath(t.allocator, t.io, &env, "jira");
@@ -1306,6 +1321,33 @@ test "the state path follows the Rust crate's resolution order, per service" {
     // A service name cannot walk out of the directory it is given.
     var svc_buf: [16]u8 = undefined;
     try t.expectEqualStrings("___x", sanitize(&svc_buf, "../x"));
+}
+
+test "no folder under the home directory is probed for the shared bucket" {
+    // A home holding a dot-folder of `<service>-ratelimit.json` files —
+    // the shape a shared directory has — is not picked up: only
+    // `MNML_SHARED_STATE_DIR` names the shared directory.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    for ([_][]const u8{ ".shared-state", ".artifacts", ".mnml" }) |stray| {
+        try tmp.dir.createDirPath(t.io, stray);
+        const file = try std.fmt.allocPrint(t.allocator, "{s}/jira-ratelimit.json", .{stray});
+        defer t.allocator.free(file);
+        try tmp.dir.writeFile(t.io, .{ .sub_path = file, .data = "{}" });
+    }
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", home);
+    const want = try std.fs.path.join(t.allocator, &.{ home, ".config", "mnml", "ratelimit", "jira.json" });
+    defer t.allocator.free(want);
+    const p = try statePath(t.allocator, t.io, &env, "jira");
+    defer t.allocator.free(p);
+    try sdk_testing.expectPath(want, p);
+    for ([_][]const u8{ ".shared-state", ".artifacts", ".mnml" }) |stray| {
+        try t.expect(std.mem.indexOf(u8, p, stray) == null);
+    }
 }
 
 test "acquireVia falls back to the file bucket when there is no broker, and says so" {
