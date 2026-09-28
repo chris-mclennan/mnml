@@ -128,8 +128,14 @@ pub const Model = struct {
     /// empty until it is pressed.
     keyboard_note: []const u8 = "",
     /// The Integrations section's rows, and which one ←→ / y / n toggle.
+    /// `integration_row == integrations.len` is the Private
+    /// integrations row under them.
     integrations: []const IntegrationRow = &.{},
     integration_row: u8 = 0,
+    /// Under the Private integrations row: what the last add said —
+    /// the source's id and count (`ok`), or why it was refused.
+    private_note: []const u8 = "",
+    private_ok: bool = false,
 };
 
 pub const State = struct {
@@ -207,6 +213,11 @@ pub fn handleKey(s: *State, key: Key) Outcome {
     }
     return .consumed;
 }
+
+/// The Integrations section's last row: a private source, through the
+/// same prompt as the Marketplace tab's `+ source`.
+pub const private_row_text = "Private integrations: a folder or owner/repo — Space adds one";
+pub const private_row_text_ascii = "Private integrations: a folder or owner/repo - Space adds one";
 
 /// The Integrations section's key line.
 pub const integrations_hint = "  y / → check · Tab next row · Space installs the checked now · Enter too";
@@ -315,6 +326,13 @@ pub fn draw(ui: Ui, area: Rect, s: *State, m: Model) void {
                     const text = ui.fmt("  {s}{s} {s:<12}{s:<8}  {s}", .{ mark, box, row.label, row.version, row.status.text(ui.ascii) });
                     const style = if (row.status == .installed) good else body;
                     lines.append(ui.arena, .{ .text = text, .style = style, .hit = chipHit(sec, i) }) catch return;
+                }
+                {
+                    const here = focused and m.integration_row == m.integrations.len;
+                    const mark = if (here) (if (ui.ascii) "> " else "▸ ") else "  ";
+                    const text = ui.fmt("  {s}{s}", .{ mark, if (ui.ascii) private_row_text_ascii else private_row_text });
+                    lines.append(ui.arena, .{ .text = text, .style = if (here) Theme.onBg(t.accent, bg) else body, .hit = chipHit(sec, m.integrations.len) }) catch return;
+                    if (m.private_note.len > 0) noteLines(ui, &lines, ui.fmt("    {s}", .{m.private_note}), if (m.private_ok) good else muted) catch return;
                 }
                 lines.append(ui.arena, .{ .text = integrations_hint, .style = muted }) catch return;
                 lines.append(ui.arena, .{ .text = "  Nothing checked, nothing installed. More in INTEGRATIONS → Marketplace.", .style = muted }) catch return;
@@ -468,6 +486,9 @@ test "the Integrations section: a checkbox per first-party integration, its vers
     try testing.expect(std.mem.indexOf(u8, text, "  [x] Jira        0.2.0     not installed") != null);
     try testing.expect(std.mem.indexOf(u8, text, "▸ [ ] Bitbucket   0.2.0     [✓ installed]") != null);
     try testing.expect(std.mem.indexOf(u8, text, "Space installs the checked now") != null);
+    // The Private integrations row under the first-party ones, a click
+    // target of its own; no note until a source is added.
+    try testing.expect(std.mem.indexOf(u8, text, "    Private integrations: a folder or owner/repo — Space adds one") != null);
     var hits: usize = 0;
     for (f.hits.items.items) |h| if (decodeHit(h.target.overlay_item)) |hit| switch (hit) {
         .chip => |c| {
@@ -475,5 +496,12 @@ test "the Integrations section: a checkbox per first-party integration, its vers
         },
         else => {},
     };
-    try testing.expectEqual(@as(usize, 2), hits);
+    try testing.expectEqual(@as(usize, 3), hits);
+    // Focused and added: the row is marked, the note under it.
+    var g = try Fixture.init(100, 60);
+    defer g.deinit();
+    draw(g.ui(), g.full(), &s, .{ .integrations = &rows, .integration_row = 2, .private_note = "added acme: 3 integrations found", .private_ok = true });
+    const text2 = try g.text();
+    try testing.expect(std.mem.indexOf(u8, text2, "▸ Private integrations") != null);
+    try testing.expect(std.mem.indexOf(u8, text2, "      added acme: 3 integrations found") != null);
 }

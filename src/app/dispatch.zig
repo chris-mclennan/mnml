@@ -1168,6 +1168,13 @@ fn closeOverlay(app: *App) void {
     http_app.overlayClosing(app);
     // Esc on a `:s///c` box keeps what was replaced and stops.
     if (app.overlay == .confirm and app.overlay.confirm.purpose == .replace_confirm) ex_verbs.cancelConfirm(app);
+    // Esc on the wizard's Private integrations prompt: the box comes
+    // back, as it was. (Enter moved the purpose out before closing.)
+    const wizard_back = app.overlay == .prompt and switch (app.overlay.prompt.purpose) {
+        .marketplace_add_source => |from| from == .wizard,
+        else => false,
+    };
+    defer if (wizard_back) first_launch.refresh(app, .integrations);
     const back: ?app_mod.FocusId = switch (app.overlay) {
         .menu => |m| m.return_focus,
         .prompt => |p| p.return_focus,
@@ -1798,6 +1805,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .layout_save => try named_layouts.acceptSave(app, text),
         .marketplace_add_source => |from| switch (from) {
             .palette => try toastOnFail(app, @import("marketplace.zig").addSourceAccept(app, text)),
+            .wizard => try first_launch.privateSourceAccept(app, text),
         },
     }
 }
