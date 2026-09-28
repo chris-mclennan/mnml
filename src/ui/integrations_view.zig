@@ -182,7 +182,15 @@ pub const SectionProps = struct {
     /// The FONTS rows above the Marketplace entries (`fonts_section.zig`);
     /// null hides the section.
     fonts: ?fonts_section.Props = null,
+    /// The ` + source ` chip on the header (` + ` where the column is
+    /// narrow) — the Marketplace tab's add-a-source; `.chip{ panel,
+    /// .new }`.
+    add_source: bool = false,
 };
+
+/// The Marketplace tab's header chip: its full and narrow rungs.
+pub const add_source_text = " + source ";
+pub const add_source_short = " + ";
 
 /// Rows an entry takes: the label row, the detail row, a blank. The
 /// last entry of a window may drop its blank, so `h` rows hold
@@ -310,12 +318,14 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
     // NOTES / FINDINGS / SESSIONS, so at the shipped 26-cell width it
     // is the icon rung rather than a pill stealing the filter's cells.
     const mode_text: ?[]const u8 = chip.modeText(ui.arena, "sort", p.sort_label, p.sort_widest) catch null;
+    const extra = [_]header.ExtraChip{.{ .text = add_source_text, .short = add_source_short, .id = 0, .style = chip.newStyle(t, t.panel_bg.bg), .kind = .new }};
     _ = header.draw(ui, top.top, .{
         .panel = p.panel,
         .label = p.label,
         .mode_chip = mode_text,
         .mode_kind = .sort,
         .bg = t.panel_bg,
+        .extra = if (p.add_source) &extra else &.{},
     });
     if (p.busy) list_panel.paintSpinner(ui, top.top, p.label, p.now_ms);
     if (area.h < 2) return null;
@@ -649,6 +659,35 @@ fn sectionProps(rows: []const Entry, scroll: *usize, tab: Tab) SectionProps {
         .focused = true,
         .empty = .{ .message = "Nothing installed yet — try the Marketplace tab" },
     };
+}
+
+test "the Marketplace tab's + source chip: the narrow rung at the shipped 26 and around it, the full one where it fits, a .new chip either way; no chip without the flag" {
+    var scroll: usize = 0;
+    inline for (.{ 26, 30, 34, 50 }) |w| {
+        var f = try Fixture.init(w, 6);
+        defer f.deinit();
+        var p = sectionProps(&.{}, &scroll, .marketplace);
+        p.add_source = true;
+        _ = drawSection(f.ui(), f.full(), p);
+        // ` + source ` needs 10 cells + one of air beside the 14-cell title.
+        const full = w >= 34;
+        const text = if (full) add_source_text else add_source_short;
+        var buf: [1024]u8 = undefined;
+        const row0 = f.row(0, &buf);
+        const at = std.mem.indexOf(u8, row0, text) orelse return error.TestExpectedChip;
+        try testing.expect(std.mem.indexOf(u8, row0, "INTEGRATIONS") != null);
+        // Every cell of the chip is the chip, and it sits left of the sort chip.
+        const x0: u16 = @intCast(try std.unicode.utf8CountCodepoints(row0[0..at]));
+        var x = x0;
+        while (x < x0 + text.len) : (x += 1) try testing.expectEqual(chip.ChipKind.new, f.hits.at(x, 0).?.chip.kind);
+        try testing.expectEqual(chip.ChipKind.sort, f.hits.at(x + 1, 0).?.chip.kind);
+        try testing.expect(vaxis.Color.eql(f.style(x0 + 1, 0).fg, f.theme.palette.green));
+    }
+    var g = try Fixture.init(26, 6);
+    defer g.deinit();
+    _ = drawSection(g.ui(), g.full(), sectionProps(&.{}, &scroll, .marketplace));
+    var gbuf: [1024]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, g.row(0, &gbuf), " + ") == null);
 }
 
 test "the section: header with the sort chip in its ladder, the three tabs at the Rust widths, the filter across the whole row, three rows per entry, the gutter down BOTH rows of the selected one" {

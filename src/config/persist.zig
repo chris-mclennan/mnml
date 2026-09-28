@@ -11,6 +11,7 @@ pub const backups_dir = zon_edit.backups_dir;
 pub const SpliceError = zon_edit.SpliceError;
 pub const splice = zon_edit.splice;
 pub const isIndexKey = zon_edit.isIndexKey;
+pub const append_key = zon_edit.append_key;
 pub const lineStart = zon_edit.lineStart;
 pub const lineIndent = zon_edit.lineIndent;
 pub const serializeLiteral = zon_edit.serializeLiteral;

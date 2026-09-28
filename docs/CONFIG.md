@@ -1100,6 +1100,15 @@ otherwise. Copy what you need; leave the rest out.
             // in the environment makes such a folder the only source.
             // The repo's own launchers/ lists as ✓ Official, not Private:
             // it is the official set.
+            //
+            // No need to write this by hand: `marketplace.add_source`
+            // (the palette, the Marketplace tab's `+ source` chip, the
+            // INTEGRATIONS tab strip's right-click menu) and the
+            // first-launch setup's Private integrations row take a folder
+            // or `owner/repo[:apps_dir]` and append the entry here, in
+            // the HOME config.zon only (never a workspace's), comments
+            // and order kept. A folder with nothing to install is refused;
+            // the id is the folder's or repo's name, made unique.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
             // A release index somewhere else — a mirror, or a fork's
             // releases. `{version}` in the URL is this mnml's version; a
@@ -1903,6 +1912,14 @@ after another, and the rows follow along (`queued`, `installing…`,
 `installed`). Nothing checked installs nothing, and Esc installs
 nothing whatever is checked. The rows come from the Marketplace tab's
 listing, which opening the wizard fetches.
+
+Under the checkboxes, the Private integrations row: Space (or a click)
+on it opens the Marketplace's add-a-source prompt — the same one as
+`marketplace.add_source` and the tab's `+ source` chip — for a folder
+or `owner/repo[:apps_dir]`. Enter adds the source to
+`marketplace.sources` in the home config.zon and the setup comes back
+with its id and how many integrations it found; Esc, or an empty line,
+changes nothing. The row is optional: skipping it adds nothing.
 
 ## Coming from 0.2.x (TOML)
 

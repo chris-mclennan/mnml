@@ -60,7 +60,11 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
             .body = "Rescans this section now. Right-click turns auto-refresh on or off for it — per section, persisted; on by default, with TODOS throttled to once every two seconds because its scan walks the whole workspace. The chip spins while a scan runs; a section that never changes on its own (notes, findings) refreshes when its folder does.",
             .links = &.{.{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }},
         },
-        .new => .{
+        .new => if (panel == .integrations) .{
+            .title = "+ source",
+            .body = "Adds a private source to the Marketplace: a folder on this machine (`~/my-integrations`, a path relative to the workspace) or a GitHub monorepo as `owner/repo[:apps_dir]`. A folder must hold something to install — a `*.zon` manifest, or a folder with `build.zig` and `manifest.zon` — and says how many it found. The source is appended to `marketplace.sources` in your home `config.zon`, never the workspace's, and the tab lists it at once. Right-click has the tab's menu.",
+            .links = &.{ .{ .command = .{ .id = .@"marketplace.add_source", .label = "Add a source" } }, .{ .command = .{ .id = .@"marketplace.refresh", .label = "Refresh the sources" } } },
+        } else .{
             .title = "+ new",
             .body = "Creates an entry in this section: a todo is appended to TODO.md at the workspace root under an `## Inbox` heading; a note becomes a file in `.mnml/notes/`, a finding one in `.mnml/findings/` from a template; a session starts a Claude Code or Codex session. The section refreshes at once rather than waiting for the next scan.",
             .links = &.{ .{ .command = .{ .id = .@"notes.new", .label = "New note" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "New Claude session" } } },

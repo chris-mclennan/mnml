@@ -27,6 +27,13 @@
 //! mnml, the checkout's build for a dev one. The wizard stays open and
 //! each row follows it (queued → installing… → installed). Esc, or
 //! nothing checked, installs nothing.
+//!
+//! Under the checkboxes, the Private integrations row: Space (or a
+//! click) opens the Marketplace's own add-a-source prompt — the one
+//! behind its `+ source` chip — for a folder or `owner/repo`; on Enter
+//! `marketplace.addSource` adds it and the wizard comes back with the
+//! source's id and count under the row. Esc, or an empty line, comes
+//! back with nothing changed.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -76,13 +83,26 @@ pub const State = struct {
     /// start), and which row ←→ / y / n / Tab act on.
     integ_checked: [first_party_integrations.len]bool = .{false} ** first_party_integrations.len,
     integ_row: u8 = 0,
+    /// Under the Private integrations row (`private_row`): what the
+    /// last add said, and whether it added.
+    priv_note: [note_cap]u8 = undefined,
+    priv_note_len: u8 = 0,
+    priv_ok: bool = false,
 
     pub const note_cap = 200;
 
     pub fn keyboardNote(st: *const State) []const u8 {
         return st.kb_note[0..st.kb_note_len];
     }
+
+    pub fn privateNote(st: *const State) []const u8 {
+        return st.priv_note[0..st.priv_note_len];
+    }
 };
+
+/// The Integrations section's row index of the Private integrations
+/// row: after the first-party checkboxes.
+pub const private_row: u8 = first_party_integrations.len;
 
 fn routeOf(backend: ?Config.AiBackend) wizard.Route {
     const b = backend orelse return .auto;
@@ -225,6 +245,8 @@ pub fn model(app: *App) wizard.Model {
         .ghost_text = st.ghost_text,
         .integrations = integrationRows(app, app.frame.allocator()) catch &.{},
         .integration_row = st.integ_row,
+        .private_note = st.privateNote(),
+        .private_ok = st.priv_ok,
     };
 }
 
@@ -238,7 +260,7 @@ pub fn key(app: *App, k: Key) Allocator.Error!void {
         .answer => |yes| answer(app, st.ui.section, yes),
         .probe => |i| st.keys_seen[i] = true,
         .other_row => if (st.ui.section == .integrations) {
-            st.integ_row = @intCast((st.integ_row + 1) % first_party_integrations.len);
+            st.integ_row = @intCast((st.integ_row + 1) % (first_party_integrations.len + 1));
         } else {
             st.ai_row +%= 1;
         },
@@ -259,6 +281,7 @@ fn action(app: *App, section: wizard.Section) Allocator.Error!void {
         .keyboard => try applyKeyboardFix(app),
         .input_style, .ai_routing, .ai_ghost_text => adjust(app, section, 1),
         .integrations => {
+            if (st.integ_row == private_row) return openPrivatePrompt(app);
             const n = installChecked(app) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => blk: {
@@ -324,6 +347,9 @@ pub fn click(app: *App, hit: u32) Allocator.Error!void {
                 .integrations => if (c.choice < first_party_integrations.len) {
                     st.integ_row = @intCast(c.choice);
                     st.integ_checked[c.choice] = !st.integ_checked[c.choice];
+                } else if (c.choice == private_row) {
+                    st.integ_row = private_row;
+                    return openPrivatePrompt(app);
                 },
                 else => answer(app, c.section, c.choice == 1),
             }
@@ -360,6 +386,51 @@ pub fn refresh(app: *App, section: wizard.Section) void {
     app.needs_render = true;
 }
 
+/// The Private integrations row: the wizard steps aside (its answers
+/// kept, as for an install pane) for the Marketplace's add-a-source
+/// prompt; `privateSourceAccept` or Esc brings it back.
+fn openPrivatePrompt(app: *App) void {
+    closeForInstall(app);
+    marketplace.openAddSourcePrompt(app, .wizard);
+}
+
+/// The prompt's Enter, from the wizard: `marketplace.addSource` — the
+/// palette's own path — then the box back on this section with the
+/// outcome under the row. An empty line adds nothing: the row is
+/// skippable.
+pub fn privateSourceAccept(app: *App, text: []const u8) Allocator.Error!void {
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) return refresh(app, .integrations);
+    const result = marketplace.addSource(app, text);
+    refresh(app, .integrations);
+    const added = result catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            const why = app.diag.msg orelse command.reason(err);
+            app.toast("{s}", .{why});
+            if (app.overlay == .wizard) setPrivateNote(&app.overlay.wizard, why, false);
+            app.diag.clear();
+            return;
+        },
+    };
+    if (app.overlay != .wizard) return;
+    var buf: [State.note_cap]u8 = undefined;
+    const note = if (added.found) |n|
+        std.fmt.bufPrint(&buf, "added {s}: {d} integration{s} found", .{ added.id, n, if (n == 1) "" else "s" }) catch "added"
+    else
+        std.fmt.bufPrint(&buf, "added {s} — its integrations list on the Marketplace tab", .{added.id}) catch "added";
+    setPrivateNote(&app.overlay.wizard, note, true);
+}
+
+/// The note copied into the state — it outlives the frame the text
+/// was built in.
+fn setPrivateNote(st: *State, note: []const u8, ok: bool) void {
+    const n = @min(note.len, State.note_cap);
+    @memcpy(st.priv_note[0..n], note[0..n]);
+    st.priv_note_len = @intCast(n);
+    st.priv_ok = ok;
+    st.integ_row = private_row;
+}
+
 /// ←→ on a section: cycle its answer.
 fn adjust(app: *App, section: wizard.Section, delta: i8) void {
     const st = &app.overlay.wizard;
@@ -374,7 +445,9 @@ fn adjust(app: *App, section: wizard.Section, delta: i8) void {
             cur.* = @enumFromInt(if (delta < 0) (i + n - 1) % n else (i + 1) % n);
             st.routes_touched[st.ai_row] = true;
         },
-        .integrations => st.integ_checked[st.integ_row] = !st.integ_checked[st.integ_row],
+        .integrations => if (st.integ_row < first_party_integrations.len) {
+            st.integ_checked[st.integ_row] = !st.integ_checked[st.integ_row];
+        },
         .keyboard, .claude_codex, .vscode_shim => {},
     }
 }
@@ -393,7 +466,9 @@ fn answer(app: *App, section: wizard.Section, yes: bool) void {
             st.ghost_text = yes;
             st.ghost_touched = true;
         },
-        .integrations => st.integ_checked[st.integ_row] = yes,
+        .integrations => if (st.integ_row < first_party_integrations.len) {
+            st.integ_checked[st.integ_row] = yes;
+        },
         .keyboard, .claude_codex, .ai_routing, .vscode_shim => {},
     }
 }
@@ -941,4 +1016,83 @@ test "Integrations: Enter installs the checked ones on the way out, and says so"
     try t.expectEqual(@as(u32, 1), rig.fake.hitsOf(IntegRig.jira_url));
     try t.expectEqual(@as(u32, 0), rig.fake.hitsOf(IntegRig.bitbucket_url));
     try t.expectEqual(@as(usize, 1), app.integrations.list.len);
+}
+
+test "the Integrations section's Private integrations row: Space opens the Marketplace's add-a-source prompt, Enter adds through addSource and the box comes back with the id and count; Esc and an empty line change nothing" {
+    const gpa = t.allocator;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "ws/acme/one");
+    try tmp.dir.createDirPath(t.io, "data");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/acme/one/build.zig", .data = "" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/acme/one/manifest.zon", .data = ".{ .id = \"one\", .label = \"One\", .version = \"0.1.0\", .binary = \"mnml-one\" }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ws/acme/solo.zon", .data = ".{ .id = \"solo\", .label = \"Solo\", .binary = \"mnml-solo\" }" });
+    const ws = try std.fs.path.join(gpa, &.{ root, "ws" });
+    defer gpa.free(ws);
+    const data = try std.fs.path.join(gpa, &.{ root, "data" });
+    defer gpa.free(data);
+    var cfg: Config = .{};
+    cfg.marketplace.use_defaults = false;
+    var app = try App.initWith(gpa, t.io, .{ .cfg = cfg, .workspace = ws, .data_root = data, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"first_launch.show" });
+    try app.handle(.{ .key = Key.char('8') });
+    try t.expect(app.overlay.wizard.ui.section == .integrations);
+    // Tab past the first-party rows to the Private row.
+    for (first_party_integrations) |_| try app.handle(.{ .key = Key.named(.tab) });
+    try t.expectEqual(private_row, app.overlay.wizard.integ_row);
+    const screen_mod = @import("../ipc/screen.zig");
+    try app.render();
+    const shown = try screen_mod.toTestText(gpa, &app.screen);
+    defer gpa.free(shown);
+    try t.expect(std.mem.indexOf(u8, shown, "▸ Private integrations: a folder or owner/repo") != null);
+
+    // Esc on the prompt: the box back, as it was, nothing written.
+    try app.handle(.{ .key = Key.char(' ') });
+    try t.expect(app.overlay == .prompt);
+    try t.expect(app.overlay.prompt.purpose.marketplace_add_source == .wizard);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .wizard);
+    try t.expect(app.overlay.wizard.ui.section == .integrations);
+    try t.expectEqual(@as(usize, 0), app.overlay.wizard.privateNote().len);
+    // An empty line: skipped, the box back.
+    try app.handle(.{ .key = Key.char(' ') });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .wizard);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "data/config.zon", .{}));
+
+    // A folder: added, the note under the row.
+    try app.handle(.{ .key = Key.char(' ') });
+    for ("acme") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .wizard);
+    try t.expect(app.focus == .overlay);
+    try t.expectEqualStrings("added acme: 2 integrations found", app.overlay.wizard.privateNote());
+    try t.expect(app.overlay.wizard.priv_ok);
+    const text = try tmp.dir.readFileAlloc(t.io, "data/config.zon", gpa, .unlimited);
+    defer gpa.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".local_folder = .{ .id = \"acme\"") != null);
+    try app.render();
+    const after = try screen_mod.toTestText(gpa, &app.screen);
+    defer gpa.free(after);
+    try t.expect(std.mem.indexOf(u8, after, "added acme: 2 integrations found") != null);
+
+    // A refusal says why under the row, and the box stays.
+    try app.handle(.{ .key = Key.char(' ') });
+    for ("nope") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.overlay == .wizard);
+    try t.expect(!app.overlay.wizard.priv_ok);
+    try t.expect(std.mem.indexOf(u8, app.overlay.wizard.privateNote(), "nope is not a folder") != null);
+    // Esc on the wizard: the source stays added (it was its own save).
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqual(@as(usize, 1), app.cfg.marketplace.sources.len);
+    var waited: u32 = 0;
+    while (app.marketplace.fetching and waited < 30_000) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try t.expect(!app.marketplace.fetching);
 }

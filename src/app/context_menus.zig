@@ -1725,14 +1725,16 @@ fn openTabPageMenu(app: *App, page: usize, x: u16, y: u16) Allocator.Error!bool 
 }
 
 /// The INTEGRATIONS section's tab strip (Zig-only): the tabs, ticked,
-/// and a refresh.
-fn openIntegrationsTabsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+/// a private source for the Marketplace (the prompt behind its
+/// ` + source ` chip, whose right-click is this menu too), and a refresh.
+pub fn openIntegrationsTabsMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const cur = app.integrations.tab;
     const rows = try items(app, &.{
         .{ .label = "Installed", .action = .{ .command = .@"integrations.show_installed" }, .checked = cur == .installed },
         .{ .label = "Marketplace", .action = .{ .command = .@"integrations.show_marketplace" }, .checked = cur == .marketplace },
         .{ .label = "Dev", .action = .{ .command = .@"integrations.show_in_dev" }, .checked = cur == .dev },
-        .{ .label = "Refresh", .action = .{ .command = .@"integrations.refresh" }, .separator_before = true },
+        .{ .label = "Add a private source (a folder or owner/repo)…", .action = .{ .command = .@"marketplace.add_source" }, .separator_before = true },
+        .{ .label = "Refresh", .action = .{ .command = .@"integrations.refresh" } },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Integrations", rows, x, y);

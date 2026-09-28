@@ -69,7 +69,14 @@ resolves through the environment — see
 A private or external integration is the same folder outside this
 repo: point `integrations.dev_roots` at its parent to develop it, or
 list its parent as a `local_folder` marketplace source to install it
-from the Marketplace tab (`docs/CONFIG.md`).
+from the Marketplace tab (`docs/CONFIG.md`). Two entry points add that
+source without editing config.zon, through one code path
+(`marketplace.addSource`): `marketplace.add_source` — the palette, the
+Marketplace tab's `+ source` chip and the INTEGRATIONS tab strip's
+right-click menu — and the first-launch setup's Private integrations
+row. Either takes the folder (`~` expanded, relative to the workspace)
+or a GitHub monorepo as `owner/repo[:apps_dir]`, refuses a folder with
+nothing to install, and appends the entry to the home config.zon.
 
 ## Set up
 
@@ -650,7 +657,9 @@ mnml to ship your code:
 
 A `local_folder` source is the same two shapes on a disk you can
 reach — a company share, a private checkout — and lists with the
-`Private` badge.
+`Private` badge. Add one from the UI with `marketplace.add_source` (or
+the tab's `+ source` chip, or the first-launch setup's Private
+integrations row) rather than by hand.
 
 ## Tier 2 — toasts, progress, statusline, badges, commands
 
