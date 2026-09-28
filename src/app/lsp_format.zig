@@ -982,7 +982,7 @@ const Key = @import("../core/key.zig").Key;
 test "through the fake server: on-type formatting behind its flag, range formatting on a selection, willSaveWaitUntil before the write" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
@@ -1055,12 +1055,13 @@ test "an external formatter runs stdin → stdout or in place as one undo step; 
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
     const e = app.activeEditor().?;
-    const path = "/tmp/mnml-zig-fmt-test.txt";
+    const path = try std.fs.path.join(gpa, &.{ app.workspace, "mnml-zig-fmt-test.txt" });
+    defer gpa.free(path);
     try e.buf.setPath(path);
     try e.buf.editor.setText("abc\n");
     // stdin → stdout.
@@ -1105,12 +1106,13 @@ test "an external linter runs on a worker and its findings land in the diagnosti
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
     const e = app.activeEditor().?;
-    const path = "/tmp/mnml-zig-lint-test.txt";
+    const path = try std.fs.path.join(gpa, &.{ app.workspace, "mnml-zig-lint-test.txt" });
+    defer gpa.free(path);
     try e.buf.setPath(path);
     try e.buf.editor.setText("a\nb\nc\n");
     const script = try writeScript(io, gpa, "lint", "echo \"$1:2:3: error: bad thing\"\necho \"$1:1:1: warning: meh\"\nexit 1\n");
@@ -1121,7 +1123,9 @@ test "an external linter runs on a worker and its findings land in the diagnosti
     try app.cfg.linters.put(gpa, "txt", .{ .cmd = &argv, .parser = .vimgrep });
     const Cond = struct {
         fn two(a: *App) bool {
-            return lsp.diagnosticsFor(a, "/tmp/mnml-zig-lint-test.txt").len == 2;
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const p = std.fmt.bufPrint(&buf, "{s}/mnml-zig-lint-test.txt", .{a.workspace}) catch return false;
+            return lsp.diagnosticsFor(a, p).len == 2;
         }
     };
     lintOnHook(&app, path, false);
@@ -1281,7 +1285,7 @@ test "mapCursor: the cursor follows its line through a formatter's added lines, 
 }
 
 test "replaceWhole splices only the changed middle and keeps the cursor" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -1312,7 +1316,7 @@ const SaveCount = struct {
 test "format-on-save holds the write for the server's edits: one write with them in it, dropped when the buffer moved on, written as is past the budget" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};
@@ -1418,7 +1422,7 @@ test "format-on-save holds the write for the server's edits: one write with them
 test "a formatting reply for a buffer that changed since the request is dropped, not spliced into the new text" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};

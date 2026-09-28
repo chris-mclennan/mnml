@@ -147,7 +147,7 @@ const Key = app_mod.Key;
 const pty_pane = @import("pty_pane.zig");
 
 test "install registers task.<name> commands; :task and the picker run them; startup runs its list" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try install(&app, &.{
@@ -192,7 +192,7 @@ test "install registers task.<name> commands; :task and the picker run them; sta
 }
 
 test "installFromConfig reads the typed config's tasks and startup list" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();

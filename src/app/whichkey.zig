@@ -655,7 +655,7 @@ fn expectUniqueKeys(n: *const Node) !void {
 test "the popup: backspace goes up a level, a non-character key leaves it open, a dead end says so" {
     const t = std.testing;
     const app_mod = @import("../app.zig");
-    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = app_mod.App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     // The tree is the vim profile's popup; the standard profile's is its
@@ -697,7 +697,7 @@ test "the popup: backspace goes up a level, a non-character key leaves it open, 
 test "an installed integration's chord is a row under +integrations, and a built-in row still wins" {
     const t = std.testing;
     const app_mod = @import("../app.zig");
-    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try app_mod.App.initWith(t.allocator, t.io, .{ .workspace = app_mod.App.scratch_workspace });
     defer app.deinit();
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();

@@ -2019,7 +2019,7 @@ test "an adapter written into the workspace config after launch: the e2e workspa
 }
 
 test "consoleLines: a result or an error of several lines is one row each, the type after the first line, all rows the entry's" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     var bt: types.ReplEntry = .{ .expression = try app.gpa.dupe(u8, "bt") };
     try bt.setResult(app.gpa, "* thread #1, stop reason = breakpoint 1.1\n  * frame #0: main at main.c:22\n    frame #1: start\n", null, null, 0);
@@ -2049,7 +2049,7 @@ test "consoleLines: a result or an error of several lines is one row each, the t
 }
 
 test "a fetched source's pane: closed and its id taken by another buffer, the ▶ and the strip leave, and the next stop there makes a new pane; the same name reuses it" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 90, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     try showFetchedSource(&app, "start", "start:\n    call main\n    exit\n", 1);
@@ -2087,7 +2087,7 @@ test "a fetched source's pane: closed and its id taken by another buffer, the �
 }
 
 test "breakpoints: toggle on/off toasts the 1-based line, list summarises, clear counts" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2118,7 +2118,7 @@ test "breakpoints: toggle on/off toasts the 1-based line, list summarises, clear
 }
 
 test "conditional + hit-count prompts record on the line; empty input clears" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2147,7 +2147,7 @@ test "conditional + hit-count prompts record on the line; empty input clears" {
 }
 
 test "gutter: the sign glyphs per breakpoint kind, a disabled or unverified one muted; the sign cell toggles on a left press, a right press opens the breakpoint menu" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2206,7 +2206,7 @@ test "gutter: the sign glyphs per breakpoint kind, a disabled or unverified one 
 }
 
 test "console without a session: entries land as no-session, ↑↓ walk the history, Ctrl+L clears, Esc leaves" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 90, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -2257,7 +2257,7 @@ test "console without a session: entries land as no-session, ↑↓ walk the his
 }
 
 test "watches: add via the prompt, the debug pane lists them, the picker removes one" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 90, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 90, .rows = 24 });
     defer app.deinit();
     // A narrow screen with the column docked: this test is about
     // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
@@ -2426,7 +2426,7 @@ fn pumpUntil(app: *App, ctx: anytype, comptime cond: fn (@TypeOf(ctx)) bool, bud
 test "a scripted adapter: the handshake, a stop with frames/scopes/variables/watches, the REPL, setVariable, a step" {
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const file = "/tmp/mnml-zig-fake-dap.py";
@@ -2545,7 +2545,7 @@ test "a scripted adapter: the handshake, a stop with frames/scopes/variables/wat
 test "an attach session: Stop detaches — no `terminate`, `disconnect { terminateDebuggee: false }` — and the process is not mnml's to end" {
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const file = "/tmp/mnml-zig-fake-dap-attach.py";
@@ -2648,7 +2648,7 @@ fn fakeNetcoredbg(io: std.Io, gpa: Allocator, in: std.Io.File, out: std.Io.File,
 test "a netcoredbg-shaped adapter: initialized before the initialize reply still gets the default filter, then launch, configurationDone and a stop" {
     const gpa = testing.allocator;
     const io = testing.io;
-    var app = try App.initWith(gpa, io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const file = "/tmp/mnml-zig-fake-netcoredbg/Program.cs";

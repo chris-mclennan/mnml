@@ -2480,7 +2480,7 @@ test "view.reveal_in_tree opens the section and every folder above the active fi
 }
 
 test "vim: <leader>e focuses the tree (opening it), <C-n> toggles it and focuses on open; standard Ctrl+B toggles without focus" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     // A narrow screen with the column docked: this test is about
     // what sits beside it, not the width rule (`ui.sidebar_auto_below`).

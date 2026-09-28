@@ -198,7 +198,7 @@ const Color = @import("vaxis").Color;
 test "through the fake server: a full reply's tokens layer over the grammar's spans; an edit stales them until the delta reply replaces the cache" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = testing.allocator;
-    var app = try App.initWith(gpa, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     var rig: lsp.TestRig = .{};

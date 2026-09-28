@@ -123,7 +123,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
 const testing = std.testing;
 
 test "cursor_idle fires once the cursor rests, again only after it moves; buffer_change follows an edit" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratchWith("one\ntwo\nthree\n");
@@ -172,7 +172,7 @@ test "buffer_change is per pane: a focus switch is not an edit, and an edit is r
     // switching between two unedited panes fired the hook each time, and
     // an edit followed by a switch inside the debounce was reported once,
     // naming the pane focus moved to.
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     const a = try app.openScratchWith("one\n");

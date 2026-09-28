@@ -98,7 +98,7 @@ pub fn askContext(app: *App, arena: Allocator, target: HitTarget) Allocator.Erro
 const t = std.testing;
 
 test "a cell, the gutter and the fold arrow have entries that name the line" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     const id = try app.openScratch();

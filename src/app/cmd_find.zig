@@ -861,7 +861,7 @@ const t = std.testing;
 const Key = app_mod.Key;
 
 fn appWith(text: []const u8) !App {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     errdefer app.deinit();
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText(text);

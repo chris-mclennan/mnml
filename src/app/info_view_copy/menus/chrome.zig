@@ -536,7 +536,7 @@ fn expectCurated(app: *App) !void {
 }
 
 test "chrome: every row of the chip menus, the dock's menu and a tab's menu resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const cm = @import("../../context_menus.zig");
     const render = @import("../../render.zig");

@@ -671,7 +671,7 @@ test "the Terminal menu's \"split below\" row opens its shell under the active p
     // A login shell: POSIX.
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     if (!@import("pty_pane.zig").supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -688,7 +688,7 @@ test "the Terminal menu's \"split below\" row opens its shell under the active p
 }
 
 test "menu bar: the View menu's full-screen row reads the way in outside and the way out inside" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     try openIndex(&app, @intFromEnum(Menu.view));
@@ -957,7 +957,7 @@ fn pinHit(app: *const App) ?Rect {
 }
 
 test "the pin: ui.menu_bar reads always while pinned, the config is untouched, and unpinning gives the mode back" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.menu_bar = .auto;
     try t.expectEqual(Config.MenuBar.auto, mode(&app));
@@ -994,7 +994,7 @@ test "the pin: ui.menu_bar reads always while pinned, the config is untouched, a
 }
 
 test "the pin chip paints under auto — revealed or pinned — and never under always, where there is nothing to pin" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const screen = @import("../ipc/screen.zig");
     app.tree.visible = false;
@@ -1047,7 +1047,7 @@ test "the pin chip paints under auto — revealed or pinned — and never under 
 }
 
 test "the pin chip's menus: the bar's word menu grows a pin row, and the chip's own right press is the pin and the mode" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const context_menus = @import("context_menus.zig");
     app.cfg.ui.menu_bar = .auto;

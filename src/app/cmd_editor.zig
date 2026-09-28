@@ -891,7 +891,7 @@ fn keywordCycle(app: *App, back: bool) CommandError!void {
 const t = std.testing;
 
 fn appWith(text: []const u8) !App {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     errdefer app.deinit();
     _ = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText(text);
@@ -899,7 +899,7 @@ fn appWith(text: []const u8) !App {
 }
 
 test "fold_all_brackets closes every multi-line pair once, outermost first per start line, and parks the cursor on its fold" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     const e = app.activeEditor().?;
@@ -1275,7 +1275,7 @@ test "Ctrl+R . inserts what the last Insert session typed; none fails" {
 }
 
 test "editor.input_mode_menu opens the keymap menu one row above the mode chip, at the origin before a frame" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.input_mode_menu" });

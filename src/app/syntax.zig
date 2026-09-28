@@ -569,7 +569,7 @@ test "parseDue: a small file's first parse is at once, a large one's waits out t
 }
 
 test "the first frame after opening a 6000-line file paints without a parse; the parse lands on the idle gate" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();

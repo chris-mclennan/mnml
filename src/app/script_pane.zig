@@ -161,7 +161,7 @@ const t = std.testing;
 const screen_mod = @import("../ipc/screen.zig");
 
 test "a script pane renders its rows, a click reaches on_hit, a key reaches on_key, close unrefs" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 40, .rows = 8 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();
@@ -211,7 +211,7 @@ test "a script pane renders its rows, a click reaches on_hit, a key reaches on_k
 }
 
 test "a render that errors paints its message instead of failing the frame" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 8 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     const lua = app.script();

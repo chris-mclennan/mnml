@@ -232,7 +232,7 @@ pub fn move(app: *App, arena: Allocator, s: Section, dest: side.Side) Allocator.
 const t = std.testing;
 
 test "rail: sectionOf reads a menu's title; Show and Move say the section, the host and the state" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     try t.expectEqual(Section.git, sectionOf("Source control").?);
@@ -259,7 +259,7 @@ test "rail: sectionOf reads a menu's title; Show and Move say the section, the h
 }
 
 test "rail: every row of every section's menu resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const cm = @import("../../context_menus.zig");
     inline for (comptime std.enums.values(Section)) |s| {

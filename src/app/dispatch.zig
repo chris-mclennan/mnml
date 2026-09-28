@@ -4562,7 +4562,7 @@ test "the one deep-link shape: `--focus <key>` names a thing inside a listing, a
 }
 
 test "chord chain: ctrl+k alone is pending with a which-key fallback; in the standard profile expiring keeps the chord and lists its keys, in vim the leader fallback opens the tree" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 40, .rows = 10 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 10 });
     defer app.deinit();
     try std.testing.expect(app.input_style != .vim);
     try key(&app, Key.ctrl('k'));
@@ -4630,7 +4630,7 @@ test "leader chain: the second key of `space e` is the chord's, not the editor's
 }
 
 test "leader chain: an unbound chord is swallowed whole — its tail key never reaches the vim handler, typed fast or through the popup" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -4681,7 +4681,7 @@ fn dragTo(app: *App, x: u16, y: u16) !void {
 }
 
 test "stale rects: a click after a layout change routes against a fresh frame, not the last one" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
     const a = try app.openScratch();
@@ -4721,7 +4721,7 @@ fn cellOf(app: *App, line: u32, off: u32) ?struct { x: u16, y: u16 } {
 }
 
 test "a click lands on the glyph under the pointer: bytes not chars, both cells of a wide glyph, the EOL space" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -4844,7 +4844,7 @@ fn hoverBoxAt(app: *App) ?struct { x: u16, y: u16 } {
 }
 
 test "the wheel over the hover box scrolls its lines two an event, never the editor under it; a press puts it away" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try app.openScratch();
@@ -4923,7 +4923,7 @@ test "a picker click opens the row under the pointer — at index 0 and after th
 }
 
 test "a click on a soft-wrapped continuation row lands on that row's chars, on the first screen and scrolled" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -4976,7 +4976,7 @@ test "a click on a soft-wrapped continuation row lands on that row's chars, on t
 }
 
 test "wheel: a burst folds into one batch per tick; standard pins the view, vim moves the cursor" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -5028,7 +5028,7 @@ test "wheel: a burst folds into one batch per tick; standard pins the view, vim 
 
 test "wheel: the batch is budgeted through scroll_accel — a fast second notch travels further under normal, 1:1 under off" {
     for ([_]app_mod.Config.ScrollAccel{ .normal, .off }, [_]u32{ 6, 3 }) |setting, second| {
-        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
         defer app.deinit();
         app.tree.visible = false;
         app.cfg.editor.scroll_accel = setting;
@@ -5053,7 +5053,7 @@ test "wheel: the batch is budgeted through scroll_accel — a fast second notch 
 }
 
 test "wheel_moves_cursor: always moves the cursor in standard, never pins the view in vim; a scrollbar drag follows the same rule" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     // A narrow screen with the column docked: this test is about
     // what sits beside it, not the width rule (`ui.sidebar_auto_below`).
@@ -5098,7 +5098,7 @@ test "wheel_moves_cursor: always moves the cursor in standard, never pins the vi
 }
 
 test "editor clicks: one places the cursor, two select the word, three the line; shift extends; drag selects" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -5184,7 +5184,7 @@ test "an Alt-press on a tree row dragged onto a folder asks to copy; Tab on the 
 }
 
 test "gestures: a divider drag resizes with the minimum kept, a tab drag reorders, the + opens the Create… menu" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
     const a = try app.openScratch();
@@ -5403,7 +5403,7 @@ test "wheel over the tree: a batch is a notch and moves one row; a batch inside 
 }
 
 test "a context menu taller than the screen: the wheel scrolls it a row per event, the border says which way the rest lies, End reaches the last row, a scrolled row's hit names its item" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 14 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 14 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -5451,7 +5451,7 @@ test "a context menu taller than the screen: the wheel scrolls it a row per even
 }
 
 test "a scrollbar drag keeps steering off the bar until the release: the help box" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"view.help" });
@@ -5533,7 +5533,7 @@ test "a submenu's first arrow moves as well as lights: New ▸ then two downs an
 }
 
 test "toasts: the transient stack keeps five and drops the oldest, a repeat coalesces, a sticky one is not counted, and Esc clears the transient ones even with an overlay open" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try app.toastPersistent("job", "indexing…", .info);
     var i: usize = 0;
@@ -5571,7 +5571,7 @@ test "a paste into the editor lands literally in both profiles: no auto-indent c
         "    a = 1\r\n        b = (2\r\nc = [3]\r\n",
     };
     for ([_]input.Style{ .standard, .vim }) |style| for (pasted) |p| {
-        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 12 });
+        var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 12 });
         defer app.deinit();
         try app.setInputStyle(style);
         _ = try app.openScratch();
@@ -5598,7 +5598,7 @@ fn hitCentre(app: *App, want: app_mod.PressedButton) ?[2]u16 {
 }
 
 test "a button fires on the release inside it: a close badge or a strip chip pressed and slid off does nothing; the badge dragged off drags its tab" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const a = try app.openScratch();
@@ -5643,7 +5643,7 @@ test "a button fires on the release inside it: a close badge or a strip chip pre
 }
 
 test "a menu closing after the active pane changed under it focuses the active pane, not the stale snapshot" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     const a = try app.openScratch();
     const b = try app.openScratch();

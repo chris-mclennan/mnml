@@ -926,7 +926,7 @@ test "terminal notifications: OSC 777 for ghostty and WezTerm, OSC 9 for iTerm2,
 }
 
 test "notify through the terminal: the escapes go to App.hostWrite, the bell after them under `sound`; no toast when the caller has one" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     try app.env.put("TERM_PROGRAM", "ghostty");
     const toasts = app.toasts.items.len;
@@ -947,7 +947,7 @@ test "notify through the terminal: the escapes go to App.hostWrite, the bell aft
 }
 
 test "apply: the five tier-2 commands land in App state; notify toasts, error pins" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();

@@ -100,7 +100,7 @@ fn openFour(app: *App, opts: Opts) !void {
 
 test "arrange .context: the empty area takes the pane full, then the axis is halves, thirds, quarters" {
     inline for (.{ true, false }) |horizontal| {
-        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
         defer app.deinit();
         app.tree.visible = false;
         try testing.expectEqual(@import("../config/Config.zig").SplitArrange.context, app.cfg.integrations.arrange);
@@ -128,7 +128,7 @@ test "arrange .fixed: the old rects, cell for cell — half the active pane, the
     // The integration path: `.fixed` plus `equalize_on_open`, which is
     // what `mount_pane.place` did before there was a rule.
     {
-        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
         defer app.deinit();
         app.tree.visible = false;
         app.cfg.integrations.arrange = .fixed;
@@ -139,7 +139,7 @@ test "arrange .fixed: the old rects, cell for cell — half the active pane, the
     // which is why the third shell took a quarter and the fourth an
     // eighth.
     inline for (.{ true, false }) |horizontal| {
-        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
         defer app.deinit();
         app.tree.visible = false;
         app.cfg.integrations.arrange = .fixed;
@@ -150,7 +150,7 @@ test "arrange .fixed: the old rects, cell for cell — half the active pane, the
 }
 
 test "arrange: `before` puts the new pane first, a grid slot is filled rather than split around" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
     const layout = app.layouts.current();
@@ -164,7 +164,7 @@ test "arrange: `before` puts the new pane first, a grid slot is filled rather th
 
     // A layout that is nothing but a held-open slot: the pane fills it,
     // so the slot is not left beside a half-width newcomer.
-    var grid = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var grid = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer grid.deinit();
     grid.tree.visible = false;
     const gl = grid.layouts.current();

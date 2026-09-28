@@ -373,7 +373,7 @@ fn goto9(app: *App) CommandError!void {
 const t = std.testing;
 
 test "page moves replace one `tab N/M` toast rather than stacking, and it expires" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"tab.new" });
@@ -392,7 +392,7 @@ test "page moves replace one `tab N/M` toast rather than stacking, and it expire
 }
 
 test "gotoPage: a count names the page, past the end is the last page; back counts pages with wrap" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"tab.new" });
@@ -415,7 +415,7 @@ test "gotoPage: a count names the page, past the end is the last page; back coun
 }
 
 test "tab pages: new / goto / move / close re-homes a dirty pane and closes a clean one" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"tab.new" });
@@ -450,7 +450,7 @@ test "tab pages: new / goto / move / close re-homes a dirty pane and closes a cl
 }
 
 test "tab.close keeps a pane another page still shows; only the panes no page shows retire" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     // Page 1: a and b. Page 2: c, then b shown there too.
     const a = try app.openScratch();
@@ -481,7 +481,7 @@ test "tab.close keeps a pane another page still shows; only the panes no page sh
 test "showing a non-editor pane on another page goes to that page — it is never pulled into this one; tab.close then retires only its own page's panes" {
     // sess-card-enter-pulls-pane-across-tabs: a pane other than an
     // editor (a session's pty, here the cheatsheet) lives in one leaf.
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     // Page 1: a and the cheatsheet. Page 2: c.
     const a = try app.openScratch();
@@ -554,7 +554,7 @@ test "tab.reopen brings a closed page's files back as a new page after this one,
 }
 
 test "view.move_to_new_tab pulls the active split out into a new page after this one; the old page keeps its other panes; alone on a page it refuses" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.move_to_new_tab" }));

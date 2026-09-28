@@ -450,7 +450,7 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
     var cfg: Config = .{};
     cfg.ai.launch_profiles = &two_profiles;
     cfg.ai.default_profile.claude = "multi-repo";
-    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .data_root = root, .cols = 80, .rows = 20 });
     defer app.deinit();
     try app.env.put("HOME", "/home/x");
     const a = app.frame.allocator();
@@ -509,7 +509,7 @@ test "launch: the built-in is the bare binary; a profile is its shim with the mo
 test "the legacy launcher-script row ends the chip menu and opens the profile picker with the migration note" {
     var cfg: Config = .{};
     cfg.ai.launch_profiles = &two_profiles;
-    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     const items = try menuItems(&app, t.allocator, .claude);
     defer {
@@ -538,7 +538,7 @@ test "setDefault persists to the home config and takes effect at once" {
     const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
     var cfg: Config = .{};
     cfg.ai.launch_profiles = &two_profiles;
-    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = "/tmp", .data_root = root, .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .data_root = root, .cols = 80, .rows = 20 });
     defer app.deinit();
     try setDefault(&app, .codex, "fast");
     try t.expectEqualStrings("fast", defaultName(&app, .codex));

@@ -447,7 +447,7 @@ test "contextAt: the API path, hooks, commands, keys (per token), roles; nothing
 }
 
 test "itemsFor: every API function and table, the hooks, the ids, the key tokens, the roles" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const arena = app.frame.allocator();
     const root = try itemsFor(&app, arena, .{ .api = "mnml" });

@@ -641,7 +641,7 @@ pub fn askContext(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!
 const t = std.testing;
 
 test "every chip kind, every panel's row and kebab, every flag, every HTTP part, the pill, the info view parts have entries" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     inline for (comptime std.enums.values(hit.ChipKind)) |k| try t.expect(chip(.notes, k).body.len >= 40);
@@ -666,7 +666,7 @@ test "every chip kind, every panel's row and kebab, every flag, every HTTP part,
 test "a git graph pane's controls read their own entries through the pane-row reading, never the kebab's Row actions" {
     const graph_view = @import("../../ui/git_graph_view.zig");
     const git_toolbar = @import("../../ui/git_toolbar.zig");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     // The pane owns the graph from here; `app.deinit` frees it.

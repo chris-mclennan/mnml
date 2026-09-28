@@ -507,7 +507,7 @@ fn rects(app: *App) render.FrameRects {
 }
 
 test "defaults: every section is on the left but the outline (right) and the diagnostics (the dock); the explorer is open on the left, the right column and the dock closed" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     for (Section.all) |s| try t.expectEqual(switch (s) {
         .outline => Side.right,
@@ -549,7 +549,7 @@ test "configuredSide: the overrides win, then sidebar_side, the outline on the o
 }
 
 test "move: a shown section closes on one side and opens on the other with the keys; the explorer stays; a pane section has no side; the same side is a no-op" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.activity_todos" });
@@ -603,7 +603,7 @@ test "move: a shown section closes on one side and opens on the other with the k
 }
 
 test "the right column: toggle brings back the last section shown there, else the first on that side; next / prev walk the side; focus opens it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     // // changed (bottom-dock): the diagnostics moved to the dock, so
@@ -718,7 +718,7 @@ test "layout (bottom-dock): the dock comes off `upper` before the columns — fu
 }
 
 test "the dock: placing a section there, `view.toggle_bottom_panel` closing and reopening it, the height clamp, and a divider drag" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     // The diagnostics live in the dock; the toggle opens it there.
@@ -748,7 +748,7 @@ test "the dock: placing a section there, `view.toggle_bottom_panel` closing and 
 }
 
 test "the dock: a section moved down and back — `Ctrl-W J` docks TODOS, `Ctrl-W K` returns it to the column it came from" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -778,7 +778,7 @@ test "the dock: a section moved down and back — `Ctrl-W J` docks TODOS, `Ctrl-
 }
 
 test "the dock is a window: vim `Ctrl-W j` steps down into it from a pane, from the tree and from a column, and `Ctrl-W k` steps back up" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const ed = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -826,7 +826,7 @@ test "the dock is a window: vim `Ctrl-W j` steps down into it from a pane, from 
 }
 
 test "the dock hosts a pane: `view.host_active_in_bottom_panel` takes the active pane out of the splits and puts it back" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_right" });
@@ -857,7 +857,7 @@ test "the dock hosts a pane: `view.host_active_in_bottom_panel` takes the active
 }
 
 test "the dock: the toggle drains its hosted panes back to the splits, as Rust's does" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_right" });
@@ -881,7 +881,7 @@ test "ctrlWCommand: the vim window family from a column, H / L the section moves
 }
 
 test "vim: ctrl+w L on a focused TODOS panel moves it to the right edge; ctrl+w H on the tree moves the explorer to the left (a no-op there); an editor keeps the split meaning" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -916,7 +916,7 @@ test "vim: ctrl+w L on a focused TODOS panel moves it to the right edge; ctrl+w 
 }
 
 test "git mode follows its section's side: on the right, entering snaps the right column to a fifth and the palette paints there; leaving puts the explorer back only on its own side" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try move(&app, .git, .right);
     try command.run(&app, .{ .static = .@"view.activity_git" });
@@ -943,7 +943,7 @@ test "git mode follows its section's side: on the right, entering snaps the righ
 }
 
 test "git mode's snap is the mode's: the column it narrowed gets its width back when the mode ends — the explorer at 30 again, not 24 — a dragged width comes back as dragged, the right column too, and a session saved in the mode keeps the width from before it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     // Before: the configured 30 — the rail's 3 and its border off it.
     try t.expectEqual(@as(u16, 30), app.tree.width);

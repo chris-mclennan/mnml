@@ -554,7 +554,7 @@ fn expectCurated(app: *App) !void {
 }
 
 test "chips: the theme pill's Toggle row follows its label — no pair, a pair, on the alt half" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     app.cfg.ui.theme_toggle = null;
@@ -569,7 +569,7 @@ test "chips: the theme pill's Toggle row follows its label — no pair, a pair, 
 }
 
 test "chips: every row of the statusline chips' menus resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const cm = @import("../../context_menus.zig");
     const now_playing = @import("../../now_playing.zig");

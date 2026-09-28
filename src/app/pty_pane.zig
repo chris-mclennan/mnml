@@ -1663,7 +1663,7 @@ test "claudeTranscriptExists: the cwd is spelled as Claude Code names the direct
     const root = buf[0..n];
     const cwd = try std.fs.path.join(t.allocator, &.{ root, "my_app v2.0" });
     defer t.allocator.free(cwd);
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.sessions.home = try std.fs.path.join(t.allocator, &.{ root, "home" });
     // The fixture spells the directory by Claude Code's rule on its own,
@@ -1797,7 +1797,7 @@ test "a scripted child's coloured line reaches the cells, the exit is noticed, a
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try open(&app, .{
@@ -1838,7 +1838,7 @@ test "an exited pane stays for reading back: its scroll keys scroll, a letter or
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try app.setInputStyle(.vim);
@@ -1866,7 +1866,7 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo; echo ready; cat | tr a-z A-Z" }, .label = "cat" });
@@ -1888,7 +1888,7 @@ test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader an
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     try command.run(&app, .{ .static = .@"editor.use_vim" });
@@ -1966,7 +1966,7 @@ test "paste is bracketed only when the child asked; a newline becomes a carriage
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     // The child switches bracketed paste on, then dumps what it reads as octal.
@@ -1982,7 +1982,7 @@ test "selecting in a terminal pane: a drag copies the cells it crossed (a wide c
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'COPYME-alpha-beta \\344\\275\\240\\345\\245\\275 end\\n'; sleep 30" }, .label = "sel" });
@@ -2038,7 +2038,7 @@ test "what a shell reports: OSC 7 is the pane's live cwd, OSC 133 prompts are ju
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     const script =
@@ -2071,7 +2071,7 @@ test "focus reports: a child that enabled DEC 1004 hears ESC [ O when its pane l
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 16 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -2097,7 +2097,7 @@ test "the wheel over a pager: on the alternate screen with no mouse tracking the
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     // What less does: the alternate screen, no mouse mode. The child
@@ -2119,7 +2119,7 @@ test "the wheel over a pty: a child tracking the mouse gets every event of a bat
     // A POSIX shell script drives this one.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     // The child asks for every motion (1003) in SGR form; the tty's
@@ -2469,7 +2469,7 @@ fn cellAfter(app: *App, needle: []const u8) ?struct { x: u16, y: u16 } {
 test "two terminals in a split: one filled cursor on the focused pane, a hollow one on the other" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     if (!supported) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 16 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 16 });
     defer app.deinit();
     app.tree.visible = false;
     const left = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf LL; sleep 30" }, .label = "left", .kind = .command });
@@ -2569,7 +2569,7 @@ test "a new terminal pane's child starts at the size the layout gives it: a righ
     if (!supported) return error.SkipZigTest;
     // 120x40 with the tree open: the panes get columns 31..119 (89)
     // and rows 1..37 (37). Every pane wears a rail and a strip row.
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.pane_rail = .all;
     const first = try openSized(&app, .tab);
@@ -2587,7 +2587,7 @@ test "a new terminal pane's child starts at the size the layout gives it: a righ
     try expectBornFitted(&app, nested, 20, 17);
 
     // A down split of a lone pane.
-    var solo = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var solo = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer solo.deinit();
     solo.cfg.ui.pane_rail = .all;
     _ = try openSized(&solo, .tab);

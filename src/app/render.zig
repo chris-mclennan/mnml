@@ -2102,7 +2102,7 @@ test "spanLineRanges: one range while the cursor is near the viewport, two when 
 test "a frame over a large document walks none of its text: no line index rebuilt, no marker looked for, whatever the keys" {
     const gpa = std.testing.allocator;
     const conflict_cache = @import("conflict_cache.zig");
-    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     try @import("../core/command.zig").run(&app, .{ .static = .@"editor.use_vim" });
     app.tree.visible = false;
@@ -2143,7 +2143,7 @@ test "a frame over a large document walks none of its text: no line index rebuil
 
 test "a frame over a long unwrapped line asks the highlighter for the columns on screen, not the line" {
     const gpa = std.testing.allocator;
-    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(gpa, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     try @import("../core/command.zig").run(&app, .{ .static = .@"editor.use_vim" });
     app.tree.visible = false;
@@ -3142,7 +3142,7 @@ test "frameRects: the rail and its border come off the sidebar's own 30 columns 
 }
 
 test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane hit under the text" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 48, .rows = 8 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 48, .rows = 8 });
     defer app.deinit();
     app.tree.visible = false;
     const empty = try screenText(&app);
@@ -3185,7 +3185,7 @@ test "a frame: bufferline tab, text with gutter, statusline Ln/Col, and the pane
 }
 
 test "a wide frame has the palette bar on row 0 and the strip on row 1; each leaf carries its own strip" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3209,7 +3209,7 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
 }
 
 test "the edge grips: one per hidden slide-in, each on its own zone's cells, each a hit that pins — and none at all when the surface is up, pinned, or `ui.edge_grips` is off" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
     app.cfg.ui.menu_bar = .auto;
@@ -3282,7 +3282,7 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
 }
 
 test "the edge grips: a screen too small for a band paints none of it, and `.hidden` — which registers no dwell zone — never wears one" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 30, .rows = 6 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 30, .rows = 6 });
     defer app.deinit();
     _ = try app.openScratch();
     app.cfg.ui.menu_bar = .auto;
@@ -3296,7 +3296,7 @@ test "the edge grips: a screen too small for a band paints none of it, and `.hid
 
     // `.hidden` reveals on no dwell at all, so a grip there would be a
     // handle that does nothing.
-    var wide = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var wide = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer wide.deinit();
     _ = try wide.openScratch();
     wide.cfg.ui.menu_bar = .hidden;
@@ -3312,7 +3312,7 @@ test "the edge grips: a screen too small for a band paints none of it, and `.hid
 test "overlays paint over the panes and win the hit test; the find bar docks at the pane bottom" {
     // 13 rows: the palette bar paints at 60 columns, then strip, 8 text
     // rows, find bar, statusline, cmdline.
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 13 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 13 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3342,7 +3342,7 @@ test "overlays paint over the panes and win the hit test; the find bar docks at 
 }
 
 test "a toast's menu opens above the pointer, over the toast, and never on the statusline" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.visible = false;
     app.toast("hello toast", .{});
@@ -3394,7 +3394,7 @@ test "ui toggles: cluster mode picks the full or compact right cluster; the AI c
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
     try env.put("PATH", "");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 12, .env = &env });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 12, .env = &env });
     defer app.deinit();
     app.tree.visible = false;
     app.cfg.ui.tab_bar_ai_icon = .none;
@@ -3644,7 +3644,7 @@ test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; e
 }
 
 test "ui.click_echo: a left press underlines the word under it for 120 ms; off, nothing" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 10 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 10 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3678,7 +3678,7 @@ test "ui.click_echo: a left press underlines the word under it for 120 ms; off, 
 // ── the one cursor ──
 
 test "the frame puts exactly one cursor on the focused editor's caret, in the mode's shape" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -3699,7 +3699,7 @@ test "the frame puts exactly one cursor on the focused editor's caret, in the mo
 }
 
 test "vim: NORMAL is a block, INSERT a bar, REPLACE an underline" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     try app.setInputStyle(.vim);
     app.tree.visible = false;
@@ -3725,7 +3725,7 @@ test "vim: NORMAL is a block, INSERT a bar, REPLACE an underline" {
 }
 
 test "editor.cursor_blink picks the blinking variant; ui.cursor_shape overrides the mode" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     try app.setInputStyle(.vim);
     app.tree.visible = false;
@@ -3742,7 +3742,7 @@ test "editor.cursor_blink picks the blinking variant; ui.cursor_shape overrides 
 }
 
 test "an overlay's field wins over the editor; a box that takes no typing hides the cursor; the tree has none" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 13 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 13 });
     defer app.deinit();
     // The tree docked at 60 columns, so it can keep the keys below
     // (the width rule would hide it and hand them to the editor).
@@ -3787,7 +3787,7 @@ test "an overlay's field wins over the editor; a box that takes no typing hides 
 }
 
 test "paneFocused: the pane the keys go to, whatever its kind and whatever pane `.pane` names" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     // One pane of each kind that builds without a process or a disk: an
@@ -3845,7 +3845,7 @@ test "the which-key popup stops above the statusline: at 120x40 and 80x24, stand
     const Size = struct { cols: u16, rows: u16 };
     for ([_]Size{ .{ .cols = 120, .rows = 40 }, .{ .cols = 80, .rows = 24 } }) |sz| {
         for ([_]bool{ false, true }) |vim| {
-            var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = sz.cols, .rows = sz.rows });
+            var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = sz.cols, .rows = sz.rows });
             defer app.deinit();
             if (vim) try command.run(&app, .{ .static = .@"editor.use_vim" });
             // The statusline and the `:` line as they paint with no popup.
@@ -3883,7 +3883,13 @@ test "the which-key popup stops above the statusline: at 120x40 and 80x24, stand
             const status_row = while (it.next()) |row| : (i += 1) {
                 if (i == fr.status.y) break row;
             } else unreachable;
-            try t.expect(std.mem.indexOf(u8, status_row, "[no file]") != null);
+            if (std.mem.indexOf(u8, status_row, "[no file]") == null) {
+                // The failure names what the row held instead, with the
+                // rows above it (the popup's bottom) — an order-dependent
+                // failure once said only "TestUnexpectedResult".
+                std.debug.print("\nstatusline at {d}x{d} vim={}: no [no file]\nrow {d}: {s}\nscreen:\n{s}\n", .{ sz.cols, sz.rows, vim, fr.status.y, status_row, after });
+                return error.TestUnexpectedResult;
+            }
         }
     }
 }

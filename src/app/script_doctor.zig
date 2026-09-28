@@ -132,7 +132,7 @@ fn doctor(app: *App) CommandError!void {
 const t = std.testing;
 
 test "script.doctor names init.lua, its budget overruns and what it registered" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     try app.script().runString("mnml.command{ id = 'x', run = function() end } mnml.on('save_post', function() end)");
     const text = try report(&app, app.frame.allocator());

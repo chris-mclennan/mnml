@@ -643,7 +643,7 @@ test "result assembles accepted hunks and leaves skipped ones as they were" {
 }
 
 test "ai.apply opens the review pane; skipping a hunk applies the rest as one undo step" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -683,7 +683,7 @@ test "ai.apply opens the review pane; skipping a hunk applies the rest as one un
 }
 
 test "an anchor follows edits around it, and an edit inside it — or an undo — loses it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();
@@ -719,7 +719,7 @@ test "an anchor follows edits around it, and an edit inside it — or an undo �
 }
 
 test "apply writes the reviewed text where it now is, and refuses when that text changed" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const ed = try app.openScratch();

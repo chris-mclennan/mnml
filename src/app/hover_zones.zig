@@ -305,7 +305,7 @@ fn zonedApp(app: *App, now: i64) void {
 }
 
 test "winner: the menu bar takes the top-left cell from both columns; the rail keeps column 0 below it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.menu_bar = .auto;
     app.cfg.ui.activity_bar = .auto;
@@ -334,7 +334,7 @@ test "winner: the menu bar takes the top-left cell from both columns; the rail k
 }
 
 test "dwell: zero is instant, a reveal waits out its ms, and leaving restarts the clock" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.menu_bar = .auto;
     app.cfg.ui.sidebar = .auto;
@@ -373,7 +373,7 @@ test "dwell: zero is instant, a reveal waits out its ms, and leaving restarts th
 }
 
 test "a painter's zone joins its id's other piece: moving from column 0 onto the rail does not restart the dwell" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.sidebar = .auto;
     app.cfg.ui.sidebar_reveal_ms = 100;

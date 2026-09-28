@@ -536,7 +536,7 @@ test "cloudwatchUrl: Rust's console link, the query escaped its way; null unless
 }
 
 test "the wizards refuse without the config; the New menu says so" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"cloud_agents.new_run" }));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "runs_table") != null);

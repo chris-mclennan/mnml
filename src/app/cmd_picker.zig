@@ -1146,7 +1146,7 @@ fn realRoot(tmp: *std.testing.TmpDir, gpa: std.mem.Allocator) ![]u8 {
 }
 
 test "the empty palette pins the recently-run commands first, newest first and ★-marked; a query still ranks by match" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try command.run(&app, .{ .static = .noop });
     try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });

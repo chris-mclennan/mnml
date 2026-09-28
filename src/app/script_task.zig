@@ -262,7 +262,7 @@ const testing = std.testing;
 
 test "a hidden task streams its lines to on_line and its exit to on_done" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const lua = app.script();
     _ = try app.openScratch();
@@ -330,7 +330,7 @@ test "a hidden task started while init.lua loads reaches on_done after the App h
 
 test "deinit returns while a hidden task is waiting for room in a full event ring" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     // Fill the ring, as a burst of output does once the loop has
     // stopped draining it for good.
     while (true) {

@@ -1158,7 +1158,7 @@ test "theme.pick previews under the cursor, Esc restores, Enter persists ui.them
 }
 
 test "theme.toggle flips to the partner or the other kind; reset returns to ui.theme; :set theme= is a pick" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"theme.toggle" });
     try t.expect(app.theme.kind == .light);
@@ -1179,7 +1179,7 @@ test "theme.toggle flips to the partner or the other kind; reset returns to ui.t
 }
 
 test "wrap toggles per pane; splits add leaves; focus moves between them" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.toggle_wrap" });
@@ -1216,7 +1216,7 @@ test "wrap toggles per pane; splits add leaves; focus moves between them" {
 }
 
 test "the sidebar is the leftmost window: focus_left from the leftmost split enters it, focus_right leaves it, focus_next_split wraps into it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     app.tree.visible = true;
@@ -1252,7 +1252,7 @@ test "the sidebar is the leftmost window: focus_left from the leftmost split ent
 }
 
 test "focus_prev_split is focus_next_split backwards: three splits wrap both ways, prev undoes next, and the open sidebar sits before the first split" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_right" });
@@ -1301,7 +1301,7 @@ test "focus_prev_split is focus_next_split backwards: three splits wrap both way
 }
 
 test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a twin window closes" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try app.activeEditor().?.buf.editor.setText("dirty");
@@ -1382,7 +1382,7 @@ test "a split opens a second window on the file; closing the split drops the win
 }
 
 test "view.settings opens the settings overlay; Esc closes it; view.about paints the about box" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.settings" });
@@ -1683,7 +1683,7 @@ fn rightPanelPrev(app: *App) CommandError!void {
 }
 
 test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right panel tabs" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const s1 = try app.openScratch();
     const s2 = try app.openScratch();
@@ -1756,7 +1756,7 @@ test "view: focus_tab_N, H/M/L, hscroll, split resize / maximize / rotate, right
 }
 
 test "view.move_split_*: the active pane becomes the far edge and keeps focus; alone it fails" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = try app.openScratch();
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.move_split_left" }));
@@ -1784,7 +1784,7 @@ test "view.move_split_*: the active pane becomes the far edge and keeps focus; a
 }
 
 test "view.close_split on the last window closes its buffer: the layout goes empty, a dirty one asks first" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try t.expectEqual(@as(usize, 1), app.panes.count());
@@ -1802,7 +1802,7 @@ test "view.close_split on the last window closes its buffer: the layout goes emp
 }
 
 test "project.todos opens the TODOS panel — the palette's name for view.activity_todos, not a stub" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     try t.expect(!side.isShown(&app, .todos));
     try command.run(&app, .{ .static = .@"project.todos" });
@@ -1847,7 +1847,7 @@ test "ui.auto_equalize_splits: a split or a close evens the ratios; off leaves t
 }
 
 test "layout.merge_to_tabs folds the page's leaves into one strip, the active pane focused; spread_to_splits puts each tab back in a split; each refuses the other's shape and a lone pane" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const a = try app.openScratch();
@@ -1902,7 +1902,7 @@ test "revealArgv: open -R on macOS, explorer /select, on Windows, xdg-open on th
     try t.expectEqual(@as(usize, 2), lin.len);
     try t.expectEqualStrings("xdg-open", lin[0]);
     try t.expectEqualStrings("/ws/src", lin[1]);
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     _ = try app.openScratch();
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"view.reveal_active" }));
@@ -1910,7 +1910,7 @@ test "revealArgv: open -R on macOS, explorer /select, on Windows, xdg-open on th
 }
 
 test "view.toggle_integrations_section opens the INTEGRATIONS column without taking the keys, and closes it again" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const a = try app.openScratch();
     try t.expect(!side.isShown(&app, .integrations));
@@ -1923,7 +1923,7 @@ test "view.toggle_integrations_section opens the INTEGRATIONS column without tak
 }
 
 test "view.workspace_menu opens the workspace chip's menu on the chip the last frame painted; with no frame it opens at the origin" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.workspace_menu" });
@@ -1952,7 +1952,7 @@ test "view.workspace_menu opens the workspace chip's menu on the chip the last f
 }
 
 test "debug.toggle_click_inspector: on, a press toasts its hit target with the cell; off, it does not" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     _ = try app.openScratch();
     try app.render();
@@ -1975,7 +1975,7 @@ test "debug.toggle_click_inspector: on, a press toasts its hit target with the c
 }
 
 test "view.commands_reference opens the generated page as a scratch buffer" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"view.commands_reference" });
     const e = app.activeEditor().?;
@@ -1989,7 +1989,7 @@ test "view.commands_reference opens the generated page as a scratch buffer" {
 }
 
 test "Ctrl-W t / b / p: the top and bottom windows, and the one that had the keys before — from the tree too" {
-    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     const a = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.split_down" });
@@ -2014,7 +2014,7 @@ test "Ctrl-W t / b / p: the top and bottom windows, and the one that had the key
 }
 
 test "every pane kind splits: a request pane gets a blank request beside it, a cheatsheet a scratch editor, and no toast names an error tag" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     const req = try http_app.openBlank(&app);

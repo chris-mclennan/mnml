@@ -654,7 +654,7 @@ fn expectCurated(app: *App) !void {
 }
 
 test "panes: every row of the editor, gutter, tree, workspace, breadcrumb, welcome, link, toast, AI and request menus resolves to a curated entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const cm = @import("../../context_menus.zig");
     _ = try app.openScratch();

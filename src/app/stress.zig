@@ -129,7 +129,7 @@ test "meter: percentiles over a ring that wraps, and the level thresholds" {
 }
 
 test "the statusline shows the bar only behind ui.stress_meter, and every render samples" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 20 });
     defer app.deinit();
     _ = try app.openScratch();
     try app.render();

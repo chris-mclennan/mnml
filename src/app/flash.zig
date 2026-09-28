@@ -232,7 +232,7 @@ test "findPairs: case-insensitive, overlapping, offset by base, utf-8 aware" {
 }
 
 fn vimApp(text: []const u8, rows: u16) !App {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = rows });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = rows });
     errdefer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();

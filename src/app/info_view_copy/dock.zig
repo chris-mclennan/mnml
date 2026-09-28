@@ -131,7 +131,7 @@ pub fn askContext(app: *App, arena: Allocator, part: hit.LauncherDockPart) Alloc
 const t = std.testing;
 
 test "every dock item kind, the pin chip and every widget part have entries" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     inline for (comptime std.enums.values(launcher_dock.Kind)) |k| try t.expect(itemKind(k, null, false).body.len >= 40);
@@ -148,7 +148,7 @@ test "every dock item kind, the pin chip and every widget part have entries" {
 }
 
 test "the dock's help matches the strip: the + is the last item out of the box, and a first-party surface is installed, not an integration you pinned" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     // The strip as shipped ends with the `+`, and its entry says so.

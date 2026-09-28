@@ -186,7 +186,7 @@ test "fire: a term line whose program is not on PATH toasts the install hint and
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
     try env.put("PATH", "/definitely/not/a/dir");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12, .env = &env });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12, .env = &env });
     defer app.deinit();
     try t.expectError(error.Failed, fire(&app, ":term nosuchprog-xyz --flag"));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "nosuchprog-xyz is not on PATH — ") != null);
@@ -194,7 +194,7 @@ test "fire: a term line whose program is not on PATH toasts the install hint and
     try t.expectEqual(@as(usize, 0), app.panes.count());
     app.diag.clear();
     try fire(&app, "echo from a {{workspace_name}} launcher");
-    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "from a tmp launcher") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "from a ws launcher") != null);
 }
 
 test "installFile: a good manifest lands in the data root and the list follows; a broken one is refused with its reason; add_local resolves a relative path" {

@@ -780,7 +780,7 @@ fn screenText(app: *App) ![]u8 {
 }
 
 test "no session: the status row, four headers with their hints, a watch row; the filter narrows; Esc leaves" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.activity_debug" });
@@ -846,7 +846,7 @@ test "no session: the status row, four headers with their hints, a watch row; th
 }
 
 test "a blank row sits between one section and the next — none before the first, none after the last; j / k step over it and a click on it does nothing" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     _ = try app.openScratch();
     try command.run(&app, .{ .static = .@"view.activity_debug" });
@@ -912,7 +912,7 @@ test "a blank row sits between one section and the next — none before the firs
 }
 
 test "row menus name real ids for every row kind; d removes the watch under the cursor; the section moves right and still draws" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 100, .rows = 30 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
     defer app.deinit();
     _ = try app.openScratch();
     const e = app.activeEditor().?;

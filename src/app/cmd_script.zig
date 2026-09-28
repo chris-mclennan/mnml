@@ -105,7 +105,7 @@ test "script.reload runs the data root's init.lua; script.edit_init opens it" {
     const n = try tmp.dir.realPath(t.io, &buf);
     const root = buf[0..n];
     try tmp.dir.writeFile(t.io, .{ .sub_path = "init.lua", .data = "mnml.command{ id = 'from_init', run = function() end }" });
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .data_root = root, .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 60, .rows = 12 });
     defer app.deinit();
     // Loaded at init.
     try t.expect(app.dyn_commands.get("user.from_init") != null);
@@ -189,7 +189,7 @@ test "saving a workspace init.lua reloads it: a new command lands, an error is a
 }
 
 test "script.run_selection: the cursor line, an expression's value, the selected lines, an error" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     try t.expectError(error.Failed, command.run(&app, .{ .static = .@"script.run_selection" }));
     _ = try app.openScratch();

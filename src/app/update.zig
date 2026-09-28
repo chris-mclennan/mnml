@@ -214,7 +214,7 @@ test "tagFromJson reads tag_name and strips the v; the tick toasts what the work
     try t.expect((try tagFromJson(t.allocator, "[1,2]")) == null);
     try t.expect((try tagFromJson(t.allocator, "not json")) == null);
 
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();
     app.update.put(app.io, app.gpa, .{ .newer = try t.allocator.dupe(u8, "9.9.9") });
     try tick(&app);

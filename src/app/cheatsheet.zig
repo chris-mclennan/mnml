@@ -390,7 +390,7 @@ pub fn draw(app: *App, st: *State, ui: Ui, pane: PaneId, area: Rect) Allocator.E
 const t = std.testing;
 
 test "cheatsheet: C collapses the focused section, X collapses the rest; a filter ignores collapse and drops empty sections" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp" });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     try command.run(&app, .{ .static = .@"view.cheatsheet" });
     const id = app.active.?;

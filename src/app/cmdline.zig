@@ -207,7 +207,7 @@ fn nextBoundary(s: []const u8, at: usize) usize {
 const t = std.testing;
 
 test "the line types, edits at the caret, and runs on Enter" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     try t.expect(app.cmdline == null);
     open(&app);
@@ -239,7 +239,7 @@ test "the line types, edits at the caret, and runs on Enter" {
 }
 
 test "Esc drops the line, backspace on an empty line closes it, an empty Enter just closes" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     open(&app);
     try insert(&app, "wq");
@@ -259,7 +259,7 @@ test "Esc drops the line, backspace on an empty line closes it, an empty Enter j
 
 test "the chord opens the line from any focus and outranks a half-typed chord chain" {
     const dispatch = @import("dispatch.zig");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     _ = try app.openScratch();
 
@@ -298,7 +298,7 @@ test "the chord opens the line from any focus and outranks a half-typed chord ch
 test "a click off the bar closes an empty line; a half-typed one survives it" {
     const dispatch = @import("dispatch.zig");
     const render = @import("render.zig");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
 
@@ -351,7 +351,7 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
 }
 
 test "a paste stays on one line and control characters are dropped" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     open(&app);
     try insert(&app, "set num\nber\ttail");

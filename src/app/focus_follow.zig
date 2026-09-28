@@ -247,7 +247,7 @@ fn xOf(app: *App, id: PaneId) u16 {
 }
 
 test "focus follows mouse: `panes` — hovering across three splits focuses each; `off` never does" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const ids = try threeSplits(&app);
     app.showPane(ids[2]);
@@ -317,7 +317,7 @@ test "focus follows mouse: a held button, a drag gesture, an open picker, the wh
 }
 
 test "focus follows mouse: a hover-focus moves neither the target's view nor its cursor" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.focus_follows_mouse = .panes;
     const ids = try threeSplits(&app);
@@ -345,7 +345,7 @@ test "focus follows mouse: a hover-focus moves neither the target's view nor its
 }
 
 test "focus follows mouse: `all` hands the tree the keys, `panes` leaves the tree alone" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.tree.loaded = true;
     const a = try app.openScratch();
@@ -367,7 +367,7 @@ test "focus follows mouse: `all` hands the tree the keys, `panes` leaves the tre
 }
 
 test "focus follows mouse: the dwell arms on the motion and fires from tick, only if the pointer stayed" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.focus_follows_mouse = .panes;
     app.cfg.ui.focus_follows_mouse_delay_ms = 300;
@@ -395,7 +395,7 @@ test "focus follows mouse: the dwell arms on the motion and fires from tick, onl
 }
 
 test "focus follows mouse: only a pane its leaf shows is a target — never a background tab or an id the store dropped" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.focus_follows_mouse = .panes;
     const ids = try threeSplits(&app);
@@ -411,7 +411,7 @@ test "focus follows mouse: only a pane its leaf shows is a target — never a ba
 }
 
 test "focus follows mouse: an open context menu keeps the focus" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.focus_follows_mouse = .panes;
     const ids = try threeSplits(&app);

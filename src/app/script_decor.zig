@@ -676,7 +676,7 @@ pub fn clearDiagnostics(app: *App, ns: u32, path: ?[]const u8) Allocator.Error!v
 const testing = std.testing;
 
 test "decor anchoring: a line inserted above moves it, deleting its line kills it, an undo brings it back" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;
@@ -708,7 +708,7 @@ test "decor anchoring: a line inserted above moves it, deleting its line kills i
 }
 
 test "a namespace clears only its own, and a reload drops every one" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;
@@ -730,7 +730,7 @@ test "a namespace clears only its own, and a reload drops every one" {
 }
 
 test "a highlight follows the text and stops at the buffer's end" {
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/tmp", .cols = 60, .rows = 12 });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
     const pane = try app.openScratch();
     const e = app.panes.editor(pane).?;

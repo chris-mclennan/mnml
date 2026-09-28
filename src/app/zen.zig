@@ -199,7 +199,7 @@ pub fn escKey(app: *App, k: Key) bool {
 const t = std.testing;
 
 test "zen: the frame drops the tree, the strip and the statusline; a second toggle brings them back" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     app.tree.visible = true;
@@ -241,7 +241,7 @@ fn hasToast(app: *App, text: []const u8) bool {
 }
 
 test "zen: entering toasts the way out per profile; leaving says so and drops the reminder" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try app.setInputStyle(.standard);
@@ -259,7 +259,7 @@ test "zen: entering toasts the way out per profile; leaving says so and drops th
 }
 
 test "zen: Esc Esc leaves — an overlay takes the first Esc; the hint toasts; the timeout and any other key disarm; a selection goes first" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratchWith("alpha beta\n");
     try app.setInputStyle(.vim);
@@ -310,7 +310,7 @@ test "zen: Esc Esc leaves — an overlay takes the first Esc; the hint toasts; t
 }
 
 test "zen: `:fullscreen` and `:zen` toggle it from the `:` line" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     _ = try app.openScratch();
     try @import("ex.zig").run(&app, "fullscreen");
@@ -334,7 +334,7 @@ fn paneRect(app: *App, id: app_mod.PaneId) ?@import("../ui/rect.zig") {
 }
 
 test "zoom: the active leaf alone paints over the body; again restores; another leaf moves it; the split tree is untouched; closing the pane clears it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     app.tree.loaded = true;
@@ -396,7 +396,7 @@ fn statusRow(app: *App) ![]const u8 {
 }
 
 test "zoom: a 3-split page zooms the focused split and restores it exactly — ratios, focus, the tab pages; the zoom is per page; a tree change un-zooms first" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     app.tree.loaded = true;
@@ -495,7 +495,7 @@ test "zoom: a 3-split page zooms the focused split and restores it exactly — r
 }
 
 test "zoom composes with full screen: both on is one pane and no chrome; either off leaves the other" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     app.tree.loaded = true;
@@ -571,7 +571,7 @@ test "reset_layout: leaves full screen and the zoom, shows the tree at the confi
 
 test "zen: from a request pane and a terminal, `Ctrl+K Z` reaches the app (the `z` never lands in the URL field) and Esc Esc leaves" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     try app.setInputStyle(.standard);
@@ -611,7 +611,7 @@ test "zen: from a request pane and a terminal, `Ctrl+K Z` reaches the app (the `
 }
 
 test "zen: the palette's full-screen row reads Enter outside and Exit inside" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     const row = @intFromEnum(command.CommandId.@"view.fullscreen");
@@ -625,7 +625,7 @@ test "zen: the palette's full-screen row reads Enter outside and Exit inside" {
 }
 
 test "zen: the corner mark paints at the body's top-right while inside, is a button whose click leaves, and is gone outside" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     _ = try app.openScratch();
@@ -651,7 +651,7 @@ test "zen: the corner mark paints at the body's top-right while inside, is a but
 }
 
 test "zen: the editor and tab context menus end with Exit full screen while inside, not outside" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 100, .rows = 24 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
     defer app.deinit();
     app.tree.visible = false;
     const id = try app.openScratch();
@@ -678,7 +678,7 @@ test "zen: the editor and tab context menus end with Exit full screen while insi
 }
 
 test "the maximize button: `ui.maximize_click` picks what a left click runs, and while something is maximized the button is the way back whatever the mode" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 30 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 30 });
     defer app.deinit();
     app.tree.visible = false;
     app.tree.loaded = true;

@@ -615,7 +615,7 @@ pub fn askContext(app: *App, arena: Allocator, id: u32) Allocator.Error!?[]const
 const t = std.testing;
 
 test "every named button, every menu word and every pane kind has an entry" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     const a = app.frame.allocator();
     inline for (comptime std.enums.values(Button)) |b| {

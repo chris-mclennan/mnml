@@ -256,7 +256,7 @@ pub fn askContext(app: *App, arena: Allocator, h: u32) Allocator.Error!?[]const 
 const t = std.testing;
 
 test "every Settings row has an entry — hand-written or generated — that names its key, its value and where it is written" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 120, .rows = 40 });
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     try settings.open(&app);
     const a = app.frame.allocator();
