@@ -15,6 +15,98 @@ the top of the [README](README.md).
 
 ## [Unreleased]
 
+## [0.2.22](https://github.com/chris-mclennan/mnml/compare/mnml-rs-v0.2.21...mnml-rs-v0.2.22) - 2026-09-28
+
+### Added
+
+- *(update)* the export-config-zon note expires 30 days after 0.3 ships
+- *(update)* the toast for 0.3+ says to run export-config-zon first
+- *(cli)* mnml export-config-zon [--out] [--workspace] [--in] [--force]
+- *(config)* TOML → ZON converter for the mnml-zig config
+- *(ui)* Button gains compact() and fit_row() so a row can never overflow
+- *(ui)* one spinner, a Busy button state, and a refresh button that uses both
+- *(ai-usage)* detect accounts sharing one login; L opens claude login
+- *(flash)* say what to press; correct the "s is dead" finding
+- *(cmd)* keyboard route to the panel sort modes
+- *(ui)* light the hovered menu-bar word; file the settings export todo
+- *(ui)* visible sort chips on TODOS/NOTES/FINDINGS + right-click on findings
+- *(ui)* a missing-dependency toast offers the install
+- *(ui)* green current-row accent, and hover help for four dead surfaces
+- *(ui)* right-click the notification bell
+- *(ui)* a close × on toasts, and identical toasts coalesce
+- *(ui)* the notification bell is always present, with three states
+- *(todos)* `+ New todo` — TODOS was the only list panel that could not create
+- one-step menu-glyph audit, and the Claude icon starts a new session
+- *(ui)* NOTES / FINDINGS / TODOS get a sort mode
+- *(ui)* refresh becomes a mode-aware Button, not a chip of its own
+- *(ui)* right-click any ↻ chip to toggle that panel's auto-refresh
+- *(ui)* a glyph on every menu and context-menu row
+- *(ui)* `[ui] external_browser` picks which browser opens links
+- *(findings)* a `+ New finding` action, matching NOTES and TODOS
+
+### Fixed
+
+- *(test)* check out the export-config-zon goldens with LF on Windows
+- *(config)* export-config-zon leaves [jira] unmigrated — mnml-zig dropped it
+- *(vim)* guu / gUU / g~~ leave the cursor on the line they changed
+- *(vim)* Esc from Insert / Replace stops at the line start instead of crossing onto the line above
+- *(editor)* a save that appends the final newline keeps the cursor where it was
+- the top-right + makes a tab again; hero GIF gets mnml's own glyphs
+- *(ai-usage)* a Retry-After of 0 is not permission to retry now
+- two SEV-1s — the first-launch panic and :%s eating line breaks
+- *(panels)* one drop order across all six panels; group commands by namespace
+- *(panels)* hover help for the sort chip, TODOS row parity, drop stale rows
+- *(vim)* finish the inclusivity and fold fixes; sync the manual
+- picker drew twice a frame; reveal-in-tree revealed the wrong file
+- *(vim)* extend every cursor's selection, and correct three e2e expectations
+- *(vim)* zo opens and zc closes; only za toggles
+- *(vim)* charwise visual is inclusive, as vim is
+- *(picker,ipc)* right margin on detail-less rows, ellipsis on cut labels
+- *(todos)* say when the scan capped; stop rewriting config on a no-op
+- *(picker)* stop panicking under 30 columns; make the scrollbar real
+- *(ui)* the sort chip was invisible at the shipped default width
+- *(menus)* one verb per action, and no hardcoded "Finder"
+- *(menus)* three dead rows, two missing right-click branches, one stale cursor
+- *(ui)* one gutter rule, paired sort modes, a real reveal-in-tree
+- *(ui)* reserve the picker scrollbar column before laying out rows
+- *(ui)* the toast offer gets its own row; the close x is legible
+- *(scroll)* a wheel event always moves at least one line
+- green CI, plus two tester SEV-2s
+- *(ui)* messages popup gets a scrollbar; left-bar bell removed
+- *(editor)* `:vsplit` + `:wa` silently destroyed one window's edits
+- *(app)* a plain save refreshes the list panels; docs for all three
+- *(ui)* context menus scroll instead of silently dropping their last rows
+- *(ui)* tester round 1 — SEV-1 filter focus, and my own glyph/panel bugs
+- *(ui)* real integration icons, and icons on submenu parents
+- *(ui)* TODOS rows stop one cell short of the kebab
+- *(tui)* stale mouse reports typed themselves into the buffer
+- *(ui)* the panel scrollbars were paint-only — wheel and drag now work
+- *(ui)* TODOS/NOTES/FINDINGS could not scroll at all
+- *(ui)* menu glyph repetition + spacing, and two right-edge overruns
+- *(ui)* align the panel accent bar under the filter magnifier
+
+### Other
+
+- *(dist)* the MSI carries the crate's new description
+- *(changelog)* note that 0.2.22 is the final Rust release
+- *(crate)* the description says this is the final Rust release
+- *(readme)* 0.2.22 is the final Rust release; how to move to 0.3
+- export-config-zon in the README CLI list, FEATURES and CHANGELOG
+- *(config)* export-config-zon round-trip against a golden and mnml-zig
+- *(roadmap)* #34 was never true of main — closed with evidence
+- the usage advisor needs a two-window ranking, not one [skip docs]
+- correct the usage-advisor todo — accounts, not models [skip docs]
+- file the Claude usage switch-advisor todo [skip docs]
+- add ROADMAP.md — four tracks the backlog doesn't cover
+- *(FEATURES)* sort chips, row menus, vim visual/fold semantics, flash cue
+- record the vim `l` EOL-wrap todo + refresh the Status block
+- file the git-view repo-scope + cycle-arrows todo [skip docs]
+- *(ai)* stop stripping ANTHROPIC_API_KEY from child processes
+- close the 11 TODOs that are actually done
+- file the notification-bell right-click menu options
+- file the context_menu truncation found while auditing
+- drop the scratch TODO.md scan probe
+
 ### Added
 
 - *(config)* `mnml export-config-zon [--out PATH] [--workspace DIR] [--in PATH] [--force]`
