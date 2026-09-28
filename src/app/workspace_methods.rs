@@ -445,9 +445,15 @@ impl App {
         let Some(latest) = uc.take_pending_announcement() else {
             return;
         };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         self.toast(crate::update_check::announcement(
             env!("CARGO_PKG_VERSION"),
             &latest,
+            uc.published_at(),
+            now,
             uc.channel,
         ));
     }

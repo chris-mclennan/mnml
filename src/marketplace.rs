@@ -794,7 +794,7 @@ pub fn dedupe_entries_by_id(entries: &mut Vec<MarketplaceEntry>) {
 /// dep). Supports the two forms crates.io / GitHub emit; anything
 /// else returns None (the entry just loses its updated_at, doesn't
 /// break rendering).
-fn parse_iso8601_secs(s: &str) -> Option<u64> {
+pub(crate) fn parse_iso8601_secs(s: &str) -> Option<u64> {
     // Expected shape: `YYYY-MM-DDTHH:MM:SS[.fraction][Z|+HH:MM|-HH:MM]`.
     // We split on 'T', parse each half, apply timezone offset.
     let (date_str, rest) = s.split_once('T')?;

@@ -14,6 +14,11 @@
 //! - `/Applications/mnml.app/…` → GitHub releases URL (download DMG)
 //! - Anywhere else              → `git pull && cargo install --path .`
 //!
+//! An update onto 0.3 or later (a new codebase that reads
+//! `config.zon`) also asks for `mnml export-config-zon` first — for
+//! 30 days after that release's `published_at`, then the toast falls
+//! back to the plain hint on its own.
+//!
 //! Silently no-op in headless mode (no toast surface). No config
 //! knob for now — the check is cheap (one HTTP call, 10s timeout,
 //! runs on a fresh thread), and the toast fires at most once per
@@ -93,6 +98,10 @@ pub struct UpdateCheck {
     /// strictly newer than `CARGO_PKG_VERSION`. `None` while still
     /// fetching, or when we're already on latest.
     pub latest_version: Mutex<Option<String>>,
+    /// The newer release's `published_at`, as Unix seconds — `None`
+    /// when absent or unparseable. Only read to decide whether the
+    /// 0.3 config-export note is still within its window.
+    pub latest_published_at: Mutex<Option<u64>>,
     /// Set true once `App::tick` has surfaced the result to the
     /// user. Prevents the toast from re-firing on every tick.
     pub announced: AtomicBool,
@@ -107,17 +116,21 @@ impl UpdateCheck {
     pub fn spawn() -> Arc<Self> {
         let handle = Arc::new(Self {
             latest_version: Mutex::new(None),
+            latest_published_at: Mutex::new(None),
             announced: AtomicBool::new(false),
             channel: InstallChannel::detect(),
         });
         let bg = Arc::clone(&handle);
         std::thread::spawn(move || {
-            if let Some(latest) = fetch_latest_tag() {
+            if let Some((latest, published_at)) = fetch_latest_release() {
                 let current = env!("CARGO_PKG_VERSION");
-                if is_newer(&latest, current)
-                    && let Ok(mut slot) = bg.latest_version.lock()
-                {
-                    *slot = Some(latest);
+                if is_newer(&latest, current) {
+                    if let Ok(mut slot) = bg.latest_published_at.lock() {
+                        *slot = published_at;
+                    }
+                    if let Ok(mut slot) = bg.latest_version.lock() {
+                        *slot = Some(latest);
+                    }
                 }
             }
         });
@@ -134,6 +147,11 @@ impl UpdateCheck {
         let latest = self.latest_version.lock().ok()?.clone()?;
         self.announced.store(true, Ordering::Relaxed);
         Some(latest)
+    }
+
+    /// The newer release's `published_at` (Unix seconds), if known.
+    pub fn published_at(&self) -> Option<u64> {
+        self.latest_published_at.lock().ok().and_then(|g| *g)
     }
 
     /// Human-readable release URL for the toast + copy/paste.
@@ -181,13 +199,36 @@ fn crosses_codebase_line(current: &str, latest: &str) -> bool {
     }
 }
 
+/// How long after the new codebase's release the toast keeps asking
+/// for `mnml export-config-zon`. This binary is frozen, so the note
+/// has to expire on its own.
+const EXPORT_NOTE_DAYS: u64 = 30;
+
+/// True when `now` is less than `days` days after `published_at`
+/// (both Unix seconds). A missing timestamp is never within the
+/// window, so a bad date cannot keep the note up forever. A
+/// `published_at` in the future (clock skew) counts as day 0.
+fn within_days(published_at: Option<u64>, now: u64, days: u64) -> bool {
+    match published_at {
+        Some(p) => now.saturating_sub(p) < days * 86_400,
+        None => false,
+    }
+}
+
 /// The update toast's text. A same-line update names the new version
-/// and the channel's upgrade hint; an update onto the new codebase
-/// also says to convert the config with `mnml export-config-zon`
-/// first, since the new version does not read `config.toml`.
-pub fn announcement(current: &str, latest: &str, channel: InstallChannel) -> String {
+/// and the channel's upgrade hint. An update onto the new codebase,
+/// within [`EXPORT_NOTE_DAYS`] of that release's `published_at`, also
+/// says to convert the config with `mnml export-config-zon` first,
+/// since the new version does not read `config.toml`.
+pub fn announcement(
+    current: &str,
+    latest: &str,
+    published_at: Option<u64>,
+    now: u64,
+    channel: InstallChannel,
+) -> String {
     let hint = channel.upgrade_hint(latest);
-    if crosses_codebase_line(current, latest) {
+    if crosses_codebase_line(current, latest) && within_days(published_at, now, EXPORT_NOTE_DAYS) {
         format!(
             "mnml v{latest} available — a new codebase: run `mnml export-config-zon` first, then {hint}"
         )
@@ -196,7 +237,9 @@ pub fn announcement(current: &str, latest: &str, channel: InstallChannel) -> Str
     }
 }
 
-fn fetch_latest_tag() -> Option<String> {
+/// The latest release's version (without the `v`) and its
+/// `published_at` as Unix seconds (`None` if absent or unparseable).
+fn fetch_latest_release() -> Option<(String, Option<u64>)> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let resp = reqwest::blocking::Client::builder()
         .user_agent(USER_AGENT)
@@ -212,7 +255,11 @@ fn fetch_latest_tag() -> Option<String> {
     let body = resp.text().ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&body).ok()?;
     let tag = parsed.get("tag_name")?.as_str()?;
-    Some(tag.trim_start_matches('v').to_string())
+    let published_at = parsed
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .and_then(crate::marketplace::parse_iso8601_secs);
+    Some((tag.trim_start_matches('v').to_string(), published_at))
 }
 
 #[cfg(test)]
@@ -232,6 +279,7 @@ mod tests {
     fn take_pending_announcement_is_one_shot() {
         let uc = UpdateCheck {
             latest_version: Mutex::new(Some("0.99.0".into())),
+            latest_published_at: Mutex::new(None),
             announced: AtomicBool::new(false),
             channel: InstallChannel::Source,
         };
@@ -288,24 +336,56 @@ mod tests {
         );
     }
 
+    /// 2026-10-01T00:00:00Z — a stand-in 0.3.0 `published_at`.
+    const PUB: u64 = 1_790_812_800;
+    const DAY: u64 = 86_400;
+
+    #[test]
+    fn published_at_parses_the_github_shape() {
+        assert_eq!(
+            crate::marketplace::parse_iso8601_secs("2026-10-01T00:00:00Z"),
+            Some(PUB)
+        );
+    }
+
     #[test]
     fn announcement_same_line_is_the_plain_hint() {
         assert_eq!(
-            announcement("0.2.21", "0.2.22", InstallChannel::Homebrew),
+            announcement("0.2.21", "0.2.22", Some(PUB), PUB, InstallChannel::Homebrew),
             "mnml v0.2.22 available — brew upgrade mnml  → v0.2.22"
         );
     }
 
     #[test]
-    fn announcement_across_the_line_asks_for_the_config_export() {
-        assert_eq!(
-            announcement("0.2.22", "0.3.0", InstallChannel::Homebrew),
-            "mnml v0.3.0 available — a new codebase: run `mnml export-config-zon` first, \
-             then brew upgrade mnml  → v0.3.0"
-        );
+    fn announcement_across_the_line_asks_for_the_export_for_30_days() {
+        let note = "mnml v0.3.0 available — a new codebase: run `mnml export-config-zon` first, \
+                    then brew upgrade mnml  → v0.3.0";
+        let plain = "mnml v0.3.0 available — brew upgrade mnml  → v0.3.0";
+        let at = |now| announcement("0.2.22", "0.3.0", Some(PUB), now, InstallChannel::Homebrew);
+        assert_eq!(at(PUB), note, "day 0");
+        assert_eq!(at(PUB + 29 * DAY), note, "day 29");
+        assert_eq!(at(PUB + 31 * DAY), plain, "day 31");
         assert!(
-            announcement("0.2.22", "1.0.0", InstallChannel::Cargo)
+            announcement("0.2.22", "1.0.0", Some(PUB), PUB, InstallChannel::Cargo)
                 .contains("mnml export-config-zon")
         );
+    }
+
+    #[test]
+    fn announcement_without_a_published_at_is_the_plain_hint() {
+        let unparseable = crate::marketplace::parse_iso8601_secs("not a date");
+        assert_eq!(unparseable, None);
+        for published_at in [None, unparseable] {
+            assert_eq!(
+                announcement(
+                    "0.2.22",
+                    "0.3.0",
+                    published_at,
+                    PUB,
+                    InstallChannel::Homebrew
+                ),
+                "mnml v0.3.0 available — brew upgrade mnml  → v0.3.0"
+            );
+        }
     }
 }
