@@ -74,6 +74,19 @@ The wheel counts too, and a click anywhere reports its cell in the hint
 row's status — handy when you are checking that your own hit rectangles
 land where you think they do.
 
+## The design-language suite
+
+`main.zig`'s last test is one line — `try sdk.testing.conformance(Probe);`
+— and it is the one to copy. `Probe` mounts the pane on a fixture and
+says where its title, gutter, ladder, list and segments are; the SDK
+paints it at 120×40 and 80×24, with and without `--ascii`, and holds it
+to every rule the family checks (title ink, header ladder, gutter full
+height, list scrollbar, statusline figure, the ascii twins, no hit off
+the screen). Every integration, in this repo or outside it, should call
+it; a rule the SDK adds later then reaches your pane at its next
+`zig build test`. The sample has no ladder, no scrolling list and no
+live figure, so it leaves those three fields null.
+
 ## The manifest
 
 `manifest.zon` beside `main.zig`, `@import`ed by the binary so the

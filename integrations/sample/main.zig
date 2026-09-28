@@ -83,6 +83,8 @@ pub fn main(init: std.process.Init) !u8 {
         // The manifest's own chip colour becomes the pane's brand, so
         // the gutter stripe is this integration's colour on the rail.
         .th = sdk.pane.Theme.fromHelloBranded(mount.hello.palette, if (spec.chip) |c| c.color else ""),
+        // What the host can draw: its Nerd Font, or the `--ascii` twins.
+        .ui = .{ .nerd = mount.hello.capabilities.nerd_font, .ascii = mount.hello.capabilities.ascii },
     };
     defer state.hits.deinit(gpa);
     try mount.setTitle(spec.label);
@@ -157,6 +159,7 @@ const State = struct {
     /// The host theme's roles, with this integration's manifest chip
     /// colour as its brand — what the gutter stripe paints in.
     th: sdk.pane.Theme = .{},
+    ui: sdk.pane.Ui = .{},
     counter: u32 = 0,
     events: u32 = 0,
     focused: bool = true,
@@ -168,7 +171,7 @@ const State = struct {
 fn paint(gpa: std.mem.Allocator, arena: std.mem.Allocator, f: *sdk.Frame, st: *State) void {
     st.hits.reset();
     f.clear(.{ .fg = st.th.fg, .bg = st.th.bg });
-    var p: sdk.pane.Painter(Target) = .{ .f = f, .gpa = gpa, .arena = arena, .hits = &st.hits, .th = st.th, .ui = .{} };
+    var p: sdk.pane.Painter(Target) = .{ .f = f, .gpa = gpa, .arena = arena, .hits = &st.hits, .th = st.th, .ui = st.ui };
     // The app-colour stripe down column 0, under everything else.
     p.gutter(.{ .x = 0, .y = 0, .w = 1, .h = f.rows -| 1 }, click_row);
     // Row 0: the caps header — the label and, dim beside it, the theme
@@ -184,7 +187,7 @@ fn paint(gpa: std.mem.Allocator, arena: std.mem.Allocator, f: *sdk.Frame, st: *S
     if (f.rows > click_row) {
         // The row the cursor is on: the toolkit's ground plus gutter.
         p.rowGround(.{ .x = 0, .y = click_row, .w = f.cols, .h = 1 }, st.focused, .click_row) catch {};
-        _ = p.put(2, click_row, f.cols -| 2, "click here, or \u{2191} \u{2193} / j k / space to count", st.th.cursorRow());
+        _ = p.put(2, click_row, f.cols -| 2, if (st.ui.ascii) "click here, or up down / j k / space to count" else "click here, or \u{2191} \u{2193} / j k / space to count", st.th.cursorRow());
     }
     if (f.rows > 1) {
         // The hint row: every `key label` a hit that runs it.
@@ -222,4 +225,50 @@ test "the manifest renders and parses back to the same shape" {
     try std.testing.expectEqualStrings(spec.commands[1].ex.?, back.commands[1].ex.?);
     try std.testing.expectEqualStrings("chip", back.statusline[0].id);
     try std.testing.expectEqualStrings("tree.file", back.context_menu[0].target);
+}
+
+const paintPane = paint;
+const PaneTarget = Target;
+
+/// The pane on its fixture, for the SDK's design-language suite.
+const Probe = struct {
+    pub const Target = PaneTarget;
+    f: sdk.Frame,
+    st: State,
+
+    pub fn init(gpa: std.mem.Allocator, size: sdk.testing.Size) !Probe {
+        return .{
+            .f = try sdk.Frame.init(gpa, size.cols, size.rows),
+            .st = .{
+                .theme = "onedark",
+                .mood = "calm",
+                .th = sdk.pane.Theme.fromHelloBranded(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } }, "teal"),
+                .ui = .{ .ascii = size.ascii },
+                .counter = 3,
+            },
+        };
+    }
+
+    pub fn deinit(p: *Probe) void {
+        p.st.hits.deinit(std.testing.allocator);
+        p.f.deinit();
+    }
+
+    pub fn paint(p: *Probe, arena: std.mem.Allocator) !sdk.testing.Painted(PaneTarget) {
+        paintPane(std.testing.allocator, arena, &p.f, &p.st);
+        // No header ladder, no scrolling list and no live statusline
+        // figure: the sample has none of the three, so those rules say
+        // nothing here. Its manifest segment is a label, not a figure.
+        return .{
+            .frame = &p.f,
+            .hits = &p.st.hits,
+            .theme = p.st.th,
+            .title = .{ .text = "SAMPLE" },
+            .gutter = .{ .h = p.f.rows - 1 },
+        };
+    }
+};
+
+test "the design language: the SDK's conformance suite at 120x40 and 80x24, with and without --ascii" {
+    try sdk.testing.conformance(Probe);
 }

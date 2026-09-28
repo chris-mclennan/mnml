@@ -5,6 +5,18 @@
 //! hide.
 
 const std = @import("std");
+
+/// The design-language conformance suite — one call per pane
+/// (`conformance.zig`): `try sdk.testing.conformance(Probe);`.
+pub const conformance = conformance_mod.conformance;
+pub const Size = conformance_mod.Size;
+pub const Painted = conformance_mod.Painted;
+pub const ConformanceError = conformance_mod.Error;
+const conformance_mod = @import("conformance.zig");
+
+test {
+    _ = conformance_mod;
+}
 const Allocator = std.mem.Allocator;
 
 /// An allocator that writes `0xAA` over everything it frees, in every

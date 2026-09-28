@@ -399,6 +399,46 @@ audit (`docs/research/pane-drift-audit-2026-09-19.md`) found seven
 elements that had come apart precisely where no shared assertion
 existed.
 
+### The conformance suite — one call, every rule
+
+Every integration — the official three and every external one — should
+also make this call from its own tests:
+
+```zig
+const Probe = struct {
+    pub const Target = MyTarget;
+    // … the pane mounted on its own fixture …
+    pub fn init(gpa: Allocator, size: sdk.testing.Size) !Probe { … }
+    pub fn deinit(p: *Probe) void { … }
+    pub fn paint(p: *Probe, arena: Allocator) !sdk.testing.Painted(MyTarget) {
+        try paintMyPane(arena, &p.frame, &p.app, p.ascii); // `init` kept `size.ascii`
+        return .{ .frame = &p.frame, .hits = &p.hits, .theme = p.theme,
+            .title = .{ .text = "MY PANE" }, .ladder_y = 0,
+            .gutter = .{ .h = p.frame.rows - 1 },
+            .list = .{ .bar_x = p.frame.cols - 1, .y0 = 1, .h = p.frame.rows - 2 },
+            .statusline = &.{my_segment_text} };
+    }
+};
+test "the design language" { try sdk.testing.conformance(Probe); }
+```
+
+`sdk.testing.conformance` mounts the pane at 120×40 and 80×24, each with
+and without `--ascii`, and asserts: the caps title is painted in
+`label()`; the header ladder ends in refresh then `?` on the chip
+ground; the gutter runs its full height in its ink (`|` under
+`--ascii`); a list whose bar column shows any bar shows a thumb over a
+track, and a declared list outruns its body at one size at least (so the
+fixture really exercises the bar — `ListNeverOutruns` otherwise); every
+statusline segment obeys the figure rule; under `--ascii` no cell holds a
+Private Use Area codepoint; and no hit lies off the frame. A failure
+prints the rule and the size (`conformance: GutterBroken at 120x40
+--ascii`). A field left null (no ladder, no list, no segments) is a rule
+the pane says does not apply; the title and the gutter apply to all.
+
+Rules are added in `sdk/mnml-sdk/src/conformance.zig`, and a rule added
+there reaches every pane that calls the suite at its next test run. Jira,
+Bitbucket and the sample call it from their `main.zig`.
+
 ### Build lines under a pull-request row
 
 `sdk.pane.build` is the one line both official panes paint for a
