@@ -3396,21 +3396,28 @@ test "a re-scan keeps a chip's published figure: installing a second integration
     defer testing.allocator.free(ws);
     // The tour's two manifests (`tools/tour/workspace.py`).
     const jira = try std.fmt.allocPrint(testing.allocator,
-        \\.{{ .id = "jira_work", .label = "Jira Work", .version = "0.2.0", .binary = "{s}", .category = "tracker",
+        \\.{{ .id = "jira_work", .label = "Jira Work", .version = "0.2.0", .binary = "$CHIP_TOOL", .category = "tracker",
         \\   .commands = .{{ .{{ .id = "jira_work.open", .title = "Jira Work" }} }},
         \\   .statusline = .{{ .{{ .id = "assigned", .text = "\u{{f0303}}", .color = "#1B5DCF", .click_command = "jira_work.open" }} }} }}
-    , .{tool});
+    , .{});
     defer testing.allocator.free(jira);
     const bb = try std.fmt.allocPrint(testing.allocator,
-        \\.{{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.0", .binary = "{s}",
+        \\.{{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.0", .binary = "$CHIP_TOOL",
         \\   .commands = .{{ .{{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open" }} }} }}
-    , .{tool});
+    , .{});
     defer testing.allocator.free(bb);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/jira_work.zon", .data = jira });
-    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    // The path reaches the manifests through the environment, as the
+    // `$VAR` test above does: written into the ZON, a Windows path's
+    // backslashes would read as escapes and the file would not parse.
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("CHIP_TOOL", tool);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40, .env = &env });
     defer app.deinit();
     try refresh(&app);
-    try testing.expectEqualStrings("\u{f0303}", app.ipc_fx.segments.items[app.ipc_fx.find("jira_work.assigned").?].text);
+    const jira_idx = app.ipc_fx.find("jira_work.assigned") orelse return error.JiraSegmentMissing;
+    try testing.expectEqualStrings("\u{f0303}", app.ipc_fx.segments.items[jira_idx].text);
 
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -3453,7 +3460,7 @@ test "a re-scan keeps a chip's published figure: installing a second integration
     _ = app.ipc_fx.clearSegment(app.gpa, "jira_work.assigned");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/jira_work.zon", .data = edited });
     try refresh(&app);
-    try testing.expectEqualStrings("\u{f0303} ?", app.ipc_fx.segments.items[app.ipc_fx.find("jira_work.assigned").?].text);
+    try testing.expectEqualStrings("\u{f0303} ?", app.ipc_fx.segments.items[app.ipc_fx.find("jira_work.assigned") orelse return error.JiraSegmentMissing].text);
     // …and an integration that is gone takes its live chips with it.
     try tmp.dir.deleteFile(testing.io, "integrations/jira_work.zon");
     try refresh(&app);
