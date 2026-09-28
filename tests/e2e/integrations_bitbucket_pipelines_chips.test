@@ -27,6 +27,8 @@ click 72 2
 wait 800
 expect screen lacks "switch to a repo tab first"
 expect screen contains "acme/api/pipelines"
+# The runner's MNML_OPEN_URL: the page went to the file, not a browser.
+expect file opened-urls.log contains "https://bitbucket.org/acme/api/pipelines"
 # The hint row: no PR-only keys on a pipelines pane.
 expect screen lacks "m open↔merged"
 expect screen lacks "d detail"

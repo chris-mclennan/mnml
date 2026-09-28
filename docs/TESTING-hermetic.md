@@ -42,6 +42,16 @@ outside the run's temp root.
   corpus was written in, and git fenced at the temp root. Unit-test
   binaries run with `HOME=<cache>/unit-home` and without the variables
   that name live state (`build.zig`, `hermeticUnitEnv`).
+- **Browser**: nothing a file does opens one. The runner sets
+  `MNML_OPEN_URL` (`docs/SDK.md`, "Opening a URL") in every file's
+  environment to `opened-urls.log` in the file's workspace — the host's
+  own value is not kept — so the App's openers and every integration it
+  spawns append the URL there and start no process. A script proves an
+  open with `expect file opened-urls.log contains https://…`
+  (`integrations_bitbucket_pipelines_chips.test`); a `# env:` line can
+  still say `none` or name another path. The real-window harness
+  (`tools/tour`) does the same: `opened-urls.log` beside the run, and in
+  the file's workspace under `sweep.py`.
 - **Time**: wait for a condition, not a clock. `expect within <ms> …`
   polls; a `wait` is for letting a clock-driven thing happen, never for
   "long enough for the machine to catch up". The unit tests that drive a
