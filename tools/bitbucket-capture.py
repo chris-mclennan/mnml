@@ -140,7 +140,7 @@ def oracle_env(tmp, home, fake_url):
     return [
         "--env", "MNML_PANE=1",
         "--env", f"HOME={home}",
-        "--env", f"TATTLE_ARTIFACTS_ROOT={os.path.join(home, 'rl')}",
+        "--env", f"MNML_SHARED_STATE_DIR={os.path.join(home, 'rl')}",
         "--env", f"BITBUCKET_BASE_URL={fake_url}",
         "--env", "BITBUCKET_API_TOKEN=x",
     ]
@@ -191,7 +191,7 @@ def main():
             home = scratch_home(tmp, "headless")
             env = dict(os.environ, HOME=home, BITBUCKET_BASE_URL=fake_url,
                        BITBUCKET_API_TOKEN="x",
-                       TATTLE_ARTIFACTS_ROOT=os.path.join(home, "rl"))
+                       MNML_SHARED_STATE_DIR=os.path.join(home, "rl"))
             out = ["# the headless surfaces, against the fake server "
                    "(tools/bitbucket-capture.py)\n"]
             for heading, argv in HEADLESS:

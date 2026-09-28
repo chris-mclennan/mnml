@@ -485,7 +485,7 @@ fn diagStep(comptime label: []const u8, comptime dir: []const u8, comptime wrap:
 fn coverageMode(comptime label: []const u8, comptime what: []const u8, comptime id: command.CommandId) Entry {
     return .{
         .title = label,
-        .body = "Sets what the coverage chip paints — " ++ what ++ " — and writes `ui.coverage_chip_mode` to the home config, so it holds in every workspace. Both numbers are read from the `trends.json` files under `~/.tattle-claude-artifacts`, at most every five minutes; one whose file is not there simply has no figure, and with neither the chip is not painted at all. A click on the chip toasts both whatever the mode.",
+        .body = "Sets what the coverage chip paints — " ++ what ++ " — and writes `ui.coverage_chip_mode` to the home config, so it holds in every workspace. Both numbers are read from the `trends.json` files under `$MNML_SHARED_STATE_DIR` (`feature-coverage/_trends/` and `code-coverage/_trends/`), at most every five minutes; one whose file is not there simply has no figure, and with neither the chip is not painted at all. A click on the chip toasts both whatever the mode.",
         .links = &.{ .{ .command = .{ .id = id, .label = "Show this" } }, .{ .command = .{ .id = .@"coverage.toast", .label = "Toast both numbers" } }, .{ .settings = .{ .row = copy.settingsRow("ui.coverage_chip_mode"), .label = "Coverage chip in Settings" } } },
     };
 }

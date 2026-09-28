@@ -1563,9 +1563,9 @@ fn emitQueryDecl(w: *std.Io.Writer, out: []const u8) void {
 /// `<cache>/unit-home`, per checkout — and without the variables that
 /// point a process at somebody's live state. The real HOME holds the
 /// developer's `~/.config/mnml` (a test reaching a `persist_*` path
-/// used to rewrite it), their Claude transcripts (the session scan) and
-/// the machine-wide rate-limit buckets (`~/.tattle-claude-artifacts`);
-/// `MNML_IPC_DIR` / `MNML_WORKSPACE` are the mnml whose terminal the
+/// used to rewrite it) and their Claude transcripts (the session scan);
+/// `MNML_SHARED_STATE_DIR` names the machine-wide rate-limit buckets and
+/// coverage trends; `MNML_IPC_DIR` / `MNML_WORKSPACE` are the mnml whose terminal the
 /// build was started in. A test that means a HOME builds its own
 /// environment, as the ones that do already do.
 fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
@@ -1580,7 +1580,7 @@ fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
         run.setEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         for ([_][]const u8{
             "MNML_IPC_DIR",    "MNML_WORKSPACE", "MNML_DATA_ROOT", "MNML_BROKER",           "MNML_SESSIONS_HOME",
-            "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "TATTLE_ARTIFACTS_ROOT", "CLAUDECODE",
+            "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "MNML_SHARED_STATE_DIR", "CLAUDECODE",
         }) |name| run.removeEnvironmentVariable(name);
     }
 }

@@ -28,10 +28,13 @@
 //! — the dev workflow — exports `MNML_PROFILE=dev` for you.
 //!
 //! What is deliberately NOT per-profile: the cross-process rate-limit
-//! bucket (`~/.tattle-claude-artifacts/<service>-ratelimit.json`,
+//! bucket in the shared-state directory
+//! (`$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`,
 //! `sdk/mnml-sdk/src/ratelimit.zig`). It is one budget per machine, and
 //! a second profile spending a second budget against the same API is
-//! the bug, not the feature.
+//! the bug, not the feature. With the variable unset the bucket falls
+//! back under the data root, which is the profile's — set it to have
+//! both profiles share one budget.
 
 const std = @import("std");
 const build_options = @import("build_options");

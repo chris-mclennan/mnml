@@ -74,6 +74,35 @@ def _too_long(service: str, path: str) -> BrokerPathTooLong:
         " for the default")
 
 
+def state_path(service: str) -> str:
+    """Where the service's ratelimit state file is -- the SDK's
+    `ratelimit.statePath`, step for step, so the socket derived beside it
+    is the one mnml serves:
+
+      1. `<SERVICE>_RATELIMIT_STATE` names the file outright
+      2. `$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`
+      3. `$MNML_DATA_ROOT/ratelimit/<service>.json`
+      4. `~/.config/mnml/ratelimit/<service>.json`
+
+    Nothing under the home directory is probed for; an empty variable
+    counts as unset."""
+    svc = "".join(c if c.isascii() and (c.isalnum() or c in "-_") else "_"
+                  for c in service[:48])
+    named = os.environ.get(f"{svc.upper()}_RATELIMIT_STATE")
+    if named:
+        return named
+    shared = os.environ.get("MNML_SHARED_STATE_DIR")
+    if shared:
+        return os.path.join(shared, f"{svc}-ratelimit.json")
+    data = os.environ.get("MNML_DATA_ROOT")
+    if data:
+        return os.path.join(data, "ratelimit", f"{svc}.json")
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    if home:
+        return os.path.join(home, ".config", "mnml", "ratelimit", f"{svc}.json")
+    return os.path.join("ratelimit", f"{svc}.json")
+
+
 def broker_socket(service: str) -> str:
     """The socket path for a service, or "" when the broker is off.
 
@@ -88,9 +117,8 @@ def broker_socket(service: str) -> str:
         if len(named) > OS_MAX_PATH_LEN:
             raise _too_long(service, named)
         return named
-    root = os.environ.get("TATTLE_ARTIFACTS_ROOT") or os.path.expanduser(
-        "~/.tattle-claude-artifacts")
-    path = os.path.join(root, f"{service}-broker.sock")
+    path = os.path.join(os.path.dirname(state_path(service)),
+                        f"{service}-broker.sock")
     # sun_path is 104 bytes on macOS and 108 on Linux, so a deep root
     # cannot hold a socket. Both sides fall back to the same short name,
     # derived from the service and the long path (the Zig side's

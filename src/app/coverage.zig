@@ -1,11 +1,13 @@
 //! The statusline coverage chip — `F 83% ▲1.0` (feature coverage and
 //! its move over seven days) and `C 71% ±0.0` (Istanbul lines and the
-//! move since the previous commit), from the two `trends.json` files
-//! the Rust chip read: `<home>/.tattle-claude-artifacts/feature-coverage/
-//! _trends/trends.json` and `…/code-coverage/_trends/trends.json`. Either
-//! may be absent (no sync, a non-acmeco user): its number is simply not
-//! shown; with neither the chip is not painted. The files are re-read
-//! every five minutes at most, whatever the outcome.
+//! move since the previous commit), from two `trends.json` files in the
+//! machine's shared-state directory, `$MNML_SHARED_STATE_DIR`:
+//! `feature-coverage/_trends/trends.json` and
+//! `code-coverage/_trends/trends.json`, written by whatever coverage
+//! tooling the machine runs. Either may be absent: its number is simply
+//! not shown; with neither — or with no shared-state directory — the
+//! chip is not painted. The files are re-read every five minutes at
+//! most, whatever the outcome.
 //!
 //! `ui.coverage_chip_mode` picks the shape: `feature` / `code` (one
 //! number), `both` (`F 83% ▲1.0 · C 71% ±0.0`), `ticker` (F ⇄ C every
@@ -25,7 +27,6 @@ const settings = @import("settings.zig");
 
 pub const reload_ms: i64 = 300_000;
 pub const ticker_ms: i64 = 4000;
-pub const artifacts_dir = ".tattle-claude-artifacts";
 
 pub const State = struct {
     /// A test's wall clock for the ticker; null reads the real one.
@@ -171,23 +172,26 @@ fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
     return .{ .y = y, .m = m, .d = d };
 }
 
-/// The directory holding `.tattle-claude-artifacts`: `MNML_ARTIFACTS_HOME`
+/// The directory the trends files are under: `MNML_ARTIFACTS_HOME`
 /// when set (the e2e driver points it at the test's own root, so a
 /// developer's real coverage never paints into a test's statusline),
-/// else the home directory — except under the test runner, where only
-/// the variable counts: a unit test that builds an App on the process
-/// environment must not read the developer's own trends files (they
-/// widened the row by a chip and cut the position out of a 48-column
-/// frame on the author's machine, and on no one else's).
-fn artifactsHome(app: *App) ?[]const u8 {
-    if (app.env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
-    if (builtin.is_test) return null;
-    return app.userHome();
+/// else the shared-state directory, `MNML_SHARED_STATE_DIR` — except
+/// under the test runner, where only the first variable counts: a unit
+/// test that builds an App on the process environment must not read
+/// the developer's own trends files (they widened the row by a chip
+/// and cut the position out of a 48-column frame on the author's
+/// machine, and on no one else's). Nothing under the home directory is
+/// probed for.
+fn trendsDir(env: *const std.process.Environ.Map, under_test: bool) ?[]const u8 {
+    if (env.get("MNML_ARTIFACTS_HOME")) |v| return if (v.len == 0) null else v;
+    if (under_test) return null;
+    const v = env.get("MNML_SHARED_STATE_DIR") orelse return null;
+    return if (v.len == 0) null else v;
 }
 
 fn readJson(comptime T: type, app: *App, arena: Allocator, rel: []const u8) ?T {
-    const home = artifactsHome(app) orelse return null;
-    const path = std.fs.path.join(arena, &.{ home, artifacts_dir, rel }) catch return null;
+    const dir = trendsDir(&app.env, builtin.is_test) orelse return null;
+    const path = std.fs.path.join(arena, &.{ dir, rel }) catch return null;
     const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(4 * 1024 * 1024)) catch return null;
     const parsed = std.json.parseFromSliceLeaky(T, arena, text, .{ .ignore_unknown_fields = true }) catch return null;
     return parsed;
@@ -319,7 +323,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
 fn toastCmd(app: *App) CommandError!void {
     ensureLoaded(app);
     const st = &app.coverage;
-    if (st.feature == null and st.code == null) return app.diag.fail(app.frame.allocator(), "coverage: no trends.json under ~/{s}", .{artifacts_dir});
+    if (st.feature == null and st.code == null) return app.diag.fail(app.frame.allocator(), "coverage: no trends.json under $MNML_SHARED_STATE_DIR", .{});
     const arena = app.frame.allocator();
     const f: []const u8 = if (st.feature) |v| try pct(arena, "features", v) else "features —";
     const c: []const u8 = if (st.code) |v| try pct(arena, "code lines", v) else "code lines —";
@@ -371,7 +375,7 @@ fn modeRunner(comptime mode: Config.CoverageChipMode, comptime label: []const u8
 
 const t = std.testing;
 
-test "the coverage chip reads the two trends files under HOME and paints per mode; nothing without them" {
+test "the coverage chip reads the two trends files in its directory and paints per mode; nothing without them" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -383,15 +387,15 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     app.now_ms = 10_000;
     try t.expect((try segment(&app, app.frame.allocator())) == null);
     // Two apps: 80/90 (ui/api) over 3 features and 60/— over 1 → (85·3 + 60·1)/4 = 78.75.
-    try tmp.dir.createDirPath(t.io, artifacts_dir ++ "/feature-coverage/_trends");
-    try tmp.dir.writeFile(t.io, .{ .sub_path = artifacts_dir ++ "/feature-coverage/_trends/trends.json", .data =
+    try tmp.dir.createDirPath(t.io, "feature-coverage/_trends");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "feature-coverage/_trends/trends.json", .data =
         \\{"latest_date":"2026-09-01","apps":[
         \\ {"slug":"a","name":"A","series":[{"date":"2026-08-01","features":1,"ui":10,"api":10},{"date":"2026-09-01","features":3,"ui":80,"api":90}]},
         \\ {"slug":"b","name":"B","series":[{"date":"2026-09-01","features":1,"ui":60}]}
         \\]}
     });
-    try tmp.dir.createDirPath(t.io, artifacts_dir ++ "/code-coverage/_trends");
-    try tmp.dir.writeFile(t.io, .{ .sub_path = artifacts_dir ++ "/code-coverage/_trends/trends.json", .data =
+    try tmp.dir.createDirPath(t.io, "code-coverage/_trends");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "code-coverage/_trends/trends.json", .data =
         \\{"latest_date":"2026-09-01","apps":[
         \\ {"slug":"a","name":"A","series":[{"date":"2026-09-01","files":3,"lines":70.0}]},
         \\ {"slug":"b","name":"B","series":[{"date":"2026-09-01","files":1,"lines":90.0}]}
@@ -424,6 +428,23 @@ test "the coverage chip reads the two trends files under HOME and paints per mod
     try t.expect(std.mem.indexOf(u8, text, "F 79% ▲43.8 · C 75% ±0.0") != null);
     try command.run(&app, .{ .static = .@"coverage.toast" });
     try t.expectEqualStrings("coverage: features 79% · code lines 75%", app.lastToast().?);
+}
+
+test "the trends directory is the shared-state directory, never the home; the test hook wins and only it counts under test" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/home/u");
+    try t.expect(trendsDir(&env, false) == null);
+    try env.put("MNML_SHARED_STATE_DIR", "");
+    try t.expect(trendsDir(&env, false) == null);
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
+    try t.expectEqualStrings("/shared", trendsDir(&env, false).?);
+    try t.expect(trendsDir(&env, true) == null);
+    try env.put("MNML_ARTIFACTS_HOME", "/test-root");
+    try t.expectEqualStrings("/test-root", trendsDir(&env, false).?);
+    try t.expectEqualStrings("/test-root", trendsDir(&env, true).?);
+    try env.put("MNML_ARTIFACTS_HOME", "");
+    try t.expect(trendsDir(&env, false) == null);
 }
 
 test "the seven-day lookback walks ISO dates across a month boundary; a falling number reads ▼" {
