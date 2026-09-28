@@ -168,6 +168,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // After the session restore, so its toast lands on the restored
     // frame; only here, because it reaches GitHub.
     @import("../app/update.zig").startupCheck(&app);
+    @import("../app/font_scan.zig").startupFetch(&app);
     // Once, until Enter says the setup is done (after the trust dialog).
     try @import("../app/first_launch.zig").showIfPending(&app);
 
