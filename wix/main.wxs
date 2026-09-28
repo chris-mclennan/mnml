@@ -69,7 +69,7 @@
 
         <Package Id='*'
             Keywords='Installer'
-            Description='A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client.'
+            Description='A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client. Final Rust release; the project continues in Zig at the same repository.'
             Manufacturer='Chris McLennan'
             InstallerVersion='450'
             Languages='1033'
