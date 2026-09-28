@@ -396,7 +396,6 @@ const CLOUD_RUN_DEFAULTS: &[Field] = &[
     f("model", Shape::Str),
 ];
 const CLOUD_RUN: &[Field] = &[f("defaults", Shape::Struct(CLOUD_RUN_DEFAULTS))];
-const JIRA: &[Field] = &[f("domain", Shape::Str), f("ticket_prefix", Shape::Str)];
 const CLOUD_AGENTS: &[Field] = &[
     f("label", Shape::Str),
     f("short_id", Shape::Str),
@@ -440,7 +439,6 @@ const ROOT: &[Field] = &[
     f("workspaces", Shape::List(&Shape::Struct(WORKSPACE))),
     f("marketplace", Shape::Struct(MARKETPLACE)),
     f("cloud_run", Shape::Struct(CLOUD_RUN)),
-    f("jira", Shape::Struct(JIRA)),
     f("cloud_agents", Shape::Struct(CLOUD_AGENTS)),
 ];
 
@@ -959,8 +957,6 @@ const DOCS: &[(&str, &str)] = &[
     ("cloud_run.defaults.env_id", "Environment id."),
     ("cloud_run.defaults.sandbox", "Sandbox name."),
     ("cloud_run.defaults.model", "Model id."),
-    ("jira.domain", "MNML_JIRA_DOMAIN overrides"),
-    ("jira.ticket_prefix", "MNML_JIRA_TICKET_PREFIX overrides"),
     ("cloud_agents.label", "Label for the cloud agents section."),
     ("cloud_agents.short_id", "Short id shown on chips."),
     ("cloud_agents.region", "MNML_CLOUD_AGENTS_REGION overrides"),

@@ -361,14 +361,6 @@
         },
     },
 
-    // ── jira ───────────────────────────────────────────────────────────────
-    .jira = .{
-        // MNML_JIRA_DOMAIN overrides
-        .domain = "example.atlassian.net",
-        // MNML_JIRA_TICKET_PREFIX overrides
-        .ticket_prefix = "TE",
-    },
-
     // ── cloud_agents ───────────────────────────────────────────────────────
     .cloud_agents = .{
         // MNML_CLOUD_AGENTS_REGION overrides
@@ -394,6 +386,10 @@
 // [[github.repos]]
 // owner = "me"
 // repo = "hello"
+//
+// [jira]
+// domain = "example.atlassian.net"
+// ticket_prefix = "TE"
 //
 // [keys.emacs]
 // "ctrl+x" = "app.quit"
