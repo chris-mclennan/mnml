@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Day-to-day development history lives in [`CLAUDE.md`](CLAUDE.md) (the Status
 block); this file is the curated, user-facing summary.
 
+**0.2.22 is the final Rust release.** The project continues as mnml 0.3,
+a new codebase written in Zig, at this same repository; run
+`mnml export-config-zon` from 0.2.22 before upgrading. See the notice at
+the top of the [README](README.md).
+
 ## [Unreleased]
 
 ### Added
