@@ -229,6 +229,11 @@ class Window:
         cmds = [c for c in cmds if c]
         if not cmds:
             return
+        # Counted afresh: the channel is shared. An integration a
+        # `shell` step ran appends its own lines (`statusline-set-
+        # segment`), and each is acked like ours — a stale count took
+        # their acks for ours and stopped waiting early.
+        self._ack_seen = self._count_acks()
         want = self._ack_seen + len(cmds)
         self._append(cmds)
         deadline = now_ms() + 5000

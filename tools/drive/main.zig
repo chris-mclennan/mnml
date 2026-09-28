@@ -349,10 +349,10 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         .full;
     // A `full` launch has no number until a window has been measured, so
     // it starts at the corpus size and re-launches once it knows.
-    var want: ?harness.Cells = if (explicit_cols != null or explicit_rows != null) .{
-        .cols = @max(explicit_cols orelse harness.min_cols, harness.min_cols),
-        .rows = @max(explicit_rows orelse harness.min_rows, harness.min_rows),
-    } else named.cells();
+    var want: ?harness.Cells = if (explicit_cols != null or explicit_rows != null)
+        harness.explicitCells(explicit_cols, explicit_rows)
+    else
+        named.cells();
     var cols: u16 = if (want) |v| v.cols else harness.Named.corpus.cells().?.cols;
     var rows: u16 = if (want) |v| v.rows else harness.Named.corpus.cells().?.rows;
     // The user's own font size, unless they set none: `--font-size`

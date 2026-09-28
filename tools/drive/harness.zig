@@ -19,6 +19,24 @@ pub const window_title = "mnml-drive harness";
 pub const min_cols: u16 = 80;
 pub const min_rows: u16 = 24;
 
+/// The floor an EXPLICIT `--cols` / `--rows` may reach: ghostty's own
+/// (`window-width` 10 columns, `window-height` 4 rows). An explicit size
+/// is a script's `# width:` / `# height:` header, and a file that declares
+/// a size gets that size — `wheel_context_menu.test` pins 14 rows so its
+/// menu overflows the screen; clamped to 24 the whole menu fit, nothing
+/// scrolled, and the sweep counted five misses that were the harness's.
+pub const explicit_min_cols: u16 = 10;
+pub const explicit_min_rows: u16 = 4;
+
+/// `--cols` / `--rows` as given (either may be missing: the other half
+/// of the `small` floor), never below ghostty's own floor.
+pub fn explicitCells(cols: ?u16, rows: ?u16) Cells {
+    return .{
+        .cols = @max(cols orelse min_cols, explicit_min_cols),
+        .rows = @max(rows orelse min_rows, explicit_min_rows),
+    };
+}
+
 /// The named sizes. `full` has no number here: it is measured on the
 /// machine (the user's own largest ghostty window, or the display).
 pub const Cells = struct { cols: u16, rows: u16 };
@@ -554,6 +572,13 @@ test "--no-mouse turns ghostty's mouse reporting off, and wins over the user's l
     const on = try renderConfig(t.allocator, "", .{ .cols = 80, .rows = 24, .title = "t" });
     defer t.allocator.free(on);
     try t.expect(std.mem.indexOf(u8, on, "mouse-reporting") == null);
+}
+
+test "an explicit size is taken below the named floor, down to ghostty's own" {
+    try t.expectEqual(Cells{ .cols = 120, .rows = 14 }, explicitCells(120, 14));
+    try t.expectEqual(Cells{ .cols = 60, .rows = min_rows }, explicitCells(60, null));
+    try t.expectEqual(Cells{ .cols = min_cols, .rows = 30 }, explicitCells(null, 30));
+    try t.expectEqual(Cells{ .cols = explicit_min_cols, .rows = explicit_min_rows }, explicitCells(1, 1));
 }
 
 test "cellsFor turns measured points into a cell count, floored and clamped" {

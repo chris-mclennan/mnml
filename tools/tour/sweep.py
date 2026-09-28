@@ -119,6 +119,81 @@ def parse_steps(text):
     return steps
 
 
+def zon_str(s):
+    """A ZON string literal: `\\`, `"` and the control bytes escaped,
+    the rest as UTF-8."""
+    out = ['"']
+    for c in s:
+        if c == "\\":
+            out.append("\\\\")
+        elif c == '"':
+            out.append('\\"')
+        elif c == "\n":
+            out.append("\\n")
+        elif c == "\t":
+            out.append("\\t")
+        elif c == "\r":
+            out.append("\\r")
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            out.append("\\x%02x" % ord(c))
+        else:
+            out.append(c)
+    out.append('"')
+    return "".join(out)
+
+
+def snippet_config(steps):
+    """The file's `snippet <scope> <trigger> <body>` steps as the config's
+    `.snippets` section (`scope → trigger → body`), or "" for none.
+
+    The runner seeds its App's table directly (`app/driver.zig`
+    `vSnippet` → `snippets.State.seed`); the channel has no line for
+    that, so the sweep used to skip the step and every expansion in
+    `snippet_lsp_grammar.test` left its trigger in the text. The table
+    the config feeds is the same one (`snippets.State.absorbConfig`),
+    read at launch — so every snippet of the file exists from the first
+    step rather than from its own line. No corpus file types a trigger
+    before the `snippet` line that defines it."""
+    table = {}
+    for _, head, rest in steps:
+        if head != "snippet":
+            continue
+        scope, rest1 = split1(rest)
+        trigger, body = split1(rest1)
+        if scope and trigger:
+            table.setdefault(scope, {})[trigger] = unescape(body)
+    if not table:
+        return ""
+    parts = []
+    for scope, triggers in table.items():
+        inner = ", ".join(f".@{zon_str(t)} = {zon_str(b)}" for t, b in triggers.items())
+        parts.append(f".@{zon_str(scope)} = .{{ {inner} }}")
+    return ".{ " + ", ".join(parts) + " }"
+
+
+def coalesce_clicks(steps):
+    """A run of identical `click X Y` lines is ONE burst of presses.
+
+    The corpus writes a double-click on a list row as two `click` lines
+    (the git palette's rows, the stash row) — in the runner they are
+    back-to-back steps, milliseconds apart, well inside the App's
+    `double_click_ms` (450, `app.zig`), so `dispatch.clickCount` counts
+    two. Here every step is paced (the frame settles for 150 ms of quiet
+    or up to 1.2 s), and the channel is polled every 200 ms
+    (`tui/loop.zig` `ipc_poll_ms`), so the second press landed past the
+    window and counted as a first press again: the row was selected,
+    never activated. So the run goes out as one append, the way
+    `doubleclick` already does — `("clicks", "X Y N", ...)`."""
+    out = []
+    for ln, head, rest in steps:
+        if head == "click" and out and out[-1][1] in ("click", "clicks") and out[-1][3] == rest:
+            pln, _, prest, _, n = out[-1]
+            out[-1] = (pln, "clicks", prest, rest, n + 1)
+            continue
+        out.append((ln, head, rest, rest if head == "click" else None, 1))
+    return [(ln, head, f"{rest} {n}" if head == "clicks" else rest) for ln, head, rest, _, n in out]
+
+
 def expand(value, env):
     def sub(m):
         name = m.group(1) or m.group(2)
@@ -333,26 +408,41 @@ class FileRun:
         cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }"
         if header["ascii"]:
             cfg += ", .ui = .{ .ascii_icons = true }"
+        snippets = snippet_config(steps)
+        if snippets:
+            cfg += ", .snippets = " + snippets
         cfg += " }"
         e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
         with open(e2e_cfg, "w", encoding="utf-8") as f:
             f.write(cfg + "\n")
-        cols = max(80, header["width"] or 120)
-        rows = max(24, header["height"] or 40)
-        if (header["width"] and header["width"] < 80) or (header["height"] and header["height"] < 24):
-            # Clamped up, the script's rows and columns are somebody
-            # else's: every click lands off and every narrow-layout
-            # expectation misses (integrations_jira_narrow_keeps_key,
-            # `# width: 60`, missed all seven). Headless covers these.
-            return "skip", f"size {header['width']}x{header['height']} is under the driver's 80x24 floor; headless only"
+        # The file's own size, whatever it is: the driver takes an
+        # explicit `--cols` / `--rows` down to ghostty's floor (10x4,
+        # `harness.explicitCells`). A size the file pins is part of what
+        # it asserts — `wheel_context_menu.test` needs 14 rows for its
+        # menu to overflow; at 24 it fit and nothing scrolled. Under
+        # ghostty's own floor there is no window to make: a skip, with
+        # the reason, and headless covers it.
+        if (header["width"] and header["width"] < 10) or (header["height"] and header["height"] < 4):
+            return "skip", f"size {header['width']}x{header['height']} is under ghostty's 10x4 floor; headless only"
+        cols = max(10, header["width"] or 120)
+        rows = max(4, header["height"] or 40)
         self.start_group()
         try:
             env = self.build_env(header)
             self.win = Window(self.run_dir, self.ws, exe=self.args.exe, cols=cols, rows=rows, app_env=env,
                               app_args=["--config", e2e_cfg])
+            # The channel is `<run>/ipc` (`--ipc-dir`), not the runner's
+            # `<ws>/.mnml/ipc-zig`, and a `shell` step has to be told: an
+            # integration's `--values` run publishes its statusline
+            # segments on `$MNML_IPC_DIR`, else on `<ws>/.mnml/ipc-zig`
+            # (integrations/bitbucket/main.zig) — which nothing read here,
+            # so `BB 2(1)`, the PR hover rows and the Jira Work rows never
+            # reached the window. A child mnml starts gets the same
+            # variable from the app (`bridge/host.zig` `envFor`).
+            self.shell_env["MNML_IPC_DIR"] = self.win.ipc
             self.win.launch()
             quit_seen = False
-            for ln, head, rest in steps:
+            for ln, head, rest in coalesce_clicks(steps):
                 if quit_seen:
                     break
                 try:
@@ -405,11 +495,17 @@ class FileRun:
         elif head == "ghost":
             w.send({"cmd": "ghost", "text": unescape(rest)}, settle=False)
             self.pace()
-        elif head in ("click", "rightclick", "doubleclick", "hover", "scroll"):
+        elif head in ("click", "clicks", "rightclick", "doubleclick", "hover", "scroll"):
             parts = rest.split()
             x, y = int(parts[0]), int(parts[1])
             if head == "click":
                 w.send({"cmd": "click", "col": x, "row": y}, settle=False)
+            elif head == "clicks":
+                # `click X Y` repeated on consecutive lines (`coalesce_clicks`):
+                # one append, so the presses share a poll the way the
+                # runner's back-to-back steps share a clock.
+                n = int(parts[2])
+                w.send(*([{"cmd": "click", "col": x, "row": y}] * n), settle=False)
             elif head == "rightclick":
                 w.send({"cmd": "click", "col": x, "row": y, "button": "right"}, settle=False)
             elif head == "doubleclick":
@@ -445,7 +541,7 @@ class FileRun:
                     spec.text = unescape(rest1)
                     spec.live = True
         elif head == "snippet":
-            self.notes.append(f"line {ln}: `snippet` has no channel line; skipped")
+            pass  # in the launch config already (`snippet_config`)
         elif head == "shot":
             w.shot(os.path.join(self.out, f"{self.name}--{rest.strip()}.png"))
         elif head == "expect":
