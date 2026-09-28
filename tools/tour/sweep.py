@@ -119,6 +119,29 @@ def parse_steps(text):
     return steps
 
 
+def coalesce_clicks(steps):
+    """A run of identical `click X Y` lines is ONE burst of presses.
+
+    The corpus writes a double-click on a list row as two `click` lines
+    (the git palette's rows, the stash row) — in the runner they are
+    back-to-back steps, milliseconds apart, well inside the App's
+    `double_click_ms` (450, `app.zig`), so `dispatch.clickCount` counts
+    two. Here every step is paced (the frame settles for 150 ms of quiet
+    or up to 1.2 s), and the channel is polled every 200 ms
+    (`tui/loop.zig` `ipc_poll_ms`), so the second press landed past the
+    window and counted as a first press again: the row was selected,
+    never activated. So the run goes out as one append, the way
+    `doubleclick` already does — `("clicks", "X Y N", ...)`."""
+    out = []
+    for ln, head, rest in steps:
+        if head == "click" and out and out[-1][1] in ("click", "clicks") and out[-1][3] == rest:
+            pln, _, prest, _, n = out[-1]
+            out[-1] = (pln, "clicks", prest, rest, n + 1)
+            continue
+        out.append((ln, head, rest, rest if head == "click" else None, 1))
+    return [(ln, head, f"{rest} {n}" if head == "clicks" else rest) for ln, head, rest, _, n in out]
+
+
 def expand(value, env):
     def sub(m):
         name = m.group(1) or m.group(2)
@@ -352,7 +375,7 @@ class FileRun:
                               app_args=["--config", e2e_cfg])
             self.win.launch()
             quit_seen = False
-            for ln, head, rest in steps:
+            for ln, head, rest in coalesce_clicks(steps):
                 if quit_seen:
                     break
                 try:
@@ -405,11 +428,17 @@ class FileRun:
         elif head == "ghost":
             w.send({"cmd": "ghost", "text": unescape(rest)}, settle=False)
             self.pace()
-        elif head in ("click", "rightclick", "doubleclick", "hover", "scroll"):
+        elif head in ("click", "clicks", "rightclick", "doubleclick", "hover", "scroll"):
             parts = rest.split()
             x, y = int(parts[0]), int(parts[1])
             if head == "click":
                 w.send({"cmd": "click", "col": x, "row": y}, settle=False)
+            elif head == "clicks":
+                # `click X Y` repeated on consecutive lines (`coalesce_clicks`):
+                # one append, so the presses share a poll the way the
+                # runner's back-to-back steps share a clock.
+                n = int(parts[2])
+                w.send(*([{"cmd": "click", "col": x, "row": y}] * n), settle=False)
             elif head == "rightclick":
                 w.send({"cmd": "click", "col": x, "row": y, "button": "right"}, settle=False)
             elif head == "doubleclick":
