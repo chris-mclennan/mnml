@@ -142,22 +142,57 @@ impl UpdateCheck {
     }
 }
 
+/// Parse a semver-shaped string into `(major, minor, patch)`. A
+/// leading `v` and any pre-release / build suffix are ignored; tail
+/// segments default to 0 so "0.1" reads as 0.1.0.
+fn version_parts(v: &str) -> Option<(u64, u64, u64)> {
+    let v = v.trim_start_matches('v').split(['-', '+']).next()?;
+    let mut it = v.split('.').map(|s| s.parse::<u64>().ok());
+    let major = it.next()??;
+    let minor = it.next().flatten().unwrap_or(0);
+    let patch = it.next().flatten().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
 /// Compare two semver-shaped strings. Returns true iff `remote` is
 /// strictly newer than `local`. Tail segments default to 0 so "0.1"
 /// < "0.1.1". Anything unparseable returns false — we'd rather skip
 /// a real upgrade than announce a phantom one.
 fn is_newer(remote: &str, local: &str) -> bool {
-    fn parts(v: &str) -> Option<(u64, u64, u64)> {
-        let v = v.trim_start_matches('v').split(['-', '+']).next()?;
-        let mut it = v.split('.').map(|s| s.parse::<u64>().ok());
-        let major = it.next()??;
-        let minor = it.next().flatten().unwrap_or(0);
-        let patch = it.next().flatten().unwrap_or(0);
-        Some((major, minor, patch))
-    }
-    match (parts(remote), parts(local)) {
+    match (version_parts(remote), version_parts(local)) {
         (Some(r), Some(l)) => r > l,
         _ => false,
+    }
+}
+
+/// The last major.minor line of the Rust codebase. 0.3 onward is a
+/// new codebase (written in Zig) that reads `config.zon`, not TOML.
+const LAST_RUST_LINE: (u64, u64) = (0, 2);
+
+/// True when upgrading from `current` to `latest` leaves the Rust
+/// codebase — `current` is on the 0.2 line or earlier and `latest` is
+/// 0.3 or later. Unparseable input returns false (plain hint).
+fn crosses_codebase_line(current: &str, latest: &str) -> bool {
+    match (version_parts(current), version_parts(latest)) {
+        (Some((cm, cn, _)), Some((lm, ln, _))) => {
+            (cm, cn) <= LAST_RUST_LINE && (lm, ln) > LAST_RUST_LINE
+        }
+        _ => false,
+    }
+}
+
+/// The update toast's text. A same-line update names the new version
+/// and the channel's upgrade hint; an update onto the new codebase
+/// also says to convert the config with `mnml export-config-zon`
+/// first, since the new version does not read `config.toml`.
+pub fn announcement(current: &str, latest: &str, channel: InstallChannel) -> String {
+    let hint = channel.upgrade_hint(latest);
+    if crosses_codebase_line(current, latest) {
+        format!(
+            "mnml v{latest} available — a new codebase: run `mnml export-config-zon` first, then {hint}"
+        )
+    } else {
+        format!("mnml v{latest} available — {hint}")
     }
 }
 
@@ -235,6 +270,42 @@ mod tests {
             InstallChannel::Source
                 .upgrade_hint("1.2.3")
                 .contains("git pull")
+        );
+    }
+
+    #[test]
+    fn crosses_codebase_line_only_past_0_2() {
+        assert!(!crosses_codebase_line("0.2.21", "0.2.22"));
+        assert!(crosses_codebase_line("0.2.22", "0.3.0"));
+        assert!(crosses_codebase_line("0.2.22", "1.0.0"));
+        assert!(
+            !crosses_codebase_line("0.3.0", "0.3.1"),
+            "already on the new line"
+        );
+        assert!(
+            !crosses_codebase_line("0.2.22", "garbage"),
+            "unparseable → false"
+        );
+    }
+
+    #[test]
+    fn announcement_same_line_is_the_plain_hint() {
+        assert_eq!(
+            announcement("0.2.21", "0.2.22", InstallChannel::Homebrew),
+            "mnml v0.2.22 available — brew upgrade mnml  → v0.2.22"
+        );
+    }
+
+    #[test]
+    fn announcement_across_the_line_asks_for_the_config_export() {
+        assert_eq!(
+            announcement("0.2.22", "0.3.0", InstallChannel::Homebrew),
+            "mnml v0.3.0 available — a new codebase: run `mnml export-config-zon` first, \
+             then brew upgrade mnml  → v0.3.0"
+        );
+        assert!(
+            announcement("0.2.22", "1.0.0", InstallChannel::Cargo)
+                .contains("mnml export-config-zon")
         );
     }
 }

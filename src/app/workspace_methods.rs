@@ -445,10 +445,10 @@ impl App {
         let Some(latest) = uc.take_pending_announcement() else {
             return;
         };
-        let channel = uc.channel;
-        self.toast(format!(
-            "mnml v{latest} available — {}",
-            channel.upgrade_hint(&latest)
+        self.toast(crate::update_check::announcement(
+            env!("CARGO_PKG_VERSION"),
+            &latest,
+            uc.channel,
         ));
     }
 
