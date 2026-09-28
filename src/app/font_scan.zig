@@ -10,7 +10,8 @@
 //! release, which a worker fetches from the GitHub API once a day and
 //! caches at `<data root>/cache/nerdfonts-latest.json`.
 //!
-//! The scan runs on the `startup` hook (`onStartup`); the fetch lands
+//! The scan runs on the `startup` hook (`onStartup`); the fetch is
+//! the terminal loop's (`startupFetch`), never the hook's; it lands
 //! as one `.fonts` event (D3). `MNML_FONT_DIRS` (`:`-separated, `;` on
 //! Windows) replaces the platform font directories — the UI spec dump
 //! and the tests seed a fixture folder through it; `MNML_NERDFONTS_LATEST`
@@ -656,7 +657,17 @@ pub fn scan(app: *App) Allocator.Error!void {
             if (latestCached(app.frame.allocator(), app.io, p, nowEpoch(app.io))) |v| st.latest = try app.gpa.dupe(u8, v);
         }
     }
-    if (st.latest == null and st.families.len > 0) try fetchLatest(app);
+}
+
+/// The once-a-day fetch of the newest Nerd Fonts release, started by
+/// the terminal loop after the `startup` hook — not by `scan`, which
+/// the hook runs everywhere: `--headless`, the `.test` runner and the
+/// unit tests all emit `startup`, and the fetch reached GitHub from
+/// each of them. The same shape as `update.startupCheck`.
+pub fn startupFetch(app: *App) void {
+    const st = &app.fonts;
+    if (!st.scanned or st.latest != null or st.families.len == 0) return;
+    fetchLatest(app) catch {};
 }
 
 pub fn onStartup(app: *App, _: hooks.HookArgs) void {
@@ -875,6 +886,37 @@ pub fn buildFixture(gpa: Allocator, o: FixtureOpts) Allocator.Error![]u8 {
 
 const t = std.testing;
 
+test "the startup hook scans but never fetches: headless, the .test runner and the unit tests all emit it; the terminal loop's startupFetch does" {
+    const gpa = t.allocator;
+    const io = t.io;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try tmp.dir.createDirPath(io, "fonts");
+    const bytes = try buildFixture(gpa, .{ .family = "JetBrainsMono Nerd Font", .version = "Version 2.304;Nerd Fonts 3.5.1" });
+    defer gpa.free(bytes);
+    try tmp.dir.writeFile(io, .{ .sub_path = "fonts/JetBrainsMonoNerdFont-Regular.ttf", .data = bytes });
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    const fonts_dir = try std.fs.path.join(gpa, &.{ root, "fonts" });
+    defer gpa.free(fonts_dir);
+    try env.put("MNML_FONT_DIRS", fonts_dir);
+    // No `MNML_NERDFONTS_LATEST` and no cache: the case that fetched.
+    // The API is a port nothing listens on, so a fetch that does start
+    // fails at once rather than reaching GitHub.
+    try env.put("MNML_MARKETPLACE_API", "http://127.0.0.1:9");
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 20, .env = &env });
+    defer app.deinit();
+    app.hooks.emit(&app, .startup);
+    try t.expect(app.fonts.scanned);
+    try t.expectEqual(@as(usize, 1), app.fonts.families.len);
+    try t.expect(app.fonts.latest == null);
+    try t.expect(!app.fonts.fetching);
+    // Only the loop's own call starts it.
+    startupFetch(&app);
+    try t.expect(app.fonts.fetching);
+}
 test "the name table: family from ID 16 over ID 1, the version from ID 5; a TTC wrapper and the OTTO magic read the same" {
     const gpa = t.allocator;
     const plain = try buildFixture(gpa, .{ .family = "JetBrainsMono NFM ExtraBold", .typographic = "JetBrainsMono Nerd Font Mono", .version = "Version 2.304;Nerd Fonts 3.5.1" });
@@ -1141,6 +1183,9 @@ test "the latest release comes from a local server and lands as one event, cache
     var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 60, .rows = 16, .env = &env });
     defer app.deinit();
     onStartup(&app, .startup);
+    // The hook scans; the terminal loop starts the fetch.
+    try t.expect(!app.fonts.fetching);
+    startupFetch(&app);
     try t.expect(app.fonts.fetching);
     var waited: u32 = 0;
     while (app.fonts.fetching and waited < 10_000) : (waited += 10) {

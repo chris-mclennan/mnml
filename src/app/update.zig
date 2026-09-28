@@ -232,7 +232,11 @@ test "tagFromJson reads tag_name and strips the v; the tick toasts what the work
 }
 
 test "the startup hook never starts the update check: headless, the .test runner and the unit tests all emit it" {
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp", .cols = 80, .rows = 20 });
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws_dir = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws_dir, .data_root = ws_dir, .cols = 80, .rows = 20 });
     defer app.deinit();
     try t.expect(app.cfg.ui.check_updates);
     try t.expect(app.env.get("MNML_NO_UPDATE_CHECK") == null);

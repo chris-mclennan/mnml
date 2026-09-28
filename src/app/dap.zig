@@ -55,6 +55,7 @@ const activity_bar = @import("activity_bar.zig");
 const lsp = @import("lsp.zig");
 const find_mod = @import("find.zig");
 const config = @import("../config/root.zig");
+const trust_app = @import("trust.zig");
 const build_options = @import("build_options");
 const hooks = @import("../core/hooks.zig");
 const document = @import("../editor/document.zig");
@@ -796,6 +797,9 @@ fn resolveAdapter(app: *App, path: []const u8) CommandError!Found {
     if (adapterFor(app, path)) |f| return f;
     if (try builtinAdapterFor(app, path)) |f| return f;
     const ext = std.fs.path.extension(path);
+    if (app.overlay == .confirm and app.overlay.confirm.purpose == .trust_workspace) {
+        return app.diag.fail(arena, "dap: the .dap.{s} adapter is in this workspace's config — answer the trust dialog, then run again", .{if (ext.len > 1) ext[1..] else "<ext>"});
+    }
     return app.diag.fail(arena, "dap: no .dap.{s} adapter in config", .{if (ext.len > 1) ext[1..] else "<ext>"});
 }
 
@@ -872,6 +876,19 @@ pub fn pollPendingLaunch(app: *App) void {
 /// launch is found without a restart. Exec-bearing, hence trusted
 /// workspaces only; the data root is this App's, not the environment's.
 fn refreshAdapters(app: *App) Allocator.Error!void {
+    // An adapter that appeared in the workspace config after launch is
+    // read under the launch's own trust policy. A person's workspace
+    // (`.ask`) goes through the real reload: a new exec-bearing claim
+    // raises the trust dialog and the adapter waits on the answer,
+    // never running on the strength of a flag set before it existed.
+    // The e2e workspace (`.trusted`, `MNML_E2E_WORKSPACE`) and a test
+    // App with no `loaded` read it outright, as before.
+    const policy: config.Trust = if (app.loaded) |l| l.opts.trust else .trusted;
+    if (policy == .ask) {
+        try app.reloadConfig(.ask);
+        try trust_app.promptIfNeeded(app);
+        return;
+    }
     if (!app.workspace_trusted) return;
     var env = try app.env.clone(app.gpa);
     defer env.deinit();
@@ -1951,6 +1968,54 @@ const screen_mod = @import("../ipc/screen.zig");
 fn screenText(app: *App) ![]u8 {
     try app.render();
     return screen_mod.toTestText(testing.allocator, &app.screen);
+}
+
+test "an adapter written into the workspace config after launch: the e2e workspace reads it; a person's gets the trust dialog first, and the adapter after Trust" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    try tmp.dir.createDirPath(testing.io, "ws");
+    try tmp.dir.createDirPath(testing.io, "data");
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    const data = try std.fs.path.join(testing.allocator, &.{ root, "data" });
+    defer testing.allocator.free(data);
+    var vars = std.process.Environ.Map.init(testing.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", data);
+    const prog = try std.fs.path.join(testing.allocator, &.{ ws, "prog.dbg" });
+    defer testing.allocator.free(prog);
+
+    for ([_]config.Trust{ .trusted, .ask }) |policy| {
+        tmp.dir.deleteTree(testing.io, "ws/.mnml") catch {};
+        const loaded = try config.load.load(testing.allocator, testing.io, .{ .workspace = ws, .trust = policy, .data_root = data, .env = .{ .vars = &vars } });
+        var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = data, .cfg = loaded.config, .loaded = loaded, .env = &vars, .cols = 100, .rows = 30 });
+        defer app.deinit();
+        // Nothing to distrust yet, under either policy.
+        try testing.expect(app.workspace_trusted);
+        try testing.expectError(error.Failed, resolveAdapter(&app, prog));
+
+        // The adapter appears after launch.
+        try tmp.dir.createDirPath(testing.io, "ws/.mnml");
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "ws/.mnml/config.zon", .data = ".{ .dap = .{ .dbg = .{ .cmd = \"/bin/true\" } } }" });
+        if (policy == .trusted) {
+            const found = try resolveAdapter(&app, prog);
+            try testing.expectEqualStrings("dbg", found.name);
+            try testing.expect(app.overlay != .confirm);
+        } else {
+            // A person's workspace: the claim is new — the dialog, not the run.
+            try testing.expectError(error.Failed, resolveAdapter(&app, prog));
+            try testing.expect(app.overlay == .confirm and app.overlay.confirm.purpose == .trust_workspace);
+            try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "trust dialog") != null);
+            try testing.expect(!app.workspace_trusted);
+            // Trust, and the adapter is there.
+            try trust_app.answer(&app, 0);
+            try testing.expect(app.workspace_trusted);
+            const found = try resolveAdapter(&app, prog);
+            try testing.expectEqualStrings("dbg", found.name);
+        }
+    }
 }
 
 test "consoleLines: a result or an error of several lines is one row each, the type after the first line, all rows the entry's" {

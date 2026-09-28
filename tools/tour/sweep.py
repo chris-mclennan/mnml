@@ -340,7 +340,11 @@ class FileRun:
         cols = max(80, header["width"] or 120)
         rows = max(24, header["height"] or 40)
         if (header["width"] and header["width"] < 80) or (header["height"] and header["height"] < 24):
-            self.notes.append(f"size {header['width']}x{header['height']} clamped to the driver's 80x24 floor")
+            # Clamped up, the script's rows and columns are somebody
+            # else's: every click lands off and every narrow-layout
+            # expectation misses (integrations_jira_narrow_keeps_key,
+            # `# width: 60`, missed all seven). Headless covers these.
+            return "skip", f"size {header['width']}x{header['height']} is under the driver's 80x24 floor; headless only"
         self.start_group()
         try:
             env = self.build_env(header)
