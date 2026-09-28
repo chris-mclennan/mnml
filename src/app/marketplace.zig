@@ -95,6 +95,7 @@ const integrations = @import("integrations.zig");
 const catalogue = @import("marketplace_catalogue.zig");
 const release = @import("marketplace_release.zig");
 const build_options = @import("build_options");
+const settings = @import("settings.zig");
 
 pub const default_api = "https://api.github.com";
 pub const max_body = 4 * 1024 * 1024;
@@ -200,9 +201,13 @@ pub const State = struct {
     /// Where a release install's bytes come from; a test swaps in a
     /// table (`marketplace_release.FakeFetcher`).
     fetcher: release.Fetcher = release.http,
+    /// Owns `cfg.marketplace.sources` once `addSource` has grown it in
+    /// memory (the loaded config's arena is not ours to extend).
+    cfg_arena: ?std.heap.ArenaAllocator = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
+        if (self.cfg_arena) |*a| a.deinit();
         if (self.arena) |*a| a.deinit();
         if (self.installing) |i| gpa.free(i);
         for (self.queue.items) |q| gpa.free(q);
@@ -811,6 +816,187 @@ fn skipDir(name: []const u8) bool {
     const skip = [_][]const u8{ "zig-out", "zig-pkg", "node_modules", "target", "vendor" };
     for (skip) |n| if (std.mem.eql(u8, name, n)) return true;
     return false;
+}
+
+// ─── add a source ───────────────────────────────────────────────────────
+//
+// `addSource` is the one code path behind every "add a private source"
+// entry point: the palette's `marketplace.add_source`, the Marketplace
+// tab's `+ source` chip and its tab menu (all three open the same
+// prompt), and the first-launch wizard's Private integrations row.
+
+/// What `addSource` read its input as.
+pub const SourceInput = union(enum) {
+    /// A folder: where it is, and what the config keeps — the typed
+    /// `~/…` form when it was one, else the absolute path (a relative
+    /// path means nothing in the home config, which every workspace
+    /// reads).
+    folder: struct { abs: []const u8, keep: []const u8 },
+    /// `owner/repo[:apps_dir]`, a `github_monorepo_apps` source.
+    repo: struct { repo: []const u8, apps_dir: []const u8 },
+};
+
+/// What `addSource` added: the id it chose, and for a folder how many
+/// integrations it found there (a repo is not fetched to count).
+pub const Added = struct { id: []const u8, found: ?usize };
+
+/// The ids mnml's own sources list under (`sources`): a configured one
+/// never takes them, so a row's `(source)` is never ambiguous.
+const reserved_ids = [_][]const u8{ "mnml", "local", "index", "github" };
+
+/// `input` as a folder or a repo. A path that says it is one (`/`, `~`,
+/// `.`, a drive letter) or names a folder that is there is a folder;
+/// else `owner/repo[:apps_dir]` is a repo; else it is a folder that is
+/// not there, which `addSource` refuses by name.
+pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocator.Error!SourceInput {
+    const raw = std.mem.trim(u8, input, " \t\r\n");
+    const expanded = try app.expandTilde(raw);
+    const abs = if (std.fs.path.isAbsolute(expanded)) try arena.dupe(u8, expanded) else try std.fs.path.join(arena, &.{ app.workspace, expanded });
+    const keep = if (raw.len > 0 and raw[0] == '~') try arena.dupe(u8, raw) else abs;
+    const says_path = raw.len > 0 and (raw[0] == '/' or raw[0] == '~' or raw[0] == '.' or raw[0] == '\\' or std.fs.path.isAbsolute(raw));
+    if (says_path or isDir(app.io, abs)) return .{ .folder = .{ .abs = abs, .keep = keep } };
+    if (repoShape(raw)) |r| return .{ .repo = .{ .repo = try arena.dupe(u8, r.repo), .apps_dir = try arena.dupe(u8, r.dir) } };
+    return .{ .folder = .{ .abs = abs, .keep = keep } };
+}
+
+fn isDir(io: Io, path: []const u8) bool {
+    var d = Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    d.close(io);
+    return true;
+}
+
+/// `owner/repo[:apps_dir]` — GitHub's name characters, one slash; the
+/// apps dir a relative path with no `..`. Null for anything else.
+pub fn repoShape(s: []const u8) ?struct { repo: []const u8, dir: []const u8 } {
+    const g = githubOverride(s);
+    const slash = std.mem.indexOfScalar(u8, g.repo, '/') orelse return null;
+    const owner = g.repo[0..slash];
+    const name = g.repo[slash + 1 ..];
+    if (!nameOk(owner) or !nameOk(name)) return null;
+    if (g.dir.len == 0 or g.dir[0] == '/' or std.mem.indexOf(u8, g.dir, "..") != null) return null;
+    for (g.dir) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '/')) return null;
+    return .{ .repo = g.repo, .dir = g.dir };
+}
+
+fn nameOk(s: []const u8) bool {
+    if (s.len == 0 or s[0] == '.') return false;
+    for (s) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) return false;
+    return true;
+}
+
+/// `base`, or `base-2`, `base-3`… — the first no configured source and
+/// none of mnml's own uses.
+fn uniqueId(app: *App, arena: Allocator, base: []const u8) Allocator.Error![]const u8 {
+    var n: usize = 1;
+    while (true) : (n += 1) {
+        const id = if (n == 1) base else try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, n });
+        const taken = for (reserved_ids) |r| {
+            if (std.mem.eql(u8, r, id)) break true;
+        } else for (app.cfg.marketplace.sources) |s| {
+            if (std.mem.eql(u8, sourceId(s), id)) break true;
+        } else false;
+        if (!taken) return id;
+    }
+}
+
+fn sourceId(s: Config.MarketplaceSource) []const u8 {
+    return switch (s) {
+        inline else => |v| v.id,
+    };
+}
+
+/// An id from a folder or repo name: its letters, digits, `-`, `_` and
+/// `.`, the rest `-`.
+fn idFrom(arena: Allocator, name: []const u8) Allocator.Error![]const u8 {
+    const out = try arena.dupe(u8, if (name.len == 0) "private" else name);
+    for (out) |*c| if (!(std.ascii.isAlphanumeric(c.*) or c.* == '-' or c.* == '_' or c.* == '.')) {
+        c.* = '-';
+    };
+    return out;
+}
+
+/// Add `input` — a folder (`~` expanded, relative to the workspace) or
+/// `owner/repo[:apps_dir]` — to `marketplace.sources`, list it, and show
+/// the Marketplace tab. A folder is checked by listing it exactly as the
+/// tab will (`listLocal`): one with nothing to install is refused. A
+/// repo is checked for its shape only — nothing is fetched here.
+///
+/// The entry is appended to the HOME `config.zon` through the settings
+/// splice (`[+]`, `zon_edit`): the file is edited in place, so its
+/// comments, its order and the sources already there keep their bytes.
+/// Never the workspace layer: a source is a list of things to build
+/// and run, and a workspace layer is what a cloned repo brings with it —
+/// the trust stripper (`config/trust.zig`) is there to keep a checkout
+/// from choosing what runs, and this path must not hand a checkout a
+/// source its owner added for themselves. The home layer is the user's
+/// own, the same file the Settings overlay writes.
+pub fn addSource(app: *App, input: []const u8) CommandError!Added {
+    const arena = app.frame.allocator();
+    const raw = std.mem.trim(u8, input, " \t\r\n");
+    if (raw.len == 0) return app.diag.fail(arena, "marketplace: give a folder or owner/repo", .{});
+    const parsed = try parseSourceInput(app, arena, raw);
+    var found: ?usize = null;
+    var entry: Config.MarketplaceSource = undefined;
+    switch (parsed) {
+        .folder => |f| {
+            if (!isDir(app.io, f.abs)) return app.diag.fail(arena, "marketplace: {s} is not a folder", .{f.keep});
+            for (app.cfg.marketplace.sources) |s| if (s == .local_folder) {
+                const spec = try specOf(app, arena, s);
+                if (std.mem.eql(u8, spec.path, f.abs)) return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ f.keep, s.local_folder.id });
+            };
+            // What the tab will list, listed now: the count, and the
+            // refusal of a folder with nothing in it.
+            const probe: SourceSpec = .{ .id = @constCast("probe"), .kind = .local_folder, .repo = @constCast(""), .path = @constCast(f.abs) };
+            var entries: std.ArrayListUnmanaged(Entry) = .empty;
+            var problems: std.ArrayListUnmanaged([]const u8) = .empty;
+            try listLocal(app.io, arena, probe, &entries, &problems);
+            if (entries.items.len == 0) {
+                return app.diag.fail(arena, "marketplace: nothing to install in {s} — it needs a *.zon manifest, or a folder with build.zig and manifest.zon", .{f.keep});
+            }
+            found = entries.items.len;
+            const base = std.fs.path.basename(std.mem.trimEnd(u8, f.abs, "/\\"));
+            entry = .{ .local_folder = .{ .id = try uniqueId(app, arena, try idFrom(arena, base)), .path = f.keep } };
+        },
+        .repo => |r| {
+            for (app.cfg.marketplace.sources) |s| if (s == .github_monorepo_apps and std.mem.eql(u8, s.github_monorepo_apps.repo, r.repo) and std.mem.eql(u8, s.github_monorepo_apps.apps_dir, r.apps_dir)) {
+                return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ r.repo, s.github_monorepo_apps.id });
+            };
+            const name = r.repo[std.mem.indexOfScalar(u8, r.repo, '/').? + 1 ..];
+            entry = .{ .github_monorepo_apps = .{ .id = try uniqueId(app, arena, try idFrom(arena, name)), .repo = r.repo, .apps_dir = r.apps_dir } };
+        },
+    }
+
+    // The file first: a source that cannot be saved is not added.
+    const path = (try settings.configPath(app, .home)) orelse return app.diag.fail(arena, "marketplace: no home config to add the source to", .{});
+    const literal = try config.persist.serializeLiteral(arena, entry);
+    _ = config.persist.persistScalar(app.gpa, app.io, path, &.{ "marketplace", "sources", config.persist.append_key }, literal) catch |err| {
+        return app.diag.fail(arena, "marketplace: could not write {s}: {s}", .{ path, @errorName(err) });
+    };
+
+    // Then the config in memory: the same list plus the entry, owned by
+    // the state (the loaded config's arena is not ours to grow).
+    const st = &app.marketplace;
+    if (st.cfg_arena == null) st.cfg_arena = .init(app.gpa);
+    const own = st.cfg_arena.?.allocator();
+    const old = app.cfg.marketplace.sources;
+    const grown = try own.alloc(Config.MarketplaceSource, old.len + 1);
+    @memcpy(grown[0..old.len], old);
+    grown[old.len] = switch (entry) {
+        .local_folder => |l| .{ .local_folder = .{ .id = try own.dupe(u8, l.id), .path = try own.dupe(u8, l.path) } },
+        .github_monorepo_apps => |g| .{ .github_monorepo_apps = .{ .id = try own.dupe(u8, g.id), .repo = try own.dupe(u8, g.repo), .apps_dir = try own.dupe(u8, g.apps_dir) } },
+        else => unreachable,
+    };
+    app.cfg.marketplace.sources = grown;
+    const id = sourceId(grown[old.len]);
+
+    try refresh(app);
+    try integrations.showTab(app, .marketplace);
+    if (found) |n| {
+        app.toast("added {s}: {d} integration{s} found", .{ id, n, if (n == 1) "" else "s" });
+    } else {
+        app.toast("added {s}: {s} ({s}/) — listing it now", .{ id, entry.github_monorepo_apps.repo, entry.github_monorepo_apps.apps_dir });
+    }
+    return .{ .id = id, .found = found };
 }
 
 // ─── install ────────────────────────────────────────────────────────────
@@ -1821,4 +2007,201 @@ test "<data root>/marketplace/local lists with no config: loose manifests and in
     defer gpa.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "Private") != null);
     try testing.expect(std.mem.indexOf(u8, text, "(local)") != null);
+}
+
+// ─── add a source: tests ────────────────────────────────────────────────
+
+const Key = app_mod.Key;
+
+/// A hand-written home config: a comment, a sibling section, and one
+/// source already there, with a comment of its own.
+const add_source_before =
+    \\// my mnml config — hand-written, keep my comments
+    \\.{
+    \\    .ui = .{ .theme = "onedark" }, // the look
+    \\    .marketplace = .{
+    \\        .use_defaults = false,
+    \\        // the one I had
+    \\        .sources = .{
+    \\            .{ .local_folder = .{ .id = "other", .path = "other" } }, // keep me
+    \\        },
+    \\    },
+    \\}
+    \\
+;
+
+/// Where `addSource` inserts into `add_source_before` and anything
+/// grown from it: before the sources list's closing line.
+const add_source_tail = "        },\n    },\n}\n";
+
+const AddSourceRig = struct {
+    tmp: std.testing.TmpDir,
+    root: []const u8,
+    ws: []const u8,
+    env: std.process.Environ.Map,
+    app: App,
+
+    /// `ws/` with `acme/` (two integration folders and a loose manifest),
+    /// `tools/acme/` (one manifest), `empty/`, `other/` and `local/`; the
+    /// data root holds `add_source_before` as its config.zon. The API
+    /// points at a port nothing listens on, so a repo source's fetch
+    /// fails at once, offline.
+    fn init(self: *AddSourceRig) !void {
+        const gpa = testing.allocator;
+        const io = testing.io;
+        self.tmp = testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+        self.root = try gpa.dupe(u8, pbuf[0..try self.tmp.dir.realPath(io, &pbuf)]);
+        errdefer gpa.free(self.root);
+        self.ws = try std.fs.path.join(gpa, &.{ self.root, "ws" });
+        errdefer gpa.free(self.ws);
+        const d = self.tmp.dir;
+        for ([_][]const u8{ "ws/acme/one", "ws/acme/two", "ws/tools/acme", "ws/empty/deep", "ws/other", "ws/local", "data" }) |p| try d.createDirPath(io, p);
+        try d.writeFile(io, .{ .sub_path = "ws/acme/one/build.zig", .data = "" });
+        try d.writeFile(io, .{ .sub_path = "ws/acme/one/manifest.zon", .data = ".{ .id = \"one\", .label = \"One\", .version = \"0.1.0\", .binary = \"mnml-one\" }" });
+        try d.writeFile(io, .{ .sub_path = "ws/acme/two/build.zig", .data = "" });
+        try d.writeFile(io, .{ .sub_path = "ws/acme/two/manifest.zon", .data = ".{ .id = \"two\", .label = \"Two\", .version = \"0.1.0\", .binary = \"mnml-two\" }" });
+        try d.writeFile(io, .{ .sub_path = "ws/acme/hello.zon", .data = hello_zon });
+        try d.writeFile(io, .{ .sub_path = "ws/tools/acme/hello.zon", .data = hello_zon });
+        try d.writeFile(io, .{ .sub_path = "ws/local/hello.zon", .data = hello_zon });
+        // Not a manifest, not an integration folder: still empty.
+        try d.writeFile(io, .{ .sub_path = "ws/empty/deep/notes.txt", .data = "hi" });
+        try d.writeFile(io, .{ .sub_path = "data/config.zon", .data = add_source_before });
+        const data = try std.fs.path.join(gpa, &.{ self.root, "data" });
+        defer gpa.free(data);
+        self.env = std.process.Environ.Map.init(gpa);
+        errdefer self.env.deinit();
+        try self.env.put("MNML_MARKETPLACE_API", "http://127.0.0.1:1");
+        var cfg: Config = .{};
+        cfg.marketplace.use_defaults = false;
+        cfg.marketplace.sources = &add_source_existing;
+        self.app = try App.initWith(gpa, io, .{ .cfg = cfg, .workspace = self.ws, .data_root = data, .cols = 100, .rows = 24, .env = &self.env });
+    }
+
+    fn deinit(self: *AddSourceRig) void {
+        self.app.deinit();
+        self.env.deinit();
+        testing.allocator.free(self.ws);
+        testing.allocator.free(self.root);
+        self.tmp.cleanup();
+    }
+
+    fn config(self: *AddSourceRig) ![]u8 {
+        return self.tmp.dir.readFileAlloc(testing.io, "data/config.zon", testing.allocator, .unlimited);
+    }
+};
+
+const add_source_existing = [_]Config.MarketplaceSource{.{ .local_folder = .{ .id = "other", .path = "other" } }};
+
+test "addSource: a folder with two integrations and a manifest — 3 found, the id from its name, config.zon gains exactly the entry; a second add appends with a unique id" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+
+    const added = try addSource(app, "acme");
+    try testing.expectEqualStrings("acme", added.id);
+    try testing.expectEqual(@as(?usize, 3), added.found);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added acme: 3 integrations found") != null);
+    const acme_abs = try std.fs.path.join(gpa, &.{ rig.ws, "acme" });
+    defer gpa.free(acme_abs);
+    const line1 = try std.fmt.allocPrint(gpa, "            .{{ .local_folder = .{{ .id = \"acme\", .path = \"{s}\" }} }},\n", .{acme_abs});
+    defer gpa.free(line1);
+    // Byte for byte: everything before the list's closing line, the one
+    // new line, everything after — comments and the sibling untouched.
+    const at = std.mem.indexOf(u8, add_source_before, add_source_tail).?;
+    const want1 = try std.mem.concat(gpa, u8, &.{ add_source_before[0..at], line1, add_source_before[at..] });
+    defer gpa.free(want1);
+    const got1 = try rig.config();
+    defer gpa.free(got1);
+    try testing.expectEqualStrings(want1, got1);
+    // In memory too, and listed: the tab is the Marketplace, its rows
+    // the folder's three, each Private.
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try testing.expectEqualStrings("acme", app.cfg.marketplace.sources[1].local_folder.id);
+    try testing.expect(app.integrations.tab == .marketplace);
+    try settle(app);
+    try testing.expectEqual(@as(usize, 3), app.marketplace.entries.len);
+    for (app.marketplace.entries) |e| {
+        try testing.expectEqualStrings("acme", e.source);
+        try testing.expect(e.private);
+    }
+
+    // A second folder named `acme`: appended after the first, `acme-2`.
+    const again = try addSource(app, "tools/acme");
+    try testing.expectEqualStrings("acme-2", again.id);
+    try testing.expectEqual(@as(?usize, 1), again.found);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added acme-2: 1 integration found") != null);
+    const tools_abs = try std.fs.path.join(gpa, &.{ rig.ws, "tools", "acme" });
+    defer gpa.free(tools_abs);
+    const line2 = try std.fmt.allocPrint(gpa, "            .{{ .local_folder = .{{ .id = \"acme-2\", .path = \"{s}\" }} }},\n", .{tools_abs});
+    defer gpa.free(line2);
+    const want2 = try std.mem.concat(gpa, u8, &.{ add_source_before[0..at], line1, line2, add_source_before[at..] });
+    defer gpa.free(want2);
+    const got2 = try rig.config();
+    defer gpa.free(got2);
+    try testing.expectEqualStrings(want2, got2);
+    try settle(app);
+    try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
+
+    // A folder named like one of mnml's own sources never takes its id.
+    try testing.expectEqualStrings("local-2", (try addSource(app, "./local")).id);
+    // The same folder twice is refused by name, nothing written.
+    try testing.expectError(error.Failed, addSource(app, "acme"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source acme") != null);
+    try settle(app);
+}
+
+test "addSource refuses an empty folder and a missing one, writing nothing" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expectError(error.Failed, addSource(app, "empty"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing to install in") != null);
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "./nope"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "./nope is not a folder") != null);
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "   "));
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expectEqualStrings(add_source_before, got);
+    try testing.expectEqual(@as(usize, 1), app.cfg.marketplace.sources.len);
+}
+
+test "addSource: owner/repo[:apps_dir] is a GitHub monorepo source — shape only, nothing fetched to count; a folder that is there wins over the shape" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const arena = app.frame.allocator();
+    // The shapes.
+    const r = (try parseSourceInput(app, arena, "acme-co/tools:integrations")).repo;
+    try testing.expectEqualStrings("acme-co/tools", r.repo);
+    try testing.expectEqualStrings("integrations", r.apps_dir);
+    try testing.expectEqualStrings("apps", repoShape("acme-co/tools").?.dir);
+    try testing.expect(repoShape("a/b/c") == null);
+    try testing.expect(repoShape("a/b:../x") == null);
+    try testing.expect(repoShape("nope") == null);
+    try testing.expect(repoShape(".x/y") == null);
+    // `tools/acme` has a slash but is a folder here: the folder wins.
+    try testing.expect(try parseSourceInput(app, arena, "tools/acme") == .folder);
+    try testing.expect(try parseSourceInput(app, arena, "./acme-co/tools") == .folder);
+
+    const added = try addSource(app, "acme-co/tools");
+    try testing.expectEqualStrings("tools", added.id);
+    try testing.expectEqual(@as(?usize, null), added.found);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added tools: acme-co/tools (apps/)") != null);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expect(std.mem.indexOf(u8, got, ".github_monorepo_apps = .{ .id = \"tools\", .repo = \"acme-co/tools\", .apps_dir = \"apps\"") != null);
+    try testing.expect(std.mem.startsWith(u8, got, add_source_before[0..std.mem.indexOf(u8, add_source_before, add_source_tail).?]));
+    try testing.expect(app.cfg.marketplace.sources[1] == .github_monorepo_apps);
+    // The fetch goes to a port nothing listens on: it fails, offline.
+    try settle(app);
 }

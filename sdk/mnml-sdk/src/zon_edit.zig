@@ -22,6 +22,14 @@
 //! ZON view pane can edit a field inside a list element or swap a
 //! union's payload in place. `persistText` is the same backup + write
 //! for a whole file the pane has already spliced.
+//!
+//! A LAST key of `[+]` appends `literal` as a new element of the list
+//! the path before it names (`.marketplace`, `.sources`, `[+]`): the
+//! element goes before the list's `}` in the list's own layout — its
+//! own line at the elements' indent, or `, lit` inline — so the
+//! elements already there, and any comments between them, keep their
+//! bytes. A list that is missing is created as `.{}` first, then
+//! appended to.
 
 const std = @import("std");
 const Io = std.Io;
@@ -47,9 +55,26 @@ pub const SpliceError = error{
     EmptyKeyPath,
 };
 
+/// The last key of an append: `literal` becomes the list's new last
+/// element.
+pub const append_key = "[+]";
+
 /// The new text, or null when `key_path` already holds `literal`.
 pub fn splice(gpa: Allocator, text: [:0]const u8, key_path: []const []const u8, literal: []const u8) SpliceError!?[]u8 {
     if (key_path.len == 0) return error.EmptyKeyPath;
+    for (key_path[0 .. key_path.len - 1]) |k| if (std.mem.eql(u8, k, append_key)) return error.NotAList;
+    if (std.mem.eql(u8, key_path[key_path.len - 1], append_key) and key_path.len > 1) {
+        // The list must exist to append to: `.{}` where it is missing,
+        // laid out as any missing field is, then the append on that.
+        const list_path = key_path[0 .. key_path.len - 1];
+        if (!try pathExists(gpa, text, list_path)) {
+            const with_list = (try splice(gpa, text, list_path, ".{}")).?;
+            defer gpa.free(with_list);
+            const z = try gpa.dupeZ(u8, with_list);
+            defer gpa.free(z);
+            return splice(gpa, z, key_path, literal);
+        }
+    }
     var ast = try Ast.parse(gpa, text, .zon);
     defer ast.deinit(gpa);
     if (ast.errors.len != 0) return error.ParseFailed;
@@ -66,6 +91,25 @@ pub fn splice(gpa: Allocator, text: [:0]const u8, key_path: []const []const u8, 
 }
 
 const Edit = struct { start: usize, end: usize, text: []const u8 };
+
+/// Whether every struct key of `keys` names a field that is there
+/// (`[i]` keys are not followed — an append path never holds one).
+fn pathExists(gpa: Allocator, text: [:0]const u8, keys: []const []const u8) SpliceError!bool {
+    var ast = try Ast.parse(gpa, text, .zon);
+    defer ast.deinit(gpa);
+    if (ast.errors.len != 0) return error.ParseFailed;
+    var node = ast.rootDecls()[0];
+    outer: for (keys) |key| {
+        var buf: [2]Ast.Node.Index = undefined;
+        const init = ast.fullStructInit(&buf, node) orelse return false;
+        for (init.ast.fields) |field| if (fieldNameIs(ast, field, key)) {
+            node = field;
+            continue :outer;
+        };
+        return false;
+    }
+    return true;
+}
 
 fn applyEdits(gpa: Allocator, text: []const u8, edits: []Edit) Allocator.Error![]u8 {
     std.mem.sort(Edit, edits, {}, struct {
@@ -89,6 +133,7 @@ fn applyEdits(gpa: Allocator, text: []const u8, edits: []Edit) Allocator.Error![
 fn walk(gpa: Allocator, arena: Allocator, ast: Ast, node: Ast.Node.Index, keys: []const []const u8, literal: []const u8, edits: *std.ArrayList(Edit)) SpliceError!bool {
     const key = keys[0];
     var buf: [2]Ast.Node.Index = undefined;
+    if (std.mem.eql(u8, key, append_key)) return appendElement(gpa, arena, ast, node, literal, edits);
     if (isIndexKey(key)) {
         // `[i]`: the i-th element of a list literal.
         const list = ast.fullArrayInit(&buf, node) orelse return error.NotAList;
@@ -115,6 +160,45 @@ fn replaceNode(gpa: Allocator, ast: Ast, node: Ast.Node.Index, literal: []const 
     const end = ast.tokenStart(last) + ast.tokenSlice(last).len;
     if (std.mem.eql(u8, ast.source[start..end], literal)) return false;
     try edits.append(gpa, .{ .start = start, .end = end, .text = literal });
+    return true;
+}
+
+/// `[+]`: `literal` after the last element of the list `node`, in the
+/// list's layout. An empty `.{}` opens up onto its own lines.
+fn appendElement(gpa: Allocator, arena: Allocator, ast: Ast, node: Ast.Node.Index, literal: []const u8, edits: *std.ArrayList(Edit)) SpliceError!bool {
+    const src = ast.source;
+    var buf: [2]Ast.Node.Index = undefined;
+    const rbrace = ast.lastToken(node);
+    const rbrace_start = ast.tokenStart(rbrace);
+    const list = ast.fullArrayInit(&buf, node) orelse {
+        // `.{}` parses as an empty struct literal; anything else that is
+        // not a list is refused.
+        const init = ast.fullStructInit(&buf, node) orelse return error.NotAList;
+        if (init.ast.fields.len != 0) return error.NotAList;
+        const lbrace = init.ast.lbrace;
+        const outer = lineIndent(src, ast.tokenStart(lbrace));
+        const inner = try std.mem.concat(arena, u8, &.{ outer, indent_unit });
+        const text = try std.mem.concat(arena, u8, &.{ "\n", inner, literal, ",\n", outer });
+        const lbrace_end = ast.tokenStart(lbrace) + ast.tokenSlice(lbrace).len;
+        try edits.append(gpa, .{ .start = lbrace_end, .end = rbrace_start, .text = text });
+        return true;
+    };
+    const prev = rbrace - 1;
+    const prev_comma = ast.tokenTag(prev) == .comma;
+    const prev_end = ast.tokenStart(prev) + ast.tokenSlice(prev).len;
+    if (onOwnLine(src, rbrace_start)) {
+        // One element per line: ours on its own line at the last
+        // element's indent, before the closing brace's line.
+        if (!prev_comma) try edits.append(gpa, .{ .start = prev_end, .end = prev_end, .text = "," });
+        const last = list.ast.elements[list.ast.elements.len - 1];
+        const indent = lineIndent(src, ast.tokenStart(ast.firstToken(last)));
+        const at = lineStart(src, rbrace_start);
+        try edits.append(gpa, .{ .start = at, .end = at, .text = try std.mem.concat(arena, u8, &.{ indent, literal, ",\n" }) });
+    } else {
+        // Inline `.{ a, b }` → `.{ a, b, lit }`.
+        const text = if (prev_comma) try std.mem.concat(arena, u8, &.{ " ", literal, "," }) else try std.mem.concat(arena, u8, &.{ ", ", literal });
+        try edits.append(gpa, .{ .start = prev_end, .end = prev_end, .text = text });
+    }
     return true;
 }
 
@@ -625,6 +709,62 @@ test "a [i] key steps into a list element; a field inside it splices in place" {
     try t.expectError(error.NoSuchElement, splice(t.allocator, list_fixture, &.{ "workspaces", "[2]", "group" }, "1"));
     try t.expectError(error.NotAList, splice(t.allocator, list_fixture, &.{ "ui", "[0]" }, "1"));
     try t.expectError(error.NotAStruct, splice(t.allocator, list_fixture, &.{ "workspaces", "name" }, "1"));
+}
+
+test "a [+] key appends an element in the list's layout: comments and the other elements keep their bytes" {
+    // One per line, a comment between the elements, no trailing comma.
+    const src: [:0]const u8 =
+        \\.{
+        \\    .marketplace = .{
+        \\        // mine
+        \\        .sources = .{
+        \\            .{ .local_folder = .{ .id = "a", .path = "/a" } },
+        \\            // the work one
+        \\            .{ .local_folder = .{ .id = "b", .path = "/b" } } // b
+        \\        },
+        \\    },
+        \\}
+        \\
+    ;
+    const got = (try splice(t.allocator, src, &.{ "marketplace", "sources", append_key }, ".{ .x = 1 }")).?;
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(
+        \\.{
+        \\    .marketplace = .{
+        \\        // mine
+        \\        .sources = .{
+        \\            .{ .local_folder = .{ .id = "a", .path = "/a" } },
+        \\            // the work one
+        \\            .{ .local_folder = .{ .id = "b", .path = "/b" } }, // b
+        \\            .{ .x = 1 },
+        \\        },
+        \\    },
+        \\}
+        \\
+    , got);
+    // Inline stays inline, with or without a trailing comma.
+    const inl = (try splice(t.allocator, list_fixture, &.{ "ui", "todo_keywords", append_key }, "\"XXX\"")).?;
+    defer t.allocator.free(inl);
+    try t.expect(std.mem.indexOf(u8, inl, ".todo_keywords = .{ \"TODO\", \"FIXME\", \"XXX\" }") != null);
+    // An empty list opens up; a missing one is created, then opened.
+    const empty = (try splice(t.allocator, fixture, &.{ "session", append_key }, "1")).?;
+    defer t.allocator.free(empty);
+    try t.expect(std.mem.indexOf(u8, empty, "    .session = .{\n        1,\n    },\n") != null);
+    const fresh = (try splice(t.allocator, ".{}\n", &.{ "marketplace", "sources", append_key }, ".{ .x = 1 }")).?;
+    defer t.allocator.free(fresh);
+    try t.expectEqualStrings(
+        \\.{
+        \\    .marketplace = .{
+        \\        .sources = .{
+        \\            .{ .x = 1 },
+        \\        },
+        \\    },
+        \\}
+        \\
+    , fresh);
+    // Not a list, and `[+]` anywhere but last, are refused.
+    try t.expectError(error.NotAList, splice(t.allocator, fixture, &.{ "editor", append_key }, "1"));
+    try t.expectError(error.NotAList, splice(t.allocator, fixture, &.{ "editor", append_key, "x" }, "1"));
 }
 
 test "listLiteral renders the two layouts" {
