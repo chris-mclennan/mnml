@@ -1,0 +1,3 @@
+# The export-config-zon golden files are compared byte for byte; a
+# CRLF checkout (Windows runners) would make every line differ.
+tests/fixtures/export_config_zon/** text eol=lf
