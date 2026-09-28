@@ -21,6 +21,17 @@ and a headless test harness — one binary.
 
 </div>
 
+> **0.2.22 is the final Rust release.** The project continues as mnml 0.3,
+> a new codebase written in Zig, at this same repository and through the
+> same install channels (Homebrew tap, winget, install scripts, GitHub
+> releases). The Rust source and its releases move to the
+> [`chris-mclennan/mnml-rust`](https://github.com/chris-mclennan/mnml-rust) archive.
+>
+> **To upgrade:** from 0.2.22, run `mnml export-config-zon` to convert
+> `config.toml` to `config.zon`, then install 0.3 the way you installed this.
+> To stay on the Rust version, pin it with `cargo install mnml-rs --version 0.2.22`
+> or use the archive's release assets.
+
 ---
 
 **mnml** is a terminal IDE that aims to be a *real* editor and a baked-in HTTP
