@@ -1608,6 +1608,51 @@ Both shipped integrations expose that door — bitbucket's
 `Harness.startOn(config, family, gpa)` — and a third should, for the
 same reason.
 
+## Keeping an external integration current
+
+An integration that lives outside this repository — a private one
+installed from a `local_folder` marketplace source, or anyone's —
+depends on the SDK by path and draws through its components. A change
+to the SDK's look reaches it only when it is BUILT again. Four pieces
+keep that from going quiet:
+
+* **The stamp.** `--install` (`sdk.manifest.write` / `render`) records
+  the SDK the binary was compiled against as the manifest's `.sdk`
+  (`sdk.version`, which mnml's release test holds to
+  `sdk/mnml-sdk/build.zig.zon`). You never write it; a launcher (no
+  binary) is never stamped.
+* **The `rebuild` chip and commands.** mnml reads the stamp. An
+  Installed row built on an SDK behind the one mnml carries — or with no
+  stamp at all, i.e. installed before the stamp existed — wears a
+  `rebuild` chip at its right edge; its hover says "built against SDK
+  0.1.0, current 0.2.0". `integrations.rebuild_stale` rebuilds every such
+  row that came from a folder on this machine (the install leaves
+  `<data root>/integrations/<id>/built-from` naming it) with the same
+  in-place `zig build` the install ran, then `--install` again, a toast
+  per row; a stale row with no folder behind it is named, not built.
+  The row menu's *Rebuild* (`integrations.rebuild_focused`) does one.
+* **The conformance call.** `try sdk.testing.conformance(Probe);` in the
+  integration's own tests (above) holds its pane to every design-language
+  rule the SDK knows, including the ones added after it was written.
+* **The extra-roots check.** `tools/check-integration-roots.sh` builds
+  and tests every integration under the folders named in
+  `MNML_EXTRA_INTEGRATION_ROOTS` (a `:`-separated list of
+  `integrations/`-shaped folders — each subfolder with a `build.zig` and
+  a `manifest.zon`), one line each, `ok|FAIL <root>/<id> (<n> tests)`,
+  exiting non-zero on any failure; unset means no extra roots and exit 0.
+  Put it in a verification chain so an SDK change that breaks a private
+  integration fails there, before the author finds out at their next
+  build.
+
+**The rule: a component a private pane needs and the SDK lacks is added
+to the SDK first.** A pane that draws its own meter or its own table
+header today misses every polish pass the family gets tomorrow, and two
+panes drawing one thing two ways is exactly the drift the toolkit exists
+to stop. Add it to `sdk.pane` (with its `--ascii` twin, a test and, when
+the family asserts it, an `expect` helper), move the in-repo panes that
+draw the same thing onto it, and only then use it from the private pane.
+`sdk.pane.meter` and `sdk.pane.columns.header` came in exactly that way.
+
 ## Layout of the package
 
 ```
