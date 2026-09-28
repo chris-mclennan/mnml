@@ -431,6 +431,15 @@ class FileRun:
             env = self.build_env(header)
             self.win = Window(self.run_dir, self.ws, exe=self.args.exe, cols=cols, rows=rows, app_env=env,
                               app_args=["--config", e2e_cfg])
+            # The channel is `<run>/ipc` (`--ipc-dir`), not the runner's
+            # `<ws>/.mnml/ipc-zig`, and a `shell` step has to be told: an
+            # integration's `--values` run publishes its statusline
+            # segments on `$MNML_IPC_DIR`, else on `<ws>/.mnml/ipc-zig`
+            # (integrations/bitbucket/main.zig) — which nothing read here,
+            # so `BB 2(1)`, the PR hover rows and the Jira Work rows never
+            # reached the window. A child mnml starts gets the same
+            # variable from the app (`bridge/host.zig` `envFor`).
+            self.shell_env["MNML_IPC_DIR"] = self.win.ipc
             self.win.launch()
             quit_seen = False
             for ln, head, rest in coalesce_clicks(steps):
