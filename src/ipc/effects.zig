@@ -46,6 +46,10 @@ pub const Segment = struct {
     /// The things behind the figure, in the publisher's order — the
     /// hover lists them. Empty leaves the one-line hover.
     items: []Item,
+    /// A host published this (`statusline-set-segment`): the figure is
+    /// live, and a manifest re-scan must not put the resting text back
+    /// over it (`app/integrations.zig` `setSegments`).
+    live: bool = false,
 
     fn deinit(self: *Segment, gpa: Allocator) void {
         gpa.free(self.id);
@@ -109,6 +113,7 @@ pub const State = struct {
             .max_width = s.max_width,
             .tooltip = null,
             .items = &.{},
+            .live = s.live,
         };
         errdefer fresh.deinit(gpa);
         fresh.text = try gpa.dupe(u8, s.text);
@@ -181,6 +186,8 @@ pub const SegmentSpec = struct {
     tooltip: ?[]const u8 = null,
     /// The things behind the figure, for the hover to list.
     items: []const ipc_command.SegmentItem = &.{},
+    /// Published by a host rather than declared by a manifest.
+    live: bool = false,
 };
 
 /// The rows, gpa-owned. Partway through, every row already taken is
@@ -717,6 +724,7 @@ pub fn apply(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
             .max_width = s.max_width,
             .tooltip = s.tooltip,
             .items = s.items,
+            .live = true,
         }),
         .statusline_clear_segment => |id| _ = app.ipc_fx.clearSegment(app.gpa, id),
         .set_activity_badge => |b| try app.ipc_fx.setBadge(app.gpa, b.section, b.count),

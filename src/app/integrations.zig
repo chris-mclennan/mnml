@@ -613,14 +613,19 @@ fn dirs(app: *App, arena: Allocator) Allocator.Error![2]?[]const u8 {
     return .{ home, ws };
 }
 
-/// Re-scan: drop every integration command, binding and segment, read
-/// the manifests again, register what they declare.
+/// Re-scan: drop every integration command and binding, read the
+/// manifests again, register what they declare. A segment still
+/// declared keeps what its host last published; one no longer declared
+/// goes.
 pub fn refresh(app: *App) Allocator.Error!void {
     const st = &app.integrations;
     // Old bindings go before the arena they point into.
     for (st.list) |*inst| for (inst.manifest.commands) |c| for (c.keys) |k| app.keymap.unbind(k);
     _ = app.dyn_commands.unregisterOwner(.integration);
-    clearSegments(app);
+    // The old ids wait for the new scan to say which survive.
+    var old_ids = st.segment_ids;
+    st.segment_ids = .empty;
+    defer dropStaleSegments(app, &old_ids);
     st.snapshot.reset();
     const arena = st.snapshot.allocator();
     st.list = &.{};
@@ -911,7 +916,12 @@ fn refreshCmd(app: *App) CommandError!void {
 // ─── statusline segments ────────────────────────────────────────────────
 
 /// Every enabled, runnable manifest's `statusline[]` entries become
-/// segments keyed `<id>.<segment id>`; a refresh replaces the set.
+/// segments keyed `<id>.<segment id>`, at the manifest's resting text —
+/// except one its host has already published: that figure is live, and
+/// the resting text (Jira's is the bare glyph) painted over it would
+/// read as a chip that lost its count. An install re-scans, so the
+/// second integration installed used to blank the first one's figure
+/// until its next poll.
 fn setSegments(app: *App) Allocator.Error!void {
     const st = &app.integrations;
     const gpa = app.gpa;
@@ -920,7 +930,8 @@ fn setSegments(app: *App) Allocator.Error!void {
         for (inst.manifest.statusline) |seg| {
             const id = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ inst.id(), seg.id });
             errdefer gpa.free(id);
-            try app.ipc_fx.setSegment(gpa, .{
+            const live = if (app.ipc_fx.find(id)) |i| app.ipc_fx.segments.items[i].live else false;
+            if (!live) try app.ipc_fx.setSegment(gpa, .{
                 .id = id,
                 .side = switch (seg.side) {
                     .left => .left,
@@ -937,13 +948,18 @@ fn setSegments(app: *App) Allocator.Error!void {
     }
 }
 
-fn clearSegments(app: *App) void {
+/// Clears every id in `old` the new scan did not declare again, then
+/// frees the list.
+fn dropStaleSegments(app: *App, old: *std.ArrayListUnmanaged([]u8)) void {
     const st = &app.integrations;
-    for (st.segment_ids.items) |id| {
-        _ = app.ipc_fx.clearSegment(app.gpa, id);
+    for (old.items) |id| {
+        const kept = for (st.segment_ids.items) |n| {
+            if (std.mem.eql(u8, n, id)) break true;
+        } else false;
+        if (!kept) _ = app.ipc_fx.clearSegment(app.gpa, id);
         app.gpa.free(id);
     }
-    st.segment_ids.clearRetainingCapacity();
+    old.deinit(app.gpa);
 }
 
 // ─── the dev roots ──────────────────────────────────────────────────────
@@ -3219,6 +3235,7 @@ const testing = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;
 const build_options = @import("build_options");
 const screen_mod = @import("../ipc/screen.zig");
+const ipc_effects = @import("../ipc/effects.zig");
 
 const fixture_manifest =
     \\.{
@@ -3358,6 +3375,89 @@ test "a `\\$VAR` binary resolves through the environment; a runnable manifest's 
     try testing.expect(app.ipc_fx.find("hello.chip") == null);
     try testing.expect(command.resolve(&app, "hello.open") == null);
     try testing.expectEqual(@as(usize, 1), (try chips(&app, app.frame.allocator())).len);
+}
+
+test "a re-scan keeps a chip's published figure: installing a second integration leaves Jira's `󰌃 3` whole, not its resting glyph" {
+    // The tour's `bitbucket-prs` shot: Jira Work published `󰌃 3`, then
+    // Bitbucket was installed, and the install's re-scan put the
+    // manifest's resting text (the bare glyph) back over the count. The
+    // row at 120 columns then read `󰂨 2(1)  󰌃   1` until Jira next
+    // polled — the chip neither whole nor gone.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.createDirPath(testing.io, "ws");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tool", .data = "#!/bin/sh\n" });
+    const tool = try std.fs.path.join(testing.allocator, &.{ root, "tool" });
+    defer testing.allocator.free(tool);
+    const ws = try std.fs.path.join(testing.allocator, &.{ root, "ws" });
+    defer testing.allocator.free(ws);
+    // The tour's two manifests (`tools/tour/workspace.py`).
+    const jira = try std.fmt.allocPrint(testing.allocator,
+        \\.{{ .id = "jira_work", .label = "Jira Work", .version = "0.2.0", .binary = "{s}", .category = "tracker",
+        \\   .commands = .{{ .{{ .id = "jira_work.open", .title = "Jira Work" }} }},
+        \\   .statusline = .{{ .{{ .id = "assigned", .text = "\u{{f0303}}", .color = "#1B5DCF", .click_command = "jira_work.open" }} }} }}
+    , .{tool});
+    defer testing.allocator.free(jira);
+    const bb = try std.fmt.allocPrint(testing.allocator,
+        \\.{{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.0", .binary = "{s}",
+        \\   .commands = .{{ .{{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open" }} }} }}
+    , .{tool});
+    defer testing.allocator.free(bb);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/jira_work.zon", .data = jira });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expectEqualStrings("\u{f0303}", app.ipc_fx.segments.items[app.ipc_fx.find("jira_work.assigned").?].text);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const publish = struct {
+        fn f(ap: *App, arena: Allocator, line: []const u8) !void {
+            const cmd = try @import("../ipc/command.zig").parse(arena, line);
+            try testing.expect(try ipc_effects.apply(ap, &cmd));
+        }
+    }.f;
+    // What the three chips published in that run.
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30}");
+    // Bitbucket is installed: the manifest lands and the list is re-read.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/bitbucket_prs.zon", .data = bb });
+    try refresh(&app);
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 2(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}");
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"side\":\"right\",\"text\":\"\u{f0e5} 1\",\"color\":\"orange\",\"click_command\":\"bitbucket_prs.open_awaiting\",\"priority\":58,\"min_width\":4,\"max_width\":30}");
+
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    var rows = std.mem.splitScalar(u8, txt, '\n');
+    var status: []const u8 = "";
+    while (rows.next()) |r| if (std.mem.indexOf(u8, r, "\u{f00a8} 2(1)") != null) {
+        status = r;
+    };
+    // The row holds all three, each with its figure, in id order.
+    const j = std.mem.indexOf(u8, status, " \u{f0303} 3 ") orelse {
+        std.debug.print("status row: [{s}]\nsegments:\n", .{status});
+        for (app.ipc_fx.segments.items) |sg| std.debug.print("  {s} live={} text=[{s}]\n", .{ sg.id, sg.live, sg.text });
+        return error.JiraChipLostItsCount;
+    };
+    const b = std.mem.indexOf(u8, status, " \u{f00a8} 2(1) ").?;
+    const r = std.mem.indexOf(u8, status, " \u{f0e5} 1 ").?;
+    try testing.expect(b < j and j < r);
+
+    // A figure nobody published does follow the manifest: an edited
+    // resting text is what the next re-scan shows.
+    const edited = try std.mem.replaceOwned(u8, testing.allocator, jira, "\\u{f0303}\"", "\\u{f0303} ?\"");
+    defer testing.allocator.free(edited);
+    _ = app.ipc_fx.clearSegment(app.gpa, "jira_work.assigned");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/jira_work.zon", .data = edited });
+    try refresh(&app);
+    try testing.expectEqualStrings("\u{f0303} ?", app.ipc_fx.segments.items[app.ipc_fx.find("jira_work.assigned").?].text);
+    // …and an integration that is gone takes its live chips with it.
+    try tmp.dir.deleteFile(testing.io, "integrations/jira_work.zon");
+    try refresh(&app);
+    try testing.expect(app.ipc_fx.find("jira_work.assigned") == null);
 }
 
 test "toggle_enabled rewrites the manifest and the list follows; remove deletes it after a confirm" {
