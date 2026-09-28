@@ -1,0 +1,33 @@
+# The first-launch setup's Integrations section (8), under the
+# first-party checkboxes: the Private integrations row. Space on it opens
+# the Marketplace's own add-a-source prompt (a folder or owner/repo);
+# Enter adds the source through the same path as `marketplace.add_source`
+# and the setup comes back with the source's id and count under the row.
+# Esc on the prompt brings the setup back with nothing changed.
+shell mkdir -p acme/one && : > acme/one/build.zig && printf '.{ .id = "one", .label = "One", .version = "0.1.0", .binary = "mnml-one" }\n' > acme/one/manifest.zon && printf '.{ .id = "solo", .label = "Solo", .version = "0.2.0", .binary = "mnml-solo" }\n' > acme/solo.zon
+command first_launch.show
+key 8
+expect screen contains "8 · Integrations"
+expect screen contains "Private integrations: a folder or owner/repo"
+# Tab past Jira and Bitbucket to the Private row.
+key tab
+key tab
+expect screen contains "▸ Private integrations"
+# Esc on the prompt: back to the setup, nothing written.
+key space
+expect screen contains "Marketplace: add a private source (a folder or owner/repo)"
+key esc
+expect screen contains "First-launch setup"
+shell test ! -e "$MNML_DATA_ROOT/config.zon"
+# A folder: added, the note under the row.
+key space
+type "acme"
+key enter
+expect screen contains "First-launch setup"
+expect screen contains "added acme: 2 integrations found"
+shell grep -q '\.local_folder = \.{ \.id = "acme"' "$MNML_DATA_ROOT/config.zon"
+# Skip the rest: the source stays (it was its own save); the gate stays open.
+key esc
+expect screen contains "Setup skipped"
+shell ! grep -q first_launch_complete "$MNML_DATA_ROOT/config.zon"
+shell rm -f "$MNML_DATA_ROOT/config.zon"

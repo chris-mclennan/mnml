@@ -1,0 +1,28 @@
+# Marketplace: add a private source from the UI, not config.zon. The
+# palette's `marketplace.add_source` opens the shared prompt (the one
+# behind the Marketplace tab's `+ source` chip and the tab menu); a
+# folder typed into it — relative to the workspace — is checked by
+# listing it as the tab will, appended to `marketplace.sources` in the
+# HOME config.zon, and the tab lists it at once, every row Private.
+shell mkdir -p acme/one && : > acme/one/build.zig && printf '.{ .id = "one", .label = "One", .version = "0.1.0", .binary = "mnml-one", .description = "Built from a private folder" }\n' > acme/one/manifest.zon && printf '.{ .id = "solo", .label = "Solo", .version = "0.2.0", .binary = "mnml-solo", .description = "A private launcher" }\n' > acme/solo.zon && mkdir -p empty
+command marketplace.add_source
+expect screen contains "Marketplace: add a private source (a folder or owner/repo)"
+expect screen contains "a folder (~/my-integrations) or owner/repo[:apps]"
+# A folder with nothing to install is refused by name; nothing written.
+type "empty"
+key enter
+expect screen contains "nothing to install in"
+shell test ! -e "$MNML_DATA_ROOT/config.zon"
+command marketplace.add_source
+type "acme"
+key enter
+expect screen contains "added acme: 2 integrations found"
+drag 30 5 75 5
+expect within 5000 screen contains "[app] One  Private  (acme)"
+expect screen contains "Built from a private folder"
+expect screen contains "[launcher] Solo  Private  (acme)"
+shell grep -q '\.local_folder = \.{ \.id = "acme", \.path = "' "$MNML_DATA_ROOT/config.zon"
+# The home config only: the workspace layer gains nothing.
+shell test ! -e .mnml/config.zon
+# Clean, so the size sweep (one data root for every size) adds it anew.
+shell rm -f "$MNML_DATA_ROOT/config.zon"
