@@ -415,14 +415,17 @@ class FileRun:
         e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
         with open(e2e_cfg, "w", encoding="utf-8") as f:
             f.write(cfg + "\n")
-        cols = max(80, header["width"] or 120)
-        rows = max(24, header["height"] or 40)
-        if (header["width"] and header["width"] < 80) or (header["height"] and header["height"] < 24):
-            # Clamped up, the script's rows and columns are somebody
-            # else's: every click lands off and every narrow-layout
-            # expectation misses (integrations_jira_narrow_keeps_key,
-            # `# width: 60`, missed all seven). Headless covers these.
-            return "skip", f"size {header['width']}x{header['height']} is under the driver's 80x24 floor; headless only"
+        # The file's own size, whatever it is: the driver takes an
+        # explicit `--cols` / `--rows` down to ghostty's floor (10x4,
+        # `harness.explicitCells`). A size the file pins is part of what
+        # it asserts — `wheel_context_menu.test` needs 14 rows for its
+        # menu to overflow; at 24 it fit and nothing scrolled. Under
+        # ghostty's own floor there is no window to make: a skip, with
+        # the reason, and headless covers it.
+        if (header["width"] and header["width"] < 10) or (header["height"] and header["height"] < 4):
+            return "skip", f"size {header['width']}x{header['height']} is under ghostty's 10x4 floor; headless only"
+        cols = max(10, header["width"] or 120)
+        rows = max(4, header["height"] or 40)
         self.start_group()
         try:
             env = self.build_env(header)
