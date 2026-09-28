@@ -79,6 +79,10 @@ def base_env(home, tmp):
         "ALL_PROXY": "http://127.0.0.1:9",
         "NO_PROXY": "127.0.0.1,localhost",
         "GIT_CONFIG_NOSYSTEM": "1",
+        # No URL the app or an integration opens reaches the developer's
+        # browser: it is appended to a file beside the run instead
+        # (docs/SDK.md, "Opening a URL"). `home` is `<run>/home`.
+        "MNML_OPEN_URL": os.path.join(os.path.dirname(home), "opened-urls.log"),
     }
 
 

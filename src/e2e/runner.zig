@@ -404,6 +404,15 @@ const Run = struct {
         // data root from the environment lands in this file's, not the
         // run's.
         file_env.put("MNML_DATA_ROOT", data_root) catch return self.fail("out of memory", .{});
+        // Where a URL the file opens goes instead of a browser: the
+        // workspace, so `expect file opened-urls.log contains …` reads it
+        // (`hermeticEnv`). Before the header's lines, so a file can
+        // still say `none`, or name another path.
+        {
+            const opened = std.fs.path.join(gpa, &.{ self.workspace, "opened-urls.log" }) catch return self.fail("out of memory", .{});
+            defer gpa.free(opened);
+            file_env.put("MNML_OPEN_URL", opened) catch return self.fail("out of memory", .{});
+        }
         // The SDK's cross-process rate limiter adopts a machine-wide
         // state file when one exists (the developer's own bucket), and
         // a pane in a test then waits on tokens the developer's live
@@ -1124,6 +1133,14 @@ pub fn hermeticEnv(gpa: Allocator, host: *const std.process.Environ.Map, home: [
         if (keep) try out.put(name, kv.value_ptr.*);
     }
     try out.put("HOME", home);
+    // No URL a run opens reaches the developer's browser
+    // (`mnml_sdk.platform.openUrlRoute`): the app and every integration
+    // it spawns append it to a file instead. Beside the run's HOME here;
+    // each file gets one in its own workspace (`runFile`), so a script
+    // can `expect file opened-urls.log contains https://…`.
+    const opened = try std.fs.path.join(gpa, &.{ std.fs.path.dirname(home) orelse home, "opened-urls.log" });
+    defer gpa.free(opened);
+    try out.put("MNML_OPEN_URL", opened);
     // The shell a terminal pane runs (`pty.shellArgv`). Without it every
     // pty file got `/bin/sh` — no bracketed paste, so a pasted block ran
     // line by line (`pty_paste_sanitized` had to name zsh itself). On
@@ -2837,6 +2854,7 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try host.put("MNML_IPC_DIR", "/Users/dev/proj/.mnml/ipc-zig");
     try host.put("XDG_CONFIG_HOME", "/Users/dev/.config");
     try host.put("SHELL", "/opt/homebrew/bin/fish");
+    try host.put("MNML_OPEN_URL", "none");
     var env = try hermeticEnv(t.allocator, &host, "/run/home");
     defer env.deinit();
     try sdk_testing.expectPath("/run/home", env.get("HOME").?);
@@ -2847,6 +2865,9 @@ test "hermeticEnv keeps what a file needs, drops the developer's, and gives it a
     try sdk_testing.expectPath("/repo/tools/shims", env.get("MNML_SHIMS").?);
     // A terminal pane's shell: macOS's own, else the host's.
     try t.expectEqualStrings(if (builtin.os.tag == .macos) "/bin/zsh" else "/opt/homebrew/bin/fish", env.get("SHELL").?);
+    // A URL goes to a file of the run's, never the browser — and the
+    // host's own setting is not the one that counts.
+    try sdk_testing.expectPath("/run/opened-urls.log", env.get("MNML_OPEN_URL").?);
     for ([_][]const u8{ "BITBUCKET_ACCESS_TOKEN", "CLAUDECODE", "MNML_IPC_DIR", "XDG_CONFIG_HOME" }) |gone| {
         if (env.get(gone) != null) {
             std.debug.print("{s} leaked into a file's environment\n", .{gone});
@@ -2880,6 +2901,29 @@ test "SHELL reaches a file's environment: a terminal pane gets a real shell, not
     defer t.allocator.free(file);
     var o = runFile(t.allocator, t.io, sf.factory(), file, content_size, opts);
     try expectPassed(&o);
+}
+
+test "every file's MNML_OPEN_URL is opened-urls.log in its own workspace, and a header line still overrides it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var host = std.process.Environ.Map.init(t.allocator);
+    defer host.deinit();
+    try host.put("PATH", "/usr/bin:/bin");
+    var base = try hermeticEnv(t.allocator, &host, env.root);
+    defer base.deinit();
+    var opts = env.opts();
+    opts.allow_shell = true;
+    opts.env = &base;
+    var sf: StubFactory = .{};
+    const own = try env.script("open-url-own.test", "shell test \"$MNML_OPEN_URL\" = \"$MNML_E2E_WORKSPACE/opened-urls.log\"\n");
+    defer t.allocator.free(own);
+    var o = runFile(t.allocator, t.io, sf.factory(), own, content_size, opts);
+    try expectPassed(&o);
+    const header = try env.script("open-url-none.test", "# env: MNML_OPEN_URL=none\nshell test \"$MNML_OPEN_URL\" = none\n");
+    defer t.allocator.free(header);
+    var o2 = runFile(t.allocator, t.io, sf.factory(), header, content_size, opts);
+    try expectPassed(&o2);
 }
 
 test "the git guard fails a file whose git reaches a repository outside the temp root, and passes one that stays inside" {
