@@ -224,6 +224,28 @@ from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
 
+### A table's column header, and a fill meter
+
+Two pieces a private pane used to have to draw itself are the toolkit's:
+
+```zig
+// The header row over a table: names in `Theme.label()`, clipped to
+// their widths, one cell of air between. `cols` is your own column
+// type after `sdk.pane.columns.fit` — anything with `name` and `w`.
+_ = p.columnHeader(x0, y, max_w, cols, 1); // or sdk.pane.columns.header(f, …, th)
+
+// A bucket / quota / budget meter: full cells in the budget chip's tier
+// ink (`budgetStyle`'s tiers — good, warn, bad), the rest a dim track;
+// `█`/`░`, and `#`/`-` under `--ascii`.
+const tier = sdk.pane.meter.tierOfFraction(used_fraction);
+_ = p.meter(x, y, 20, remaining_fraction, tier);
+```
+
+`sdk.pane.expect.columnHeader(&frame, theme, x0, y, &.{ "KEY", "STATUS" })`
+asserts a header row: every name in label ink, and never run into the
+next (`STATUSASSIGNEE`). The Bitbucket pane's tables wear this header;
+its suite proves it cell for cell what the pane painted before.
+
 ### The design language, in full
 
 The toolkit is the list. A pane that paints all of it belongs beside
@@ -367,6 +389,7 @@ try sdk.pane.expect.statuslineFigure(my_segment_text);
 try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
 try sdk.pane.expect.gutterFullHeight(&frame, theme, 0, 0, frame.rows - 1, ascii);
 try sdk.pane.expect.actionRun(Target, &frame, &hits, y, &targets, form);
+try sdk.pane.expect.columnHeader(&frame, theme, x0, y, &.{ "KEY", "SUMMARY" });
 ```
 
 Both official integrations call these, which is the point: one

@@ -46,6 +46,9 @@ pub const Error = figure.Error || error{
     ActionRunWidth,
     ActionRunShape,
     ActionRunBlank,
+    HeaderNameMissing,
+    HeaderNamesRunTogether,
+    HeaderInk,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -257,6 +260,38 @@ pub fn buildLineHit(comptime Target: type, m: *const hit.Map(Target), y: u16, x0
     }
 }
 
+/// Row `y` is a table's column header: each of `names`, left to right
+/// from `x0`, whole or clipped to a prefix of at least one cell, in
+/// `Theme.label()`, and never touching the next — `columns.header`.
+///
+/// A header two panes spell two ways is the first thing a reader sees
+/// differ between them; one that runs its words together at a narrow
+/// width (`STATUSASSIGNEE`) reads as one column that does not exist.
+pub fn columnHeader(f: *const Frame, th: Theme, x0: u16, y: u16, names: []const []const u8) Error!void {
+    const want = th.label();
+    var x = x0;
+    for (names) |name| {
+        // The first cell of the name on the row, from where the last ended.
+        const first = name[0 .. std.unicode.utf8ByteSequenceLength(name[0]) catch 1];
+        const at = while (x < f.cols) : (x += 1) {
+            if (rowHas(f, y, x, first)) break x;
+        } else return Error.HeaderNameMissing;
+        var cells: u16 = 0;
+        var off: usize = 0;
+        while (off < name.len and at + cells < f.cols) {
+            const len = std.unicode.utf8ByteSequenceLength(name[off]) catch 1;
+            const slot = f.slots[@as(usize, y) * f.cols + at + cells];
+            if (!std.mem.eql(u8, slot.symbol(), name[off .. off + len])) break;
+            if (!eqlInk(slot.style, want)) return Error.HeaderInk;
+            off += len;
+            cells += 1;
+        }
+        x = at + cells;
+        // Clipped or whole, the next cell is air (or the row's end).
+        if (x < f.cols and !blank(f, x, y)) return Error.HeaderNamesRunTogether;
+    }
+}
+
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph
 /// the ladder carries is single-width, so a cell is a codepoint here.
 fn rowHas(f: *const Frame, y: u16, x0: u16, want: []const u8) bool {
@@ -375,4 +410,20 @@ test "the header expectations pass on a toolkit-painted header and fail on a han
     try testing.expectError(Error.LadderInk, headerLadderTail(&f, th, 2, true, false));
     // Nothing at all on the row.
     try testing.expectError(Error.LadderMissing, headerLadderTail(&f, th, 3, true, false));
+}
+
+test "a column header painted by the toolkit passes; one run together or in the wrong ink fails" {
+    const columns = @import("columns.zig");
+    const Col = struct { name: []const u8, w: u16 };
+    var f = try Frame.init(testing.allocator, 40, 3);
+    defer f.deinit();
+    const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } });
+    _ = columns.header(&f, 2, 0, 38, &[_]Col{ .{ .name = "KEY", .w = 5 }, .{ .name = "STATUS", .w = 4 }, .{ .name = "SUMMARY", .w = 10 } }, 1, th);
+    try columnHeader(&f, th, 2, 0, &.{ "KEY", "STATUS", "SUMMARY" });
+    // What the tracker pane painted at 43 columns.
+    _ = f.text(2, 1, 30, "KEY STATUSASSIGNEE", th.label());
+    try testing.expectError(Error.HeaderNamesRunTogether, columnHeader(&f, th, 2, 1, &.{ "KEY", "STATUS", "ASSIGNEE" }));
+    _ = f.text(2, 2, 30, "KEY", th.accentText());
+    try testing.expectError(Error.HeaderInk, columnHeader(&f, th, 2, 2, &.{"KEY"}));
+    try testing.expectError(Error.HeaderNameMissing, columnHeader(&f, th, 2, 0, &.{"NOPE"}));
 }

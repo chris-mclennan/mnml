@@ -21,6 +21,8 @@ const wire_mod = @import("../wire.zig");
 const warm_mod = @import("../warm.zig");
 const keysheet_mod = @import("keysheet.zig");
 const budget_mod = @import("../budget.zig");
+const columns_mod = @import("columns.zig");
+const meter_mod = @import("meter.zig");
 
 pub const Frame = frame_mod.Frame;
 pub const Style = frame_mod.Style;
@@ -284,6 +286,19 @@ pub fn Painter(comptime Target: type) type {
 
         pub fn fill(p: *Self, r: Rect, style: Style) void {
             p.f.fill(r.x, r.y, r.w, r.h, style);
+        }
+
+        /// A table's column header row (`columns.header`): names in
+        /// `label()`, clipped to their widths, `gap` cells between.
+        pub fn columnHeader(p: *Self, x0: u16, y: u16, max_w: u16, list: anytype, gap: u16) u16 {
+            if (y >= p.rows() or x0 >= p.cols()) return 0;
+            return columns_mod.header(p.f, x0, y, max_w, list, gap, p.th);
+        }
+
+        /// A fill meter (`meter.paint`), `--ascii` twin by the pane's `Ui`.
+        pub fn meter(p: *Self, x: u16, y: u16, cells: u16, frac: f64, tier: budget_mod.Tier) u16 {
+            if (y >= p.rows() or x >= p.cols()) return 0;
+            return meter_mod.paint(p.f, x, y, cells, frac, tier, p.th, p.ui.ascii or !p.ui.nerd);
         }
 
         pub fn mark(p: *Self, r: Rect, target: Target) Allocator.Error!void {

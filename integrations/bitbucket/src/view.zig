@@ -127,17 +127,6 @@ pub const Span = struct {
     w: u16 = 0,
 };
 
-/// The column header row.
-pub fn headerSpans(a: Allocator, cols: []const Col, th: Theme) Allocator.Error![]Span {
-    var out: std.ArrayList(Span) = .empty;
-    const style: Style = .{ .fg = th.muted, .mods = .{ .bold = true } };
-    for (cols, 0..) |c, i| {
-        if (i > 0) try out.append(a, .{ .text = " ", .style = style, .w = gap });
-        try out.append(a, .{ .text = c.name, .style = style, .w = c.w });
-    }
-    return out.toOwnedSlice(a);
-}
-
 pub const RowCtx = struct {
     app: *App,
     ts: *const app_mod.TabState,

@@ -369,8 +369,9 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
     }
     const inner_w = box.w -| 2; // the marker column and a cell of air
     const cols = try view.fit(arena, view.tableOf(ts.data), inner_w -| 1);
-    const header = try view.headerSpans(arena, cols, th);
-    paintSpans(p, box.x + 2, box.y, inner_w -| 1, header);
+    // The toolkit's column header — the one every table in the family
+    // wears, so this pane's and a private pane's cannot drift apart.
+    _ = sdk.pane.columns.header(p.f, box.x + 2, box.y, inner_w -| 1, cols, view.gap, th);
     if (box.h < 2) return;
     const list: Box = .{ .x = box.x, .y = box.y + 1, .w = box.w, .h = box.h - 1 };
     const v = try app.visible(arena);
@@ -1783,4 +1784,51 @@ test "hover help names each element: a chip, a row, a hint entry, the refresh ch
     try t.expectEqualStrings("r — refresh this tab", try Probe.at(app, .{ .hint = .refresh }, &buf));
     // Nothing under the pointer: an empty title, which clears the view.
     try t.expectEqualStrings("", app.helpAt(0, 60, &buf).title);
+}
+
+test "the column header is the toolkit's, cell for cell what this pane painted before it moved into the SDK" {
+    // The span painter this pane used for its header until
+    // `sdk.pane.columns.header` took it over, kept here as the oracle.
+    const Legacy = struct {
+        fn paintHeader(f: *sdk.Frame, x0: u16, y: u16, max_w: u16, cols: []const view.Col, th: view.Theme) void {
+            const style: Style = .{ .fg = th.muted, .mods = .{ .bold = true } };
+            var x = x0;
+            const end = x0 + max_w;
+            for (cols, 0..) |c, i| {
+                const spans = [_]struct { text: []const u8, w: u16 }{ .{ .text = " ", .w = view.gap }, .{ .text = c.name, .w = c.w } };
+                for (spans[(if (i > 0) 0 else 1)..]) |sp| {
+                    if (x >= end) return;
+                    const room = end - x;
+                    if (sp.w == 0) {
+                        x += f.text(x, y, room, sp.text, style);
+                    } else {
+                        const w = @min(sp.w, room);
+                        f.fill(x, y, w, 1, style);
+                        _ = f.text(x, y, w, sp.text, style);
+                        x += w;
+                    }
+                }
+            }
+        }
+    };
+    const th = view.Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } }, .bg = .{ .rgb = .{ 7, 8, 9 } } });
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    for ([_]view.Table{ .pr_tree, .pipelines_tree, .pr_flat, .pipelines_flat, .branches_flat }) |table| {
+        for ([_]u16{ 20, 43, 60, 80, 120, 200 }) |w| {
+            const cols = try view.fit(arena.allocator(), table, w -| 3);
+            var a = try sdk.Frame.init(t.allocator, w, 1);
+            defer a.deinit();
+            var b = try sdk.Frame.init(t.allocator, w, 1);
+            defer b.deinit();
+            a.clear(.{ .bg = th.bg });
+            b.clear(.{ .bg = th.bg });
+            Legacy.paintHeader(&a, 2, 0, w -| 3, cols, th);
+            _ = sdk.pane.columns.header(&b, 2, 0, w -| 3, cols, view.gap, th);
+            for (a.slots, b.slots) |x, y| {
+                try t.expectEqualStrings(x.symbol(), y.symbol());
+                try t.expect(std.meta.eql(x.style, y.style));
+            }
+        }
+    }
 }

@@ -16,6 +16,8 @@
 //! into it: it is either there at a readable width, or gone.
 
 const std = @import("std");
+const frame_mod = @import("../frame.zig");
+const theme_mod = @import("theme.zig");
 
 pub const Spec = struct {
     /// Preferred width, cells (the `rest` column's: the least it wants
@@ -83,6 +85,49 @@ pub fn fit(out: []u16, cols: []const Spec, width: u16, gap: u16) void {
         };
         return;
     }
+}
+
+/// The column header row: each kept column's name in `Theme.label()`
+/// (muted, bold), left-aligned in its width and clipped to it, with
+/// `gap` cells of air between — the header the forge pane's tables
+/// wear, and every table in the family with them. `cols` is any slice
+/// whose items carry `name` and `w` (a pane's own column type, after
+/// `fit`). Each cell of a column and its gap is painted, so the row
+/// is the header's ground edge to edge rather than whatever was under
+/// it. Clipped at `x0 + max_w`. Returns the cells painted.
+///
+/// A column of width 0 (a `rest` column with nothing left) paints its
+/// name at its natural width, as far as the row allows.
+pub fn header(f: *frame_mod.Frame, x0: u16, y: u16, max_w: u16, cols: anytype, gap: u16, th: theme_mod.Theme) u16 {
+    const style = headerStyle(th);
+    var x = x0;
+    const end = x0 +| max_w;
+    for (cols, 0..) |c, i| {
+        if (i > 0 and gap > 0) {
+            if (x >= end) break;
+            const w = @min(gap, end - x);
+            f.fill(x, y, w, 1, style);
+            _ = f.text(x, y, w, " ", style);
+            x += w;
+        }
+        if (x >= end) break;
+        const room = end - x;
+        const cw: u16 = c.w;
+        if (cw == 0) {
+            x += f.text(x, y, room, c.name, style);
+        } else {
+            const w = @min(cw, room);
+            f.fill(x, y, w, 1, style);
+            _ = f.text(x, y, w, c.name, style);
+            x += w;
+        }
+    }
+    return x - x0;
+}
+
+/// The header's ink: `Theme.label()`.
+pub fn headerStyle(th: theme_mod.Theme) frame_mod.Style {
+    return th.label();
 }
 
 fn widenRest(out: []u16, cols: []const Spec, extra: u16) void {
@@ -194,4 +239,24 @@ test "columns that do not shrink are dropped whole in rank order, gaps counted (
     try testing.expectEqualSlices(u16, &.{ 28, 10, 0, 0, 12, 27 }, &out);
     fit(&out, &forge, 40, 1);
     try testing.expectEqualSlices(u16, &.{ 28, 0, 0, 0, 0, 11 }, &out);
+}
+
+test "the column header: names in label ink, clipped to their widths, air between, cut at the row's end" {
+    const Col = struct { name: []const u8, w: u16 };
+    var f = try frame_mod.Frame.init(testing.allocator, 30, 1);
+    defer f.deinit();
+    const th = theme_mod.Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } });
+    const cols = [_]Col{ .{ .name = "KEY", .w = 6 }, .{ .name = "STATUS", .w = 4 }, .{ .name = "SUMMARY", .w = 20 } };
+    try testing.expectEqual(@as(u16, 28), header(&f, 1, 0, 28, &cols, 1, th));
+    var row: [64]u8 = undefined;
+    var n: usize = 0;
+    for (f.slots[0..30]) |s| {
+        const g = s.symbol();
+        @memcpy(row[n..][0..g.len], g);
+        n += g.len;
+    }
+    // STATUS is clipped to its four cells; SUMMARY is cut at the row's end.
+    try testing.expectEqualStrings(" KEY    STAT SUMMARY          ", row[0..n]);
+    for (1..29) |x| try testing.expect(std.meta.eql(f.slots[x].style, th.label()));
+    try testing.expect(!std.meta.eql(f.slots[29].style, th.label()));
 }
