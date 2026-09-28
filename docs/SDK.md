@@ -1463,6 +1463,28 @@ Two rules that fall out of the same reasoning:
 payload without taking the arena or duping is a finding, and a unit
 test walks both roots under `zig build unit`.
 
+## Opening a URL — `MNML_OPEN_URL`
+
+An integration that opens a page in the browser (a pull request, a
+pipeline run) asks `sdk.platform` for the opener — `openUrlArgv` — and,
+before it starts one, `sdk.platform.divertOpenUrl(io, env.get(sdk.platform.open_url_env), url)`.
+The variable is one contract for the host and every integration:
+
+| `MNML_OPEN_URL` | what happens |
+| --- | --- |
+| unset, or empty | the URL opens in the browser, as normal |
+| `none` | nothing: no process, no file |
+| anything else | a file path: one line `<epoch seconds>\t<url>\n` is appended to it (created if missing), and no process starts |
+
+Only `.spawn` lets the opener run; `.log_failed` is a reason to say so,
+never a reason to open the browser after all. `sdk.platform.openUrlRoute`
+is the decision alone, for a caller that wants to branch on it. The
+`.test` runner sets the variable for every file (`opened-urls.log` in
+the file's workspace, so a script can `expect file opened-urls.log
+contains https://…`), `--headless` defaults it to `none`, and the
+real-window harness points it at a file beside its run — no automated
+run ever puts a page in front of a person.
+
 ## Testing an integration
 
 The socket is plain: a test can `UnixAddress.listen`, spawn the binary
@@ -1540,7 +1562,8 @@ sdk/mnml-sdk/src/
   base_url.zig   the `$<SERVICE>_BASE_URL` override — a URL or `@<file>`;
                  a file that never arrives is an error, never a fallback
   platform.zig   the platform's URL opener — `open`, `xdg-open`, or
-                 `rundll32 url.dll,FileProtocolHandler` (never `cmd`)
+                 `rundll32 url.dll,FileProtocolHandler` (never `cmd`) —
+                 and `MNML_OPEN_URL`, which diverts it to a file or nowhere
   testing.zig    test allocators a suite borrows — Scribble, which
                  poisons what it frees so a slice into a let-go arena
                  reads as 0xAA rather than as luck

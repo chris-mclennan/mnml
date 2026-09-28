@@ -6,6 +6,7 @@ const mem_report = @import("core/mem_report.zig");
 const os_path = @import("core/os_path.zig");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
+const sdk_platform = @import("mnml_sdk").platform;
 const app_driver = @import("app/driver.zig");
 const loop = @import("tui/loop.zig");
 const Term = @import("tui/term.zig").Term;
@@ -976,12 +977,19 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
         try w.flush();
         return 2;
     };
+    // A headless app has no one in front of it to show a page to: a URL
+    // it or an integration it spawns opens is dropped
+    // (`mnml_sdk.platform.openUrlRoute`) unless whoever launched it
+    // said otherwise — a log path, or an empty value to open for real.
+    if (env.get(sdk_platform.open_url_env) == null) try env.put(sdk_platform.open_url_env, "none");
     const startup = try loadConfig(gpa, io, env, ws_abs, argv, false);
     defer gpa.free(startup.data_root);
     // Headless has no first frame to toast on; the seed still happened.
     defer if (startup.note) |n| gpa.free(n);
-    // `make` owns `loaded` from here, whatever it returns.
-    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded, .startup_hook = true };
+    // `make` owns `loaded` from here, whatever it returns. The App's
+    // environment is this map, not a fresh read of the process's: the
+    // default above, and `--profile`, reach it and every child it spawns.
+    const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded, .startup_hook = true, .env = env };
     const driver = try factory.make(gpa, io, cfg);
     defer driver.deinit();
     const restart = try headless.run(gpa, io, driver, ws_abs, opts);

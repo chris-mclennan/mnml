@@ -331,6 +331,10 @@ class FileRun:
             # No usage reader reaches the keychain or the wire: an empty
             # fixture is the not-linked state (a file sets its own).
             "MNML_CLAUDE_USAGE_FIXTURE": os.path.join(self.run_dir, "no-usage"),
+            # As the runner does: a URL the file opens lands in its own
+            # workspace, where `expect file opened-urls.log` reads it —
+            # never in the developer's browser.
+            "MNML_OPEN_URL": os.path.join(self.ws, "opened-urls.log"),
         })
         # The SESSIONS scan reads the file's data root unless the file
         # names a HOME to seed (then that HOME, as the runner leaves it).

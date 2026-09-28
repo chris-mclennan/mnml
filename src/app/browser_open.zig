@@ -18,6 +18,23 @@ const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 
+/// Whether `url` stops short of a browser: `$MNML_OPEN_URL` in the
+/// app's environment (`mnml_sdk.platform.divertOpenUrl`) — `none` drops
+/// it, a path logs it there. Every spawning opener asks this first; true
+/// means spawn nothing. A log that could not be written is toasted, and
+/// still spawns nothing.
+pub fn diverted(app: *App, url: []const u8) bool {
+    const platform = @import("mnml_sdk").platform;
+    return switch (platform.divertOpenUrl(app.io, app.env.get(platform.open_url_env), url)) {
+        .spawn => false,
+        .dropped, .logged => true,
+        .log_failed => blk: {
+            app.toast("could not write the $MNML_OPEN_URL log for {s}", .{url});
+            break :blk true;
+        },
+    };
+}
+
 /// The argv that opens `url`: the configured browser, else the OS default.
 pub fn argv(app: *const App, arena: Allocator, url: []const u8) Allocator.Error![]const []const u8 {
     return argvFor(arena, std.mem.trim(u8, app.cfg.ui.external_browser, " \t"), url, builtin.os.tag);
@@ -112,4 +129,30 @@ test "a Windows URL reaches the browser whole: no cmd metacharacter survives une
     try std.testing.expect((try windowsUrlArg(a, plain)).ptr == plain.ptr);
     // Other platforms never see the escaping.
     try std.testing.expectEqualStrings(url, (try argvFor(a, "", url, .linux))[1]);
+}
+
+test "MNML_OPEN_URL diverts the app's openers: a log path gets the line, none drops it, unset spawns" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &root);
+    const log = try std.fmt.allocPrint(std.testing.allocator, "{s}/opened-urls.log", .{root[0..n]});
+    defer std.testing.allocator.free(log);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = "/tmp" });
+    defer app.deinit();
+    _ = app.env.swapRemove("MNML_OPEN_URL");
+    try std.testing.expect(!diverted(&app, "https://x.test/spawned"));
+    try app.env.put("MNML_OPEN_URL", log);
+    try std.testing.expect(diverted(&app, "https://x.test/logged"));
+    // Through the real opener: `git.openExternal` writes the line and
+    // starts nothing.
+    @import("git.zig").openExternal(&app, "https://x.test/through-git");
+    try app.env.put("MNML_OPEN_URL", "none");
+    try std.testing.expect(diverted(&app, "https://x.test/dropped"));
+    const body = try tmp.dir.readFileAlloc(std.testing.io, "opened-urls.log", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\thttps://x.test/logged\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\thttps://x.test/through-git\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "dropped") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "spawned") == null);
 }

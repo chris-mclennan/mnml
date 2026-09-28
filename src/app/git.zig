@@ -1261,6 +1261,7 @@ pub fn openExternal(app: *App, url: []const u8) void {
         app.toast("not a web URL: {s}", .{url});
         return;
     }
+    if (@import("browser_open.zig").diverted(app, url)) return;
     // `ui.external_browser` names the application (trust-stripped upstream).
     const argv = @import("browser_open.zig").argv(app, app.frame.allocator(), url) catch return;
     runArgv(app, argv, "a browser");
