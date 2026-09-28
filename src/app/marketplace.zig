@@ -166,8 +166,10 @@ pub const Result = struct {
     generation: u32,
     kind: union(enum) {
         listing: struct { arena: std.heap.ArenaAllocator, entries: []Entry, problems: [][]const u8 },
-        /// An install finished; `id` names the entry.
-        installed: struct { id: []u8, detail: []u8 },
+        /// An install finished; `id` names the entry. `rebuilt`: it was
+        /// a rebuild of an installed integration from its folder
+        /// (`integrations.rebuild_*`), not a first install.
+        installed: struct { id: []u8, detail: []u8, rebuilt: bool = false },
         failed: []u8,
     },
 
@@ -204,6 +206,14 @@ pub const State = struct {
     /// Owns `cfg.marketplace.sources` once `addSource` has grown it in
     /// memory (the loaded config's arena is not ours to extend).
     cfg_arena: ?std.heap.ArenaAllocator = null,
+    /// How an app folder is built in place — `zig build` by default; a
+    /// test swaps in one that copies a prebuilt binary, the way it swaps
+    /// the fetcher, so the build-then-`--install` path runs whole.
+    builder: Builder = zigBuild,
+    /// Installed integrations waiting to be rebuilt from their folders
+    /// (`integrations.rebuild_stale` / `rebuild_focused`), one at a time
+    /// behind whatever install is running. gpa-owned.
+    rebuilds: std.ArrayListUnmanaged(Rebuild) = .empty,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
@@ -212,8 +222,46 @@ pub const State = struct {
         if (self.installing) |i| gpa.free(i);
         for (self.queue.items) |q| gpa.free(q);
         self.queue.deinit(gpa);
+        for (self.rebuilds.items) |r| r.deinit(gpa);
+        self.rebuilds.deinit(gpa);
     }
 };
+
+/// One queued rebuild: the installed id and the folder it builds from.
+pub const Rebuild = struct {
+    id: []u8,
+    dir: []u8,
+
+    fn deinit(r: Rebuild, gpa: Allocator) void {
+        gpa.free(r.id);
+        gpa.free(r.dir);
+    }
+};
+
+/// Builds the integration folder `app_dir` into `prefix` (so its binary
+/// lands in `<prefix>/bin/`). A non-zero exit is `Failed` with `why`.
+pub const Builder = *const fn (io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void;
+
+/// The real build: `zig build -Doptimize=ReleaseSafe --prefix <prefix>`
+/// in the folder — what a `local_folder` install and a rebuild both run.
+pub fn zigBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void {
+    return run(io, gpa, arena, &.{ "zig", "build", "-Doptimize=ReleaseSafe", "--prefix", prefix }, app_dir, env, "zig build", why);
+}
+
+/// The file beside an app install's binary that names the folder it was
+/// built from: `<root>/integrations/<id>/built-from`. A rebuild reads it
+/// to know where to build again.
+pub const built_from_file = "built-from";
+
+/// The folder `id` was built from, when an install recorded one.
+pub fn builtFrom(io: Io, arena: Allocator, root: []const u8, id: []const u8) ?[]const u8 {
+    manifest_mod.validateId(id) catch return null;
+    const p = std.fs.path.join(arena, &.{ root, manifest_mod.subdir, id, built_from_file }) catch return null;
+    const text = Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(4096)) catch return null;
+    const dir = std.mem.trim(u8, text, " \r\n\t");
+    if (dir.len == 0 or !std.fs.path.isAbsolute(dir)) return null;
+    return dir;
+}
 
 pub const table = .{
     .@"marketplace.refresh" = &refreshCmd,
@@ -1058,6 +1106,28 @@ pub fn pump(app: *App) CommandError!void {
         };
         try install(app, idx);
     }
+    // A rebuild needs no listing: it names its folder.
+    if (st.installing == null and st.rebuilds.items.len > 0) {
+        const r = st.rebuilds.orderedRemove(0);
+        defer r.deinit(app.gpa);
+        try startJob(app, .{ .source = "local", .kind = .app, .id = r.id, .label = r.id, .description = "", .url = r.dir }, true);
+    }
+}
+
+/// Queue a rebuild of installed `id` from `dir` — the same in-place
+/// build a `local_folder` install runs, then `--install` again, so the
+/// manifest is stamped with this mnml's SDK. Runs behind whatever
+/// install or rebuild is ahead of it.
+pub fn enqueueRebuild(app: *App, id: []const u8, dir: []const u8) CommandError!void {
+    const st = &app.marketplace;
+    if (st.installing) |cur| if (std.mem.eql(u8, cur, id)) return;
+    for (st.rebuilds.items) |r| if (std.mem.eql(u8, r.id, id)) return;
+    const owned_id = try app.gpa.dupe(u8, id);
+    errdefer app.gpa.free(owned_id);
+    const owned_dir = try app.gpa.dupe(u8, dir);
+    errdefer app.gpa.free(owned_dir);
+    try st.rebuilds.append(app.gpa, .{ .id = owned_id, .dir = owned_dir });
+    try pump(app);
 }
 
 /// Install the entry at `idx` on a worker: a launcher's manifest is
@@ -1066,13 +1136,17 @@ pub fn pump(app: *App) CommandError!void {
 pub fn install(app: *App, idx: usize) CommandError!void {
     const st = &app.marketplace;
     if (idx >= st.entries.len) return;
+    return startJob(app, st.entries[idx], false);
+}
+
+fn startJob(app: *App, e: Entry, rebuild: bool) CommandError!void {
+    const st = &app.marketplace;
     if (st.installing != null) return app.diag.fail(app.frame.allocator(), "marketplace: an install is already running", .{});
     if (app.data_root.len == 0) return app.diag.fail(app.frame.allocator(), "marketplace: no data root to install into", .{});
-    const e = st.entries[idx];
     const gpa = app.gpa;
     const job = try gpa.create(InstallJob);
     errdefer gpa.destroy(job);
-    job.* = .{ .kind = e.kind, .id = &.{}, .root = &.{}, .url = &.{}, .subpath = &.{}, .binary = &.{}, .repo = &.{}, .asset_name = &.{}, .sha256 = &.{}, .fetcher = st.fetcher, .env = undefined };
+    job.* = .{ .kind = e.kind, .id = &.{}, .root = &.{}, .url = &.{}, .subpath = &.{}, .binary = &.{}, .repo = &.{}, .asset_name = &.{}, .sha256 = &.{}, .fetcher = st.fetcher, .builder = st.builder, .rebuild = rebuild, .env = undefined };
     job.id = try gpa.dupe(u8, e.id);
     errdefer gpa.free(job.id);
     job.root = try gpa.dupe(u8, app.data_root);
@@ -1097,8 +1171,14 @@ pub fn install(app: *App, idx: usize) CommandError!void {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the install: {s}", .{@errorName(err)});
     };
     st.installing = try gpa.dupe(u8, e.id);
-    app.toast("marketplace: installing {s}…", .{e.id});
+    if (rebuild)
+        app.toast("rebuilding {s} against SDK {s}…", .{ e.id, sdk_version })
+    else
+        app.toast("marketplace: installing {s}…", .{e.id});
 }
+
+/// The SDK this mnml carries — what a rebuild stamps.
+const sdk_version = @import("mnml_sdk").version;
 
 const InstallJob = struct {
     kind: Kind,
@@ -1115,6 +1195,9 @@ const InstallJob = struct {
     asset_name: []u8,
     sha256: []u8,
     fetcher: release.Fetcher,
+    builder: Builder,
+    /// A rebuild of an installed integration, not a first install.
+    rebuild: bool = false,
     env: std.process.Environ.Map,
 
     fn destroy(self: *InstallJob, gpa: Allocator) void {
@@ -1131,7 +1214,7 @@ const InstallJob = struct {
     }
 };
 
-const InstallError = error{ OutOfMemory, Canceled, Failed };
+pub const InstallError = error{ OutOfMemory, Canceled, Failed };
 
 fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *InstallJob, generation: u32) void {
     defer job.destroy(gpa);
@@ -1155,7 +1238,7 @@ fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Instal
         gpa.free(id);
         return;
     };
-    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d } } });
+    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d, .rebuilt = job.rebuild } } });
 }
 
 fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why: *[]const u8) InstallError![]const u8 {
@@ -1256,7 +1339,13 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 break :blk try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             };
             const prefix = try std.fs.path.join(arena, &.{ job.root, manifest_mod.subdir, job.id });
-            try run(io, gpa, arena, &.{ "zig", "build", "-Doptimize=ReleaseSafe", "--prefix", prefix }, app_dir, &job.env, "zig build", why);
+            try job.builder(io, gpa, arena, app_dir, prefix, &job.env, why);
+            // Where it came from, for a rebuild: a folder on this
+            // machine is the one source a rebuild can build again.
+            if (std.fs.path.isAbsolute(job.url)) {
+                const note = try std.fs.path.join(arena, &.{ prefix, built_from_file });
+                Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = app_dir }) catch {};
+            }
             // The binary: the one file under <prefix>/bin.
             const bin_dir = try std.fs.path.join(arena, &.{ prefix, "bin" });
             var dir = Io.Dir.cwd().openDir(io, bin_dir, .{ .iterate = true }) catch {
@@ -1277,6 +1366,7 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
             };
             _ = linkBinary(io, arena, job.root, exe) catch "";
             try run(io, gpa, arena, &.{ exe, "--install" }, null, &job.env, "--install", why);
+            if (job.rebuild) return try std.fmt.allocPrint(arena, "rebuilt against SDK {s}", .{sdk_version});
             return try std.fmt.allocPrint(arena, "built {s}", .{exe});
         },
     }
@@ -1373,7 +1463,10 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             if (st.installing) |cur| gpa.free(cur);
             st.installing = null;
             try integrations.refresh(app);
-            app.toast("marketplace: installed {s} — {s}", .{ i.id, i.detail });
+            if (i.rebuilt)
+                app.toast("{s}: {s}", .{ i.id, i.detail })
+            else
+                app.toast("marketplace: installed {s} — {s}", .{ i.id, i.detail });
             pumpOrToast(app);
         },
         .failed => |msg| {
@@ -1414,7 +1507,7 @@ fn pumpOrToast(app: *App) void {
 
 /// A frame is due while a worker runs (the spinner).
 pub fn busy(app: *const App) bool {
-    return app.marketplace.fetching or app.marketplace.installing != null;
+    return app.marketplace.fetching or app.marketplace.installing != null or app.marketplace.rebuilds.items.len > 0;
 }
 
 // ─── the section's hooks ────────────────────────────────────────────────

@@ -142,7 +142,12 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .body = "A row of the debug column — a variable, a watch, a frame of the call stack, a breakpoint — under its section's header. Enter expands or jumps; `e` edits a variable or a watch, `x` removes a watch or a breakpoint, Space toggles a breakpoint on or off. Right-click is the row's menu.",
             .links = &.{ .{ .command = .{ .id = .@"dap.add_watch", .label = "Add a watch" } }, .{ .command = .{ .id = .@"dap.continue", .label = "Continue" } }, ask },
         },
-        .integrations => .{
+        .integrations => if (try @import("../integrations.zig").rowStaleText(app, arena, r.idx)) |why| .{
+            .title = try std.fmt.allocPrint(arena, "Integration {d} \u{b7} rebuild", .{r.idx + 1}),
+            .body = try std.fmt.allocPrint(arena, "The `rebuild` chip: {s}. An integration draws through the SDK it was compiled against, so this one misses whatever the SDK has changed since. Right-click \u{2192} Rebuild builds it again from its folder and re-runs `--install`; `integrations.rebuild_stale` does every one.", .{why}),
+            .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
+            .links = &.{ .{ .command = .{ .id = .@"integrations.rebuild_focused", .label = "Rebuild it" } }, .{ .command = .{ .id = .@"integrations.rebuild_stale", .label = "Rebuild every stale one" } } },
+        } else .{
             .title = try std.fmt.allocPrint(arena, "Integration {d}", .{r.idx + 1}),
             .body = "An installed integration — its chip, label and state. Enter opens it; right-click is its menu: configure, disable or enable, pin to the rail or the dock, show the manifest, uninstall. A disabled row is dimmed and Enter toasts.",
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},

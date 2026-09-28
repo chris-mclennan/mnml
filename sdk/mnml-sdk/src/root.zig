@@ -70,6 +70,29 @@ pub fn compatible(host: []const u8, built_on: []const u8) bool {
     return h[0] != 0 or h[1] == b[1];
 }
 
+/// Whether an integration stamped with SDK `stamp` (the manifest's
+/// `.sdk`, written by `--install`) was built behind `current` — the SDK
+/// this host carries. An empty stamp is a manifest written before the
+/// field existed, so it counts as behind; one that does not parse
+/// counts as behind too, since nothing says it is current. A stamp
+/// AHEAD of `current` is not behind: it was built on a newer SDK, and
+/// rebuilding it here would move it backwards.
+pub fn behind(stamp: []const u8, current: []const u8) bool {
+    const s = triple(stamp) orelse return true;
+    const c = triple(current) orelse return false;
+    for (s, c) |a, b| if (a != b) return a < b;
+    return false;
+}
+
+fn triple(v: []const u8) ?[3]u32 {
+    const core = v[0 .. std.mem.indexOfAny(u8, v, "-+") orelse v.len];
+    var it = std.mem.splitScalar(u8, core, '.');
+    var out: [3]u32 = undefined;
+    for (&out) |*n| n.* = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
+    if (it.next() != null) return null;
+    return out;
+}
+
 fn majorMinor(v: []const u8) ?[2]u32 {
     const core = v[0 .. std.mem.indexOfAny(u8, v, "-+") orelse v.len];
     var it = std.mem.splitScalar(u8, core, '.');
@@ -94,6 +117,18 @@ test "compatible: same major, and the same minor below 1.0" {
     try t.expect(!compatible("", "0.1.0"));
     try t.expect(!compatible("0.1.0", "x.y.z"));
     try t.expect(compatible(version, version));
+}
+
+test "behind: an older stamp, a missing one and a broken one are behind; equal and newer are not" {
+    const t = std.testing;
+    try t.expect(behind("0.1.0", "0.2.0"));
+    try t.expect(behind("0.1.9", "0.1.10"));
+    try t.expect(behind("", "0.1.0"));
+    try t.expect(behind("zero", "0.1.0"));
+    try t.expect(!behind("0.1.0", "0.1.0"));
+    try t.expect(!behind("0.2.0", "0.1.0"));
+    try t.expect(!behind("1.0.0-rc1", "1.0.0"));
+    try t.expect(!behind(version, version));
 }
 
 const std = @import("std");

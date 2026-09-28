@@ -576,6 +576,8 @@ pub const table = .{
     .@"view.activity_integrations" = &showInstalled,
     .@"integrations.show_marketplace" = &showMarketplace,
     .@"integrations.update" = &updateCmd,
+    .@"integrations.rebuild_stale" = &rebuildStaleCmd,
+    .@"integrations.rebuild_focused" = &rebuildFocusedCmd,
     .@"integrations.show_in_dev" = &showDevCmd,
     .@"integrations.toggle_dev_tab" = &toggleDevTab,
     .@"integrations.toggle_tab" = &toggleTab,
@@ -2295,7 +2297,9 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
     const enabled = inst.enabled();
     const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
     const pinned = isPinned(app, inst.id());
-    const items = try app.gpa.dupe(command.MenuItem, &.{
+    var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    errdefer rows.deinit(app.gpa);
+    try rows.appendSlice(app.gpa, &.{
         .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
         .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
         .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } },
@@ -2304,9 +2308,13 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
         openAsRow(app),
         .{ .label = "Update (relink the binary)", .action = .{ .command = .@"integrations.update" }, .separator_before = true },
-        .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" } },
     });
-
+    // A row built from a folder on this machine can be built again from
+    // it; the label says why when the build is behind this mnml's SDK.
+    if (!inst.manifest.isLauncher() and try localSource(app, app.frame.allocator(), inst.id()) != null)
+        try rows.append(app.gpa, .{ .label = if (stale(inst)) "Rebuild (built on an older SDK)" else "Rebuild from its folder", .action = .{ .command = .@"integrations.rebuild_focused" } });
+    try rows.append(app.gpa, .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" } });
+    const items = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(items);
     try app.openMenu(st.list[row].manifest.label, items, x, y);
 }
@@ -2415,6 +2423,9 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                 .missing = if (inst.binary_found) null else std.fs.path.basename(m.binary),
                 .version = m.version,
                 .line2 = if (m.commands.len > 0) m.commands[0].id else m.binary,
+                // A binary that is not there has nothing to compare: the
+                // red `not installed` note is the row's one warning.
+                .rebuild = inst.binary_found and stale(inst),
             };
         },
         .marketplace => {
@@ -2898,6 +2909,107 @@ fn updateAt(app: *App, i: usize) CommandError!void {
         app.toast("updated {s} {s} \u{2014} {s} \u{2192} {s}", .{ id, version, shown, target })
     else
         app.toast("updated {s} \u{2014} {s} \u{2192} {s}", .{ id, shown, target });
+}
+
+// ─── rebuilding against this SDK ────────────────────────────────────────
+
+/// The SDK this mnml carries: what a manifest's `.sdk` stamp is read
+/// against.
+pub const host_sdk = @import("mnml_sdk").version;
+
+/// Built on an SDK behind this mnml's, or never stamped — the `rebuild`
+/// chip. A launcher is never stale.
+pub fn stale(inst: *const Installed) bool {
+    return inst.manifest.staleAgainst(host_sdk);
+}
+
+/// `built against SDK 0.1.0, current 0.2.0` — what the chip means, on
+/// hover. A manifest written before the stamp existed says so.
+pub fn staleText(arena: Allocator, inst: *const Installed) Allocator.Error![]const u8 {
+    if (inst.manifest.sdk.len == 0) return std.fmt.allocPrint(arena, "built against an unknown SDK (installed before the stamp), current {s}", .{host_sdk});
+    return std.fmt.allocPrint(arena, "built against SDK {s}, current {s}", .{ inst.manifest.sdk, host_sdk });
+}
+
+/// The stale note for the Installed tab's row at visible index `idx`,
+/// or null — what the row's hover leads with.
+pub fn rowStaleText(app: *App, arena: Allocator, idx: usize) Allocator.Error!?[]const u8 {
+    const st = &app.integrations;
+    if (st.tab != .installed) return null;
+    const v = (try entryAt(app, idx)) orelse return null;
+    const i = switch (installedRow(v)) {
+        .first_party => return null,
+        .manifest => |m| m,
+    };
+    if (i >= st.list.len or !stale(&st.list[i])) return null;
+    return try staleText(arena, &st.list[i]);
+}
+
+/// The folder installed `id` builds from, if it came from one on this
+/// machine: the note its install left beside the binary, else a
+/// `local_folder` marketplace row with the id, else a Dev folder with
+/// it. Null for anything downloaded or shipped.
+pub fn localSource(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?[]const u8 {
+    if (app.data_root.len > 0) if (marketplace.builtFrom(app.io, arena, app.data_root, id)) |d| return d;
+    for (app.marketplace.entries) |e| {
+        if (e.kind != .app or !std.mem.eql(u8, e.id, id)) continue;
+        if (std.fs.path.isAbsolute(e.url)) return e.url;
+    }
+    for (app.integrations.dev) |*d| {
+        if (d.launcher or !std.mem.eql(u8, d.id(), id)) continue;
+        return d.dir;
+    }
+    return null;
+}
+
+/// `integrations.rebuild_stale`: every installed integration built from
+/// a folder on this machine whose stamp is behind this SDK is rebuilt
+/// there — `zig build`, then `--install` again — one at a time, a toast
+/// per row. A stale row with no folder behind it is named and left:
+/// reinstalling it from where it came from is the only fix.
+fn rebuildStaleCmd(app: *App) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
+    if (!st.scanned) try refresh(app);
+    const Todo = struct { id: []const u8, dir: []const u8 };
+    var todo: std.ArrayListUnmanaged(Todo) = .empty;
+    var orphans: std.ArrayListUnmanaged([]const u8) = .empty;
+    // Every finished rebuild re-scans the list, so collect first.
+    for (st.list) |*inst| {
+        if (!stale(inst)) continue;
+        const id = try arena.dupe(u8, inst.id());
+        if (try localSource(app, arena, id)) |dir| {
+            try todo.append(arena, .{ .id = id, .dir = dir });
+        } else try orphans.append(arena, id);
+    }
+    for (todo.items) |r| try marketplace.enqueueRebuild(app, r.id, r.dir);
+    if (orphans.items.len > 0) {
+        const names = try std.mem.join(arena, ", ", orphans.items);
+        try app.toastLevel(.warn, "integrations: {s} {s} built on an older SDK but not from a folder here \u{2014} reinstall from the Marketplace", .{ names, if (orphans.items.len == 1) "is" else "are" });
+    }
+    if (todo.items.len == 0 and orphans.items.len == 0) app.toast("integrations: every installed integration is built against SDK {s}", .{host_sdk});
+    app.needs_render = true;
+}
+
+/// `integrations.rebuild_focused`: rebuild the row the menu was opened
+/// on (or the cursor's, or the detail pane's) from its folder, stale or
+/// not.
+fn rebuildFocusedCmd(app: *App) CommandError!void {
+    const i = (try focusedRow(app)) orelse
+        return app.diag.fail(app.frame.allocator(), "integrations: pick an installed integration first", .{});
+    return rebuildAt(app, i);
+}
+
+fn rebuildAt(app: *App, i: usize) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
+    if (i >= st.list.len) return;
+    const inst = &st.list[i];
+    if (inst.manifest.isLauncher())
+        return app.diag.fail(arena, "integrations: {s} is a launcher \u{2014} there is nothing to build", .{inst.id()});
+    const id = try arena.dupe(u8, inst.id());
+    const dir = (try localSource(app, arena, id)) orelse
+        return app.diag.fail(arena, "integrations: {s} was not built from a folder here \u{2014} reinstall it from the Marketplace", .{id});
+    try marketplace.enqueueRebuild(app, id, dir);
 }
 
 fn copyId(app: *App) CommandError!void {
@@ -4064,4 +4176,176 @@ test "Enter on a first-party row runs its command" {
     app.integrations.panel.cursor = 3; // HTTP
     try testing.expect(try handleKey(&app, .{ .code = .enter }));
     try testing.expect(side.isShown(&app, .http));
+}
+
+/// An installed manifest for the SDK-stamp tests: a binary that
+/// resolves (the prebuilt sample), and `.sdk` as given — omitted when
+/// `sdk` is null, the shape of a manifest written before the stamp.
+fn stampedManifest(a: Allocator, id: []const u8, exe: []const u8, sdk: ?[]const u8) ![]const u8 {
+    const stamp = if (sdk) |s| try std.fmt.allocPrint(a, ", .sdk = \"{s}\"", .{s}) else "";
+    return std.fmt.allocPrint(a, ".{{ .id = \"{s}\", .label = \"{s}\", .binary = \"{f}\"{s} }}", .{ id, id, std.zig.fmtString(exe), stamp });
+}
+
+fn manifestRow(app: *App, arena: Allocator, id: []const u8) !view.Entry {
+    return entryRow(app, arena, manifestVirtual(app.integrations.find(id) orelse return error.NoSuchRow));
+}
+
+test "the rebuild chip: an older stamp wears it, an equal one does not, a missing one does, a launcher never; the hover says which SDK" {
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/older.zon", .data = try stampedManifest(a, "older", exe, "0.0.1") });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/equal.zon", .data = try stampedManifest(a, "equal", exe, host_sdk) });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/unstamped.zon", .data = try stampedManifest(a, "unstamped", exe, null) });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/lnch.zon", .data = ".{ .id = \"lnch\", .label = \"lnch\", .commands = .{ .{ .id = \"lnch.open\", .title = \"o\", .run = \":term htop\" } } }" });
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expectEqual(@as(usize, 4), app.integrations.list.len);
+    try testing.expect((try manifestRow(&app, a, "older")).rebuild);
+    try testing.expect(!(try manifestRow(&app, a, "equal")).rebuild);
+    try testing.expect((try manifestRow(&app, a, "unstamped")).rebuild);
+    try testing.expect(!(try manifestRow(&app, a, "lnch")).rebuild);
+
+    // On screen: the chip at the right edge of exactly those two rows.
+    app.tree.width = 60;
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    app.integrations.panel.cursor = installedCount(&app) - 1;
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    var seen: usize = 0;
+    var it = std.mem.splitScalar(u8, txt, '\n');
+    while (it.next()) |line| {
+        if (std.mem.indexOf(u8, line, view.rebuild_text) == null) continue;
+        seen += 1;
+        try testing.expect(std.mem.indexOf(u8, line, "older") != null or std.mem.indexOf(u8, line, "unstamped") != null);
+    }
+    try testing.expectEqual(@as(usize, 2), seen);
+
+    // The hover names both SDKs, by the row's VISIBLE index.
+    const visible = try visibleEntries(&app, a);
+    var said_older = false;
+    for (visible, 0..) |v, vi| switch (installedRow(v)) {
+        .first_party => try testing.expect(try rowStaleText(&app, a, vi) == null),
+        .manifest => |mi| {
+            const note = try rowStaleText(&app, a, vi);
+            const id = app.integrations.list[mi].id();
+            if (std.mem.eql(u8, id, "older")) {
+                try testing.expectEqualStrings(try std.fmt.allocPrint(a, "built against SDK 0.0.1, current {s}", .{host_sdk}), note.?);
+                said_older = true;
+            } else if (std.mem.eql(u8, id, "unstamped")) {
+                try testing.expect(std.mem.indexOf(u8, note.?, "unknown SDK") != null);
+            } else try testing.expect(note == null);
+        },
+    };
+    try testing.expect(said_older);
+}
+
+/// The fake build a rebuild test swaps in for `zig build`: it leaves a
+/// `built.txt` in the folder it was asked to build (so the test can
+/// read back WHICH folders were built) and puts the prebuilt sample in
+/// `<prefix>/bin/`, so the rest of the path — the link, `--install`, the
+/// re-scan — runs for real.
+fn fakeBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) marketplace.InstallError!void {
+    _ = gpa;
+    _ = env;
+    const note = try std.fs.path.join(arena, &.{ app_dir, "built.txt" });
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = prefix }) catch {
+        why.* = "fake build: cannot write built.txt";
+        return error.Failed;
+    };
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {};
+    const exe = build_options.sample_integration_exe;
+    const dst = try std.fs.path.join(arena, &.{ bin, std.fs.path.basename(exe) });
+    Io.Dir.cwd().copyFile(exe, Io.Dir.cwd(), dst, io, .{}) catch {
+        why.* = "fake build: cannot copy the sample";
+        return error.Failed;
+    };
+}
+
+fn settleRebuilds(app: *App) !void {
+    var waited: u32 = 0;
+    while ((app.marketplace.installing != null or app.marketplace.rebuilds.items.len > 0) and waited < 30_000) : (waited += 10) {
+        try app.tick(App.nowMs(app.io));
+        app.io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    if (app.marketplace.installing != null or app.marketplace.rebuilds.items.len > 0) return error.Timeout;
+}
+
+fn builtHere(io: Io, root: []const u8, sub: []const u8) bool {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const p = std.fmt.bufPrint(&buf, "{s}/{s}/built.txt", .{ root, sub }) catch return false;
+    Io.Dir.cwd().access(io, p, .{}) catch return false;
+    return true;
+}
+
+test "rebuild_stale builds exactly the stale rows that came from a folder here, re-runs --install, and names the stale one it cannot build; rebuild_focused does one" {
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    // Two integration folders on this machine, as a private repo holds them.
+    for ([_][]const u8{ "repo/sample", "repo/fresh" }) |d| {
+        try tmp.dir.createDirPath(testing.io, d);
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = try std.fmt.allocPrint(a, "{s}/build.zig", .{d}), .data = "" });
+    }
+    try tmp.dir.createDirPath(testing.io, "integrations/sample");
+    try tmp.dir.createDirPath(testing.io, "integrations/fresh");
+    // `sample`: built from repo/sample on an old SDK — the one to rebuild.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/sample.zon", .data = try stampedManifest(a, "sample", exe, "0.0.1") });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/sample/" ++ marketplace.built_from_file, .data = try std.fs.path.join(a, &.{ root, "repo", "sample" }) });
+    // `fresh`: from repo/fresh, already on this SDK — left alone.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/fresh.zon", .data = try stampedManifest(a, "fresh", exe, host_sdk) });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/fresh/" ++ marketplace.built_from_file, .data = try std.fs.path.join(a, &.{ root, "repo", "fresh" }) });
+    // `shipped`: unstamped, from nowhere on this machine — stale, but
+    // there is no folder to build it in.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/shipped.zon", .data = try stampedManifest(a, "shipped", exe, null) });
+
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.marketplace.builder = fakeBuild;
+    try refresh(&app);
+    try testing.expectEqualStrings(try std.fs.path.join(a, &.{ root, "repo", "sample" }), (try localSource(&app, a, "sample")).?);
+    try testing.expect(try localSource(&app, a, "shipped") == null);
+
+    try command.run(&app, .{ .static = .@"integrations.rebuild_stale" });
+    // The orphan is named straight away; the build runs behind it.
+    var warned = false;
+    for (app.toasts.items) |tt| if (std.mem.indexOf(u8, tt.text, "shipped is built on an older SDK but not from a folder here") != null) {
+        warned = true;
+    };
+    try testing.expect(warned);
+    try settleRebuilds(&app);
+    try testing.expect(builtHere(testing.io, root, "repo/sample"));
+    try testing.expect(!builtHere(testing.io, root, "repo/fresh"));
+    // The real `--install` ran on what the build left and restamped the
+    // manifest: the row is current, and the toast said so.
+    const i = app.integrations.find("sample").?;
+    try testing.expectEqualStrings(host_sdk, app.integrations.list[i].manifest.sdk);
+    try testing.expect(!stale(&app.integrations.list[i]));
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "sample: rebuilt against SDK " ++ host_sdk) != null);
+    try testing.expect(stale(&app.integrations.list[app.integrations.find("shipped").?]));
+
+    // `rebuild_focused` from the row menu does the one row, stale or not.
+    app.integrations.menu_row = .{ .tab = .installed, .idx = manifestVirtual(app.integrations.find("fresh").?) };
+    try command.run(&app, .{ .static = .@"integrations.rebuild_focused" });
+    try settleRebuilds(&app);
+    try testing.expect(builtHere(testing.io, root, "repo/fresh"));
+    // …and on a row with no folder behind it, it says why and builds nothing.
+    app.integrations.menu_row = .{ .tab = .installed, .idx = manifestVirtual(app.integrations.find("shipped").?) };
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"integrations.rebuild_focused" }));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "not built from a folder here") != null);
 }
