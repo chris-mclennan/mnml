@@ -323,21 +323,20 @@ class FileRun:
         # `<ws>/.mnml/`: the headless runner plants nothing in the
         # workspace, so a script that acts on "the first row of the tree"
         # means the first file it wrote, and `.mnml/` would be that row.
-        # `e2e_defaults` is only `breadcrumb = false`; the menu bar is
-        # pinned off besides, because headless has no bar in its default
-        # `auto` and the real window does — every `click X Y` in the
-        # corpus counts rows from the strip, and a bar shifts them all.
-        # And no broker: the terminal loop hosts one by default, headless
-        # hosts nothing unless a script asks (`MNML_BROKER=1`), and the
-        # REQUESTS view says which — `broker — jira off` is the corpus's
-        # premise.
-        cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }, .ui = .{ .menu_bar = .hidden"
+        # Trust comes from `MNML_E2E_WORKSPACE` (the app takes the named
+        # workspace as trusted at launch, as the runner does), so a DAP
+        # adapter or LSP server a script writes into the workspace config
+        # after launch is read. No broker besides: the terminal loop
+        # hosts one by default, headless hosts nothing unless a script
+        # asks, and the REQUESTS view says which. (The menu bar is NOT
+        # pinned: headless draws it too.)
+        cfg = ".{ .editor = .{ .breadcrumb = false }, .integrations = .{ .broker = false }"
         if header["ascii"]:
-            cfg += ", .ascii_icons = true"
+            cfg += ", .ui = .{ .ascii_icons = true }"
         cfg += " }"
         e2e_cfg = os.path.join(self.run_dir, "e2e-config.zon")
         with open(e2e_cfg, "w", encoding="utf-8") as f:
-            f.write(cfg + " }\n")
+            f.write(cfg + "\n")
         cols = max(80, header["width"] or 120)
         rows = max(24, header["height"] or 40)
         if (header["width"] and header["width"] < 80) or (header["height"] and header["height"] < 24):

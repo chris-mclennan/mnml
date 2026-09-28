@@ -374,11 +374,29 @@ pub const JunkOrigin = struct {
                 @memcpy(self.seen_buf[0..n], got[0..n]);
                 self.seen_len = n;
             }
+            // The rest of the record, drained, and the close as a FIN:
+            // a connection closed with unread bytes is reset on Windows,
+            // the reply queued behind them is thrown away, and the
+            // client's read fails with a status no name maps to
+            // (CONNECTION_RESET → error.Unexpected) instead of the TLS
+            // error the hop is expected to name. A ClientHello is one
+            // record whose length is in its header.
+            if (n >= 5 and got[0] == 0x16) {
+                const total: usize = 5 + ((@as(usize, got[3]) << 8) | got[4]);
+                var left = total -| n;
+                var sink: [1024]u8 = undefined;
+                while (left > 0) {
+                    const k = reader.interface.readSliceShort(sink[0..@min(left, sink.len)]) catch 0;
+                    if (k == 0) break;
+                    left -= k;
+                }
+            }
             _ = self.served.fetchAdd(1, .monotonic);
             var wbuf: [1024]u8 = undefined;
             var writer = Io.net.Stream.Writer.init(stream, io, &wbuf);
             writer.interface.writeAll(self.reply) catch {};
             writer.interface.flush() catch {};
+            stream.shutdown(io, .send) catch {};
         }
     }
 };

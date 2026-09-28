@@ -1826,7 +1826,12 @@ test "no broker at the path is null, not an error — the caller falls back to t
 
 test "status answers the budget, the queue by class and what has been served; a stopped broker answers nothing" {
     if (!supported) return error.SkipZigTest;
-    var h = try Harness.init("bitbucket", .{ .rate = 10.0, .capacity = 5.0, .max_block_secs = 2.0 }, null);
+    // A refill nobody would notice: the test compares the bucket before
+    // and after one draw, and at ten tokens a second a runner whose
+    // round trip takes over a hundred milliseconds saw it refilled —
+    // the slow-runner failure that, before the harness's deferred
+    // stop, left the broker running and wedged the suite.
+    var h = try Harness.init("bitbucket", .{ .rate = 0.0001, .capacity = 5.0, .max_block_secs = 2.0 }, null);
     // Stopped explicitly below, to show a stopped broker answers nothing;
     // the defer is for the failing paths above that line.
     defer h.deinit();
