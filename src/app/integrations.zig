@@ -2150,7 +2150,10 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     switch (kind) {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, cycleSort(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .integrations, m.x, m.y) else runToast(app, refreshTab(app)),
-        .new, .view, .history => {},
+        // The Marketplace tab's ` + source `: the add-a-source prompt;
+        // right-click, the tab strip's menu, which has the same row.
+        .new => if (m.button == .right) try @import("context_menus.zig").openIntegrationsTabsMenu(app, m.x, m.y) else runToast(app, command.run(app, .{ .static = .@"marketplace.add_source" })),
+        .view, .history => {},
     }
 }
 
@@ -2308,6 +2311,10 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
     try app.openMenu(st.list[row].manifest.label, items, x, y);
 }
 
+/// The Marketplace tab's empty-state hint: the two ways to add a source
+/// from here, not the config file alone.
+pub const add_source_hint = "`+ source` or marketplace.add_source adds one";
+
 /// The section's frame.
 pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.integrations;
@@ -2331,13 +2338,13 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     else switch (st.tab) {
         .installed => .{ .message = "Nothing installed yet — try the Marketplace tab", .hint = if (tomlNoticeDue(app)) try tomlNoticeText(app, ui.arena) else "or a Dev folder: Install runs <binary> --install" },
         .marketplace => if (marketplace.sourceCount(app) == 0)
-            .{ .message = "No sources yet — the official set comes with the first Zig integrations", .hint = "marketplace.sources in config.zon adds one" }
+            .{ .message = "No sources yet — the official set comes with the first Zig integrations", .hint = add_source_hint }
         else if (app.marketplace.fetching)
             .{ .message = if (ui.ascii) "Fetching the sources..." else "Fetching the sources…" }
         else if (app.marketplace.fetched_at_ms == null)
             .{ .message = "No marketplace entries yet — run `marketplace.refresh`", .hint = "r fetches the configured sources" }
         else
-            .{ .message = "Nothing listed — the sources are empty", .hint = "marketplace.sources in config.zon" },
+            .{ .message = "Nothing listed — the sources are empty", .hint = add_source_hint },
         .dev => .{ .message = "No dev folders — nothing under integrations.dev_roots", .hint = "a folder is a build.zig with a manifest.zon beside it" },
     };
     const caret = view.drawSection(ui, area, .{
@@ -2357,6 +2364,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .busy = marketplace.busy(app) or st.job != null,
         .now_ms = app.now_ms,
         .fonts = fonts,
+        .add_source = st.tab == .marketplace,
     });
     if (caret) |c| if (app.focus == .panel and app.focus.panel == .integrations) {
         app.cursor_pos = .{ .x = c.x, .y = c.y };

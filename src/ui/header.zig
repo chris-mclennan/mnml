@@ -73,6 +73,10 @@ pub const ExtraChip = struct {
     /// target is `.chip{ panel, kind }`; a chip with no kind is dropped
     /// there, as before.
     kind: ?ChipKind = null,
+    /// The narrow rung: painted instead of `text` when `text` does not
+    /// fit (` + ` for ` + source `), dropped whole only when neither
+    /// does — the mode chip's ladder, for an extra chip.
+    short: ?[]const u8 = null,
 };
 
 pub const PaneId = hit.PaneId;
@@ -224,10 +228,16 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
                 .{ .chip = .{ .panel = p.panel, .kind = k } }
             else
                 continue;
-            const ew = ui.width(e.text);
-            if (ex < area.x + title_w + ew + 1) break;
+            var text = e.text;
+            var ew = ui.width(text);
+            if (ex < area.x + title_w + ew + 1) {
+                const s = e.short orelse break;
+                text = s;
+                ew = ui.width(s);
+                if (ex < area.x + title_w + ew + 1) break;
+            }
             ex -= ew + 1;
-            _ = chip.paintTarget(ui, ex, y, ew, e.text, e.style orelse chip.modeStyle(t), target);
+            _ = chip.paintTarget(ui, ex, y, ew, text, e.style orelse chip.modeStyle(t), target);
         }
     }
     return out;

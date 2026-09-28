@@ -355,6 +355,12 @@ pub const PromptPurpose = union(enum) {
     /// `layout.save`: the layout's name (`app/named_layouts.zig`). Load
     /// and delete pick from the list instead (`layout.pick`).
     layout_save,
+    /// `marketplace.add_source`: a folder or `owner/repo` to add to the
+    /// marketplace's sources (`app/marketplace.zig` `addSource`); the
+    /// payload says who asked.
+    marketplace_add_source: AddSourceFrom,
+
+    pub const AddSourceFrom = enum { palette };
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const AccountPrompt = struct { name: []u8, title: []u8 };

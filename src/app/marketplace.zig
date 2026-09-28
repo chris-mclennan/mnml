@@ -217,6 +217,7 @@ pub const State = struct {
 
 pub const table = .{
     .@"marketplace.refresh" = &refreshCmd,
+    .@"marketplace.add_source" = &addSourceCmd,
     .@"marketplace.install_focused" = &installFocused,
     .@"marketplace.open_detail_focused" = &detailFocused,
     .@"marketplace.copy_id_focused" = &copyIdFocused,
@@ -997,6 +998,33 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
         app.toast("added {s}: {s} ({s}/) — listing it now", .{ id, entry.github_monorepo_apps.repo, entry.github_monorepo_apps.apps_dir });
     }
     return .{ .id = id, .found = found };
+}
+
+/// The prompt's title and its placeholder — one prompt for every entry
+/// point.
+pub const add_source_title = "Marketplace: add a private source (a folder or owner/repo)";
+pub const add_source_placeholder = "a folder (~/my-integrations) or owner/repo[:apps]";
+
+/// Open the shared prompt; its Enter runs `addSource`
+/// (`addSourceAccept`), Esc cancels.
+pub fn openAddSourcePrompt(app: *App, from: app_mod.PromptPurpose.AddSourceFrom) void {
+    app.overlay.deinit(app.gpa);
+    var ps = app_mod.Prompt.init(app.gpa, add_source_title);
+    ps.placeholder = add_source_placeholder;
+    app.overlay = .{ .prompt = .{ .state = ps, .purpose = .{ .marketplace_add_source = from } } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// `marketplace.add_source` — the palette, the `+ source` chip and the
+/// tab menu.
+fn addSourceCmd(app: *App) CommandError!void {
+    openAddSourcePrompt(app, .palette);
+}
+
+/// The prompt's Enter.
+pub fn addSourceAccept(app: *App, text: []const u8) CommandError!void {
+    _ = try addSource(app, text);
 }
 
 // ─── install ────────────────────────────────────────────────────────────
@@ -2204,4 +2232,77 @@ test "addSource: owner/repo[:apps_dir] is a GitHub monorepo source — shape onl
     try testing.expect(app.cfg.marketplace.sources[1] == .github_monorepo_apps);
     // The fetch goes to a port nothing listens on: it fails, offline.
     try settle(app);
+}
+
+test "marketplace.add_source resolves, opens the shared prompt, and its Enter adds the folder" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expect(command.resolve(app, "marketplace.add_source") != null);
+    try command.runNamed(app, "marketplace.add_source");
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.overlay.prompt.purpose.marketplace_add_source == .palette);
+    try app.render();
+    const text = try screen_mod.toTestText(gpa, &app.screen);
+    defer gpa.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, add_source_title) != null);
+    try testing.expect(std.mem.indexOf(u8, text, add_source_placeholder) != null);
+    for ("acme") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(app.overlay == .none);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added acme: 3 integrations found") != null);
+    try testing.expect(app.integrations.tab == .marketplace);
+    try settle(app);
+    // Esc cancels: nothing more is written.
+    try command.runNamed(app, "marketplace.add_source");
+    for ("tools/acme") |c| try app.handle(.{ .key = Key.char(c) });
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.overlay == .none);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expect(std.mem.indexOf(u8, got, "acme-2") == null);
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+}
+
+test "the Marketplace tab's + source chip and its menus fire marketplace.add_source: a click opens the prompt; right-click on the chip or a tab is the tab strip's menu, whose row opens it too" {
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try command.run(app, .{ .static = .@"integrations.show_marketplace" });
+    try settle(app);
+    try app.render();
+    // The chip, found where the paint registered it, never painted by hand.
+    const chip_rect = for (app.hits.items.items) |e| {
+        if (e.target == .chip and e.target.chip.panel == .integrations and e.target.chip.kind == .new) break e.rect;
+    } else return error.TestExpectedChip;
+    try app.handle(.{ .mouse = .{ .x = chip_rect.x + 1, .y = chip_rect.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = chip_rect.x + 1, .y = chip_rect.y, .kind = .release, .button = .left } });
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.overlay.prompt.purpose.marketplace_add_source == .palette);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try testing.expect(app.overlay == .none);
+    try app.render();
+    try app.handle(.{ .mouse = .{ .x = chip_rect.x + 1, .y = chip_rect.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Integrations", app.overlay.menu.title);
+    try testing.expect(app.overlay.menu.items[3].action.command == .@"marketplace.add_source");
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.render();
+    const tab_rect = for (app.hits.items.items) |e| {
+        if (e.target == .button and e.target.button == @import("../ui/integrations_view.zig").tab_base + 1) break e.rect;
+    } else return error.TestExpectedTab;
+    try app.handle(.{ .mouse = .{ .x = tab_rect.x + 1, .y = tab_rect.y, .kind = .press, .button = .right } });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Integrations", app.overlay.menu.title);
+    try testing.expect(app.overlay.menu.items[3].action.command == .@"marketplace.add_source");
+    // Picking the row is the same prompt.
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.down) });
+    try app.handle(.{ .key = Key.named(.enter) });
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.overlay.prompt.purpose.marketplace_add_source == .palette);
 }

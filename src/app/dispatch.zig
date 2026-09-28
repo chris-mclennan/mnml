@@ -1796,6 +1796,9 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .http_description => try http_app.applyDescriptionPrompt(app, text),
         .http_tags => try http_app.applyTagsPrompt(app, text),
         .layout_save => try named_layouts.acceptSave(app, text),
+        .marketplace_add_source => |from| switch (from) {
+            .palette => try toastOnFail(app, @import("marketplace.zig").addSourceAccept(app, text)),
+        },
     }
 }
 
