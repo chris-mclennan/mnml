@@ -4493,3 +4493,59 @@ test "a stale row whose source folder is gone: rebuild_stale and rebuild_focused
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "is gone") != null);
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "cannot run") == null);
 }
+
+/// A fake build whose binary is a shell script: its `--install` writes
+/// the manifest stamped `.sdk = "0.0.1"` — what an integration whose
+/// build.zig.zon still pins an older mnml-sdk does.
+fn oldStampBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) marketplace.InstallError!void {
+    _ = gpa;
+    _ = env;
+    _ = app_dir;
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {};
+    const script =
+        \\#!/bin/sh
+        \\mkdir -p "$MNML_DATA_ROOT/integrations"
+        \\printf '.{ .id = "old", .label = "old", .binary = "%s", .sdk = "0.0.1" }' "$0" > "$MNML_DATA_ROOT/integrations/old.zon"
+        \\
+    ;
+    const exe = try std.fs.path.join(arena, &.{ bin, "mnml-old" });
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = exe, .data = script, .flags = .{ .permissions = .executable_file } }) catch {
+        why.* = "fake build: cannot write the script";
+        return error.Failed;
+    };
+}
+
+test "a rebuild toasts the SDK the fresh manifest carries: one that is still behind says so and why, never 'rebuilt against' the host's SDK" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "repo/old");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "repo/old/build.zig", .data = "" });
+    try tmp.dir.createDirPath(testing.io, "integrations/old");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/old.zon", .data = try stampedManifest(a, "old", exe, "0.0.1") });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/old/" ++ marketplace.built_from_file, .data = try std.fs.path.join(a, &.{ root, "repo", "old" }) });
+
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.marketplace.builder = oldStampBuild;
+    try refresh(&app);
+    try command.run(&app, .{ .static = .@"integrations.rebuild_stale" });
+    try settleRebuilds(&app);
+    // The manifest the rebuild wrote is still on 0.0.1…
+    const i = app.integrations.find("old").?;
+    try testing.expectEqualStrings("0.0.1", app.integrations.list[i].manifest.sdk);
+    try testing.expect(stale(&app.integrations.list[i]));
+    // …and the toast says exactly that, with the likely cause.
+    const said = app.lastToast().?;
+    try testing.expect(std.mem.indexOf(u8, said, "rebuilt against SDK " ++ host_sdk) == null);
+    try testing.expect(std.mem.indexOf(u8, said, "still on SDK 0.0.1") != null);
+    try testing.expect(std.mem.indexOf(u8, said, "mnml-sdk") != null);
+}

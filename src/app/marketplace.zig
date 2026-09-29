@@ -169,7 +169,9 @@ pub const Result = struct {
         /// An install finished; `id` names the entry. `rebuilt`: it was
         /// a rebuild of an installed integration from its folder
         /// (`integrations.rebuild_*`), not a first install.
-        installed: struct { id: []u8, detail: []u8, rebuilt: bool = false },
+        /// `warn`: it finished, but not as asked — a rebuild whose
+        /// manifest is still stamped behind this mnml's SDK.
+        installed: struct { id: []u8, detail: []u8, rebuilt: bool = false, warn: bool = false },
         failed: []u8,
     },
 
@@ -1404,7 +1406,8 @@ fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Instal
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var why: []const u8 = "";
-    const detail = installInner(io, gpa, arena, job, &why) catch |err| switch (err) {
+    var warn = false;
+    const detail = installInner(io, gpa, arena, job, &why, &warn) catch |err| switch (err) {
         error.OutOfMemory => {
             postFailed(events, io, gpa, generation, "marketplace: out of memory installing {s}", .{job.id});
             return;
@@ -1420,10 +1423,10 @@ fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Instal
         gpa.free(id);
         return;
     };
-    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d, .rebuilt = job.rebuild } } });
+    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d, .rebuilt = job.rebuild, .warn = warn } } });
 }
 
-fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why: *[]const u8) InstallError![]const u8 {
+fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why: *[]const u8, warn: *bool) InstallError![]const u8 {
     manifest_mod.validateId(job.id) catch {
         why.* = "the id is not a file name";
         return error.Failed;
@@ -1554,10 +1557,34 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
             };
             _ = linkBinary(io, arena, job.root, exe) catch "";
             try run(io, gpa, arena, &.{ exe, "--install" }, null, &job.env, "--install", why);
-            if (job.rebuild) return try std.fmt.allocPrint(arena, "rebuilt against SDK {s}", .{sdk_version});
+            if (job.rebuild) return rebuiltStamp(io, arena, job, warn);
             return try std.fmt.allocPrint(arena, "built {s}", .{exe});
         },
     }
+}
+
+/// What a rebuild says: the SDK the manifest `--install` just wrote is
+/// stamped with — read back, not assumed. A build still behind this
+/// mnml's SDK (the folder's build.zig.zon pins an older mnml-sdk) says
+/// so, and `warn` is set.
+fn rebuiltStamp(io: Io, arena: Allocator, job: *InstallJob, warn: *bool) Allocator.Error![]const u8 {
+    const path = manifest_mod.manifest.pathUnder(arena, job.root, job.id) catch return "rebuilt";
+    const text = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(1 << 20), .of(u8), 0) catch {
+        warn.* = true;
+        return std.fmt.allocPrint(arena, "rebuilt, but --install wrote no manifest at {s}", .{path});
+    };
+    var why: []const u8 = "";
+    const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadManifest => {
+            warn.* = true;
+            return std.fmt.allocPrint(arena, "rebuilt, but the manifest --install wrote does not parse: {s}", .{why});
+        },
+    };
+    if (!m.staleAgainst(sdk_version)) return std.fmt.allocPrint(arena, "rebuilt against SDK {s}", .{m.sdk});
+    warn.* = true;
+    const on = if (m.sdk.len == 0) "no SDK stamp" else try std.fmt.allocPrint(arena, "SDK {s}", .{m.sdk});
+    return std.fmt.allocPrint(arena, "rebuilt, but still on {s} \u{2014} the mnml-sdk its build.zig.zon depends on is older than {s}; update that and rebuild", .{ on, sdk_version });
 }
 
 pub const LinkError = error{ OutOfMemory, LinkFailed };
@@ -1652,7 +1679,7 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             st.installing = null;
             try integrations.refresh(app);
             if (i.rebuilt)
-                app.toast("{s}: {s}", .{ i.id, i.detail })
+                try app.toastLevel(if (i.warn) .warn else .info, "{s}: {s}", .{ i.id, i.detail })
             else
                 app.toast("marketplace: installed {s} — {s}", .{ i.id, i.detail });
             pumpOrToast(app);
