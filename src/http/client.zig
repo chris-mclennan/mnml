@@ -315,7 +315,14 @@ pub fn urlRefusal(gpa: Allocator, raw: []const u8) Allocator.Error!?[]u8 {
 fn sendGuarded(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: Transport) Allocator.Error!Outcome {
     return sendInner(gpa, io, req, opts, t) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => .{ .err = try describe(gpa, err, req.url) },
+        else => {
+            // A cancel becomes the `.err` outcome's text, so it is
+            // re-armed for the caller: the runtime reports it once, and
+            // dropped here the caller's next wait could not be
+            // interrupted — its group's `cancel` waited that out.
+            if (err == error.Canceled) io.recancel();
+            return .{ .err = try describe(gpa, err, req.url) };
+        },
     };
 }
 
@@ -330,8 +337,10 @@ fn sendWithDeadline(gpa: Allocator, io: Io, req: *const Request, opts: SendOptio
     sel.concurrent(.send, sendGuarded, .{ gpa, io, req, opts, t }) catch return sendGuarded(gpa, io, req, opts, t);
     sel.async(.timer, sleepMs, .{ io, ms });
     const first = sel.await() catch {
-        // We were cancelled ourselves: end both and report as a cancel.
+        // We were cancelled ourselves: end both and report as a cancel,
+        // re-armed for the caller as `sendGuarded` does.
         drainSelect(&sel, gpa);
+        io.recancel();
         return .{ .err = try std.fmt.allocPrint(gpa, "canceled: {s}", .{req.url}) };
     };
     switch (first) {
@@ -392,6 +401,17 @@ fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8
 }
 
 const SendError = Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.Uri.ParseError || std.Uri.ResolveInPlaceError || std.Uri.GetHostError || Io.Writer.Error || Io.Reader.StreamError || insecure_mod.ProxyError || Io.net.HostName.ValidateError || error{ InvalidMethod, UnsupportedCompressionMethod, WriteFailed, TlsInitializationFailed };
+
+/// Whether the request's socket read or write was cancelled. std's
+/// readers answer a cancel with a bare `ReadFailed` (or `WriteFailed`)
+/// and keep the cause on the connection's stream; surfaced as
+/// `error.Canceled`, `sendGuarded` re-arms it for the caller.
+fn socketCanceled(request: *const std.http.Client.Request) bool {
+    const c = request.connection orelse return false;
+    if (c.stream_reader.err) |e| if (e == error.Canceled) return true;
+    if (c.stream_writer.err) |e| if (e == error.Canceled) return true;
+    return false;
+}
 
 fn isRedirect(status: u16) bool {
     return switch (status) {
@@ -579,12 +599,14 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
             }
         };
         sent catch |err| {
+            if (socketCanceled(&request)) return error.Canceled;
             if (try shimFailure(gpa, shim)) |o| return o;
             return err;
         };
 
         var redirect_buffer: [8 * 1024]u8 = undefined;
         var response = request.receiveHead(&redirect_buffer) catch |err| {
+            if (socketCanceled(&request)) return error.Canceled;
             // The shim closed on us: its failure is the one to name.
             if (try shimFailure(gpa, shim)) |o| return o;
             return err;
@@ -683,7 +705,7 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
                 // over parks it until the server's NEXT write.
                 if (reader.buffered().len == 0) reader.fillMore() catch |err| switch (err) {
                     error.EndOfStream => break,
-                    error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
+                    error.ReadFailed => return response.bodyErr() orelse if (socketCanceled(response.request)) error.Canceled else error.ReadFailed,
                 };
                 const got = reader.buffered();
                 if (got.len == 0) {
@@ -723,7 +745,7 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
         defer sink.deinit();
         var truncated = false;
         _ = reader.streamRemaining(&sink.writer) catch |err| switch (err) {
-            error.ReadFailed => return response.bodyErr() orelse error.ReadFailed,
+            error.ReadFailed => return response.bodyErr() orelse if (socketCanceled(response.request)) error.Canceled else error.ReadFailed,
             error.WriteFailed => return error.WriteFailed,
         };
         var body_bytes = sink.written();
@@ -1283,4 +1305,36 @@ test "urlRefusal: a space or a control character in the URL is refused with its 
     defer out.deinit(testing.allocator);
     try testing.expect(out == .err);
     try testing.expect(std.mem.startsWith(u8, out.err, "bad request: the URL has a space"));
+}
+
+test "send: a cancelled send keeps the cancel armed — the caller's next wait is interrupted too, so its group's cancel returns" {
+    const io = testing.io;
+    var server = try mock.Server.start(testing.allocator, io, .{ .chunks = &.{"late"}, .chunk_delay_ms = 1500 });
+    defer server.stop(io);
+    const url = try std.fmt.allocPrint(testing.allocator, "http://127.0.0.1:{d}/slow", .{server.port});
+    defer testing.allocator.free(url);
+    const Worker = struct {
+        fn run(wio: Io, u: []const u8, saw: *std.atomic.Value(bool)) void {
+            var req = Request.init(testing.allocator) catch return;
+            defer req.deinit(testing.allocator);
+            req.setUrl(testing.allocator, u) catch return;
+            var outcome = send(testing.allocator, wio, &req, .{}) catch return;
+            outcome.deinit(testing.allocator);
+            // The caller's next cancelation point, as a marketplace
+            // fetch's next source or an install's next step is.
+            wio.sleep(.fromSeconds(20), .awake) catch {
+                saw.store(true, .release);
+                return;
+            };
+        }
+    };
+    var saw = std.atomic.Value(bool).init(false);
+    var group: Io.Group = .init;
+    try group.concurrent(io, Worker.run, .{ io, url, &saw });
+    // The send is waiting on the body the server holds back.
+    io.sleep(.fromMilliseconds(300), .awake) catch {};
+    const t0 = nowMs(io);
+    group.cancel(io);
+    try testing.expect(nowMs(io) - t0 < 2000);
+    try testing.expect(saw.load(.acquire));
 }

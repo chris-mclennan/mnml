@@ -565,6 +565,9 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
         .pty => |*pt| saw_pty = saw_pty or std.mem.eql(u8, pt.label, "ls"),
         else => {},
     };
+    // The golden opens `ls` at cwd `.`, not `/tmp`: a Windows runner has
+    // no `\tmp` unless an earlier step made one, and the spawn failed
+    // with DIRECTORY there.
     try t.expect(saw_pty);
     // The segment is on the statusline of the last frame (the loop frames
     // after the batch, so an in-band `expect_screen` would run too early).

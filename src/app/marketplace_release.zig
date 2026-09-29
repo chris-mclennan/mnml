@@ -362,14 +362,18 @@ pub fn install(io: Io, gpa: Allocator, arena: Allocator, fetcher: Fetcher, root:
         why.* = try std.fmt.allocPrint(arena, "{s}: not a .tar.xz or a .zip", .{job.asset.url});
         return error.Failed;
     };
-    const bytes = switch (try fetcher.get(fetcher.ctx, gpa, io, arena, job.asset.url)) {
+    const got = try fetcher.get(fetcher.ctx, gpa, io, arena, job.asset.url);
+    // A download cut short by a cancel comes back as an `.err` text with
+    // the cancel re-armed (`http/client.zig`): it is a cancel, not a
+    // failure to report.
+    io.checkCancel() catch return error.Canceled;
+    const bytes = switch (got) {
         .body => |b| b,
         .err => |e| {
             why.* = e;
             return error.Failed;
         },
     };
-    io.checkCancel() catch return error.Canceled;
     if (!verify(bytes, job.asset.sha256)) {
         why.* = try std.fmt.allocPrint(arena, "sha256 mismatch — the download is not what the index says (want {s}, got {s}); nothing was installed", .{ job.asset.sha256, &sha256Hex(bytes) });
         return error.Failed;

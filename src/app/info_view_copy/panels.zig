@@ -142,7 +142,12 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .body = "A row of the debug column — a variable, a watch, a frame of the call stack, a breakpoint — under its section's header. Enter expands or jumps; `e` edits a variable or a watch, `x` removes a watch or a breakpoint, Space toggles a breakpoint on or off. Right-click is the row's menu.",
             .links = &.{ .{ .command = .{ .id = .@"dap.add_watch", .label = "Add a watch" } }, .{ .command = .{ .id = .@"dap.continue", .label = "Continue" } }, ask },
         },
-        .integrations => if (try @import("../integrations.zig").rowStaleText(app, arena, r.idx)) |why| .{
+        .integrations => if (try @import("../integrations.zig").rowStaleText(app, arena, r.idx)) |why| if (try @import("../integrations.zig").rowNoRebuild(app, arena, r.idx)) |cannot| .{
+            .title = try std.fmt.allocPrint(arena, "Integration {d} \u{b7} old SDK", .{r.idx + 1}),
+            .body = try std.fmt.allocPrint(arena, "The `old SDK` chip: {s}. An integration draws through the SDK it was compiled against, so this one misses whatever the SDK has changed since \u{2014} and it cannot be rebuilt here: {s}. Reinstall it from the Marketplace.", .{ why, cannot }),
+            .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
+            .links = &.{.{ .command = .{ .id = .@"integrations.show_marketplace", .label = "Open the Marketplace" } }},
+        } else .{
             .title = try std.fmt.allocPrint(arena, "Integration {d} \u{b7} rebuild", .{r.idx + 1}),
             .body = try std.fmt.allocPrint(arena, "The `rebuild` chip: {s}. An integration draws through the SDK it was compiled against, so this one misses whatever the SDK has changed since. Right-click \u{2192} Rebuild builds it again from its folder and re-runs `--install`; `integrations.rebuild_stale` does every one.", .{why}),
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},

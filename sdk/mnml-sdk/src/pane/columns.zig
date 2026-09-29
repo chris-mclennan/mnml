@@ -18,6 +18,7 @@
 const std = @import("std");
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
+const text_mod = @import("text.zig");
 
 pub const Spec = struct {
     /// Preferred width, cells (the `rest` column's: the least it wants
@@ -88,20 +89,31 @@ pub fn fit(out: []u16, cols: []const Spec, width: u16, gap: u16) void {
 }
 
 /// The column header row: each kept column's name in `Theme.label()`
-/// (muted, bold), left-aligned in its width and clipped to it, with
-/// `gap` cells of air between — the header the forge pane's tables
-/// wear, and every table in the family with them. `cols` is any slice
-/// whose items carry `name` and `w` (a pane's own column type, after
-/// `fit`). Each cell of a column and its gap is painted, so the row
-/// is the header's ground edge to edge rather than whatever was under
-/// it. Clipped at `x0 + max_w`. Returns the cells painted.
+/// (muted, bold), left-aligned in its width, with `gap` cells of air
+/// between — the header the forge pane's tables wear, and every table
+/// in the family with them. `cols` is any slice whose items carry
+/// `name` and `w` (a pane's own column type, after `fit`). Each cell
+/// of a column and its gap is painted, so the row is the header's
+/// ground edge to edge rather than whatever was under it. Clipped at
+/// `x0 + max_w`. Returns the cells painted.
+///
+/// A name that does not fit its column — squeezed by `fit`, or cut at
+/// the row's end — ends in `…` (`text.fit`, the clipper list rows
+/// use), never a bare `STAT`. `headerFor` is the `--ascii` twin.
 ///
 /// A column of width 0 (a `rest` column with nothing left) paints its
 /// name at its natural width, as far as the row allows.
 pub fn header(f: *frame_mod.Frame, x0: u16, y: u16, max_w: u16, cols: anytype, gap: u16, th: theme_mod.Theme) u16 {
+    return headerFor(f, x0, y, max_w, cols, gap, th, false);
+}
+
+/// `header`, with a cut name marked by `text.ellipsis(ascii)` — `...`
+/// under `--ascii`.
+pub fn headerFor(f: *frame_mod.Frame, x0: u16, y: u16, max_w: u16, cols: anytype, gap: u16, th: theme_mod.Theme, ascii: bool) u16 {
     const style = headerStyle(th);
     var x = x0;
     const end = x0 +| max_w;
+    var buf: [256]u8 = undefined;
     for (cols, 0..) |c, i| {
         if (i > 0 and gap > 0) {
             if (x >= end) break;
@@ -114,11 +126,11 @@ pub fn header(f: *frame_mod.Frame, x0: u16, y: u16, max_w: u16, cols: anytype, g
         const room = end - x;
         const cw: u16 = c.w;
         if (cw == 0) {
-            x += f.text(x, y, room, c.name, style);
+            x += f.text(x, y, room, text_mod.fitFor(&buf, c.name, room, ascii), style);
         } else {
             const w = @min(cw, room);
             f.fill(x, y, w, 1, style);
-            _ = f.text(x, y, w, c.name, style);
+            _ = f.text(x, y, w, text_mod.fitFor(&buf, c.name, w, ascii), style);
             x += w;
         }
     }
@@ -241,7 +253,7 @@ test "columns that do not shrink are dropped whole in rank order, gaps counted (
     try testing.expectEqualSlices(u16, &.{ 28, 0, 0, 0, 0, 11 }, &out);
 }
 
-test "the column header: names in label ink, clipped to their widths, air between, cut at the row's end" {
+test "the column header: names in label ink, fitted to their widths, air between, cut at the row's end" {
     const Col = struct { name: []const u8, w: u16 };
     var f = try frame_mod.Frame.init(testing.allocator, 30, 1);
     defer f.deinit();
@@ -255,8 +267,59 @@ test "the column header: names in label ink, clipped to their widths, air betwee
         @memcpy(row[n..][0..g.len], g);
         n += g.len;
     }
-    // STATUS is clipped to its four cells; SUMMARY is cut at the row's end.
-    try testing.expectEqualStrings(" KEY    STAT SUMMARY          ", row[0..n]);
+    // STATUS is fitted to its four cells with an ellipsis; SUMMARY fits
+    // whole before the row's end.
+    try testing.expectEqualStrings(" KEY    STA\u{2026} SUMMARY          ", row[0..n]);
     for (1..29) |x| try testing.expect(std.meta.eql(f.slots[x].style, th.label()));
     try testing.expect(!std.meta.eql(f.slots[29].style, th.label()));
+}
+
+fn rowText(buf: []u8, f: *const frame_mod.Frame, y: u16) []const u8 {
+    var n: usize = 0;
+    for (f.slots[@as(usize, y) * f.cols ..][0..f.cols]) |s| {
+        const g = s.symbol();
+        @memcpy(buf[n..][0..g.len], g);
+        n += g.len;
+    }
+    return buf[0..n];
+}
+
+test "a squeezed header ends in an ellipsis, `...` under --ascii; a header that fits is unchanged" {
+    const Col = struct { name: []const u8, w: u16 };
+    const th = theme_mod.Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } });
+    var row: [256]u8 = undefined;
+    // At 30 columns the last column is squeezed: the Bitbucket PR
+    // table's CI and STATUS at the tail of a narrow pane.
+    const squeezed = [_]Col{ .{ .name = "PR", .w = 5 }, .{ .name = "TITLE", .w = 14 }, .{ .name = "STATUS", .w = 8 } };
+    {
+        var f = try frame_mod.Frame.init(testing.allocator, 30, 2);
+        defer f.deinit();
+        _ = header(&f, 0, 0, 25, &squeezed, 1, th);
+        _ = headerFor(&f, 0, 1, 25, &squeezed, 1, th, true);
+        // STATUS gets the row's last four cells: `STA…`, not `STAT`.
+        try testing.expectEqualStrings("PR    TITLE          STA\u{2026}", std.mem.trimEnd(u8, rowText(&row, &f, 0), " "));
+        try testing.expectEqualStrings("PR    TITLE          S...", std.mem.trimEnd(u8, rowText(&row, &f, 1), " "));
+        // The mark is header ink, like the rest of the name.
+        try testing.expect(std.meta.eql(f.slots[24].style, th.label()));
+    }
+    {
+        // A column narrower than its name, mid-row.
+        const cols = [_]Col{ .{ .name = "UPDATED", .w = 5 }, .{ .name = "CA", .w = 2 } };
+        var f = try frame_mod.Frame.init(testing.allocator, 12, 2);
+        defer f.deinit();
+        _ = header(&f, 0, 0, 12, &cols, 1, th);
+        _ = headerFor(&f, 0, 1, 12, &cols, 1, th, true);
+        try testing.expectEqualStrings("UPDA\u{2026} CA    ", rowText(&row, &f, 0));
+        try testing.expectEqualStrings("UP... CA    ", rowText(&row, &f, 1));
+    }
+    {
+        // Wide enough: every name whole, no mark anywhere, either twin.
+        var f = try frame_mod.Frame.init(testing.allocator, 40, 2);
+        defer f.deinit();
+        _ = header(&f, 0, 0, 40, &squeezed, 1, th);
+        _ = headerFor(&f, 0, 1, 40, &squeezed, 1, th, true);
+        var row2: [256]u8 = undefined;
+        try testing.expectEqualStrings("PR    TITLE          STATUS", std.mem.trimEnd(u8, rowText(&row, &f, 0), " "));
+        try testing.expectEqualStrings(rowText(&row, &f, 0), rowText(&row2, &f, 1));
+    }
 }
