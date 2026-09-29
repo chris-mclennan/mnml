@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       linux_corpus:
-        description: "Also run the whole .test corpus on Linux (~12 min)"
+        description: "Also run the whole .test corpus on Linux (sharded four ways)"
         type: boolean
         default: false
 
@@ -131,7 +131,10 @@ jobs:
       # The Phase-0 gate (tools/gate.txt) at three sizes: content asserts at
       # 120x40; 80x24 and 200x60 assert no panic, no leak, no rect outside
       # its parent. Each file runs on a DebugAllocator with safety on.
+      # Not on ubuntu: the same ReleaseSafe build runs the same sweep there,
+      # split four ways, in the `corpus (shard i/4)` jobs below.
       - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
+        if: ${{ matrix.os != 'ubuntu-latest' }}
         shell: bash
         timeout-minutes: 40
         env:
@@ -147,8 +150,9 @@ jobs:
   # job because the `check` matrix above stops at the gate: the parts that
   # only ever broke on Linux were the corpus (a resolver error spelled
   # differently, a filesystem enumeration order) and the pty (a thread
-  # stack glibc refused). Build + unit + gate + mouse always; the corpus
-  # behind the workflow_dispatch flag, because it is ~12 minutes.
+  # stack glibc refused). Build + unit + mouse + integration suites here;
+  # the three-size gate always and the corpus behind the workflow_dispatch
+  # flag run from this job's build in the `corpus (shard i/4)` jobs.
   linux:
     name: linux (native) · gate · pty · corpus?
     runs-on: ubuntu-latest
@@ -192,10 +196,24 @@ jobs:
       - name: zig build -Doptimize=ReleaseSafe
         run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
 
-      - name: mnml-zig test --gate --sizes 80x24,120x40,200x60
-        env:
-          MNML_E2E_ALLOW_SHELL: "1"
-        run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60
+      # The build the `corpus (shard i/4)` jobs run: the whole install
+      # prefix — mnml-zig and everything the runner finds beside it (the
+      # fake DAP / LSP / Copilot / Jira / Bitbucket servers, the sample,
+      # Jira and Bitbucket integrations) plus share/. Tarred, because an
+      # artifact does not keep the executable bit. What the corpus reads
+      # from the checkout (tools/gate.txt, tests/e2e, tools/shims,
+      # launchers, the repo itself for $MNML_REPO) is baked into the
+      # binary as this checkout's absolute path, which is the same path
+      # in every job of this repository.
+      - name: pack zig-out for the corpus shards
+        run: tar -czf zig-out-linux.tgz zig-out
+      - name: upload zig-out
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zig-out-linux
+          path: zig-out-linux.tgz
+          retention-days: 1
+          if-no-files-found: error
 
       # A container and a runner both give a real pty; this is the only
       # place the terminal path (capability probe, mouse mode, SGR report,
@@ -203,16 +221,51 @@ jobs:
       - name: tools/pty-mouse-check.py
         run: python3 tools/pty-mouse-check.py
 
-      - name: the whole corpus
-        if: ${{ inputs.linux_corpus }}
-        env:
-          MNML_E2E_ALLOW_SHELL: "1"
-        run: ./zig-out/bin/mnml-zig test
-
       - name: the integration suites
         run: |
           (cd integrations/jira && zig build test --summary failures)
           (cd integrations/bitbucket && zig build test --summary failures)
+
+  # The long sequential runner steps, split four ways. They used to run
+  # one file after another inside `linux` (the three-size gate, then the
+  # whole corpus behind the flag: ~39 min for that job) and again inside
+  # `check` on ubuntu (the same gate: ~43 min for that job). Files are
+  # independent — each gets its own temp workspace and data root, and the
+  # offline fake servers bind port 0 — so `mnml-zig test --shard i/4`
+  # runs every fourth file of the runner's sorted list and the four jobs
+  # between them run each file exactly once. Measured on an 18-core Mac:
+  # the 1100-file corpus took ~57 min sequentially and 265 s as twelve
+  # parallel shards, with a byte-identical set of verdicts. Each job's
+  # trailer ends `, shard i/4`, so a failure names its slice.
+  corpus:
+    name: corpus (shard ${{ matrix.shard }}/4)
+    needs: linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - name: download zig-out
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zig-out-linux
+      - name: unpack zig-out
+        run: tar -xzf zig-out-linux.tgz && ./zig-out/bin/mnml-zig --version
+
+      - name: mnml-zig test --gate --sizes 80x24,120x40,200x60 --shard ${{ matrix.shard }}/4
+        timeout-minutes: 40
+        env:
+          MNML_E2E_ALLOW_SHELL: "1"
+        run: ./zig-out/bin/mnml-zig test --gate --sizes 80x24,120x40,200x60 --shard ${{ matrix.shard }}/4
+
+      - name: the whole corpus (shard ${{ matrix.shard }}/4)
+        if: ${{ inputs.linux_corpus }}
+        timeout-minutes: 60
+        env:
+          MNML_E2E_ALLOW_SHELL: "1"
+        run: ./zig-out/bin/mnml-zig test --shard ${{ matrix.shard }}/4
 
   # Cross-compile the exe and every test binary for each shipped target
   # (E7): Zig only analyses target-gated code when that target is built, so
