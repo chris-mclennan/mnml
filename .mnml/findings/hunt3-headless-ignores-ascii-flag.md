@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `mnml-zig --headless --ascii <ws>` ignores `--ascii`: the virtual screen is full of Nerd Font glyphs and powerline chevrons
 
@@ -23,3 +23,11 @@ with U+E0B0/U+E0B2 chevrons and the `󱼀 󰐎 ` glyphs, and the top bar's `󰍉
 **Why:** `headlessSubcommand` calls `loadConfig(gpa, io, env, ws_abs, argv, false)` (`src/main.zig:1014`) with the `ascii` argument hard-coded `false`; the terminal path parses `--ascii` (`src/main.zig:323`) but the headless one never does.
 
 **Reproduced:** 4/4 fresh launches.
+
+**Fixed:** `headlessSubcommand` reads its arguments through `headlessArgs`
+(`src/main.zig`), which takes `--ascii` and passes it to `loadConfig`,
+setting `ui.ascii_icons` as the terminal path and the `.test` runner's
+`# ascii` do. Test: `main.zig` "--headless reads --ascii, --stub and the
+workspace…". A private `--headless --ascii` launch at 80x24 paints the
+statusline `START  [no file] … B >   !  01:53  ws   —`; without the
+flag, the same launch paints the Nerd Font cluster.

@@ -18,6 +18,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const builtin = @import("builtin");
+const vaxis = @import("vaxis");
+const utf8 = @import("../core/utf8.zig");
+const clip = @import("../ui/clip.zig");
 const ipc_command = @import("command.zig");
 const sessions_table = @import("../app/sessions_table.zig");
 const app_mod = @import("../app.zig");
@@ -233,19 +236,21 @@ pub const Rendered = struct {
     text: []const u8,
     color: ?[]const u8,
     clickable: bool,
+    /// The cells the pack charged this chip against its lane's budget:
+    /// its text and the two cells of padding (` text `) the painter
+    /// puts round it.
+    cells: u16,
 };
-
-pub const ellipsis_unicode = "…";
-pub const ellipsis_ascii = "...";
 
 /// The hybrid pack Rust's statusline does: by priority (high first,
 /// ties in registration order), each segment takes the smaller of
 /// its natural width and `max_width` while the budget allows, is
 /// truncated to what is left when that is at least `min_width` (or
 /// its whole natural width, when shorter), and is dropped otherwise.
-/// Widths are in codepoints; the terminal's columns are close enough
-/// for a chip.
-pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usize, ascii: bool) Allocator.Error![]Rendered {
+/// Widths are cells under `method`, the screen's — the measure the
+/// painter lays the chips and their hits by, so a CJK character or an
+/// emoji costs the two cells it paints, not one codepoint.
+pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usize, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]Rendered {
     var order: std.ArrayListUnmanaged(u32) = .empty;
     for (segments, 0..) |s, i| if (s.side == side) try order.append(arena, @intCast(i));
     const Ctx = struct {
@@ -267,33 +272,20 @@ pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usi
     var left = budget;
     for (order.items) |i| {
         const s = segments[i];
-        const natural = std.unicode.utf8CountCodepoints(s.text) catch s.text.len;
+        const natural: usize = utf8.width(s.text, method);
         // Two cells of padding are the chip's own (` text `).
         const desired = @min(natural, @as(usize, s.max_width));
         const need = @min(natural, @as(usize, s.min_width));
         if (left < need + 2) continue;
         const take = @min(desired, left - 2);
-        const text: []const u8 = if (take >= natural) s.text else try truncate(arena, s.text, take, ascii);
-        try out.append(arena, .{ .index = i, .id = s.id, .text = text, .color = s.color, .clickable = s.click_command != null });
-        left -= take + 2;
+        const text: []const u8 = if (take >= natural) s.text else try clip.clipCells(arena, s.text, @intCast(take), .{ .method = method, .ellipsis = clip.ellipsisFor(ascii) });
+        // A cut that would tear a wide glyph stops short of it: charge
+        // what the text really takes.
+        const cells = utf8.width(text, method);
+        try out.append(arena, .{ .index = i, .id = s.id, .text = text, .color = s.color, .clickable = s.click_command != null, .cells = cells + 2 });
+        left -= cells + 2;
     }
     return out.toOwnedSlice(arena);
-}
-
-/// The first `width` codepoints with the ellipsis in the last slot.
-fn truncate(arena: Allocator, text: []const u8, width: usize, ascii: bool) Allocator.Error![]const u8 {
-    const ell: []const u8 = if (ascii) ellipsis_ascii else ellipsis_unicode;
-    const ell_w: usize = if (ascii) 3 else 1;
-    if (width <= ell_w) return ell[0..@min(ell.len, width)];
-    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
-    var kept: usize = 0;
-    var end: usize = 0;
-    while (it.nextCodepointSlice()) |cp| {
-        if (kept + ell_w >= width) break;
-        end += cp.len;
-        kept += 1;
-    }
-    return std.fmt.allocPrint(arena, "{s}{s}", .{ text[0..end], ell });
 }
 
 // ─── notify ─────────────────────────────────────────────────────────────
@@ -829,8 +821,8 @@ test "pack: equal priorities lay out by id whichever arrived first — one scree
     try second.setSegment(t.allocator, .{ .id = "bitbucket_prs.prs_mine", .text = "B 2(1)", .priority = 60, .min_width = 2 });
     try second.setSegment(t.allocator, .{ .id = "jira_work.assigned", .text = "J 3", .priority = 60, .min_width = 2 });
     const budget: usize = 12; // "B 2(1)" + 2 = 8, then 4 left: "J 3" needs 3 + 2
-    const one = try pack(a, first.segments.items, .right, budget, false);
-    const two = try pack(a, second.segments.items, .right, budget, false);
+    const one = try pack(a, first.segments.items, .right, budget, false, .unicode);
+    const two = try pack(a, second.segments.items, .right, budget, false, .unicode);
     try t.expectEqual(one.len, two.len);
     for (one, two) |x, y| {
         try t.expectEqualStrings(x.id, y.id);
@@ -851,7 +843,7 @@ test "pack: priority order, max_width truncation, min_width drop" {
     try st.setSegment(t.allocator, .{ .id = "norm", .text = "normal", .min_width = 4 });
     try st.setSegment(t.allocator, .{ .id = "lefty", .text = "L", .side = .left, .click_command = "app.quit" });
     // Plenty of room: 200, 100, 50 — `must` truncated to its max_width.
-    const wide = try pack(a, st.segments.items, .right, 100, false);
+    const wide = try pack(a, st.segments.items, .right, 100, false, .unicode);
     try t.expectEqual(@as(usize, 3), wide.len);
     try t.expectEqual(@as(u32, 1), wide[0].index);
     try t.expectEqualStrings("alway…", wide[0].text);
@@ -859,21 +851,41 @@ test "pack: priority order, max_width truncation, min_width drop" {
     try t.expectEqualStrings("nice to have", wide[2].text);
     try t.expect(!wide[0].clickable);
     // 8 + 8 cells: `must` (6+2), `normal` (6+2); nothing left for `nice`.
-    const tight = try pack(a, st.segments.items, .right, 16, false);
+    const tight = try pack(a, st.segments.items, .right, 16, false, .unicode);
     try t.expectEqual(@as(usize, 2), tight.len);
     try t.expectEqualStrings("normal", tight[1].text);
     // 8 + 6: `normal` truncated to 4 (its min_width) with the ellipsis.
-    const tighter = try pack(a, st.segments.items, .right, 14, false);
+    const tighter = try pack(a, st.segments.items, .right, 14, false, .unicode);
     try t.expectEqual(@as(usize, 2), tighter.len);
     try t.expectEqualStrings("nor…", tighter[1].text);
     // Under `--ascii` the ellipsis is three dots.
-    const asc = try pack(a, st.segments.items, .right, 14, true);
+    const asc = try pack(a, st.segments.items, .right, 14, true, .unicode);
     try t.expectEqualStrings("n...", asc[1].text);
     // Below min_width + padding it is dropped, and the room goes to the next.
-    const drop = try pack(a, st.segments.items, .right, 12, false);
+    const drop = try pack(a, st.segments.items, .right, 12, false, .unicode);
     try t.expectEqual(@as(usize, 1), drop.len);
     // The left side is its own lane.
-    const l = try pack(a, st.segments.items, .left, 100, false);
+    // Cells, not codepoints: `漢字 2` is four codepoints and six cells,
+    // and a cut never tears a glyph — seven cells hold `漢字漢…`.
+    try st.setSegment(t.allocator, .{ .id = "wide", .text = "\u{6f22}\u{5b57} 2", .side = .left, .priority = 190 });
+    try st.setSegment(t.allocator, .{ .id = "cut", .text = "\u{6f22}\u{5b57}\u{6f22}\u{5b57}\u{6f22}", .side = .left, .priority = 180, .max_width = 8 });
+    const w = try pack(a, st.segments.items, .left, 100, false, .unicode);
+    try t.expectEqualStrings("\u{6f22}\u{5b57} 2", w[0].text);
+    try t.expectEqual(@as(u16, 8), w[0].cells);
+    try t.expectEqualStrings("\u{6f22}\u{5b57}\u{6f22}\u{2026}", w[1].text);
+    try t.expectEqual(@as(u16, 9), w[1].cells);
+    // Nine cells of budget: `漢字 2` (8) fits and nothing else does.
+    try t.expectEqual(@as(usize, 1), (try pack(a, st.segments.items, .left, 9, false, .unicode)).len);
+    // A cut to one cell is the whole mark, never its first byte.
+    try st.setSegment(t.allocator, .{ .id = "tiny", .text = "abcdef", .side = .left, .priority = 170, .max_width = 1 });
+    for ([_]bool{ false, true }) |ascii| for (try pack(a, st.segments.items, .left, 100, ascii, .unicode)) |r| if (std.mem.eql(u8, r.id, "tiny")) {
+        try t.expectEqualStrings(if (ascii) "." else "\u{2026}", r.text);
+        try t.expectEqual(@as(u16, 3), r.cells);
+    };
+    _ = st.clearSegment(t.allocator, "tiny");
+    _ = st.clearSegment(t.allocator, "wide");
+    _ = st.clearSegment(t.allocator, "cut");
+    const l = try pack(a, st.segments.items, .left, 100, false, .unicode);
     try t.expectEqual(@as(usize, 1), l.len);
     try t.expectEqual(@as(u32, 3), l[0].index);
     try t.expect(l[0].clickable);

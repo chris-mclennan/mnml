@@ -288,11 +288,12 @@ pub fn Painter(comptime Target: type) type {
             p.f.fill(r.x, r.y, r.w, r.h, style);
         }
 
-        /// A table's column header row (`columns.header`): names in
-        /// `label()`, clipped to their widths, `gap` cells between.
+        /// A table's column header row (`columns.headerFor`): names in
+        /// `label()`, fitted to their widths with an ellipsis (`...`
+        /// under `--ascii`, by the pane's `Ui`), `gap` cells between.
         pub fn columnHeader(p: *Self, x0: u16, y: u16, max_w: u16, list: anytype, gap: u16) u16 {
             if (y >= p.rows() or x0 >= p.cols()) return 0;
-            return columns_mod.header(p.f, x0, y, max_w, list, gap, p.th);
+            return columns_mod.headerFor(p.f, x0, y, max_w, list, gap, p.th, p.ui.ascii or !p.ui.nerd);
         }
 
         /// A fill meter (`meter.paint`), `--ascii` twin by the pane's `Ui`.
