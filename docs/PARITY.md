@@ -22,11 +22,12 @@ status |` row per line), not by hand. *2026-09-26:* the recount by that
 script finds one row more than the table had — `Panes` 28, not 27: the
 `Ctrl-W` resize row writes `\|` inside a code span, and the old count split
 the row there. One row moved from `done` to `partial` (the update check's
-*Skipped in headless*, below).
+*Skipped in headless*, below) and back to `done` once only the terminal
+loop starts that check (`24b9b6a8`).
 
 | section | done | partial | cut | missing | rows |
 |---|---|---|---|---|---|
-| Editing & input | 54 | 0 | 0 | 0 | 54 |
+| Editing & input | 55 | 0 | 0 | 0 | 55 |
 | Panes, splits & tab pages | 28 | 0 | 0 | 0 | 28 |
 | File manager | 22 | 0 | 0 | 0 | 22 |
 | Navigation & search | 36 | 0 | 0 | 0 | 36 |
@@ -42,9 +43,9 @@ the row there. One row moved from `done` to `partial` (the update check's
 | Testing & quality | 20 | 0 | 0 | 0 | 20 |
 | UI & theming | 97 | 0 | 1 | 0 | 98 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 59 | 1 | 2 | 1 | 63 |
+| Headless, IPC & extensibility | 60 | 0 | 2 | 1 | 63 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **603** | **1** | **7** | **1** | **612** |
+| **total** | **605** | **0** | **7** | **1** | **613** |
 
 The two integration sections at the bottom (jira: 44 done, 1 cut, of 45;
 bitbucket: 41 done, 1 cut, of 42) are counted apart: they measure the
@@ -174,7 +175,6 @@ the tree. Nothing left is larger than M.
 |---|---|---|
 | (none — every spec id has a runner or a `cutRunner`; `zig build -Dpartial=false` builds and CI runs it) | — | Headless, IPC & extensibility |
 | `--demo` launch mode (deferred until the website work) | M | Headless, IPC & extensibility |
-| The update check skips `--headless` as it skips a `.test` run (today `main.zig` emits `startup` headless and `update.onStartup` asks GitHub) | S | Headless, IPC & extensibility |
 
 Everything else the first Remaining list named landed on the `remaining`
 branch (2026-09-05; the corpus was 351/352 then — the one failure asserted TOML; it asserts ZON since 2026-09-07 and the corpus is 393/393): MRU buffers, pins and `tab.reopen`; the symbol,
@@ -893,7 +893,7 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | `mnml.app` launcher default | done | `dist/macos/{Info.plist,launcher.sh,build-app.sh}`, `scripts/package.sh --macos-app` | ghostty first, Terminal.app else; the picker on |
 | Update check on launch | done | `src/app/update.zig` | |
 | `ui.check_updates = false` opt-out | done | `Config.zig`, `update.zig` | + `MNML_NO_UPDATE_CHECK=1` |
-| Skipped in headless | partial | `src/app/update.zig`, `src/main.zig`, `src/e2e/driver.zig` | a `.test` run never emits `startup` (`startup_hook = false`), so the corpus never checks; `--headless` DOES emit it (`main.zig` sets `startup_hook = true`), so a headless run asks GitHub unless `ui.check_updates = false` or `MNML_NO_UPDATE_CHECK=1` — `update.zig`'s header still says "never headless" |
+| Skipped in headless | done | `src/app/update.zig` (`startupCheck`), `src/tui/loop.zig`, `src/app/driver.zig` | the automatic check is not a `startup` hook subscriber: only the terminal loop calls `update.startupCheck` after its `startup` hook, so `--headless`, a `.test` run and the unit tests never ask GitHub (`driver: the headless loop runs the startup hook but never the update check`) |
 | `zig build docs` → `docs/commands.md` | done | `tools/gen_commands.zig`, `build.zig` | Zig-only |
 | `zig build check` (E7 gates) | done | `build.zig`, `tools/break-check.sh`, `tests/e2e/defaults.test` | fmt → Debug tests → ReleaseSafe tests → the gate → the width sweep → `defaults.test` → the full corpus; Zig-only |
 | Session file `.mnml/session.zon` | done | `src/app/session.zig` | ZON, never JSON |
