@@ -58,9 +58,9 @@ jobs:
 
   # The unit suites, one job per platform and optimize mode (Debug, and
   # ReleaseSafe — what ships). Leak = FAIL: every unit test runs on
-  # std.testing.allocator. Windows runs the same command; the POSIX-gated
-  # pty / tui suites are simply not in its graph (build.zig,
-  # `pty_supported`).
+  # std.testing.allocator. Windows runs the same command, pty and tui
+  # suites included (build.zig adds them on every target); the tests that
+  # need a real pty or tty skip themselves there.
   #
   # `test` is `unit` plus the one-size e2e gate. Windows and macOS run
   # Debug `unit` with every test's name streamed as it starts: the
