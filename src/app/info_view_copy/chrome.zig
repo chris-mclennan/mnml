@@ -42,7 +42,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     if (Button.tabPageOf(id)) |page| return try tabPage(app, arena, page);
     if (Button.tabPageCloseOf(id) != null) return .{
         .title = "Close this tab page",
-        .body = "Closes the whole tab page — every split and tab in it — and shows the page before it. A page with an unsaved buffer asks first, once per dirty buffer. There is always one page left: the `×` on the last one is not painted.",
+        .body = "Closes the whole tab page — every split and tab in it — and shows the page before it. Nothing asks: a buffer with unsaved edits moves to the page that stays as a background tab, and the clean ones close. On the last page the `×` is still painted and the click only says there is one tab page.",
         .links = &.{ .{ .command = .{ .id = .@"tab.close", .label = "Close this page" } }, .{ .command = .{ .id = .@"tab.only", .label = "Close every other page" } } },
     };
     if (Button.tabScrollOf(id)) |ts| return .{
@@ -53,7 +53,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     };
     if (Button.newTabLeaf(id) != null) return .{
         .title = "+ New tab",
-        .body = "A new scratch buffer as a tab in this split — untitled until its first save, which asks for a path. Right-click is the *Create…* menu: a new file, a shell, a Claude or Codex session, a panel, a tool, an integration; rows can be pinned to the top of that menu or hidden from it. The launcher dock's `+` opens the same menu.",
+        .body = "Click or right-click opens the *Create…* menu, aimed at this split: a new file, a shell, a Claude or Codex session, a panel, a tool, an integration; rows can be pinned to the top of that menu or hidden from it. In git mode a left click brings a closed repo back instead. The launcher dock's `+` opens the same menu.",
         .keys = &.{ .{ .command = .@"file.new", .label = "New file" }, .{ .command = .@"term.shell", .label = "New shell" } },
         .links = &.{ .{ .command = .{ .id = .@"scratch.new", .label = "New scratch buffer" } }, .{ .command = .{ .id = .@"file.new", .label = "New file…" } }, .{ .command = .{ .id = .@"term.shell", .label = "Open a shell" } } },
     };
@@ -105,13 +105,13 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     return switch (@as(Button, @enumFromInt(id))) {
         .palette => .{
             .title = "Workspace chip — the pickers",
-            .body = "The chip that names the workspace at the left of the strip is the door to the pickers: click opens the file picker (fuzzy, over every file the tree knows, `.git/` excluded), right-click the recent-files list. The command palette is the same picker over the commands; type a `>` first in the file picker and it becomes that.",
+            .body = "The chip that names the workspace at the left of the strip is the door to the pickers: click opens the command palette, right-click the recent-files list. The file picker (fuzzy, over every file the tree knows, `.git/` excluded) is the same picker over the files; type a `>` first in it and it becomes the palette.",
             .keys = &.{ .{ .command = .@"picker.files", .label = "Files" }, .{ .command = .palette, .label = "Commands" }, .{ .command = .@"picker.recent", .label = "Recent files" } },
             .links = &.{ .{ .command = .{ .id = .@"picker.files", .label = "Open a file" } }, .{ .command = .{ .id = .palette, .label = "The command palette" } }, .{ .command = .{ .id = .@"picker.recent", .label = "Recent files" } } },
         },
         .toggle_tree => .{
             .title = if (app.tree.visible) "Left column — open" else "Left column — hidden",
-            .body = "Shows or hides the left column: the file tree, or whichever section is on that side, with this info box under it. Click toggles; right-click lists the column's modes — always, auto (slides in when the pointer rests at the edge), hidden — which is `ui.sidebar` in Settings. Hidden, the edge grip `⋮` at the column's edge is the way back with the mouse.",
+            .body = "Shows or hides the left column: the file tree, or whichever section is on that side, with this info box under it. Click toggles; right-click is Show or Hide, Reset sidebar width and Focus sidebar. The column's mode — always, auto (slides in when the pointer rests at the edge), hidden — is `ui.sidebar` in Settings; under auto, with `ui.edge_grips` on, a `⋮` grip marks the edge.",
             .keys = &.{ .{ .command = .@"view.toggle_tree", .label = "Toggle the left column" }, .{ .command = .@"view.focus_tree", .label = "Focus the tree" } },
             .links = &.{ .{ .command = .{ .id = .@"view.toggle_tree", .label = "Toggle it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
         },
@@ -125,19 +125,19 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .ai_codex => try aiLauncher(app, .codex),
         .back => .{
             .title = "Back — the previous buffer",
-            .body = if (n <= 1) "Steps back through the buffers in most-recently-used order. There is only one buffer open, so the button is dimmed and the click does nothing; it wakes when a second tab is open. Right-click lists the recent buffers." else try std.fmt.allocPrint(arena, "Steps back through the {d} open buffers in most-recently-used order — the tab you were on before this one, then the one before that. Right-click lists them so a jump three back is one click. The jumplist (`nav.back`) is the other history: positions inside files rather than tabs.", .{n}),
+            .body = if (n <= 1) "Steps to the previous tab of the active split, by position, wrapping at the start; terminal tabs are stepped over. With one buffer open the click does nothing. Right-click is Previous, Next, Buffers… and Clear history." else try std.fmt.allocPrint(arena, "Steps to the previous tab of the active split, by position along the strip, wrapping at the start; terminal tabs are stepped over ({d} panes are open). Right-click is Previous, Next, Buffers… (the picker) and Clear history. The jumplist (`nav.back`) is the other history: positions inside files rather than tabs.", .{n}),
             .keys = &.{ .{ .command = .@"buffer.prev", .label = "Previous buffer" }, .{ .command = .@"nav.back", .label = "Back in the jumplist" } },
             .links = &.{ .{ .command = .{ .id = .@"buffer.prev", .label = "Previous buffer" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Pick a buffer" } } },
         },
         .forward => .{
             .title = "Forward — the next buffer",
-            .body = if (n <= 1) "Steps forward through the buffers in most-recently-used order. With one buffer open the button is dimmed and does nothing; it wakes when a second tab is open. Right-click lists the recent buffers." else try std.fmt.allocPrint(arena, "Steps forward through the {d} open buffers in most-recently-used order — the reverse of Back. Right-click lists them. The jumplist (`nav.forward`) is the other history: positions inside files rather than tabs.", .{n}),
+            .body = if (n <= 1) "Steps to the next tab of the active split, by position, wrapping at the end; terminal tabs are stepped over. With one buffer open the click does nothing. Right-click is Previous, Next, Buffers… and Clear history." else try std.fmt.allocPrint(arena, "Steps to the next tab of the active split, by position along the strip, wrapping at the end — the reverse of Back ({d} panes are open). Right-click is Previous, Next, Buffers… and Clear history. The jumplist (`nav.forward`) is the other history: positions inside files rather than tabs.", .{n}),
             .keys = &.{ .{ .command = .@"buffer.next", .label = "Next buffer" }, .{ .command = .@"nav.forward", .label = "Forward in the jumplist" } },
             .links = &.{ .{ .command = .{ .id = .@"buffer.next", .label = "Next buffer" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Pick a buffer" } } },
         },
         .dropdown => .{
             .title = "Recent files",
-            .body = "The `▾` beside the workspace chip lists the files opened most recently in this workspace, newest first, kept across restarts in the session. Click opens the list as a picker; right-click is the Open menu with the recent rows inline. `file.clear_recent` empties it.",
+            .body = "The `▾` beside the workspace chip lists the files opened most recently in this workspace, newest first, kept across restarts in the session. Click opens the list as a picker; right-click is the Open… menu — Recent files, Recent commands, All files, Command palette. `file.clear_recent` empties it.",
             .keys = &.{.{ .command = .@"picker.recent", .label = "Recent files" }},
             .links = &.{ .{ .command = .{ .id = .@"picker.recent", .label = "Open the list" } }, .{ .command = .{ .id = .@"file.clear_recent", .label = "Clear it" } } },
         },
@@ -149,12 +149,12 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .tabs_label => .{
             .title = if (app.layouts.layouts.items.len <= 1) "TABS — one tab page" else try std.fmt.allocPrint(arena, "TABS — {d} tab pages", .{app.layouts.layouts.items.len}),
-            .body = "The cluster's label for the tab pages; the numbered chips after it are the pages, the active one lit. Click switches page; right-click is the cluster's menu — how much of the cluster shows (`ui.top_bar_cluster_mode`: expanded, compact, auto), the AI chips, the theme pill. On a narrow terminal the cluster compacts to the chips alone.",
+            .body = "The cluster's label for the tab pages; the numbered chips after it are the pages, the active one lit. Click opens the tab-page picker; right-click is the cluster's menu — how much of the cluster shows (`ui.top_bar_cluster_mode`: expanded, compact, auto) and Tab pages…. On a narrow terminal the cluster compacts to the chips alone.",
             .links = &.{ .{ .command = .{ .id = .@"tab.picker", .label = "Pick a page" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.top_bar_cluster_mode"), .label = "Top bar cluster" } } },
         },
         .theme_toggle => .{
             .title = try std.fmt.allocPrint(arena, "Theme — {s}", .{app.theme.name}),
-            .body = "The theme pill names the active theme. Click toggles between the configured pair (`theme.toggle`); right-click is the theme menu — pick from every shipped and user theme, follow the system's light/dark, reset. Picking one writes `ui.theme` to the home config, so it holds across workspaces.",
+            .body = "The theme pill names the active theme. Click toggles to the alternate `ui.theme_toggle` names (`theme.toggle`), or opens the picker when none is set; right-click is the theme menu — pick from every shipped and user theme, follow the system's light/dark, reset. Picking one writes `ui.theme` to the home config, so it holds across workspaces.",
             .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the theme" }},
             .links = &.{ .{ .command = .{ .id = .@"theme.pick", .label = "Pick a theme" } }, .{ .command = .{ .id = .@"theme.auto_system", .label = "Follow the system" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.theme"), .label = "Theme in Settings" } } },
         },
@@ -219,7 +219,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .right_new => .{
             .title = "Add a panel to the right column",
-            .body = "Click opens the add-panel menu: the outline, diagnostics, and every section that can be shown in the right column. A section already on the left moves over; its rail menu's *Move to right side* is the same thing. The column opens if it was hidden.",
+            .body = "Click opens the Add panel menu: Outline, Problems, AI chat, Grep, Tests — each row runs its command, which opens that panel where it lives. A section on the left is moved over from its rail menu's *Move to right side* instead.",
             .keys = &.{.{ .command = .@"lsp.diagnostics", .label = "Diagnostics" }},
             .links = &.{ .{ .command = .{ .id = .@"outline.show", .label = "The outline" } }, .{ .command = .{ .id = .@"lsp.diagnostics", .label = "Diagnostics" } } },
         },
@@ -237,13 +237,13 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .cmdline_bar => .{
             .title = "The command line",
-            .body = "The row under the statusline is the `:` line: click it (or press the chord) and type an ex command — `:e path`, `:42`, `:set wrap`, `:!make` — with Tab completion and a history on the arrows. While a send or a build is in flight the row shows a `⟳ … running…` indicator instead; an echoed toast's `[name]` here reveals the pane it names.",
+            .body = "The row under the statusline is the `:` line: click it (or press the chord) and type an ex command — `:e path`, `:42`, `:set wrap`, `:!make` — with Tab completion and a history on the arrows. While HTTP work is in flight — a send, a bench, a chain, a sync — the row's right end shows a `⟳ … running…` indicator; an echoed toast's `[name]` here reveals the pane it names.",
             .keys = &.{.{ .command = .@"app.command_line", .label = "Open the : line" }},
             .links = &.{ .{ .command = .{ .id = .@"app.command_line", .label = "Open the command line" } }, .{ .command = .{ .id = .@"view.cmdline_history", .label = "Show the history" } } },
         },
         .cmdline_inflight => .{
             .title = "Work in flight",
-            .body = "Something is running — an HTTP send, a chain, a build — and the command-line row is reporting it while it does. Click aborts every in-flight send (`http.abort`); a build started from a terminal is stopped in that terminal. The row goes back to the `:` line when the last job finishes.",
+            .body = "HTTP work is running — a send, a bench, an env fan-out, a sync, a chain — and the command-line row names it, with how long it has been going. Click aborts every in-flight send (`http.abort`). The indicator goes when the last of them finishes.",
             .links = &.{ .{ .command = .{ .id = .@"http.abort", .label = "Abort every send" } }, ask },
         },
         .cmdline_mention => .{
@@ -259,18 +259,18 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .sidebar_pin => .{
             .title = "Pin the column",
-            .body = "The chip at the edge of a slid-in column. Click docks the column for the session — it stops sliding away and the frame is carved out for it as under `always`; click again to let it go. The pin, unlike the mode, is remembered in the session, so a pinned column is pinned again at the next start. Right-click lists the modes.",
+            .body = "The chip at the edge of a slid-in column. Click docks the column for the session — it stops sliding away and the frame is carved out for it as under `always`; click again to let it go. The pin, unlike the mode, is remembered in the session, so a pinned column is pinned again at the next start. The chip has no menu: a right press toggles the pin too.",
             .keys = &.{.{ .command = .@"view.sidebar_pin", .label = "Pin / unpin" }},
             .links = &.{ .{ .command = .{ .id = .@"view.sidebar_pin", .label = "Pin / unpin" } }, .{ .command = .{ .id = .@"view.sidebar_mode_always", .label = "Always show it" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar"), .label = "Side columns in Settings" } } },
         },
         .menu_bar_pin => .{
             .title = if (app.menu_bar.pinned) "Menu bar — pinned" else "Pin the menu bar",
-            .body = "The chip past the menu bar's words, painted only while `ui.menu_bar` lets the bar hide. Click keeps the words up for this session so the bar stops sliding away; click again to let it go. Right-click lists the bar's modes — always, auto, hidden. The pin is remembered in the session; the mode is the config's.",
+            .body = "The chip past the menu bar's words, painted only while `ui.menu_bar` lets the bar hide. Click keeps the words up for this session so the bar stops sliding away; click again to let it go. Right-click has two rows: pin or unpin, and one that steps `ui.menu_bar` to its next mode. The pin is remembered in the session; the mode is the config's.",
             .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Pin / unpin" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } } },
         },
         .edge_grip_menu_bar => .{
             .title = "The menu bar hides here",
-            .body = "The `⋯` at the top centre marks the band that brings the menu bar back: rest the pointer on it and the words slide in over the top row. Click reveals AND pins the bar for the session — the same pin the chip past its words toggles — and right-click lists the bar's modes. `ui.edge_grips` turns all three grips off if you know the bands by heart.",
+            .body = "The `⋯` in the middle of the run the menu words take marks the band that brings the menu bar back: rest the pointer on it and the words slide in over the top row. Click reveals AND pins the bar for the session — the same pin the chip past its words toggles — and right-click is that chip's menu: pin, and step to the next mode. `ui.edge_grips` turns all three grips off if you know the bands by heart.",
             .links = &.{ .{ .command = .{ .id = .@"view.menu_bar_pin", .label = "Reveal and pin the bar" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.menu_bar"), .label = "Menu bar in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
         .edge_grip_sidebar_left, .edge_grip_sidebar_right => .{
@@ -317,7 +317,7 @@ fn tabPage(app: *App, arena: Allocator, page: usize) Allocator.Error!Entry {
     const active = page == app.layouts.active;
     return .{
         .title = try std.fmt.allocPrint(arena, "Tab page {d} of {d}{s}", .{ page + 1, n, if (active) " — active" else "" }),
-        .body = if (active) "This is the page on screen: its splits and tabs are what you see. Click on the other chips switches page; right-click on any chip is the page menu — rename, close, close the others, move. Alt+1..9 switch by number." else "Another layout — its own splits and tabs, kept as you left them. Click switches to it; right-click is the page menu — rename, close, close the others, move. Alt+1..9 switch by number, and the session restores every page.",
+        .body = if (active) "This is the page on screen: its splits and tabs are what you see. Click on the other chips switches page; right-click on any chip is the page menu — close, close the others, a new page, move left or right, the page picker. Alt+1..9 switch by number." else "Another layout — its own splits and tabs, kept as you left them. Click switches to it; right-click is the page menu — rename, close, close the others, move. Alt+1..9 switch by number, and the session restores every page.",
         .links = &.{ .{ .command = .{ .id = .@"tab.picker", .label = "Pick a page" } }, .{ .command = .{ .id = .@"tab.new", .label = "New page" } } },
     };
 }
@@ -389,7 +389,7 @@ pub fn breadcrumb(app: *App, arena: Allocator, pane_id: PaneId, idx: u16) Alloca
     if (idx >= names.len) return null;
     return .{
         .title = try std.fmt.allocPrint(arena, "Breadcrumb: {s}", .{names[idx]}),
-        .body = "The row over the editor spells the file's path from the workspace root, one segment per folder, then the symbol the cursor is in when a language server knows it. Click a segment to open a Files pane at that folder (the file's own segment opens its parent); right-click offers the folder's rows. `editor.breadcrumb` in Settings hides the row.",
+        .body = "The row over the editor spells the file's path from the workspace root, one segment per folder and the file's name last. Click a segment to open a Files pane at that folder (the file's own segment opens its parent); right-click offers the folder's rows. `editor.breadcrumb` in Settings hides the row.",
         .links = &.{ .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.breadcrumb"), .label = "Breadcrumb in Settings" } } },
     };
 }
@@ -403,7 +403,7 @@ pub fn divider(id: u32) Entry {
     };
     return .{
         .title = "Divider",
-        .body = "The line between two panes, or between a column and the editor area. Drag it to resize; the column widths are per workspace (`ui.tree_width`, `ui.right_panel_width`) and the split ratios live in the session. The keyboard resizes too: grow and shrink width or height from the Window menu, or equalize every split at once.",
+        .body = "The line between two panes, or between a column and the editor area. Drag it to resize; the column widths are per workspace (`ui.tree_width`, `ui.right_panel_width`) and the split ratios live in the session. The keyboard resizes too: the Window menu grows a split's width or height, and equalizes every split at once.",
         .keys = &.{.{ .chord = "Drag", .label = "Resize" }},
         .links = &.{ .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
     };
@@ -448,29 +448,29 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
     return switch (kind) {
         .editor => .{
             .title = "editor",
-            .body = "A text buffer. Click places the cursor, drag selects, the wheel scrolls; right-click is the editor menu — the clipboard, go to definition, the AI rows, format. The colour stripe down the left edge is the pane rail: it says which pane this is, and a Claude session's card wears the same colour. Ctrl+S saves; the file chip in the statusline shows ● while it is dirty.",
+            .body = "A text buffer. Click places the cursor, drag selects, the wheel scrolls; right-click is the editor menu — the clipboard, go to definition and references, rename, the AI rows, save. The colour stripe down the left edge is the pane rail: it says which pane this is, and a Claude session's card wears the same colour. Ctrl+S saves; the file chip in the statusline shows ● while it is dirty.",
             .keys = &.{ .{ .command = .@"file.save", .label = "Save" }, .{ .command = .palette, .label = "Command palette" }, .{ .command = .@"lsp.code_action", .label = "Code actions" } },
             .links = &.{ .{ .command = .{ .id = .@"lsp.code_action", .label = "Code actions" } }, .{ .command = .{ .id = .@"ai.explain", .label = "Explain the selection" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.pane_rail"), .label = "Pane colour rail" } } },
         },
         .pty => .{
             .title = "terminal",
-            .body = "A shell, or a program started as one, in a libghostty-vt terminal: keys go straight to it while it is focused, so mnml's own chords need the pane unfocused (F6 cycles). Click focuses and places nothing; the wheel scrolls its history; right-click is the pane menu — rename, restart, clear, paste, the accent colour. Closing the tab ends the child.",
+            .body = "A shell, or a program started as one, in a libghostty-vt terminal: keys go straight to it while it is focused, except the Ctrl and Alt chords mnml binds — Ctrl+C, D, Z and L always reach the program. Click focuses and places nothing; the wheel scrolls its history; right-click is the pane menu — rename, restart, clear, paste, the accent colour. Closing the tab ends the child.",
             .keys = &.{.{ .command = .@"focus.cycle", .label = "Cycle focus out" }},
             .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart the shell" } }, .{ .command = .{ .id = .@"term.rename", .label = "Rename" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.pty_cursor.blink"), .label = "Terminal cursor blinks" } } },
         },
         .ai => .{
             .title = "AI pane",
-            .body = "A Claude job's transcript — the question at the top, the answer streaming under it, and for an action (explain, fix, refactor) an Apply row that puts the result into the buffer it came from. Type at the bottom prompt to continue; right-click is the pane menu — re-ask, cancel, copy. The pane is the API or CLI route `ai.routing` picks, not a session tab.",
+            .body = "A Claude job's transcript — the question at the top, the answer streaming under it, and for an action (explain, fix, refactor) an Apply row that puts the result into the buffer it came from. Type at the bottom prompt to continue; right-click is the pane menu — re-ask, cancel, promote to an interactive session, apply. The pane is the API or CLI route `ai.routing` picks, not a session tab.",
             .links = &.{ .{ .command = .{ .id = .@"ai.reask", .label = "Ask again" } }, .{ .command = .{ .id = .@"ai.apply", .label = "Apply the result" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ai.routing.claude.backend"), .label = "Claude backend" } } },
         },
         .request => .{
             .title = "HTTP request",
-            .body = "A request being edited: method, URL, headers and body in fields, with `{{VAR}}` references resolved from the picked env at send time. Enter sends and the response opens beside it; Ctrl+S saves as `.http` / `.curl` into a collection. Right-click on a field is its own menu — copy as curl, generate code, the env variable under the cursor.",
+            .body = "A request being edited: method, URL, headers and body in fields, with `{{VAR}}` references resolved from the picked env at send time. Ctrl+Enter sends and the response fills the pane's Response half; Enter on a field starts editing it; Ctrl+S saves it into a collection. Right-click on a field is its own menu — send, paste or copy curl, cycle the method, format the body, insert a header, save.",
             .links = &.{ .{ .command = .{ .id = .@"http.send", .label = "Send the request" } }, .{ .command = .{ .id = .@"http.pick_env", .label = "Pick an env" } }, .{ .command = .{ .id = .@"http.ai_debug", .label = "Debug it with AI" } } },
         },
         .md_preview => .{
             .title = "markdown preview",
-            .body = "The rendered view of a markdown file — headings, lists, code, images where the terminal can draw them. Links open on click; the header chip swaps the raw editor in. The preview follows the source on save, so keep both open to see edits land. `ui.render_markdown` is the inline renderer inside the editor, a different thing.",
+            .body = "The rendered view of a markdown file — headings, lists, code, images where the terminal can draw them. Links open on click; the header chip swaps the raw editor in. The preview reads the editor's text as you type, so an edit shows on the next frame. `ui.render_markdown` is the inline renderer inside the editor, a different thing.",
             .links = &.{ .{ .command = .{ .id = .@"markdown.edit_raw", .label = "Edit the source" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.md_image_rows"), .label = "Markdown image rows" } } },
         },
         .zon => .{
@@ -481,12 +481,12 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         },
         .git_graph => .{
             .title = "commit graph",
-            .body = "The repo's history as a graph, in git mode: arrows walk commits, Enter opens the detail, the filters narrow by branch, author, date or subject. Right-click on a commit is its menu — checkout, cherry-pick, revert, tag, rebase from here. The graph is the active repo's; the repo pill in the palette switches it.",
+            .body = "The repo's history as a graph, in git mode: arrows walk commits, Enter opens the detail, the filters narrow by branch, author, date or subject. Right-click on a commit is its menu — details, diff, cherry-pick, revert, the rebase rows, reset, checkout, a branch or worktree from here. The graph is the active repo's; the repo pill in the palette switches it.",
             .links = &.{ .{ .command = .{ .id = .@"git.graph_filter_branch", .label = "Filter by branch" } }, .{ .command = .{ .id = .@"git.graph_filter_reset_all", .label = "Clear the filters" } }, ask },
         },
         .git_status => .{
             .title = "git status",
-            .body = "The working tree's changes, staged above unstaged: Enter opens the diff, `s` / `u` stage and unstage a file, `a` stages all, `c` commits, `d` discards after a confirm. Right-click on a row is the file's git menu. Conflicts are listed first with their own rows — ours, theirs, both, split. A submodule reads `sub/  (submodule, modified)`: its changes are committed inside it, so Enter opens it in the file tree rather than a diff.",
+            .body = "The working tree's changes, unstaged above staged: Enter opens the diff, `s` / `u` stage and unstage a file, `-` toggles it (Space too under standard), `a` stages all, `c` commits. Right-click on a row is the file's git menu. Conflicted files lead in a section of their own, and Enter opens the editor on one rather than a diff. A submodule reads `sub/  (submodule, modified)`: its changes are committed inside it, so Enter opens it in the file tree rather than a diff.",
             .keys = &.{.{ .command = .@"git.commit", .label = "Commit" }},
             .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Commit" } }, .{ .command = .{ .id = .@"git.ai_commit", .label = "Write the message with AI" } }, ask },
         },
@@ -498,13 +498,13 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         },
         .diff => .{
             .title = "diff",
-            .body = "A diff — a file against the index or a base, side by side or unified (`git.diff_toggle_view`). Select lines and stage, unstage, discard or stash just those; Enter on a hunk opens the file at that line. `]c` / `[c` step hunks under vim. Conflict hunks have their own rows — ours, theirs, both.",
+            .body = "A diff — a file against the index or a base, as hunks, inline or split (`git.diff_toggle_view` cycles the three). Select lines and stage, unstage, discard or stash just those; Enter on a hunk opens the file at that line. `]c` / `[c` step hunks and `]f` / `[f` files, in both profiles. Conflict hunks have their own rows — ours, theirs, both.",
             .keys = &.{.{ .command = .@"git.diff_next_file", .label = "Next file" }},
-            .links = &.{ .{ .command = .{ .id = .@"git.diff_toggle_view", .label = "Toggle split / unified" } }, .{ .command = .{ .id = .@"ai.explain_diff", .label = "Explain the diff" } }, ask },
+            .links = &.{ .{ .command = .{ .id = .@"git.diff_toggle_view", .label = "Cycle hunk / inline / split" } }, .{ .command = .{ .id = .@"ai.explain_diff", .label = "Explain the diff" } }, ask },
         },
         .grep => .{
             .title = "search results",
-            .body = "A workspace search's hits grouped by file, from ripgrep: Enter jumps to the line, Space toggles a hit for the replace, the folds collapse a file. Right-click on a hit is its menu — open in a split, copy the path or the line. The query and its flags are on the SEARCH section's header.",
+            .body = "A workspace search's hits grouped by file, from ripgrep: Enter jumps to the line, Space toggles a hit for the replace, the folds collapse a file. Right-click on a hit is its menu — open, skip or include it on replace, copy `path:line` and the text. The query and its flags are on the SEARCH section's header.",
             .links = &.{ .{ .command = .{ .id = .@"grep.refresh", .label = "Rerun the search" } }, .{ .command = .{ .id = .@"find.grep_replace", .label = "Replace across the hits" } } },
         },
         .debug => .{
@@ -525,12 +525,12 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         },
         .files => .{
             .title = "Files pane",
-            .body = "A folder as a list — a file manager rather than the tree: `u` goes up, Enter opens or enters, Space marks, the marked files copy or move to a destination, `d` trashes. The sort and hidden-files toggles are on its header. Transfers run on a worker and report in the statusline's transfer chip.",
+            .body = "A folder as a list — a file manager rather than the tree: ← or Backspace goes up (`h` too), Enter opens or enters, Space marks, the marked files copy or move to a destination, Delete trashes them. The sort and hidden-files toggles are on its header. Transfers run on a worker and report in the statusline's transfer chip.",
             .links = &.{ .{ .command = .{ .id = .@"files.toggle_hidden", .label = "Show hidden files" } }, .{ .command = .{ .id = .@"files.restore_from_trash", .label = "Restore from the trash" } } },
         },
         .tests => .{
             .title = "test results",
-            .body = "The last test run — each test with pass / fail and, opened, its output; Enter jumps to the failing line. The runner is the workspace's (cargo, pytest, go, npm, dotnet, the e2e corpus). Rerun-failed reruns only the red ones; the statusline's test chip carries the tally.",
+            .body = "The last test run — each test with pass / fail and, opened, its output; Enter jumps to the failing line. The runner is the workspace's — playwright, dotnet, zig, vitest or pytest. Rerun-failed reruns only the red ones; the statusline's test chip carries the tally.",
             .links = &.{ .{ .command = .{ .id = .@"test.rerun_failed", .label = "Rerun the failures" } }, .{ .command = .{ .id = .@"test.heal", .label = "Heal a failing test" } }, ask },
         },
         .browser => .{
