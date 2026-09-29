@@ -1539,13 +1539,16 @@ pub fn openThemeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
     errdefer rows.deinit(app.gpa);
     const cur = app.theme.name;
+    // Following is live state (the poll is armed), not the config key:
+    // `theme.auto_system` / `_off` switch it without writing the file.
+    const following = app.theme_auto_poll_ms != null;
     const toggle_label: []const u8 = if (app.cfg.ui.theme_toggle) |alt|
         (if (!std.ascii.eqlIgnoreCase(alt, cur)) try std.fmt.allocPrint(arena, "Toggle → {s}", .{alt}) else "Toggle (primary ⇄ alt)")
     else
         "Toggle (set ui.theme_toggle first)";
     try rows.appendSlice(app.gpa, &.{
         .{ .label = toggle_label, .action = .{ .command = .@"theme.toggle" } },
-        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (app.cfg.ui.theme_auto_system) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = app.cfg.ui.theme_auto_system },
+        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (following) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = following },
         .{ .label = "Reset to config default", .action = .{ .command = .@"theme.reset" } },
         .{ .label = "Pick theme…  (fuzzy)", .action = .{ .command = .@"theme.pick" } },
     });
@@ -1845,6 +1848,18 @@ test "right-click: the chrome chips — a chip with a menu answers true, one wit
     };
     try t.expectEqual(@as(usize, 1), ticked);
     closeMenu(&app);
+    // The system-follow row ticks while the poll is armed and offers
+    // the way out; unarmed it offers the way in.
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.theme_toggle), 3, 3));
+    try t.expect(!app.overlay.menu.items[1].checked);
+    try t.expectEqual(command.CommandId.@"theme.auto_system", app.overlay.menu.items[1].action.command);
+    closeMenu(&app);
+    app.theme_auto_poll_ms = app.now_ms + 60_000;
+    try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.theme_toggle), 3, 3));
+    try t.expect(app.overlay.menu.items[1].checked);
+    try t.expectEqual(command.CommandId.@"theme.auto_system_off", app.overlay.menu.items[1].action.command);
+    closeMenu(&app);
+    app.theme_auto_poll_ms = null;
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.split_term), 3, 3));
     try t.expectEqualStrings("Terminal", app.overlay.menu.title);
     try t.expectEqual(command.CommandId.@"term.shell_left", app.overlay.menu.items[1].action.command);

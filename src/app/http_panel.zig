@@ -1028,7 +1028,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
         // ladder of everything the section can create.
         .refresh => if (m.button == .right) try @import("auto_refresh.zig").openRefreshMenu(app, .http, m.x, m.y) else runToast(app, refresh(app)),
         .new => if (m.button == .right) try openNewLadderMenu(app, m.x, m.y) else runToast(app, command.run(app, .{ .static = .@"http.new" })),
-        .sort, .view, .history => {},
+        .sort, .history => {},
     }
 }
 

@@ -1,5 +1,5 @@
 //! Chips — the small pills in a panel header: the ` key: value ` mode
-//! chip (`sort: Newest first`, `view: Compact`) and the icon-only
+//! chip (`sort: Newest first`) and the icon-only
 //! refresh chip. One place for their text, style and paint so every
 //! panel's header reads as one family, and so a chip can never be
 //! painted without its hit — `paint` registers the target in the same

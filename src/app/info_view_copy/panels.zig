@@ -69,11 +69,6 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
             .body = "Creates an entry in this section: a todo is appended to TODO.md at the workspace root under an `## Inbox` heading; a note becomes a file in `.mnml/notes/`, a finding one in `.mnml/findings/` from a template; SESSIONS' `+` opens the New session menu — a local Claude Code session, one in a worktree, two, four or eight at once, or a cloud run. The section refreshes at once rather than waiting for the next scan.",
             .links = &.{ .{ .command = .{ .id = .@"notes.new", .label = "New note" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "New Claude session" } } },
         },
-        .view => .{
-            .title = "view: chip",
-            .body = "Click cycles how the rows paint — compact one-liners or cards with their detail lines; right-click picks one. The choice is per section and persisted. Cards say more per row and fit fewer; compact is the one for a short column.",
-            .links = &.{.{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } }},
-        },
         .history => .{
             .title = "Ended sessions",
             .body = "Click shows or hides the sessions that have ended — they keep their card, greyed, with the transcript a click away, until cleared. Right-click offers show, hide and clear. A session killed from its card ends here too; `sessions.open_transcript` reads what it said.",

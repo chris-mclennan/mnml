@@ -1113,6 +1113,18 @@ pub fn detectSystemDark(gpa: std.mem.Allocator, io: std.Io) ?bool {
 const t = std.testing;
 const Allocator = std.mem.Allocator;
 
+test "ui.theme_auto_system starts the system follow at launch; off leaves it stopped" {
+    var off = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
+    defer off.deinit();
+    try t.expect(off.theme_auto_poll_ms == null);
+    var cfg: Config = .{};
+    cfg.ui.theme_auto_system = true;
+    var on = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cfg = cfg });
+    defer on.deinit();
+    try t.expect(on.theme_auto_poll_ms != null);
+    try t.expect(on.theme_auto_poll_ms.? <= on.now_ms);
+}
+
 test "theme.pick previews under the cursor, Esc restores, Enter persists ui.theme to the home config" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

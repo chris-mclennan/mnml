@@ -30,7 +30,7 @@ pub const PanelId = panel.PanelId;
 /// // changed (sessions-card): `history` is the SESSIONS section's
 /// ended-sessions chip (click toggles them in, right-click lists the
 /// verbs).
-pub const ChipKind = enum { sort, refresh, new, view, history };
+pub const ChipKind = enum { sort, refresh, new, history };
 
 /// // changed (sessions-merge): the ids a pane-hosted `ListPanel`
 /// registers its parts under (`.script_hit{ pane, id }`): a row is

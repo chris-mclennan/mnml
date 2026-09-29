@@ -146,7 +146,7 @@ otherwise. Copy what you need; leave the rest out.
         .theme = "onedark", // any theme name; an open set
         .cmdline_popup_border_color = "", // "#RRGGBB" for the `:` line's completion popup; "" = the theme's overlay border
         .theme_toggle = null, // a second theme for theme.toggle
-        .theme_auto_system = false,
+        .theme_auto_system = false, // follow the OS light/dark from launch (theme.auto_system)
         .ascii_icons = false,
         .tree_width = 30, // clamped to 10..80
         .right_panel_visible = false,
@@ -1877,7 +1877,8 @@ and `:set theme=<name>` pick directly. `theme.toggle` flips to
 `.ui.theme_toggle`, or to the first bundled theme of the other kind
 when it is unset; `theme.reset` returns to `.ui.theme`;
 `theme.auto_system` follows the OS appearance (checked every 15 s) and
-`theme.auto_system_off` freezes it. Only a pick writes the file.
+`theme.auto_system_off` freezes it. `.ui.theme_auto_system = true`
+starts that follow at launch. Only a pick writes the file.
 
 A theme file is the palette as NvChad ships it, `0xrrggbb` values:
 

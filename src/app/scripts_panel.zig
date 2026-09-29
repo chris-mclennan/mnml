@@ -853,7 +853,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
             st.sort = st.sort.next();
             app.needs_render = true;
         },
-        .new, .view, .history => {},
+        .new, .history => {},
     }
 }
 

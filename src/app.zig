@@ -1702,6 +1702,7 @@ pub const App = struct {
         try app.toastConfigDiagnostics();
         try app.noticeUnreadToml();
         try app.applyTheme();
+        app.armSystemTheme();
         try trust_app.promptIfNeeded(&app);
         // D10: the scripts subscribe before the `startup` hook fires.
         // A hidden task one of them starts waits for the App's final
@@ -1791,6 +1792,7 @@ pub const App = struct {
         try self.toastConfigDiagnostics();
         self.probeWorkspaceToml();
         try self.applyTheme();
+        self.armSystemTheme();
         try script_api.rebind(self);
         // The reload may have taken the Copilot opt-in away (the key
         // edited out, or trust withdrawn). The server goes with it —
@@ -1819,6 +1821,13 @@ pub const App = struct {
         } else {
             try self.toastLevel(.warn, "config: ui.theme \"{s}\" is not a bundled theme; keeping {s}", .{ self.cfg.ui.theme, self.theme.name });
         }
+    }
+
+    /// `ui.theme_auto_system`: start following the OS light/dark, as
+    /// `theme.auto_system` does — the next tick asks the OS. Off in the
+    /// config leaves a follow started by the command alone.
+    pub fn armSystemTheme(self: *App) void {
+        if (self.cfg.ui.theme_auto_system) self.theme_auto_poll_ms = self.now_ms;
     }
 
     /// Paint with `t` from the next frame; every editor re-highlights in
