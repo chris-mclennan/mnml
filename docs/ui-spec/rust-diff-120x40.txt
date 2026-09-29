@@ -13,7 +13,7 @@
   │                          │
  󱘣 │  acmeco-mnml-workspace  │
    │                          │
-   │  adx                    │
+   │  web                    │
    │                          │
    │  acmeco-claude-plugins  │
    │                          │

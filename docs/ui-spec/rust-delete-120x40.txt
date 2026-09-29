@@ -13,7 +13,7 @@
   │                          │      │ Delete .gitignore?                        │
  󱘣 │  acmeco-mnml-workspace  │      │                                           │
    │                          │      │    Delete    Delete permanently   Cancel  │
-   │  adx                    │      └───────────────────────────────────────────┘
+   │  web                    │      └───────────────────────────────────────────┘
    │                          │
    │  acmeco-claude-plugins  │
    │                          │

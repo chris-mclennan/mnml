@@ -13,7 +13,7 @@
   │                │ [1]  Clock chip  click: local↔UTC · right-click: clock menu                  │
  󱘣 │  acmeco-mnml-w│ [ ]  Bufferline tabs  click: focus · middle: close · right-click: tab menu   │
    │                │ [ ]  > GIT rail header  Fetch / Pull / Push / Stage all / Commit / Graph     │
-   │  adx          │ [ ]  Editor gutter  right-click line: breakpoint / goto def / refs / blame…  │
+   │  web          │ [ ]  Editor gutter  right-click line: breakpoint / goto def / refs / blame…  │
    │                │ [ ]  Diff toolbar  Hunk / Inline / Split / Wrap / Close chips                │
    │  acmeco-claude│ [ ]  Fold chips (⋯)  click to expand the folded block                        │
    │                │ [ ]  Code-lens chips (⚡ )  click to run the lens command                     │

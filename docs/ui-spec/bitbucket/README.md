@@ -50,7 +50,7 @@ hint chips on the right).
 
 | screen | file | reached by | shows |
 |---|---|---|---|
-| Open + Draft tree, first paint | `rust-full-open-collapsed` | launch (the reference auto-expands every repo on the first fetch) | toolbar `[ 󰍉 Search ] [ Status: Open ▾ ] [ Author ▾ ] [ Target branch ▾ ] … [ 󰑐 Refresh ]`; columns `REPO / #PR · STATE · AUTHOR · BRANCH · UPDATED · TITLE`; a repo header row ` ▼ adx  15 PRs  <author> <branch> <date> #638 · <title>` (the header previews its first PR; an empty repo shows `last merged` + its last merge; an erroring repo shows `429 · retry in 30s` / `auth failed` / `no such repo` in red); PR rows `     #638  OPEN  Claude  fix/… 2026-09-16  <title>`; status `Open + Draft · 49 rows` |
+| Open + Draft tree, first paint | `rust-full-open-collapsed` | launch (the reference auto-expands every repo on the first fetch) | toolbar `[ 󰍉 Search ] [ Status: Open ▾ ] [ Author ▾ ] [ Target branch ▾ ] … [ 󰑐 Refresh ]`; columns `REPO / #PR · STATE · AUTHOR · BRANCH · UPDATED · TITLE`; a repo header row ` ▼ web  15 PRs  <author> <branch> <date> #638 · <title>` (the header previews its first PR; an empty repo shows `last merged` + its last merge; an erroring repo shows `429 · retry in 30s` / `auth failed` / `no such repo` in red); PR rows `     #638  OPEN  Claude  fix/… 2026-09-16  <title>`; status `Open + Draft · 49 rows` |
 | a PR row focused | `rust-full-open-pr-focused` | `j` `j` | the cursor row on a dark ground (no marker glyph) |
 | detail, loading | `rust-full-detail-loading` | `d` | the right 45%: `┌ ws/repo#id ┐` box, `loading detail…` |
 | detail | `rust-full-detail`, `rust-c-detail` | `d` (2 requests: PR, comments) | `STATE · source → dest`, `author: X · updated: YYYY-MM-DD`, `○ not approved · N total` (or `✓ you approved · N total`), blank, title (bold), blank, description (wrapped) or `(no description)`, blank, `comments (N, most-recent first):`, each `  author · date` then the body indented; the list squeezes to `REPO STATE AUTHOR BRANCH UPDATED TITLE` at 55% |
@@ -68,7 +68,7 @@ hint chips on the right).
 | the Author chip | `rust-full-click-author-chip` (the `…-refreshing` frame is too brief to catch offline) | click | toggles mine-only: `[ Author: Chris M ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
 | tab keys | `rust-full-tab-key` | `Tab` / `Shift+Tab` / `1`–`9` | the strip's highlight moves |
 | paging | `rust-full-pgdn`, `rust-full-home`, `rust-c-pgdn/pgup/end` | `PageDown` / `PageUp` / `Home`,`g` / `End`,`G` | ±10 rows, the ends |
-| hide a repo | `rust-c-hide-repo` | `x` on a tree row | the repo's rows go, status `hid adx (H to un-hide all)`, `hidden_repos` written to the TOML (comments dropped) |
+| hide a repo | `rust-c-hide-repo` | `x` on a tree row | the repo's rows go, status `hid web (H to un-hide all)`, `hidden_repos` written to the TOML (comments dropped) |
 | un-hide | `rust-c-unhide-all` | `H` | the repos return (collapsed), status `un-hid 1 repo(s)`; `nothing hidden` when the list is empty |
 | scope | `rust-c-scope-cycle-1/2/3` | `s` | status `scope: explicit` → `scope: all` → `scope: recent`; written to the TOML; the tabs refetch |
 | reorder | `rust-c-reorder-down`, `-up` | `alt+↓` / `alt+↑` on a tree row | the repo swaps places; `repo_order` written |

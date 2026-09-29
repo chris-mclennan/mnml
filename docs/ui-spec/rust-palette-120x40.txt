@@ -13,7 +13,7 @@
   │           │ git  ·  Open branch menu  ·  git.branch_menu                                          █│
  󱘣 │  acmeco-m│ git  ·  Git: diff this file (split)  ·  git.diff_file                                 █│
    │           │ git  ·  Git: toggle blame gutter  ·  git.blame_toggle                        ctrl+k b █│
-   │  adx     │ git  ·  Git: commit staged changes  ·  git.commit                          ctrl+k g c █│
+   │  web     │ git  ·  Git: commit staged changes  ·  git.commit                          ctrl+k g c █│
    │           │ git  ·  Git: delete tag (picker)  ·  git.tag_delete                                   █│
    │  acmeco-c│ git  ·  Git: redo the last undone commit  ·  git.redo                                 █│
    │           │ git  ·  Git: commit graph (DAG browser)  ·  git.graph                                 █│
