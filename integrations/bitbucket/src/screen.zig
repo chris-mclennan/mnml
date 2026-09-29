@@ -371,7 +371,7 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
     const cols = try view.fit(arena, view.tableOf(ts.data), inner_w -| 1);
     // The toolkit's column header — the one every table in the family
     // wears, so this pane's and a private pane's cannot drift apart.
-    _ = sdk.pane.columns.header(p.f, box.x + 2, box.y, inner_w -| 1, cols, view.gap, th);
+    _ = p.c.columnHeader(box.x + 2, box.y, inner_w -| 1, cols, view.gap);
     if (box.h < 2) return;
     const list: Box = .{ .x = box.x, .y = box.y + 1, .w = box.w, .h = box.h - 1 };
     const v = try app.visible(arena);
@@ -1789,6 +1789,9 @@ test "hover help names each element: a chip, a row, a hint entry, the refresh ch
 test "the column header is the toolkit's, cell for cell what this pane painted before it moved into the SDK" {
     // The span painter this pane used for its header until
     // `sdk.pane.columns.header` took it over, kept here as the oracle.
+    // One deliberate difference: where the old painter cut a name bare
+    // (`STAT`), the toolkit ends it in `…` — so a cell may differ only
+    // by being that mark, in the same ink.
     const Legacy = struct {
         fn paintHeader(f: *sdk.Frame, x0: u16, y: u16, max_w: u16, cols: []const view.Col, th: view.Theme) void {
             const style: Style = .{ .fg = th.muted, .mods = .{ .bold = true } };
@@ -1826,7 +1829,7 @@ test "the column header is the toolkit's, cell for cell what this pane painted b
             Legacy.paintHeader(&a, 2, 0, w -| 3, cols, th);
             _ = sdk.pane.columns.header(&b, 2, 0, w -| 3, cols, view.gap, th);
             for (a.slots, b.slots) |x, y| {
-                try t.expectEqualStrings(x.symbol(), y.symbol());
+                if (!std.mem.eql(u8, x.symbol(), y.symbol())) try t.expectEqualStrings("\u{2026}", y.symbol());
                 try t.expect(std.meta.eql(x.style, y.style));
             }
         }

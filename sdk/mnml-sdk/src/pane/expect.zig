@@ -49,6 +49,7 @@ pub const Error = figure.Error || error{
     HeaderNameMissing,
     HeaderNamesRunTogether,
     HeaderInk,
+    HeaderCutBare,
 };
 
 fn eqlStyle(a: Style, b: Style) bool {
@@ -261,8 +262,10 @@ pub fn buildLineHit(comptime Target: type, m: *const hit.Map(Target), y: u16, x0
 }
 
 /// Row `y` is a table's column header: each of `names`, left to right
-/// from `x0`, whole or clipped to a prefix of at least one cell, in
-/// `Theme.label()`, and never touching the next — `columns.header`.
+/// from `x0`, whole or cut to a prefix of at least one cell that ends
+/// in the ellipsis (`…`, or `...` under `--ascii`), in `Theme.label()`,
+/// and never touching the next — `columns.header`. A name cut bare
+/// (`STAT`) reads as a different word; it fails `HeaderCutBare`.
 ///
 /// A header two panes spell two ways is the first thing a reader sees
 /// differ between them; one that runs its words together at a narrow
@@ -286,10 +289,30 @@ pub fn columnHeader(f: *const Frame, th: Theme, x0: u16, y: u16, names: []const 
             off += len;
             cells += 1;
         }
+        if (off < name.len) {
+            // Cut short: the mark follows, in the header's ink.
+            const mark = markAt(f, y, at + cells) orelse return Error.HeaderCutBare;
+            var i: u16 = 0;
+            while (i < mark) : (i += 1) {
+                if (!eqlInk(f.slots[@as(usize, y) * f.cols + at + cells + i].style, want)) return Error.HeaderInk;
+            }
+            cells += mark;
+        }
         x = at + cells;
-        // Clipped or whole, the next cell is air (or the row's end).
+        // Cut or whole, the next cell is air (or the row's end).
         if (x < f.cols and !blank(f, x, y)) return Error.HeaderNamesRunTogether;
     }
+}
+
+/// The cells of a cut's mark at `(x, y)`: 1 for `…`, 1-3 for the
+/// `--ascii` dots; null when there is none.
+fn markAt(f: *const Frame, y: u16, x: u16) ?u16 {
+    if (x >= f.cols) return null;
+    const row = f.slots[@as(usize, y) * f.cols ..][0..f.cols];
+    if (std.mem.eql(u8, row[x].symbol(), "\u{2026}")) return 1;
+    var n: u16 = 0;
+    while (x + n < f.cols and n < 3 and std.mem.eql(u8, row[x + n].symbol(), ".")) n += 1;
+    return if (n > 0) n else null;
 }
 
 /// `want`, one codepoint per cell, starting at `(x0, y)`. Every glyph
@@ -420,6 +443,14 @@ test "a column header painted by the toolkit passes; one run together or in the 
     const th = Theme.fromHello(.{ .fg = .{ .rgb = .{ 1, 2, 3 } }, .muted = .{ .rgb = .{ 4, 5, 6 } } });
     _ = columns.header(&f, 2, 0, 38, &[_]Col{ .{ .name = "KEY", .w = 5 }, .{ .name = "STATUS", .w = 4 }, .{ .name = "SUMMARY", .w = 10 } }, 1, th);
     try columnHeader(&f, th, 2, 0, &.{ "KEY", "STATUS", "SUMMARY" });
+    // The --ascii twin's `...` passes the same way.
+    var g = try Frame.init(testing.allocator, 40, 2);
+    defer g.deinit();
+    _ = columns.headerFor(&g, 2, 0, 38, &[_]Col{ .{ .name = "KEY", .w = 5 }, .{ .name = "STATUS", .w = 4 }, .{ .name = "SUMMARY", .w = 10 } }, 1, th, true);
+    try columnHeader(&g, th, 2, 0, &.{ "KEY", "STATUS", "SUMMARY" });
+    // A name cut bare, the way the header used to paint it, fails.
+    _ = g.text(2, 1, 30, "KEY   STAT SUMMARY", th.label());
+    try testing.expectError(Error.HeaderCutBare, columnHeader(&g, th, 2, 1, &.{ "KEY", "STATUS", "SUMMARY" }));
     // What the tracker pane painted at 43 columns.
     _ = f.text(2, 1, 30, "KEY STATUSASSIGNEE", th.label());
     try testing.expectError(Error.HeaderNamesRunTogether, columnHeader(&f, th, 2, 1, &.{ "KEY", "STATUS", "ASSIGNEE" }));
