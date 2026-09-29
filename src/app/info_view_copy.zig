@@ -32,6 +32,7 @@ const view = @import("../ui/info_view.zig");
 const settings = @import("settings.zig");
 const ai_app = @import("ai.zig");
 const docs = @import("docs.zig");
+const Config = @import("../config/root.zig").Config;
 
 pub const statusline = @import("info_view_copy/statusline.zig");
 pub const rail = @import("info_view_copy/rail.zig");
@@ -377,8 +378,73 @@ pub fn lint(arena: Allocator, entry: Entry, out: *std.ArrayListUnmanaged(Problem
             if (!ok) try out.append(arena, .{ .entry = entry.title, .what = try std.fmt.allocPrint(arena, "literal chord `{s}` is not in literal_chords — name the command instead", .{k.chord}) });
         }
     }
+    for ([_][]const u8{ entry.body, entry.aside orelse "" }) |prose| try lintProse(arena, entry.title, prose, out);
     if (entry.links.len > max_links) try out.append(arena, .{ .entry = entry.title, .what = "more links than the box shows" });
     for (entry.links) |l| if (l == .docs) if (docs.section(l.docs.doc, l.docs.section) == null) try out.append(arena, .{ .entry = entry.title, .what = try std.fmt.allocPrint(arena, "docs link names `{s}`, which {s} has no heading for", .{ l.docs.section, l.docs.doc.file() }) });
+}
+
+/// The prose half of the lint: a backticked dotted name in the body or
+/// the aside (`view.toggle_wrap`, `ui.wheel_lines`) whose first word is
+/// a command group or a config section must resolve — as a command id
+/// or a config path (a Settings row counts). Prose is where a rename goes unnoticed: the typed
+/// `keys` and `links` are checked by the compiler, a sentence is not.
+fn lintProse(arena: Allocator, title: []const u8, prose: []const u8, out: *std.ArrayListUnmanaged(Problem)) Allocator.Error!void {
+    var it = std.mem.splitScalar(u8, prose, '`');
+    _ = it.next();
+    while (it.next()) |span| {
+        defer _ = it.next(); // the text after the closing backtick
+        if (!dottedName(span)) continue;
+        const head = span[0..std.mem.indexOfScalar(u8, span, '.').?];
+        if (!isCommandGroup(head) and !configHas(Config, head)) continue;
+        if (command.by_name.get(span) != null or configHas(Config, span) or isSettingsPath(span)) continue;
+        try out.append(arena, .{ .entry = title, .what = try std.fmt.allocPrint(arena, "prose names `{s}`, which is neither a command id nor a config path", .{span}) });
+    }
+}
+
+/// `word.word[.word…]` of lower-case letters, digits and `_` — the shape
+/// of a command id and a config path, and not of a file (`req-N.http`,
+/// `.mnml/…`) or an expression.
+fn dottedName(span: []const u8) bool {
+    if (span.len < 3 or span[0] == '.' or span[span.len - 1] == '.') return false;
+    var dots: usize = 0;
+    for (span) |c| switch (c) {
+        'a'...'z', '0'...'9', '_' => {},
+        '.' => dots += 1,
+        else => return false,
+    };
+    return dots > 0 and std.mem.indexOf(u8, span, "..") == null;
+}
+
+/// A Settings row's path — `ai.suggest_backend` is one without a typed
+/// field behind it (it lives in `ai.extra`).
+fn isSettingsPath(path: []const u8) bool {
+    for (settings.rows) |r| if (std.mem.eql(u8, r.path, path)) return true;
+    return false;
+}
+
+fn isCommandGroup(head: []const u8) bool {
+    for (std.enums.values(CommandId)) |id| if (std.mem.eql(u8, command.group(id), head)) return true;
+    return false;
+}
+
+/// Whether the dotted `path` names a field of `T`. A keyed table (a
+/// `Map`, the `Dynamic` blocks) takes any key under it.
+fn configHas(comptime T: type, path: []const u8) bool {
+    const head = path[0 .. std.mem.indexOfScalar(u8, path, '.') orelse path.len];
+    const rest: ?[]const u8 = if (head.len == path.len) null else path[head.len + 1 ..];
+    switch (@typeInfo(T)) {
+        .optional => |o| return configHas(o.child, path),
+        .@"struct" => |st| {
+            if (@hasDecl(T, "get") and @hasDecl(T, "put")) return true;
+            inline for (st.fields) |f| if (std.mem.eql(u8, f.name, head)) {
+                const r = rest orelse return true;
+                return configHas(f.type, r);
+            };
+            return false;
+        },
+        .@"union" => return @hasDecl(T, "get"),
+        else => return false,
+    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -414,6 +480,14 @@ test "the lint can fail: a key on an unbound command, a chord outside the litera
     try t.expectEqual(@as(usize, 1), problems.items.len);
     try t.expect(std.mem.indexOf(u8, problems.items[0].what, "No such heading") != null);
     try t.expect(std.mem.indexOf(u8, problems.items[0].what, "CONFIG.md") != null);
+    // Prose naming a command id or a config path that does not exist;
+    // a file name, a real id and a real path in the same prose are quiet.
+    problems.clearRetainingCapacity();
+    try lint(a, .{ .title = "Bad prose", .body = "Runs `view.no_such_command`; `ui.no_such_setting` sets it. `req-N.http`, `view.toggle_wrap` and `ui.wheel_lines` are fine.", .aside = "`editor.gone_away` too" }, &problems);
+    try t.expectEqual(@as(usize, 3), problems.items.len);
+    try t.expect(std.mem.indexOf(u8, problems.items[0].what, "view.no_such_command") != null);
+    try t.expect(std.mem.indexOf(u8, problems.items[1].what, "ui.no_such_setting") != null);
+    try t.expect(std.mem.indexOf(u8, problems.items[2].what, "editor.gone_away") != null);
     // A good one passes clean.
     problems.clearRetainingCapacity();
     const good: Entry = .{
