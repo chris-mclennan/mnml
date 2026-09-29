@@ -67,9 +67,10 @@ jobs:
   # suite's first Windows runs sat silent for fifty minutes on a test
   # nobody could name, and a macOS run then did the same for an hour
   # (2026-09-27, #4); their three-size gate runs in `check`, where its
-  # lines stream too. macOS streams the ReleaseSafe `unit` as well: #7's
-  # own run had the shipped-mode `test` binary fail with no text and the
-  # step hang to its timeout. ubuntu keeps `test` in both modes.
+  # lines stream too. macOS and Windows stream the ReleaseSafe `unit` as
+  # well: #7's own run had the shipped-mode `test` binary fail with no
+  # text and the step hang to its timeout, and Windows did the same on
+  # 2026-09-29. ubuntu keeps `test` in both modes.
   unit:
     name: unit · ${{ matrix.optimize }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -83,9 +84,12 @@ jobs:
           - { os: macos-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
           - { os: macos-latest, optimize: ReleaseSafe, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 40 }
           - { os: windows-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
-          # 60, not 40: this leg (unit + the one-size gate, ReleaseSafe, on the
-          # slowest runner) took 33 and 38 min on #16's runs and hit 40 on main's first.
-          - { os: windows-latest, optimize: ReleaseSafe, step: test, timeout: 60 }
+          # Streams each test's name, as macOS does: on 2026-09-29 this leg
+          # hit its limit once and then had a test binary stop responding
+          # for a minute, and neither log could name the test. `unit`, not
+          # `test`: Windows' gate runs in `check` at all three sizes.
+          # 60, not 40: this leg took 33-38 min on #16's runs.
+          - { os: windows-latest, optimize: ReleaseSafe, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
     steps:
       - name: Checkout mnml-zig
         uses: actions/checkout@v7
