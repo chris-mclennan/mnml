@@ -298,7 +298,7 @@ never takes the keyboard. Three tools, three cadences:
 | | what | when | judged by |
 |---|---|---|---|
 | `tools/look.sh` | one window on the workspace an agent is already driving headless | while fixing anything visual | the agent reading its PNG (`docs/LOOK.md`) |
-| `tools/tour.sh` | the curated tour: 29 states at 120x40, pixel asserts (`tests/tour/asserts.zon`), masked diff against `tests/tour/baseline/` | **after every green chain** (~2 min) | the diff's `ok` / `CHANGED n%`, the asserts, and a person or agent reading the flagged shots with `tools/tour-review.md` |
+| `tools/tour.sh` | the curated tour: 29 states at 200x60, pixel asserts (`tests/tour/asserts.zon`), masked diff against `tests/tour/baseline/` | **after every green chain** (~2 min) | the diff's `ok` / `CHANGED n%`, the asserts, and a person or agent reading the flagged shots with `tools/tour-review.md` |
 | `tools/tour.sh sweep` | every `tests/e2e/**/*.test` through the real window, the last frame shot | **overnight** (~7 s a file, ~2 h for the corpus) | the diff only, against `tests/tour/sweep-baseline/` (machine-local, never committed); the `soft misses` in `sweep.jsonl` are where a file's `expect` never held on the real screen |
 
 A tour `CHANGED` is not a failure by itself: read the shot, then either
