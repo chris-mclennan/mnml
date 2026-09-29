@@ -205,6 +205,12 @@ test "isNewer: semver order, v prefix and suffixes, garbage is never newer" {
     try t.expect(!isNewer("0.1.3", "0.1.3"));
     try t.expect(!isNewer("garbage", "0.1.3"));
     try t.expect(!isNewer("0.1.3", "garbage"));
+    // What a checkout builds (`<zon version>+g<sha>[-dirty]`) against the
+    // endpoint's repo as it is before the cutover: its latest is a 0.2.x
+    // Rust release, which is never newer than a 0.3.0-dev build.
+    try t.expect(!isNewer("0.2.22", "0.3.0-dev+g1a2b3c4-dirty"));
+    try t.expect(!isNewer("v0.2.23", "0.3.0-dev+g1a2b3c4"));
+    try t.expect(!isNewer("0.2.22", "0.3.0-dev"));
 }
 
 test "tagFromJson reads tag_name and strips the v; the tick toasts what the worker left" {
