@@ -2,12 +2,12 @@
 # mnml installer — downloads the release archive for this machine, checks
 # its sha256, and puts `mnml` on your PATH.
 #
-#   curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.sh | sh
+#   curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.sh | sh
 #
 # Environment:
 #   MNML_VERSION       a tag without the v (0.3.0); default: the latest release
 #   MNML_INSTALL_DIR   where the binary goes; default: ~/.local/bin
-#   MNML_REPO          owner/repo on GitHub; default: chris-mclennan/mnml-zig
+#   MNML_REPO          owner/repo on GitHub; default: chris-mclennan/mnml
 #   MNML_BASE_URL      full URL of the release's asset directory. Overrides
 #                      MNML_REPO + MNML_VERSION — for mirrors and for testing
 #                      the script against a local directory served over HTTP.
@@ -18,7 +18,7 @@
 # macOS's /bin/sh and zsh's sh mode.
 set -eu
 
-repo=${MNML_REPO:-chris-mclennan/mnml-zig}
+repo=${MNML_REPO:-chris-mclennan/mnml}
 version=${MNML_VERSION:-}
 install_dir=${MNML_INSTALL_DIR:-"$HOME/.local/bin"}
 base_url=${MNML_BASE_URL:-}
@@ -28,7 +28,7 @@ usage() {
 mnml installer
   --version V    a tag without the v; default: latest
   --dir D        install directory; default: ~/.local/bin
-  --repo R       owner/repo; default: chris-mclennan/mnml-zig
+  --repo R       owner/repo; default: chris-mclennan/mnml
   --base-url U   asset directory URL (overrides --repo/--version)
 EOF
 }

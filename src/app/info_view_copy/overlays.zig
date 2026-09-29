@@ -46,7 +46,7 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .about => .{
                 .title = "About mnml",
                 .body = "The version, the workspace, how many commands are implemented, the keymap and its binding count, and the Zig it was built with. Copy from here when filing an issue — the version line is what a bug report needs first. Any key closes it.",
-                .links = &.{ .{ .command = .{ .id = .@"app.check_updates", .label = "Check for updates" } }, .{ .url = .{ .url = "https://github.com/chris-mclennan/mnml-zig/issues", .label = "File an issue" } } },
+                .links = &.{ .{ .command = .{ .id = .@"app.check_updates", .label = "Check for updates" } }, .{ .url = .{ .url = "https://github.com/chris-mclennan/mnml/issues", .label = "File an issue" } } },
             },
         },
         // The find bar over a terminal pane (`pty_search.zig`).

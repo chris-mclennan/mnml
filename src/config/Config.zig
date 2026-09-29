@@ -1336,7 +1336,7 @@ pub const default_marketplace_sources = [_]MarketplaceSource{
 };
 
 /// The index URL for an mnml release, `{version}` being its version.
-pub const default_index_url = "https://github.com/chris-mclennan/mnml-zig/releases/download/v{version}/integrations.json";
+pub const default_index_url = "https://github.com/chris-mclennan/mnml/releases/download/v{version}/integrations.json";
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
