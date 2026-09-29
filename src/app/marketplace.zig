@@ -1013,6 +1013,9 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     const arena = app.frame.allocator();
     const raw = std.mem.trim(u8, input, " \t\r\n");
     if (raw.len == 0) return app.diag.fail(arena, "marketplace: give a folder or owner/repo", .{});
+    // Refused before anything is written: a source added to a disabled
+    // Marketplace would sit in config.zon behind an error toast.
+    if (!app.cfg.marketplace.enabled) return app.diag.fail(arena, "marketplace: disabled in config (marketplace.enabled) \u{2014} nothing added", .{});
     const parsed = try parseSourceInput(app, arena, raw);
     var found: ?usize = null;
     var entry: Config.MarketplaceSource = undefined;
@@ -2499,4 +2502,21 @@ test "addSource: a folder that IS an integration (build.zig + manifest.zon) list
     defer gpa.free(built);
     try Io.Dir.cwd().access(io, built, .{});
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "installed slow") != null);
+}
+
+test "addSource with the Marketplace disabled refuses before writing: config.zon and the sources in memory are untouched, and the message says nothing was added" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    app.cfg.marketplace.enabled = false;
+    try testing.expectError(error.Failed, addSource(app, "acme"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "disabled") != null);
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing added") != null);
+    try testing.expectError(error.Failed, addSource(app, "someone/tools"));
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expectEqualStrings(add_source_before, got);
+    try testing.expectEqual(@as(usize, 1), app.cfg.marketplace.sources.len);
 }
