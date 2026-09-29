@@ -900,7 +900,10 @@ const reserved_ids = [_][]const u8{ "mnml", "local", "index", "github" };
 pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocator.Error!SourceInput {
     const raw = std.mem.trim(u8, input, " \t\r\n");
     const expanded = try app.expandTilde(raw);
-    const abs = if (std.fs.path.isAbsolute(expanded)) try arena.dupe(u8, expanded) else try std.fs.path.join(arena, &.{ app.workspace, expanded });
+    // Resolved, not joined: `tools/acme` typed on Windows becomes one
+    // path with one separator, and `..` collapses, so the file keeps a
+    // clean spelling on every platform.
+    const abs = try std.fs.path.resolve(arena, &.{ app.workspace, expanded });
     const keep = if (raw.len > 0 and raw[0] == '~') try arena.dupe(u8, raw) else abs;
     const says_path = raw.len > 0 and (raw[0] == '/' or raw[0] == '~' or raw[0] == '.' or raw[0] == '\\' or std.fs.path.isAbsolute(raw));
     if (says_path or isDir(app.io, abs)) return .{ .folder = .{ .abs = abs, .keep = keep } };
@@ -2294,7 +2297,9 @@ test "addSource refuses an empty folder and a missing one, writing nothing" {
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing to install in") != null);
     app.diag.clear();
     try testing.expectError(error.Failed, addSource(app, "./nope"));
-    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "./nope is not a folder") != null);
+    // The message names the resolved folder: `./nope` under the workspace.
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, std.fs.path.sep_str ++ "nope is not a folder") != null);
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "./nope") == null);
     app.diag.clear();
     try testing.expectError(error.Failed, addSource(app, "   "));
     const got = try rig.config();
