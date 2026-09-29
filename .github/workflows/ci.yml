@@ -83,7 +83,9 @@ jobs:
           - { os: macos-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
           - { os: macos-latest, optimize: ReleaseSafe, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 40 }
           - { os: windows-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
-          - { os: windows-latest, optimize: ReleaseSafe, step: test, timeout: 40 }
+          # 60, not 40: this leg (unit + the one-size gate, ReleaseSafe, on the
+          # slowest runner) took 33 and 38 min on #16's runs and hit 40 on main's first.
+          - { os: windows-latest, optimize: ReleaseSafe, step: test, timeout: 60 }
     steps:
       - name: Checkout mnml-zig
         uses: actions/checkout@v7
