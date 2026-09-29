@@ -245,7 +245,7 @@ gets that size and no other.
 
 ### The ladder
 
-`mnml-zig test --sizes ladder` (and the harness's own sweep) runs a
+`mnml test --sizes ladder` (and the harness's own sweep) runs a
 script at every width where mnml's chrome is known to change shape.
 Sweeping only 80 and 200 walks straight past all of these:
 

@@ -60,7 +60,7 @@ integrations/sample/
    bindings, the chip and the segment. The binary stays.
 
 The corpus does all of this without building: `zig build` installs
-`zig-out/bin/mnml-sample`, `mnml-zig test` exports it as
+`zig-out/bin/mnml-sample`, `mnml test` exports it as
 `$MNML_SAMPLE_INTEGRATION`, and a manifest whose `binary` is `$VAR`
 resolves through the environment — see
 `tests/e2e/integrations_sample_dev_install.test` and
@@ -1341,7 +1341,7 @@ by default), one per service, elected by a lock file beside the socket
 with the same pid-and-heartbeat rules as `warm.Lock` — so a second mnml
 window becomes a client of the first rather than a second queue. Its
 REQUESTS header shows the result: `broker — jira on · queue 3 · 42%
-budget`. `mnml-zig broker serve --service jira` holds one on a machine
+budget`. `mnml broker serve --service jira` holds one on a machine
 with no mnml. **Absent is a supported state**, not a degraded one.
 
 **The wire** is one line of JSON each way, deliberately trivial to
@@ -1393,10 +1393,10 @@ can hit it:
 bitbucket: socket path is 131 bytes; the OS allows 103 — set BITBUCKET_BROKER_SOCKET shorter or unset it for the default
 ```
 
-`mnml-zig broker serve` prints it and exits 1 before it takes a lock or
+`mnml broker serve` prints it and exits 1 before it takes a lock or
 touches a bucket; mnml's own election prints it as a warning toast and
 a `:messages` line, once per service, and leaves every client on the
-file bucket exactly as an absent broker does; `mnml-zig broker status`
+file bucket exactly as an absent broker does; `mnml broker status`
 prints it instead of the indistinguishable `no broker at <path>`; and
 the Python client raises `BrokerPathTooLong` (which `try_broker` /
 `broker_status` catch, warn about once on stderr, and fall through on —
@@ -1411,8 +1411,8 @@ socket from pid N?` appended when the election lock still named one —
 taking a token out from under one:
 
 ```sh
-mnml-zig broker acquire --service bitbucket --class batch --reason capture && curl …
-mnml-zig broker status
+mnml broker acquire --service bitbucket --class batch --reason capture && curl …
+mnml broker status
 ```
 
 Exit 0 is a token; exit 1 is none inside the timeout, and the caller

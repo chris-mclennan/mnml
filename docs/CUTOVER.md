@@ -1,6 +1,6 @@
 # Cutover day
 
-The day mnml-zig becomes `chris-mclennan/mnml`: its history becomes that
+The day the Zig mnml (0.3 and later) becomes `chris-mclennan/mnml`: its history becomes that
 repo's `main`, the Rust history moves to a new archived
 `chris-mclennan/mnml-rust` with its releases re-created there, and the
 0.2.x branches, tags and releases leave the main repo. The mnml release

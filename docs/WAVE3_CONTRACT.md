@@ -732,7 +732,7 @@ that the oldest slot reads `+K more…`.
   (no anchors / aliases / tags / multi-document). `-k` / `--insecure` is
   parsed and carried but the std client verifies certificates regardless —
   a self-signed dev host needs its CA in the bundle.
-- CLI: `mnml-zig run FILE [--env] [--workspace]`, `chain run FILE`,
+- CLI: `mnml run FILE [--env] [--workspace]`, `chain run FILE`,
   `discover SPEC [--out] [--base-url] [--normalize] [--force]`,
   `sync [--workspace] [--normalize]`, `sync-check`, `proxy --url URL
   [--seconds] [--idle-ms] [--quiet]` (`http/cli.zig`).
@@ -2452,7 +2452,7 @@ Three findings from the API-developer hunt (`.mnml/findings/api-*.md`).
   process; curl and reqwest (Rust mnml) send it, and Elasticsearch-style
   `DELETE` bodies are real. A POST with no body is `content-length: 0`
   (std's `sendBodiless` asserts the mirror). No user input reaches a
-  std assert from `send`, `mnml-zig run` or `chain run`.
+  std assert from `send`, `mnml run` or `chain run`.
 - `// changed (http.mock):` `Canned.next` chains answers so a test
   server can say 302 then 200; the last link answers every request
   after it.
@@ -2465,7 +2465,7 @@ Three findings from the API-developer hunt (`.mnml/findings/api-*.md`).
 ## The `vim-round2` track (2026-09-05, on `main`) — `// changed:` notes
 
 Twenty-three findings from the second NvChad hunt: 20 fixed, 1
-rejected against Vim (`vim -es` reproduces mnml-zig's V-BLOCK edge),
+rejected against Vim (`vim -es` reproduces mnml's V-BLOCK edge),
 2 parked (the doubled-case cursor sits on a Rust corpus line in the
 gate; see the finding). Each fix has a `tests/e2e/vim_*.test`
 repro and, for seven of them, a `vim()` case in the buffer harness.
@@ -2577,7 +2577,7 @@ break-check.
   a working click / right-click / wheel.
 - `// changed (tools):` `tools/ui-diff.sh` runs the Rust and Zig
   binaries headless on one workspace with one config and diffs the two
-  screens row by row. The Rust screen is the spec for how mnml-zig
+  screens row by row. The Rust screen is the spec for how mnml 0.3
   looks; the UI tracks use the diff as their gate.
 
 ## The activity bar (2026-09-06, branch `rail`) — `// changed:` notes
@@ -3190,7 +3190,7 @@ help,discovery,close}-120x40.txt` (the steps beside each).
   list (`cmd_picker.walkTree`: recents, the tree's order with dotfiles
   and `.gitignore`, cross-workspace recents a tier below) with the
   directory as the detail. Residue: the palette's count and three git
-  rows are commands only mnml-zig has (914 vs 796).
+  rows are commands only mnml 0.3 has (914 vs 796).
 - `// changed (help):` `ui/help_overlay.zig` (state, keys, painter) and
   `app/help.zig` (Rust's `build_help` rows from the registry and the
   active keymap reversed — `Chord.unpack` / `format` — plus the modes
@@ -4217,9 +4217,9 @@ the URL, and thirteen ids (spec count 1000). Nothing renamed.
   `parse.progressFrom` is the pure half. `parse.parseTodo` reads a
   `rebase -i` todo (long and one-letter words, `exec` lines skipped).
 - `// added (git):` `src/git/sequence_editor.zig` — mnml as git's
-  editors. `mnml-zig --rebase-todo <plan> <todo>` replaces git's todo
+  editors. `mnml --rebase-todo <plan> <todo>` replaces git's todo
   with the plan after checking both name the same commits (a mismatch
-  exits 1: git aborts with the reason); `mnml-zig --commit-msg <queue>
+  exits 1: git aborts with the reason); `mnml --commit-msg <queue>
   <target>` hands a reword its new message, keyed by the commit's OLD
   subject (git opens the editor once per reword and once per run of
   squashes, so a positional queue would misfire). `main.zig` dispatches

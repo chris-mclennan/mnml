@@ -814,7 +814,7 @@ otherwise. Copy what you need; leave the rest out.
     // repo pill's right-click Color menu writes a pick; one repo shows no
     // accent. Home layer only — a workspace file's entries are read but
     // the app writes home.
-    .git = .{ .repo_colors = .{ .mnml = "green", .@"mnml-zig" = "blue" } },
+    .git = .{ .repo_colors = .{ .api = "green", .@"web-app" = "blue" } },
 
     // ── tasks / startup ────────────────────────────────────────────────
     // The project runners need no entry here: `test.run_all` /
@@ -1317,7 +1317,7 @@ that mnml expands and runs when the command fires:
   `--install` and by mnml's scan alike.
 
 Where one comes from: the Marketplace tab (a `github_launcher_folder`
-or `local_folder` source — the four in `launchers/` of the mnml-zig
+or `local_folder` source — the four in `launchers/` of the mnml
 repo are the official set), the Dev tab (an SDK checkout lists its
 `launchers/` beside its `integrations/`), or `launcher.add_local` (a
 prompt for a `.zon` path). Install is the file appearing in the data
@@ -1364,7 +1364,7 @@ gets none of the rows.
 
 ## The launcher dock
 
-`ui.dock` is mnml-zig's own Dock: a strip of the things you *start* —
+`ui.dock` is mnml's own Dock: a strip of the things you *start* —
 the `+`, the installed integrations, a *New terminal* item plus one per
 open terminal (a click focuses it), the installed launchers, and any
 command `ui.dock.pins` names — along one edge of the editor area,
@@ -1942,9 +1942,10 @@ changes nothing. The row is optional: skipping it adds nothing.
 
 ## Coming from 0.2.x (TOML)
 
-mnml-zig reads no TOML — not `config.toml`, not the theme files, not
-`trusted_workspaces.toml`. The last Rust release (0.2.22) carries the
-converter, since it is the one that still has the typed TOML config:
+mnml 0.3 and later reads no TOML — not `config.toml`, not the theme
+files, not `trusted_workspaces.toml`. The last release of mnml 0.2.x
+(Rust), 0.2.22, carries the converter, since it is the one that still
+has the typed TOML config:
 
 ```
 mnml export-config-zon                # writes ~/.config/mnml/config.zon
@@ -1956,9 +1957,9 @@ workspace's `.mnml/config.toml` (from inside that workspace, with
 `--out .mnml/config.zon`). The output carries a `//` comment per key
 from the schema's own doc table, and every key it could not place lands
 verbatim in a trailing `// unmigrated:` block so nothing is lost
-silently. The TOML file is left where it was; mnml-zig ignores it.
+silently. The TOML file is left where it was; mnml 0.3+ ignores it.
 
-What mnml-zig says about a `config.toml` it finds where a `config.zon`
+What mnml 0.3+ says about a `config.toml` it finds where a `config.zon`
 should be (and only then — a `.toml` beside a `.zon` is nothing):
 
 - **Once per data root, a toast** naming the file and the converter

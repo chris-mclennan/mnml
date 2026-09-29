@@ -112,7 +112,7 @@ The file sets `# env: TZ=America/New_York`, but that fills the App's
 environment map; the offset comes from libc's `localtime_r`
 (`src/core/localtime.zig`), which reads the *process's* `TZ`. It passes
 on a Mac in US Eastern and fails everywhere else — on the Mac too:
-`TZ=UTC mnml-zig test tests/e2e/usage_reset_clock_dst.test` reads the
+`TZ=UTC mnml test tests/e2e/usage_reset_clock_dst.test` reads the
 resets as `3pm` / `5am`.
 
 What it needs: `localtime` taking the zone from the App's environment,

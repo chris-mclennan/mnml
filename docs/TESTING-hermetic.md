@@ -1,7 +1,7 @@
 # Hermetic tests
 
 The unit suite and the `.test` corpus run on machines where other copies
-of mnml-zig are running the same suites at the same time: up to ten
+of mnml are running the same suites at the same time: up to ten
 agents, each in its own worktree, and CI runners that share hosts. A test
 is **hermetic** when nothing outside its own temp directory, its own
 process group and its own environment can change its verdict — another
@@ -67,7 +67,7 @@ outside the run's temp root.
   with `git ran against a repository outside the run's temp root
   (<repository>): git <args> — a test must never reach the checkout it
   runs in`.
-- **Flakes are reported, not hidden**: `mnml-zig test` retries a failing
+- **Flakes are reported, not hidden**: `mnml test` retries a failing
   file once and names a pass on the retry as `FLAKY` — as it happens and
   in the trailer (`N/M passed (…), K FLAKY (passed only on a retry)` then
   one `FLAKY <file> — first run: <why>` line each). `--strict` retries
@@ -88,7 +88,7 @@ remaining fixed `wait`s as a category.
 
 | Site | Shared | Fix |
 |---|---|---|
-| `sdk/mnml-sdk/src/broker.zig` `socketPath` fallback | `/tmp/mnml-broker-<service>.sock` and its `.lock` for EVERY deep bucket: each unit test's private bucket under `.zig-cache/tmp`, each corpus file's data root, another checkout's tests. A second `Server.start` unlinked the first's socket; the election lock was shared. Broke `app.broker` (3 tests), `broker_cli` (acquire, status), the SDK broker harness tests, and `run-sh-check` "broker status: an ordinary path still reports an absent broker" whenever another mnml-zig held the lock | `/tmp/mnml-broker-<service>-<sha256(long path)[:6] hex>.sock` (`fallbackPath`); tests: pinned name, two deep buckets → two sockets/locks, two live brokers coexist |
+| `sdk/mnml-sdk/src/broker.zig` `socketPath` fallback | `/tmp/mnml-broker-<service>.sock` and its `.lock` for EVERY deep bucket: each unit test's private bucket under `.zig-cache/tmp`, each corpus file's data root, another checkout's tests. A second `Server.start` unlinked the first's socket; the election lock was shared. Broke `app.broker` (3 tests), `broker_cli` (acquire, status), the SDK broker harness tests, and `run-sh-check` "broker status: an ordinary path still reports an absent broker" whenever another mnml held the lock | `/tmp/mnml-broker-<service>-<sha256(long path)[:6] hex>.sock` (`fallbackPath`); tests: pinned name, two deep buckets → two sockets/locks, two live brokers coexist |
 | `sdk/clients/ratelimit_broker.py` | the same fallback name | the same hash with `hashlib` (pinned digest in the Zig test) |
 | `tests/e2e/integrations_broker_header.test` | `JIRA_/BITBUCKET_BROKER_SOCKET=/tmp/mnml-e2e-broker-*.sock` — two runs took each other's election | overrides dropped: the sockets derive from the file's own buckets (or their hashed fallback) |
 | LSP unit tests (`app.lsp`, `lsp_decor`, `lsp_rename`, `lsp_format`, `lsp_semantic`) | fixed `/tmp/mnml-zig-fake-lsp{,-other,-open,-readonly,-warn}.ts`, written, chmod-ed and deleted by concurrent runs | `TestRig.scratch(name)`: `/tmp/mnml-zig-lsp-<pid>/<name>`; three tests rooted there so their labels stay workspace-relative |
@@ -128,7 +128,7 @@ remaining fixed `wait`s as a category.
 | `app/tests_pane.zig` unit tests (`test.run_playwright …`, `test.run_all on a vitest project …`) | ran the machine's real `npx playwright` / `npx vitest`, which fetched both from the npm registry in the background — network, CPU and an npm cache write, for a run the test cancels | the App's `PATH` is an empty directory: the spawn fails at once, as the test already allowed |
 | `$TERM_PROGRAM` & friends | `launcher_dock_always`, `_always_outer`, `_icons`, `_keyboard`, `_placement`, `split_arrange_thirds`, `tab_cluster_preview` asserted `Terminal (sh)` — Apple Terminal's name — and failed in ghostty, in CI, under `env -i` | the runner pins `TERM_PROGRAM=Apple_Terminal`, `TERM`, `COLORTERM` and removes other emulators' marks; a file's own `# env:` wins |
 | `claude` / `codex` on the host's `PATH` | the tab bar's AI chip shows only when one is found; the corpus was written where both were (`split_preview_keys` failed without them) — and a file could start the REAL CLI | `$MNML_SHIMS/ai` (sleeping stand-ins) first on every file's `PATH` |
-| `# env: …=${PWD}` (`lua_example_eslint`, `_git_blame_line`, `_recent_commands`, `_surround_word`, `_todo_list`, and `lua_task_at_load_quits` from main) | `PWD` is a shell's; `env -i` and CI steps have none | `mnml-zig test` exports `MNML_REPO` (the checkout, `build_options.repo_dir`) |
+| `# env: …=${PWD}` (`lua_example_eslint`, `_git_blame_line`, `_recent_commands`, `_surround_word`, `_todo_list`, and `lua_task_at_load_quits` from main) | `PWD` is a shell's; `env -i` and CI steps have none | `mnml test` exports `MNML_REPO` (the checkout, `build_options.repo_dir`) |
 | `TMPDIR` inside a git checkout | `repoAbove` and the LSP root walk climbed out of the workspace into the checkout: `git_commands_no_repo` saw its branches; `lsp_zsh_builtin_server`'s server was rooted at the checkout and wrote `lsp.log` into it | the runner sets `GIT_CEILING_DIRECTORIES=<temp root>`; `app/git.zig` `repoAbove` and `app/lsp.zig` `walkUp` honour it as git does |
 | `shell` steps' interpreter | the developer's login shell (`$SHELL`) | `/bin/sh` (`MNML_E2E_SHELL` overrides) |
 | The runner's own cwd and environment | the App runs in-process, so a child it spawns with neither a cwd nor an environment inherits the runner's: the checkout as cwd, no git fence — a stale `index.lock` in a worktree's git dir, and main's twice in a day, came from runs like this | the cwd is the run's temp root (test paths made absolute first); the git fence, the guard's `PATH` and its variables are set in the process environment too (`fenceProcess`) |
@@ -207,7 +207,7 @@ How it was run (2026-09-23/24, macOS, ReleaseSafe):
 - two worktrees of the same commit, each built on its own; both runs with
   `env -i PATH=… HOME=<worktree>/.verify/home TMPDIR=<worktree>/.verify/tmp`
   — the same `TMPDIR` for both, inside a git worktree;
-- `mnml-zig broker serve` for `bitbucket` and `jira` running on the
+- `mnml broker serve` for `bitbucket` and `jira` running on the
   sockets that environment resolves by default;
 - three stray fakes of our own outside any file's group: a `claude
   --resume` with `sessions_table_batch_kill`'s first session id, one with
@@ -239,7 +239,7 @@ the bug this file is about, seen from the outside. Inferred, not traced.
 ## Sharding the corpus
 
 Hermetic files are also independent files, so the corpus splits across
-processes. `mnml-zig test --shard I/N` (0 ≤ I < N) runs one slice:
+processes. `mnml test --shard I/N` (0 ≤ I < N) runs one slice:
 
 - The runner builds its list as usual — every root it was given, each
   sorted, in order — takes out what `--filter` and `--skip` take out,

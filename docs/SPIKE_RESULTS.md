@@ -15,7 +15,7 @@ Every number below was produced by the named command on this tree.
 | 1 | 43 grammars compile + cross-compile to all 5 release targets with plain `zig build` | **Holds.** `zig build gate-build -Doptimize=ReleaseSafe` (the exe *and every test binary*, which link all 43 grammars) passes for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-macos`, `aarch64-macos`, and `x86_64-windows-gnu` — Windows builds the exe, tree-sitter, highlight, ui and main tests; the POSIX pty/tui pieces are gated off until ConPTY (Phase 8) | §2 |
 | 2 | ghostty-vt works as a zon dependency, a pty pane runs a real shell, incremental rebuild after a one-line change < 5 s | **Holds.** ghostty is a native `build.zig.zon` module (main HEAD, no C ABI); `ls --color`, `vim`, `top` render under `pty-demo`; resize propagates. A real one-line edit → `zig build` in **6.0 s** on the full app tree (1.6 s on the smaller tree) — see §3 for why the earlier "0.5 s" was a no-op | §1, §3 |
 | 3 | vaxis renders with kitty keyboard in 3 terminals; Canvas primitives done | **Holds.** ghostty (kitty keyboard, kitty graphics, rgb, mode 2027, in-band resize), Terminal.app (legacy: no kitty, 256 colors, SIGWINCH — found and fixed two real bugs: a false explicit-width claim and colon-form SGR that dropped every color), and vhs/xterm.js. All 8 gallery screens correct on each | tui + ui reports |
-| 4 | ≥ 40 of the 47 gate files pass unmodified, leak-clean | **Holds: 41 / 47 at the verdict, 47 / 47 after the six editor slices landed the same day** (`mnml-zig test --gate`). Width sweep `--sizes 80x24,120x40,200x60`: **141 / 141**, no panics, no leaks | §4 |
+| 4 | ≥ 40 of the 47 gate files pass unmodified, leak-clean | **Holds: 41 / 47 at the verdict, 47 / 47 after the six editor slices landed the same day** (`mnml test --gate`). Width sweep `--sizes 80x24,120x40,200x60`: **141 / 141**, no panics, no leaks | §4 |
 | 5 | Parallelization thesis: trunk in ≤ 5 days, leaf slices merge without trunk changes | **Holds.** Trunk authored in one session. Eight leaf branches (vaxis, ghostty-vt, tree-sitter, tui, editor, verify, app, ui) merged onto it; the only trunk-adjacent edits were two documented contract corrections (frame-arena timing, overlay carets) and one bug (`removeLeaf` invalidating a `NodeId`). Merges were mechanical except `build.zig` | git log |
 
 ## 1. pty in a real terminal
@@ -42,7 +42,7 @@ Every number below was produced by the named command on this tree.
 | x86_64-macos | pass; the binaries run under Rosetta |
 | aarch64-linux-gnu | pass |
 | x86_64-linux-gnu | pass (Debug hits a Zig 0.16.0 backend TODO in `writeToPackedMemory` via vaxis — ReleaseSafe, the shipped mode, is unaffected) |
-| x86_64-windows-gnu | pass for the exe + tree-sitter/highlight/ui/main tests; `pty` tests and the interactive loop are gated off (POSIX until ConPTY, Phase 8); `mnml-zig test` and `--headless` work there |
+| x86_64-windows-gnu | pass for the exe + tree-sitter/highlight/ui/main tests; `pty` tests and the interactive loop are gated off (POSIX until ConPTY, Phase 8); `mnml test` and `--headless` work there |
 
 ## 3. Timings (`/usr/bin/time -p`)
 
@@ -57,7 +57,7 @@ recorded earlier measured nothing. The honest figure is the real-edit one.
 
 ## 4. The gate
 
-`mnml-zig test --gate` → **41 / 47** at the verdict; **47 / 47** after the editor slices (multi-cursor, visual block, surround, align, ctrl+a/x, gq, gcc) merged. The six at verdict time:
+`mnml test --gate` → **41 / 47** at the verdict; **47 / 47** after the editor slices (multi-cursor, visual block, surround, align, ctrl+a/x, gq, gcc) merged. The six at verdict time:
 
 | File | Why |
 |------|-----|
@@ -68,7 +68,7 @@ recorded earlier measured nothing. The honest figure is the real-edit one.
 | `vim_visual_block` | `yank_block` unsupported |
 | `vim_replace_mode` | parity: after `R…<esc>`, `A<esc>R!` should append; the Zig handler overwrites |
 
-Full corpus `mnml-zig test` → 100 / 224 at the verdict, **107 / 225** after the slices and the TODOS panel (the rest are subsystems not yet built: mouse/drag/splits chrome, git, LSP, DAP, HTTP, agents, md-preview, runners). No crashes. Unit suite: **351 / 351** in Debug and ReleaseSafe.
+Full corpus `mnml test` → 100 / 224 at the verdict, **107 / 225** after the slices and the TODOS panel (the rest are subsystems not yet built: mouse/drag/splits chrome, git, LSP, DAP, HTTP, agents, md-preview, runners). No crashes. Unit suite: **351 / 351** in Debug and ReleaseSafe.
 
 ## 5. Leak / safety
 

@@ -1,4 +1,4 @@
-# Contributing to mnml-zig
+# Contributing to mnml
 
 The working rules, in the order you meet them. The design rationale is
 `docs/DESIGN.md`; the conventions a diff is checked against are
@@ -6,7 +6,7 @@ The working rules, in the order you meet them. The design rationale is
 
 ## The shape of the project
 
-mnml-zig is the successor to the Rust `mnml`, not a port of it. Full
+mnml 0.3 is the successor to mnml 0.2.x (Rust), not a port of it. Full
 parity of capability is the target (`docs/PARITY.md` is the ledger);
 structure, internals and formats are free to change where Zig or a
 better design warrants it. Two consequences you will feel every day:
@@ -40,7 +40,7 @@ git worktree add ../mnml-zig-worktrees/session-restore -b session-restore
 
 History is a deliverable. Small commits, one concern each, followable in
 `git log --oneline`; a branch is never squashed into a blob. The subject
-describes mnml-zig on its own terms — what the change does for a user
+describes mnml on its own terms — what the change does for a user
 or a reader of the code — and the body says why, including any
 `// changed:` note where the change departs from `docs/DESIGN.md`. Do
 not describe work as "porting"; the Rust code is reference material, not
@@ -849,7 +849,7 @@ tools/zig-spec.sh debug-stopped 120x40
     # against): headless on a throwaway workspace wired to the fake
     # adapter, kept as docs/ui-spec/zig-<name>-<size>.txt — the dump IS the spec
 tools/debug-demo.sh vim
-    # the same seed on a real screen, deleted when mnml-zig exits
+    # the same seed on a real screen, deleted when mnml exits
 ```
 
 `MNML_RUST_BIN` / `MNML_ZIG_BIN` point the scripts at other binaries.

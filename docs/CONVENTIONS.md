@@ -1,4 +1,4 @@
-# mnml-zig conventions
+# mnml conventions
 
 Short rules, one example each. The design rationale lives in
 `docs/DESIGN.md` (D1–D10); this file is what you check a diff against.
@@ -574,7 +574,7 @@ data — a title, a body of two to four sentences, an optional aside,
   — every menu opened for real — and fails on an uncovered target that
   `docs/hover-help-todo.txt` does not list. That file is the backlog: a
   new control cannot land without help, and a line that is covered now
-  is reported stale. `mnml-zig hover-audit --write-todo
+  is reported stale. `mnml hover-audit --write-todo
   docs/hover-help-todo.txt` regenerates it.
 - **The box is sticky under the pointer.** Crossing onto the box to
   click a link keeps the last target's entry (`State.sticky`); a link's
