@@ -245,9 +245,11 @@ variable at `0` they are refused rather than run through `cmd`.
   (`terminalHint` in `first_launch_install.zig` says so). And there is
   still no MSI step for the font — the installer drops it under the
   prefix and leaves the font directory alone, like every other package.
-- **CI runs the unit suite on `windows-latest`** (`ci.yml`'s `check`
-  matrix: `zig build test` in Debug and ReleaseSafe, the gate at three
-  sizes) — the POSIX-scripted tests skip there. Nothing in CI runs the
+- **CI runs the unit suite on `windows-latest`** (`ci.yml`'s `unit`
+  job: `zig build unit` in Debug with each test's name streamed, and
+  `zig build test` in ReleaseSafe; its `check` job runs fmt, the
+  ReleaseSafe build, the audits and the gate at three sizes) — the
+  POSIX-scripted tests skip there. Nothing in CI runs the
   interactive loop or a ConPTY child; the checklist above is still the
   only way to see those. `docs/PORTABILITY.md` lists the Windows-skipped
   tests and what, if anything, runs in their place.
