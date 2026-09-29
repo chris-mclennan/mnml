@@ -26,6 +26,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const vaxis = @import("vaxis");
+const utf8_mod = @import("../core/utf8.zig");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
@@ -214,6 +216,12 @@ pub fn openLspChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 /// Rust's per-side cap on host segments: a third of the row, at least 20.
 pub fn dynamicLaneBudget(width: u16) usize {
     return @max(width / 3, 20);
+}
+
+/// The host segments one lane of a `width`-cell row paints, packed
+/// into the lane's budget and measured by `method`, the screen's.
+pub fn dynamicLane(app: *const App, arena: Allocator, width: u16, side_: ipc.effects.Side, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]ipc.effects.Rendered {
+    return ipc.effects.pack(arena, app.ipc_fx.segments.items, side_, dynamicLaneBudget(width), ascii, method);
 }
 
 // ─── the mode ────────────────────────────────────────────────────────────
@@ -496,9 +504,8 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     // ── host segments, left lane ──
-    const budget = dynamicLaneBudget(area.w);
     // A segment with no text yet (a count the poller has not filled in) paints nothing — an empty chevron is noise.
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .left, budget, ui.ascii)) |r| if (r.text.len > 0) try push(&left, arena, dynSeg(ui, r));
+    for (try dynamicLane(app, arena, area.w, .left, ui.ascii, ui.canvas.widthMethod())) |r| if (r.text.len > 0) try push(&left, arena, dynSeg(ui, r));
 
     // ── branch, PR ──
     if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
@@ -556,7 +563,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
 
     // ── right lane ──
-    for (try ipc.effects.pack(arena, app.ipc_fx.segments.items, .right, budget, ui.ascii)) |r| if (r.text.len > 0) try push(&right, arena, dynSeg(ui, r));
+    for (try dynamicLane(app, arena, area.w, .right, ui.ascii, ui.canvas.widthMethod())) |r| if (r.text.len > 0) try push(&right, arena, dynSeg(ui, r));
     for (try app.luaStates(arena)) |lua| for (try lua.segmentTexts(arena, .left)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.comment));
     if (tests_pane.find(app)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
         .tests => |*tp| try push(&right, arena, Seg.init(ui.fmt(" {s} {s} ", .{ if (ui.ascii) "T" else "\u{1f9ea}", tp.title() }), p.bg_darker, p.yellow).withHit(SegId.test_run.raw())),
@@ -1305,6 +1312,74 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.qa", .text = "", .side = .left, .priority = 4, .max_width = 8, .color = "magenta" });
     b.app.needs_render = true;
     try testing.expectEqualStrings(row_before, try b.row(38));
+}
+
+// ─── wide glyphs in a host chip ──────────────────────────────────────────
+
+test "a host chip with a wide glyph: the cells the pack plans are the cells painted and the cells the hit covers, at 80 and 120" {
+    // The pack used to count codepoints: `漢字 2` is 4 codepoints and 6
+    // cells, so a chip it charged 6 painted 8, the lane ran past its
+    // budget, and a click aimed where the plan put the next chip landed
+    // on this one.
+    for ([_]u16{ 80, 120 }) |w| {
+        var b = try Bench.init(w, 24);
+        defer b.deinit();
+        try b.onMain("# branch.head main\n");
+        // Room on the row: the clock and WRAP off, so at 80 the lanes
+        // fit whole and the right one is anchored to the edge rather
+        // than cut by it.
+        b.app.cfg.ui.clock = false;
+        b.app.cfg.ui.wrap = false;
+        const y: u16 = 22;
+        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "bitbucket_prs.reviews_pending", .text = "\u{6f22}\u{5b57} 2", .side = .right, .priority = 60, .color = "magenta" });
+        // At 80 the row has room for one host chip a side before the
+        // narrow rule cuts the right lane at the edge; at 120, for more.
+        if (w >= 120) try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "t.bell", .text = "\u{1f514} 3", .side = .right, .priority = 50, .color = "yellow" });
+        // Cut by its max_width: the cut is cells too, and never tears a glyph.
+        if (w >= 120) try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "t.cut", .text = "\u{6f22}\u{5b57}\u{6f22}\u{5b57}\u{6f22}\u{5b57}", .side = .right, .priority = 40, .max_width = 7, .color = "cyan" });
+        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.assigned", .text = "\u{5b57} 1", .side = .left, .priority = 60, .color = "blue" });
+        _ = try b.row(y);
+        const arena = b.app.frame.allocator();
+        const method = b.app.screen.width_method;
+        for ([_]ipc.effects.Side{ .left, .right }) |lane| {
+            var planned: usize = 0;
+            var chips: usize = 0;
+            for (try dynamicLane(&b.app, arena, w, lane, false, method)) |r| {
+                if (r.text.len == 0) continue;
+                chips += 1;
+                planned += r.cells;
+                const id = sl.seg_dyn_base + r.index;
+                // The hit: one contiguous run of cells.
+                const x0 = b.colOf(y, id) orelse return error.ChipNotOnRow;
+                var hit_w: u16 = 0;
+                while (x0 + hit_w < w) : (hit_w += 1) {
+                    const h = b.app.hits.at(x0 + hit_w, y) orelse break;
+                    if (!(h == .statusline_seg and h.statusline_seg == id)) break;
+                }
+                // The paint: what the screen holds under the hit, glyph by glyph.
+                var painted: std.ArrayList(u8) = .empty;
+                var x = x0;
+                while (x < x0 + hit_w) {
+                    const c = b.app.screen.readCell(x, y).?;
+                    try painted.appendSlice(arena, c.char.grapheme);
+                    x += @max(c.char.width, 1);
+                }
+                const want = try std.fmt.allocPrint(arena, " {s} ", .{r.text});
+                try testing.expectEqualStrings(want, painted.items);
+                try testing.expectEqual(x0 + hit_w, x);
+                try testing.expectEqual(utf8_mod.width(want, method), hit_w);
+                try testing.expectEqual(r.cells, hit_w);
+            }
+            try testing.expect(chips > 0);
+            try testing.expect(planned <= dynamicLaneBudget(w));
+        }
+        // The right-aligned block still ends on the row's last cell: the
+        // language chip, last on the lane, is there and ends at the edge.
+        const lang = b.colOf(y, sl.seg_language) orelse return error.LanguageChipCut;
+        var end = lang;
+        while (end < w and b.app.hits.at(end, y) != null and b.app.hits.at(end, y).? == .statusline_seg and b.app.hits.at(end, y).?.statusline_seg == sl.seg_language) end += 1;
+        try testing.expectEqual(w, end);
+    }
 }
 
 // ─── the narrow rule, at four widths ─────────────────────────────────────
