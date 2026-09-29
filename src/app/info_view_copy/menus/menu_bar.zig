@@ -36,7 +36,7 @@ pub const rows = [_]Row{
     // ── File ──
     .{ .menu = "File", .label = "New file", .entry = .{
         .title = "New file",
-        .body = "With the tree focused it asks for a path relative to the workspace, makes the folders on the way and opens the file in a new tab; a name that already exists is opened, never overwritten. From anywhere else the row opens an untitled scratch buffer instead, which Save refuses until `:w <path>` names a file. A tree row's own menu is the reliable way to the prompt.",
+        .body = "With the tree focused it asks for a path relative to the workspace, makes the folders on the way and opens the file in a new tab; a name that already exists is opened, never overwritten. From anywhere else it asks too, relative to the workspace root; a tree row's own menu asks inside that row's folder. `:enew` is the way to an untitled scratch buffer.",
         .keys = &.{.{ .command = .@"file.new", .label = "New file" }},
         .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file" } }, .{ .command = .{ .id = .@"file.new_folder", .label = "New folder" } }, .{ .command = .{ .id = .@"scratch.new", .label = "A scratch buffer instead" } } },
     } },
@@ -135,7 +135,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Edit", .label = "Replace in files…", .entry = .{
         .title = "Replace in files…",
-        .body = "Applies a replacement to every ticked hit in the active grep pane, writing each file to disk — the workspace-wide twin of Replace…. Untick the rows to keep before firing: there is no undo across files beyond git, so a dirty tree is worth a look in the status pane first. A hit inside an open buffer with unsaved edits is skipped, silently, and the report counts it.",
+        .body = "Applies a replacement to every ticked hit in the active grep pane, writing each file to disk — the workspace-wide twin of Replace…. Untick the rows to keep before firing: there is no undo across files beyond git, so a dirty tree is worth a look in the status pane first. A hit inside an open buffer with unsaved edits is skipped, and the report's warning toast counts it — save first.",
         .links = &.{ .{ .command = .{ .id = .@"find.grep_replace", .label = "Replace in files" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "Check the tree in git" } }, ask },
     } },
     // ── Selection ──
@@ -186,7 +186,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "View", .label = "Dual file panes (commander)", .entry = .{
         .title = "Dual file panes (commander)",
-        .body = "Opens two Files panes side by side — the commander layout: mark rows on one side, paste on the other, and the move happens without typing a destination. Each side keeps its own folder, sort and marks; Tab moves between them.",
+        .body = "Opens two Files panes side by side — the commander layout: mark rows on one side, paste on the other, and the move happens without typing a destination. Each side keeps its own folder, sort and marks; a click moves between them, as between any two splits.",
         .links = &.{ .{ .command = .{ .id = .@"files.open_split", .label = "Open the pair" } }, .{ .command = .{ .id = .@"files.open", .label = "One pane instead" } } },
     } },
     .{ .menu = "View", .label = "Command palette", .entry = .{
@@ -242,7 +242,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "View", .label = "Toggle theme", .entry = .{
         .title = "Toggle theme",
-        .body = "Swaps between `ui.theme` and `ui.theme_toggle` — a light and a dark, usually — for this session only; nothing is written, so the next launch is back on `ui.theme`. With no `theme_toggle` set it picks the first bundled theme of the opposite kind instead. The pill in the top-right cluster is the same swap on a click, and its menu has Auto for following the OS appearance.",
+        .body = "Swaps between `ui.theme` and `ui.theme_toggle` — a light and a dark, usually — for this session only; nothing is written, so the next launch is back on `ui.theme`. With no `theme_toggle` set it picks the first bundled theme of the opposite kind instead. The pill in the top-right cluster is the same swap on a click when `ui.theme_toggle` is set, and opens the theme picker when it is not.",
         .keys = &.{.{ .command = .@"theme.toggle", .label = "Toggle the theme" }},
         .links = &.{ .{ .command = .{ .id = .@"theme.toggle", .label = "Toggle it" } }, .{ .command = .{ .id = .@"theme.pick", .label = "Pick a theme" } }, copy.docsSection("Themes") },
     } },
@@ -288,19 +288,19 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Go", .label = "Go to definition", .entry = .{
         .title = "Go to definition",
-        .body = "Jumps to where the symbol under the cursor is defined, opening its file when it is not open; the back chip in the palette bar returns. It needs the buffer's language server — with none running the LSP chip in the statusline says which is missing and how to install it.",
+        .body = "Jumps to where the symbol under the cursor is defined, opening its file when it is not open; `nav.back` returns to where you were. It needs the buffer's language server — with none running the LSP chip in the statusline says which is missing and how to install it.",
         .keys = &.{ .{ .command = .@"lsp.goto_definition", .label = "Go to definition" }, .{ .command = .@"lsp.peek_definition_overlay", .label = "Peek instead" } },
         .links = &.{ .{ .command = .{ .id = .@"lsp.goto_definition", .label = "Go" } }, .{ .command = .{ .id = .@"lsp.references", .label = "Find the references" } }, .{ .command = .{ .id = .@"lsp.status", .label = "Which servers are running" } } },
     } },
     .{ .menu = "Go", .label = "Previous buffer", .entry = .{
         .title = "Previous buffer",
-        .body = "Activates the tab to the left of this one in the active leaf's strip, wrapping from the first to the last. The palette bar's ← chip is the other order — most recently used — and Buffers… lists every open buffer as a picker.",
+        .body = "Activates the tab to the left of this one in the active leaf's strip, wrapping from the first to the last. Terminal tabs are stepped over. The palette bar's ← chip runs this same step, and Buffers… lists every open buffer as a picker.",
         .keys = &.{ .{ .command = .@"buffer.prev", .label = "Previous buffer" }, .{ .command = .@"buffer.next", .label = "Next buffer" } },
         .links = &.{ .{ .command = .{ .id = .@"buffer.prev", .label = "Previous" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Buffers…" } } },
     } },
     .{ .menu = "Go", .label = "Next buffer", .entry = .{
         .title = "Next buffer",
-        .body = "Activates the tab to the right of this one in the active leaf's strip, wrapping from the last to the first. The palette bar's → chip walks the most-recently-used order instead, and Buffers… lists every open buffer as a picker.",
+        .body = "Activates the tab to the right of this one in the active leaf's strip, wrapping from the last to the first. Terminal tabs are stepped over. The palette bar's → chip runs this same step, and Buffers… lists every open buffer as a picker.",
         .keys = &.{ .{ .command = .@"buffer.next", .label = "Next buffer" }, .{ .command = .@"buffer.prev", .label = "Previous buffer" } },
         .links = &.{ .{ .command = .{ .id = .@"buffer.next", .label = "Next" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Buffers…" } } },
     } },
@@ -396,7 +396,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Window", .label = "Close split", .entry = .{
         .title = "Close split",
-        .body = "Closes the active split and hands its space to the neighbour; with one split left it closes the active buffer instead. The tabs the leaf held close with it — a dirty one asks first — and Reopen closed tab has them.",
+        .body = "Closes the active split and hands its space to the neighbour; the tabs the leaf held stay open in the background, and only a second window on a document open elsewhere closes. With one split left it closes the active buffer instead — a dirty one asks first.",
         .links = &.{ .{ .command = .{ .id = .@"view.close_split", .label = "Close it" } }, .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Zoom instead of closing" } }, .{ .command = .{ .id = .@"buffer.reopen", .label = "Reopen the last closed" } } },
     } },
     .{ .menu = "Window", .label = "Equalize splits", .entry = .{
@@ -406,7 +406,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Window", .label = "Auto-equalize on split / close (toggle)", .entry = .{
         .title = "Auto-equalize on split / close (toggle)",
-        .body = "On, every split and every close re-shares the sizes equally, so a leaf never ends up a sliver; off, a new split takes half of the pane it came from and the rest keep their ratios. The row ticks when it is on; Equalize splits is the one-shot form.",
+        .body = "On, every split and every close re-shares the sizes equally, so a leaf never ends up a sliver; off, a new split takes half of the pane it came from and the rest keep their ratios. The row carries no tick — a toast says which way it went; Equalize splits is the one-shot form.",
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_auto_equalize_splits", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize once" } } },
     } },
     .{ .menu = "Window", .label = "Grow split width", .entry = .{
@@ -425,7 +425,7 @@ pub const rows = [_]Row{
     .{ .menu = "Window", .label = "Focus split down", .entry = focusSplit("down", "below", "j", "From the lowest split it steps into the bottom dock instead.", .@"view.focus_down", .@"view.focus_up") },
     .{ .menu = "Window", .label = "Restart mnml", .entry = .{
         .title = "Restart mnml",
-        .body = "Exits with the code `run.sh`'s loop reads as rebuild-and-relaunch, so a fresh build comes up on the same workspace with the config re-read from disk; the session is written first and restored after. Nothing asks on the way out — unlike Quit, a restart skips the unsaved-changes box, so Save all first if a buffer is dirty. Outside the loop it simply quits.",
+        .body = "Exits with the code `run.sh`'s loop reads as rebuild-and-relaunch, so a fresh build comes up on the same workspace with the config re-read from disk; the session is written first and restored after. With a buffer dirty a *Restart mnml?* box names it first; clean, nothing asks. Outside the loop it simply quits.",
         .links = &.{ .{ .command = .{ .id = .@"app.restart", .label = "Restart" } }, .{ .command = .{ .id = .@"file.save_all", .label = "Save all first" } }, ask },
     } },
     // ── Help ──

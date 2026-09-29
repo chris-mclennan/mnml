@@ -93,9 +93,9 @@ const phase_one = [_]Row{
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in top half", .entry = newSession(.claude, "top") },
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in bottom half", .entry = newSession(.claude, "bottom") },
     .{ .menu = "Codex launcher", .label = "Toggle existing Codex pane", .entry = .{
-        .title = "Toggle the Codex pane",
-        .body = "Shows the running Codex session's pane if it is hidden, hides it if it is on screen, and starts a session when there is none. The session is the `codex` CLI in a terminal pane, in the workspace; Codex has no API route in this build, so the CLI must be on PATH.",
-        .links = &.{ .{ .command = .{ .id = .@"ai.codex", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        .title = "Go to the Codex pane",
+        .body = "Brings the running Codex session's pane forward and focuses it, and starts a session when there is none — it never hides the pane. The session is the `codex` CLI in a terminal pane, in the workspace; Codex has no API route in this build, so the CLI must be on PATH.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.codex", .label = "Go to it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
     } },
     .{ .menu = "Codex launcher", .label = "New Codex session in left half", .entry = newSession(.codex, "left") },
     .{ .menu = "Codex launcher", .label = "New Codex session in right half", .entry = newSession(.codex, "right") },
@@ -114,8 +114,8 @@ const phase_one = [_]Row{
     } },
     .{ .label = "Bake AI glyphs into MnmlSymbols", .entry = .{
         .title = "Bake the AI glyphs",
-        .body = "Rebuilds the MnmlSymbols font with the Claude and Codex marks — the figure, the spark, the Codex glyph — and installs it for the terminal, so the chips draw the branded marks rather than a box. Needs the font tools the build ships; the terminal reads the new face on its next launch.",
-        .links = &.{ .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake them" } }, .{ .command = .{ .id = .@"integrations.glyph_builder", .label = "The glyph builder" } } },
+        .body = "Writes the catalog of the Nerd Font glyphs mnml draws to `nerd-glyphs.tsv` under the data root and toasts the count — it builds and installs no font. A mark of your own goes into the MnmlSymbols font through Icon ▸ Custom SVG… on the terminal or Claude chip.",
+        .links = &.{ .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake them" } }, .{ .command = .{ .id = .@"view.terminal_glyph_custom", .label = "Bake a custom terminal icon" } } },
     } },
     .{ .label = "Edit Codex glyph…", .entry = glyphEdit(.codex) },
     // ── the Icon submenus ──
@@ -139,10 +139,15 @@ const phase_one = [_]Row{
         .body = "The terminal chip and every terminal tab wear the plain terminal codicon instead of the ghost. Picking it writes `ui.terminal_glyph = terminal` to the home config; the tick shows the current choice. It is a Nerd Font glyph, so it draws on any patched font.",
         .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_terminal", .label = "Use the plain terminal" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
     } },
-    .{ .parent = "Icon", .label = "Custom SVG…", .entry = .{
+    .{ .parent = "Icon", .label = "Custom SVG…", .command = .@"view.claude_mark_custom", .entry = .{
+        .title = "Icon — a custom SVG for Claude",
+        .body = "Asks for an SVG file and bakes it into the MnmlSymbols font behind the Claude Code figure's codepoint (U+F1E00), so the Claude chip and every Claude session tab wear your own art (`ui.claude_mark = custom`). The face is rebuilt under the data root and a toast offers the restart the terminal needs to notice. The figure row puts the shipped mark back.",
+        .links = &.{ .{ .command = .{ .id = .@"view.claude_mark_custom", .label = "Pick an SVG" } }, .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } } },
+    } },
+    .{ .parent = "Icon", .label = "Custom SVG…", .command = .@"view.terminal_glyph_custom", .entry = .{
         .title = "Icon — a custom SVG",
-        .body = "Asks for an SVG file and bakes it into the MnmlSymbols font behind the ghost's codepoint, so the terminal chip and every terminal tab wear your own art (`ui.terminal_glyph = custom`). Needs the font tools the build ships; the terminal reads the rebuilt face on its next launch. The ghost row puts the shipped glyph back.",
-        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_custom", .label = "Pick an SVG" } }, .{ .command = .{ .id = .@"integrations.patch_nerd_font_svg", .label = "Patch a Nerd Font with an SVG" } } },
+        .body = "Asks for an SVG file and bakes it into the MnmlSymbols font behind the ghost's codepoint, so the terminal chip and every terminal tab wear your own art (`ui.terminal_glyph = custom`). The face is rebuilt under the data root and a toast offers the restart the terminal needs to notice. The ghost row puts the shipped glyph back.",
+        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_custom", .label = "Pick an SVG" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
     } },
     // ── the terminal chip ──
     .{ .menu = "Terminal", .label = "Open shell (beside)", .entry = .{
@@ -157,7 +162,7 @@ const phase_one = [_]Row{
     .{ .menu = "Terminal", .label = "Open shell in bottom half", .entry = shellHalf("bottom", .@"term.shell_bottom") },
     .{ .menu = "Terminal", .label = "Scratch terminal", .entry = .{
         .title = "The scratch terminal",
-        .body = "One shell that toggles: the first call opens it in a split at the bottom, the next hides it, the next shows it again with its history intact — a place for the one-off command without a tab per command. It is per workspace and restarts with the session when `session.restore_terminals` is on.",
+        .body = "One shell that toggles: the first call opens it in a split at the bottom, the next hides it, the next shows it again with its history intact — a place for the one-off command without a tab per command. It is per workspace and is not saved with the session, so it does not come back after a restart — `session.restore_terminals` brings back the ordinary shells only.",
         .keys = &.{.{ .command = .@"term.scratch_toggle", .label = "Toggle the scratch terminal" }},
         .links = &.{ .{ .command = .{ .id = .@"term.scratch_toggle", .label = "Toggle it" } }, .{ .settings = .{ .row = copy.settingsRow("session.restore_terminals"), .label = "Restore terminals" } } },
     } },
@@ -191,19 +196,19 @@ const phase_one = [_]Row{
         .body = "Adds the time until the window resets after the percentage — `42% 1h20m` — so the chip says when a full window opens again without a hover. Off, the percentage stands alone and the hover has the time.",
         .links = &.{.{ .command = .{ .id = .@"ai.chip_toggle_reset", .label = "Toggle it" } }},
     } },
-    .{ .label = "All AI chips: off", .entry = chipsAll("off", "hides every AI chip from the statusline — the usage pane and the sessions section still have the figures", .@"ai.chip_show_all_off") },
-    .{ .label = "All AI chips: compact", .entry = chipsAll("compact", "one short chip per product with the percentage — the default", .@"ai.chip_show_all_compact") },
-    .{ .label = "All AI chips: ticker", .entry = chipsAll("ticker", "a single chip that alternates between the products and their windows, for a narrow statusline", .@"ai.chip_show_all_ticker") },
+    .{ .label = "All AI chips: off", .entry = chipsAll("off", "the active account alone, as a single account always shows", .@"ai.chip_show_all_off") },
+    .{ .label = "All AI chips: compact", .entry = chipsAll("compact", "every linked account in one chip — `P40% · W62% · C12%` — the default", .@"ai.chip_show_all_compact") },
+    .{ .label = "All AI chips: ticker", .entry = chipsAll("ticker", "one account at a time, rotating every four seconds, its letter first", .@"ai.chip_show_all_ticker") },
     // ── the tab menu ──
     .{ .label = "Close others", .entry = .{
         .title = "Close the other tabs",
-        .body = "Closes every other tab in this leaf and keeps this one; a dirty buffer among them asks, one box per buffer, and Cancel on any of them stops the run there. Pinned tabs are kept. The undo chip offers the batch back for a few seconds.",
+        .body = "Closes every other tab in this leaf and keeps this one; a dirty buffer among them is kept open rather than asked about, and a toast counts them. Pinned tabs are kept. The undo chip offers the batch back for a few seconds.",
         .keys = &.{.{ .command = .@"buffer.reopen", .label = "Reopen the last closed" }},
         .links = &.{ .{ .command = .{ .id = .@"buffer.close_others", .label = "Close the others" } }, .{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Pin this one first" } } },
     } },
     .{ .label = "Close to the right", .entry = .{
         .title = "Close the tabs to the right",
-        .body = "Closes every tab after this one in the strip and keeps this one and those before it; a dirty buffer among them asks. Pinned tabs sit at the front, so they are never to the right of anything.",
+        .body = "Closes every tab after this one in the strip and keeps this one and those before it; a dirty buffer among them is kept, with a toast counting them. Pinned tabs sit at the front, so they are never to the right of anything.",
         .links = &.{.{ .command = .{ .id = .@"buffer.close_right", .label = "Close them" } }},
     } },
     .{ .label = "Pin tab", .entry = .{
@@ -213,7 +218,7 @@ const phase_one = [_]Row{
     } },
     .{ .label = "Unpin tab", .entry = .{
         .title = "Unpin the tab",
-        .body = "Lets the tab back into the strip's normal order — it can be closed by *Close others* again and takes its place after the pinned ones. The pin is per tab and was surviving the session.",
+        .body = "Lets the tab back into the strip's normal order — it can be closed by *Close others* again, and it stays where it sits in the strip. The pin is per tab and was surviving the session.",
         .links = &.{.{ .command = .{ .id = .@"buffer.pin_toggle", .label = "Unpin it" } }},
     } },
     .{ .label = "Reveal in tree", .entry = .{
@@ -223,7 +228,7 @@ const phase_one = [_]Row{
     } },
     .{ .label = "Reveal in Finder", .entry = .{
         .title = "Reveal in the OS file manager",
-        .body = "Opens the folder in Finder (macOS), the file manager `xdg-open` picks (Linux) or Explorer (Windows) with this file selected. `view.reveal_in_tree` is the in-app twin — the tree row rather than a window outside mnml.",
+        .body = "Opens the folder in Finder (macOS) or Explorer (Windows) with this file selected; on Linux `xdg-open` opens its folder, with nothing selected. `view.reveal_in_tree` is the in-app twin — the tree row rather than a window outside mnml.",
         .links = &.{ .{ .command = .{ .id = .@"view.reveal_active", .label = "Reveal it" } }, .{ .command = .{ .id = .@"file.copy_path", .label = "Copy the path" } } },
     } },
     .{ .label = "Rename…", .command = .@"term.rename", .entry = .{
@@ -233,13 +238,13 @@ const phase_one = [_]Row{
     } },
     .{ .label = "Restart", .command = .@"term.restart", .entry = .{
         .title = "Restart the terminal",
-        .body = "Ends the child — the shell, or the session it is running — and starts it again in the same tab with the same command and directory. For a Claude session that is a new session, not a resume: the transcript stays on disk and `sessions.open_transcript` reads it.",
+        .body = "Ends the child — the shell, or the session it is running — and starts it again in the same tab with the same command and directory. A Claude session resumes its conversation when its transcript exists, and starts fresh under the same id when it does not.",
         .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart it" } }, .{ .command = .{ .id = .@"term.clear", .label = "Just clear the screen" } } },
     } },
     // ── submenu parents ──
     .{ .label = "Icon", .entry = .{
         .title = "Icon ▸ — the mark this chip wears",
-        .body = "Opens the two (or three) marks to choose from: for the Claude chip and Claude session tabs the Claude Code figure or the Anthropic spark (`ui.claude_mark`); for the terminal chip and every terminal tab the ghost, the plain terminal codicon, or a custom SVG baked into the MnmlSymbols font (`ui.terminal_glyph`). The tick marks the one in use; picking writes the home config, so the mark is the same in every workspace.",
+        .body = "Opens the three marks to choose from: for the Claude chip and Claude session tabs the Claude Code figure, the Anthropic spark, or a custom SVG baked into the MnmlSymbols font (`ui.claude_mark`); for the terminal chip and every terminal tab the ghost, the plain terminal codicon, or a custom SVG baked into the MnmlSymbols font (`ui.terminal_glyph`). The tick marks the one in use; picking writes the home config, so the mark is the same in every workspace.",
         .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
         .links = &.{ .{ .settings = .{ .row = copy.settingsRow("ui.claude_mark"), .label = "Claude icon in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.terminal_glyph"), .label = "Terminal icon in Settings" } } },
     } },
@@ -251,7 +256,7 @@ const phase_one = [_]Row{
     } },
     .{ .label = "Clear (Ctrl+L)", .entry = .{
         .title = "Clear the terminal",
-        .body = "Clears the screen and the scrollback of this terminal, as Ctrl+L in the shell does — the child keeps running. A restart is the row above when the child itself is stuck.",
+        .body = "Sends Ctrl+L to the child, which clears the screen the way the shell does — mnml keeps the scrollback, and the child keeps running. Restart is the other row when the child itself is stuck.",
         .links = &.{.{ .command = .{ .id = .@"term.clear", .label = "Clear it" } }},
     } },
 };
@@ -269,8 +274,8 @@ fn glyphEdit(comptime product: enum { codex }) Entry {
     _ = product;
     return .{
         .title = "Edit the Codex glyph",
-        .body = "Opens the glyph builder on this mark — the SVG that is baked into the MnmlSymbols font at the codepoint the chip draws — so the art can be replaced with your own. Bake afterwards to rebuild the font; the terminal reads the new face on its next launch.",
-        .links = &.{ .{ .command = .{ .id = .@"integrations.edit_codex_glyph", .label = "Edit it" } }, .{ .command = .{ .id = .@"integrations.bake_ai_glyphs", .label = "Bake the glyphs" } } },
+        .body = "Cut in this build: the per-integration glyph builder is not here, so the row only toasts why. Two marks can still wear your own SVG — the terminal's and Claude's, through Icon ▸ Custom SVG… on their chips.",
+        .links = &.{ .{ .command = .{ .id = .@"view.terminal_glyph_custom", .label = "Custom terminal icon" } }, .{ .command = .{ .id = .@"view.claude_mark_custom", .label = "Custom Claude icon" } } },
     };
 }
 
@@ -292,8 +297,8 @@ fn chipDetail(comptime label: []const u8, comptime what: []const u8, comptime id
 
 fn chipsAll(comptime mode: []const u8, comptime what: []const u8, comptime id: command.CommandId) Entry {
     return .{
-        .title = "All AI chips — " ++ mode,
-        .body = "Sets `ai.claude_meter_mode` for every AI chip in the statusline at once: this row is " ++ what ++ ". The tick marks the current mode; Settings → AI has the same row. The usage pane keeps the full figures whichever mode the chips are in.",
+        .title = "Claude chip accounts — " ++ mode,
+        .body = "Sets `ai.claude_meter_mode`, how the Claude chip shows several linked accounts: this row is " ++ what ++ ". With one account the chip is always the single one. The tick marks the current mode; the usage pane keeps the full figures whichever mode is set.",
         .links = &.{ .{ .command = .{ .id = id, .label = "Use this mode" } }, .{ .settings = .{ .row = copy.settingsRow("ai.claude_meter_mode"), .label = "Meter mode in Settings" } } },
     };
 }
