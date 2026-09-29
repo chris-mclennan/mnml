@@ -910,6 +910,8 @@ pub const SourceInput = union(enum) {
     folder: struct { abs: []const u8, keep: []const u8 },
     /// `owner/repo[:apps_dir]`, a `github_monorepo_apps` source.
     repo: struct { repo: []const u8, apps_dir: []const u8 },
+    /// A URL that names no repo this can add: why, for the toast.
+    refused: []const u8,
 };
 
 /// What `addSource` added: the id it chose, and for a folder how many
@@ -926,6 +928,10 @@ const reserved_ids = [_][]const u8{ "mnml", "local", "index", "github" };
 /// not there, which `addSource` refuses by name.
 pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocator.Error!SourceInput {
     const raw = std.mem.trim(u8, input, " \t\r\n");
+    // A URL is never a folder: `https://…` resolved against the
+    // workspace is a path nobody typed.
+    const schemed = std.mem.indexOf(u8, raw, "://") != null;
+    if (schemed or std.mem.startsWith(u8, raw, "git@")) return urlInput(arena, raw);
     const expanded = try app.expandTilde(raw);
     // Resolved, not joined: `tools/acme` typed on Windows becomes one
     // path with one separator, and `..` collapses, so the file keeps a
@@ -934,6 +940,9 @@ pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocato
     const keep = if (raw.len > 0 and raw[0] == '~') try arena.dupe(u8, raw) else abs;
     const says_path = raw.len > 0 and (raw[0] == '/' or raw[0] == '~' or raw[0] == '.' or raw[0] == '\\' or std.fs.path.isAbsolute(raw));
     if (says_path or isDir(app.io, abs)) return .{ .folder = .{ .abs = abs, .keep = keep } };
+    // `github.com/owner/repo` — a browser's address bar without its
+    // scheme — once no folder by that name is here.
+    if (githubHost(raw)) return urlInput(arena, raw);
     if (repoShape(raw)) |r| return .{ .repo = .{ .repo = try arena.dupe(u8, r.repo), .apps_dir = try arena.dupe(u8, r.dir) } };
     return .{ .folder = .{ .abs = abs, .keep = keep } };
 }
@@ -946,6 +955,53 @@ fn realFolder(io: Io, arena: Allocator, path: []const u8) Allocator.Error![]cons
         error.OutOfMemory => error.OutOfMemory,
         else => path,
     };
+}
+
+/// Whether `rest` (a URL without its scheme) starts with GitHub's host.
+fn githubHost(rest: []const u8) bool {
+    const end = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    const host = rest[0..end];
+    return std.ascii.eqlIgnoreCase(host, "github.com") or std.ascii.eqlIgnoreCase(host, "www.github.com");
+}
+
+const url_forms = "give a folder, owner/repo[:dir], or a GitHub repo URL (github.com/owner/repo, …/tree/<branch>/<dir>)";
+
+/// A URL typed or pasted where a folder or `owner/repo` was asked for:
+/// a GitHub repo URL — `https://`, `http://` or none, `www.`, a
+/// trailing `.git` or `/`, a `?query` or `#anchor`, `…/tree/<branch>/<dir>`
+/// for the apps dir, or `git@github.com:owner/repo.git` — is that repo.
+/// The branch is not kept: a source lists the repo's default branch.
+/// Anything else is refused by name.
+fn urlInput(arena: Allocator, raw: []const u8) Allocator.Error!SourceInput {
+    var rest = raw;
+    if (std.mem.startsWith(u8, raw, "git@github.com:")) {
+        rest = try std.fmt.allocPrint(arena, "github.com/{s}", .{raw["git@github.com:".len..]});
+    } else if (std.mem.indexOf(u8, raw, "://")) |i| {
+        const scheme = raw[0..i];
+        if (!std.ascii.eqlIgnoreCase(scheme, "https") and !std.ascii.eqlIgnoreCase(scheme, "http"))
+            return .{ .refused = try std.fmt.allocPrint(arena, "{s} is a URL, not a source \u{2014} {s}", .{ raw, url_forms }) };
+        rest = raw[i + 3 ..];
+    }
+    if (!githubHost(rest))
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} is not a GitHub repo URL \u{2014} {s}", .{ raw, url_forms }) };
+    var path = rest[(std.mem.indexOfScalar(u8, rest, '/') orelse rest.len)..];
+    if (std.mem.indexOfAny(u8, path, "?#")) |q| path = path[0..q];
+    path = std.mem.trim(u8, path, "/");
+    var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.tokenizeScalar(u8, path, '/');
+    while (it.next()) |seg| try segs.append(arena, seg);
+    const s = segs.items;
+    const dir: []const u8 = if (s.len == 2 or (s.len == 4 and std.mem.eql(u8, s[2], "tree")))
+        "apps"
+    else if (s.len >= 5 and std.mem.eql(u8, s[2], "tree"))
+        try std.mem.join(arena, "/", s[4..])
+    else
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} names no repo \u{2014} {s}", .{ raw, url_forms }) };
+    const name = if (std.mem.endsWith(u8, s[1], ".git")) s[1][0 .. s[1].len - 4] else s[1];
+    const shaped = try std.fmt.allocPrint(arena, "{s}/{s}:{s}", .{ s[0], name, dir });
+    const r = repoShape(shaped) orelse
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} names no repo \u{2014} {s}", .{ raw, url_forms }) };
+    return .{ .repo = .{ .repo = r.repo, .apps_dir = r.dir } };
 }
 
 fn isDir(io: Io, path: []const u8) bool {
@@ -1031,6 +1087,7 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     var found: ?usize = null;
     var entry: Config.MarketplaceSource = undefined;
     switch (parsed) {
+        .refused => |why| return app.diag.fail(arena, "marketplace: {s}", .{why}),
         .folder => |f| {
             if (!isDir(app.io, f.abs)) return app.diag.fail(arena, "marketplace: {s} is not a folder", .{f.keep});
             // Compared by where the folder really is: a symlink to it, or
@@ -2598,6 +2655,59 @@ test "addSource: the same folder by another spelling — a symlink to it, or its
     const after = try rig.config();
     defer gpa.free(after);
     try testing.expectEqualStrings(before, after);
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try settle(app);
+}
+
+test "addSource: a pasted GitHub repo URL is that repo — scheme or not, .git, a trailing slash, /tree/<branch>/<dir>; any other URL is refused by name, never read as a folder" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const arena = app.frame.allocator();
+    const Want = struct { in: []const u8, repo: []const u8, dir: []const u8 };
+    for ([_]Want{
+        .{ .in = "https://github.com/someone/tools", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "http://github.com/someone/tools.git/", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "github.com/someone/tools", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "HTTPS://www.GitHub.com/someone/tools/", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools?tab=readme#top", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools/tree/main", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools/tree/main/integrations", .repo = "someone/tools", .dir = "integrations" },
+        .{ .in = "https://github.com/someone/tools/tree/main/pkgs/zig/", .repo = "someone/tools", .dir = "pkgs/zig" },
+        .{ .in = "git@github.com:someone/tools.git", .repo = "someone/tools", .dir = "apps" },
+    }) |w| {
+        const got = try parseSourceInput(app, arena, w.in);
+        if (got != .repo) {
+            std.debug.print("{s}: read as {s}, not a repo\n", .{ w.in, @tagName(got) });
+            return error.TestExpectedRepo;
+        }
+        try testing.expectEqualStrings(w.repo, got.repo.repo);
+        try testing.expectEqualStrings(w.dir, got.repo.apps_dir);
+    }
+    for ([_][]const u8{ "https://gitlab.com/someone/tools", "ftp://example.com/x", "file:///Users/me/x", "https://github.com/someone", "https://github.com/someone/tools/blob/main/x.zon", "https://github.com/some one/tools" }) |in| {
+        const got = try parseSourceInput(app, arena, in);
+        try testing.expect(got == .refused);
+    }
+
+    const added = try addSource(app, "https://github.com/someone/tools");
+    try testing.expectEqualStrings("tools", added.id);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expect(std.mem.indexOf(u8, got, ".repo = \"someone/tools\", .apps_dir = \"apps\"") != null);
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "github.com/someone/tools/"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source tools") != null);
+    // Refused by what it is, with the forms that work — never a path
+    // under the workspace the user did not type.
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "https://gitlab.com/someone/tools"));
+    const msg = app.diag.msg.?;
+    try testing.expect(std.mem.indexOf(u8, msg, "not a folder") == null);
+    try testing.expect(std.mem.indexOf(u8, msg, rig.ws) == null);
+    try testing.expect(std.mem.indexOf(u8, msg, "https://gitlab.com/someone/tools") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "owner/repo") != null);
     try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
     try settle(app);
 }

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Pasting a GitHub repo URL into "add a private source" is read as a workspace-relative folder and refused with a mangled path
 
