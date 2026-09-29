@@ -14,6 +14,8 @@ const app_mod = @import("../../app.zig");
 const App = app_mod.App;
 const copy = @import("../info_view_copy.zig");
 const Entry = copy.Entry;
+const Link = copy.Link;
+const context_menus = @import("../context_menus.zig");
 const sl = @import("../../ui/statusline.zig");
 const statusline_app = @import("../statusline.zig");
 const SegId = statusline_app.SegId;
@@ -328,26 +330,39 @@ fn bell(app: *App, arena: Allocator) Allocator.Error!Entry {
     };
 }
 
-/// A host's own segment: its `tooltip` is the publisher's help — the
-/// first line is the title, the rest the body — and it counts as
-/// curated; a segment sent without one falls through to the generic
-/// line, which the audit lists.
+/// A host's own segment — a chip an integration (or a script over the
+/// IPC channel) publishes. With a `tooltip`, its first line is the
+/// title and the rest opens the body; without one, the entry names the
+/// segment by its id. Either way the rest is read off the segment: what
+/// its left click runs, and the rows its right-click menu really has
+/// (`context_menus.openIntegrationSegmentMenu`).
 fn dynamic(app: *App, arena: Allocator, slot: u32) Allocator.Error!?Entry {
     const segs = app.ipc_fx.segments.items;
     if (slot >= segs.len) return null;
     const seg = segs[slot];
-    const tip = seg.tooltip orelse return null;
-    var it = std.mem.splitScalar(u8, tip, '\n');
-    const head = try arena.dupe(u8, it.first());
+    const polled = app.integration_poll.jobForSegment(seg.id) != null;
+    var title: []const u8 = undefined;
     var body: std.ArrayListUnmanaged(u8) = .empty;
-    while (it.next()) |l| {
-        if (body.items.len > 0) try body.append(arena, ' ');
-        try body.appendSlice(arena, l);
+    if (seg.tooltip) |tip| {
+        var it = std.mem.splitScalar(u8, tip, '\n');
+        title = try arena.dupe(u8, it.first());
+        while (it.next()) |l| {
+            if (body.items.len > 0) try body.append(arena, ' ');
+            try body.appendSlice(arena, l);
+        }
+        if (body.items.len > 0) try body.appendSlice(arena, " ");
+    } else {
+        title = try std.fmt.allocPrint(arena, "Chip `{s}`", .{seg.id});
+        try body.print(arena, "A chip published to the statusline as `{s}`, sent without hover text of its own, so its figure is all it says. ", .{seg.id});
     }
-    if (body.items.len > 0) try body.appendSlice(arena, " ");
-    if (seg.click_command) |c| try body.print(arena, "Click runs `{s}`; ", .{c}) else try body.appendSlice(arena, "The chip is passive — a click runs nothing; ");
-    try body.print(arena, "right-click offers Refresh now and the segment's own rows. Published by the `{s}` integration over the statusline channel, so it is as fresh as that integration's last poll.", .{seg.id});
-    return .{ .title = head, .body = body.items, .links = &.{ .{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }, ask } };
+    if (seg.click_command) |c| try body.print(arena, "Click runs `{s}`. ", .{c}) else try body.appendSlice(arena, "The chip is passive — a click runs nothing. ");
+    try body.appendSlice(arena, "Right-click lists ");
+    if (polled) try body.appendSlice(arena, "Refresh now (every integration polls at once), ");
+    if (seg.click_command != null) try body.appendSlice(arena, "Open (the click's command), ");
+    try body.print(arena, "Requests… (the request log filtered to `{s}`) and Integrations…. ", .{context_menus.serviceOfSegment(seg.id)});
+    try body.appendSlice(arena, if (polled) "It is as fresh as that integration's last poll." else "Nothing here polls it; it is as fresh as the publisher's last send.");
+    const links: []const Link = if (polled) &.{ .{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }, ask } else &.{ .{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }, ask };
+    return .{ .title = title, .body = body.items, .links = links };
 }
 
 // ─── the state, spelled for the AI ──────────────────────────────────────
@@ -391,6 +406,14 @@ test "every fixed segment and every SegId has an entry; the branch entry names t
         try t.expect(e.body.len >= 40);
     }
     try t.expect(std.mem.startsWith(u8, (try entry(&app, a, SegId.branch.raw())).?.title, "Branch "));
-    // A dynamic segment without a tooltip is not curated; with one, it is.
+    // A dynamic segment past the end has nothing; one without a tooltip
+    // is curated by its id and the rows its menu really has.
     try t.expect((try entry(&app, a, sl.seg_dyn_base)) == null);
+    try app.ipc_fx.setSegment(app.gpa, .{ .id = "demo_prs.open", .text = " 3 " });
+    const plain = (try entry(&app, a, sl.seg_dyn_base)).?;
+    try t.expectEqualStrings("Chip `demo_prs.open`", plain.title);
+    try t.expect(std.mem.indexOf(u8, plain.body, "a click runs nothing") != null);
+    try t.expect(std.mem.indexOf(u8, plain.body, "Requests… (the request log filtered to `demo`)") != null);
+    // Nothing polls it, so no Refresh now row is promised.
+    try t.expect(std.mem.indexOf(u8, plain.body, "Refresh now") == null);
 }
