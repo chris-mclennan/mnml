@@ -32,9 +32,25 @@
 # Needs: macOS, ghostty, `zig build -Ddrive`, python3 (stdlib only),
 # Accessibility + Screen Recording for the terminal that runs it
 # (`zig-out/bin/mnml-drive doctor`). See docs/LOOK.md and docs/DRIVE.md.
+#
+# `run` and `sweep` without those grants re-run themselves in a new
+# Ghostty window, which holds them (tools/tour/ghostty-hop.sh), and relay
+# its output and exit code. --in-ghostty / MNML_TOUR_GHOSTTY=1 forces the
+# hop; --no-ghostty / MNML_TOUR_GHOSTTY=0 never hops.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -x "$ROOT/zig-out/bin/mnml-drive" ] || { echo "tour.sh: build the driver first: zig build -Ddrive" >&2; exit 64; }
+# --in-ghostty / --no-ghostty are this script's, wherever they appear.
+hop=${MNML_TOUR_GHOSTTY:-auto}
+args=()
+for a in "$@"; do
+  case "$a" in
+    --in-ghostty) hop=1 ;;
+    --no-ghostty) hop=0 ;;
+    *) args+=("$a") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
 # A driver older than tools/drive/ is rebuilt (or, under
 # MNML_DRIVE_NO_REBUILD=1, refused) before anything launches; `diff` and
 # `accept` never launch, so they skip it (tools/tour/stamp.py).
@@ -42,8 +58,19 @@ case "${1:-}" in
   diff|accept|-h|--help|help) ;;
   *) MNML_STAMP_WHO=tour.sh python3 "$ROOT/tools/tour/stamp.py" drive || exit $? ;;
 esac
+# The permissions hop: only for the verbs that drive a window, only on
+# macOS, never from inside the hop itself.
+case "${1:-}" in
+  diff|accept|-h|--help|help) hop=0 ;;
+esac
+if [ "$hop" != 0 ] && [ -z "${MNML_TOUR_IN_GHOSTTY:-}" ] && [ "$(uname -s)" = Darwin ]; then
+  if [ "$hop" = 1 ] || ! "$ROOT/zig-out/bin/mnml-drive" doctor >/dev/null 2>&1; then
+    [ "$hop" = 1 ] || echo "tour.sh: this process lacks Accessibility / Screen Recording; running in a Ghostty window that holds them" >&2
+    exec "$ROOT/tools/tour/ghostty-hop.sh" "$ROOT/tools/tour.sh" "$@"
+  fi
+fi
 case "${1:-}" in
   run|diff|accept|sweep) exec python3 "$ROOT/tools/tour/tour.py" "$@" ;;
-  -h|--help|help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help|help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) exec python3 "$ROOT/tools/tour/tour.py" run "$@" ;;
 esac
