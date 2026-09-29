@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # `marketplace.refresh` (and `marketplace.add_source`, which calls it) freezes the whole app — and `quit` hangs — until a running install's child process exits
 
@@ -25,3 +25,39 @@ The same freeze with `{"cmd":"run-command","id":"marketplace.add_source"}` + `ty
 **Same cause, on quit:** `{"cmd":"quit"}` sent while `mnml-slow --install` sleeps 15 s: `{"event":"quit"}` is logged at once, but the process exits only when the child does — `exited after 15s` — because teardown cancels the same group (`src/app/marketplace.zig:219`). Quitting mid-`zig build` waits out the whole build.
 
 **Reproduced:** 4/4 fresh launches for the refresh/add (two with `marketplace.refresh`, one with `marketplace.add_source`, one while the `zig build` step itself was sleeping — 15 s ack); 2/2 for quit.
+
+## Fix
+
+Two causes, both fixed (branch `fix-freeze`):
+
+- **The shared group.** A refresh cancelled the one `Io.Group` the
+  install worker also ran in. The state now has a `fetch_group` (the
+  listing; a refresh cancels it) and an `install_group` (installs and
+  rebuilds; only `deinit` cancels it). A refresh leaves a running
+  install alone — it keeps going and lands its own "installed" toast.
+- **The swallowed cancel.** `run`'s `streamRemaining(...) catch {}` ate
+  the `error.Canceled` the runtime reports once, so the `child.wait`
+  after it could not be interrupted. `run` now spawns the child as the
+  leader of its own process group (POSIX), returns `Canceled` from the
+  read, and a `defer core/child.terminate(.{ .group = true })` stops the
+  child and what it started (SIGTERM, 500 ms, SIGKILL, reaped); a
+  cancelled `wait` goes to `reapAbandonedGroup`. The install path's other
+  `catch {}` sites re-arm a cancel they catch (`keepCancel`), and a
+  failed `git pull` no longer swallows one.
+
+Headless, ReleaseSafe, the reproduction above with `SLOW_SECS=12`
+(`.verify/results.txt`): PING ack after a refresh 11.6 s → 0.04 s; after
+an add_source 11.7 s → 0.05 s; `quit` mid-install exits 11.7 s → 0.13 s,
+the script and its `sleep` both gone. Tests: `app.marketplace`'s "a
+refresh while an install's child runs…" and "quitting mid-install…".
+
+The same swallowed cancel sat on the listing side, which a refresh does
+still cancel: `http/client.zig` turned a cancelled send into an `.err`
+outcome and dropped the cancel (std reports it as a bare `ReadFailed`,
+the cause kept on the connection's stream), so a fetch worker went on
+through its remaining sources un-cancellable. The send now surfaces it as
+`Canceled` and re-arms it; the listing loops re-arm what their
+`checkCancel` caught; a cancelled download or manifest fetch in an
+install is a cancel, not a failure. Test: `http.client`'s "a cancelled
+send keeps the cancel armed…" (20 s → 0 s to cancel, 1.5 s is the mock
+server's own stop).

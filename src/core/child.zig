@@ -31,6 +31,16 @@ pub fn reapAbandoned(pid: ?Child.Id) void {
     reap(p);
 }
 
+/// `reapAbandoned` for a child that led its own process group (spawned
+/// with `.pgid = 0`): the group goes first, so what the child started
+/// does not outlive it. With `group` false it is `reapAbandoned`.
+pub fn reapAbandonedGroup(pid: ?Child.Id, group: bool) void {
+    if (builtin.os.tag == .windows) return;
+    const p = pid orelse return;
+    if (group) std.posix.kill(-p, .KILL) catch {};
+    reapAbandoned(p);
+}
+
 /// `waitpid` until it answers: a cancelled task is still being
 /// signalled. `Io.Group.cancel` keeps sending SIGIO to a worker's thread
 /// until the task is seen to finish, and the one that lands here — after

@@ -96,6 +96,8 @@ const catalogue = @import("marketplace_catalogue.zig");
 const release = @import("marketplace_release.zig");
 const build_options = @import("build_options");
 const settings = @import("settings.zig");
+const child_os = @import("../core/child.zig");
+const builtin = @import("builtin");
 
 pub const default_api = "https://api.github.com";
 pub const max_body = 4 * 1024 * 1024;
@@ -189,7 +191,14 @@ pub const Result = struct {
 };
 
 pub const State = struct {
-    group: Io.Group = .init,
+    /// The listing fetch. A refresh cancels it and starts another.
+    fetch_group: Io.Group = .init,
+    /// The install or rebuild running, apart from the fetch: a refresh
+    /// re-reads the listing and has no business with an install the
+    /// user started — cancelling it there blocked the UI thread until
+    /// the install's child exited. Only `deinit` cancels this one, and
+    /// a cancelled install stops its child (`run`).
+    install_group: Io.Group = .init,
     generation: u32 = 0,
     /// The listing's arena, adopted from the last result.
     arena: ?std.heap.ArenaAllocator = null,
@@ -218,7 +227,8 @@ pub const State = struct {
     rebuilds: std.ArrayListUnmanaged(Rebuild) = .empty,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
-        self.group.cancel(io);
+        self.fetch_group.cancel(io);
+        self.install_group.cancel(io);
         if (self.cfg_arena) |*a| a.deinit();
         if (self.arena) |*a| a.deinit();
         if (self.installing) |i| gpa.free(i);
@@ -491,7 +501,7 @@ pub fn refresh(app: *App) CommandError!void {
     if (!app.cfg.marketplace.enabled) return app.diag.fail(app.frame.allocator(), "marketplace: disabled in config (marketplace.enabled)", .{});
     const st = &app.marketplace;
     const gpa = app.gpa;
-    st.group.cancel(app.io);
+    st.fetch_group.cancel(app.io);
     st.generation +%= 1;
     const specs = try sources(app, gpa);
     errdefer {
@@ -508,7 +518,7 @@ pub fn refresh(app: *App) CommandError!void {
     }
     const api = try gpa.dupe(u8, apiBase(app));
     errdefer gpa.free(api);
-    st.group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation, st.fetcher }) catch |err| {
+    st.fetch_group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation, st.fetcher }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the fetch: {s}", .{@errorName(err)});
     };
     st.fetching = true;
@@ -638,7 +648,8 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
         return;
     };
     for (listing) |gh| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         if (!safeName(gh.name)) continue;
         switch (s.kind) {
             .launcher_folder => {
@@ -707,7 +718,8 @@ fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayLis
         },
     };
     for (cat.entries) |e| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         var glyph: []const u8 = "";
         if (e.chip) |c| {
             const chip: manifest_mod.Chip = .{ .glyph = c.glyph, .glyph_codepoint = c.glyph_codepoint, .fallback = c.fallback, .color = c.color };
@@ -859,7 +871,8 @@ const local_depth = 3;
 fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []const u8, depth: usize, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         if (!safeName(entry.name)) continue;
         const full = try std.fs.path.join(arena, &.{ path, entry.name });
         var kind: Kind = undefined;
@@ -1351,7 +1364,7 @@ fn startJob(app: *App, e: Entry, rebuild: bool) CommandError!void {
     job.env = try app.env.clone(gpa);
     errdefer job.env.deinit();
     try job.env.put("MNML_DATA_ROOT", app.data_root);
-    st.group.concurrent(app.io, installWorker, .{ app.events, app.io, gpa, job, st.generation }) catch |err| {
+    st.install_group.concurrent(app.io, installWorker, .{ app.events, app.io, gpa, job, st.generation }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the install: {s}", .{@errorName(err)});
     };
     st.installing = try gpa.dupe(u8, e.id);
@@ -1475,23 +1488,30 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
         .launcher => {
             // A local folder's manifest is a file; a GitHub one a download.
             const text = if (std.fs.path.isAbsolute(job.url))
-                Io.Dir.cwd().readFileAlloc(io, job.url, arena, .limited(1 << 20)) catch {
+                Io.Dir.cwd().readFileAlloc(io, job.url, arena, .limited(1 << 20)) catch |err| {
+                    keepCancel(io, err);
                     why.* = "cannot read the manifest";
                     return error.Failed;
                 }
-            else switch (try fetch(gpa, io, arena, job.url)) {
-                .body => |b| b,
-                .err => |e| {
-                    why.* = e;
-                    return error.Failed;
-                },
+            else f: {
+                const got = try fetch(gpa, io, arena, job.url);
+                // Cut short by a cancel: a cancel, not a failure.
+                io.checkCancel() catch return error.Canceled;
+                break :f switch (got) {
+                    .body => |b| b,
+                    .err => |e| {
+                        why.* = e;
+                        return error.Failed;
+                    },
+                };
             };
             const path = manifest_mod.manifest.pathUnder(arena, job.root, job.id) catch {
                 why.* = "the id is not a file name";
                 return error.Failed;
             };
-            Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(path).?) catch {};
-            Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text }) catch {
+            Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(path).?) catch |err| keepCancel(io, err);
+            Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text }) catch |err| {
+                keepCancel(io, err);
                 why.* = "cannot write the manifest";
                 return error.Failed;
             };
@@ -1511,15 +1531,22 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 }
                 const clone_dir = try std.fs.path.join(arena, &.{ job.root, "marketplace", slug });
                 const exists = e: {
-                    Io.Dir.cwd().access(io, clone_dir, .{}) catch break :e false;
+                    Io.Dir.cwd().access(io, clone_dir, .{}) catch |err| {
+                        keepCancel(io, err);
+                        break :e false;
+                    };
                     break :e true;
                 };
                 if (!exists) {
-                    Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(clone_dir).?) catch {};
+                    Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(clone_dir).?) catch |err| keepCancel(io, err);
                     const git_url = try std.fmt.allocPrint(arena, "https://github.com/{s}.git", .{job.url});
                     try run(io, gpa, arena, &.{ "git", "clone", "--depth", "1", git_url, clone_dir }, null, &job.env, "git clone", why);
                 } else {
-                    run(io, gpa, arena, &.{ "git", "-C", clone_dir, "pull", "--ff-only" }, null, &job.env, "git pull", why) catch {};
+                    // A failed pull builds what is there; a cancel stops.
+                    run(io, gpa, arena, &.{ "git", "-C", clone_dir, "pull", "--ff-only" }, null, &job.env, "git pull", why) catch |err| switch (err) {
+                        error.Canceled, error.OutOfMemory => |e| return e,
+                        error.Failed => {},
+                    };
                 }
                 break :blk try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             };
@@ -1535,18 +1562,22 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
             // machine is the one source a rebuild can build again.
             if (std.fs.path.isAbsolute(job.url)) {
                 const note = try std.fs.path.join(arena, &.{ prefix, built_from_file });
-                Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = app_dir }) catch {};
+                Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = app_dir }) catch |err| keepCancel(io, err);
             }
             // The binary: the one file under <prefix>/bin.
             const bin_dir = try std.fs.path.join(arena, &.{ prefix, "bin" });
-            var dir = Io.Dir.cwd().openDir(io, bin_dir, .{ .iterate = true }) catch {
+            var dir = Io.Dir.cwd().openDir(io, bin_dir, .{ .iterate = true }) catch |err| {
+                keepCancel(io, err);
                 why.* = "zig build produced no bin/";
                 return error.Failed;
             };
             defer dir.close(io);
             var it = dir.iterate();
             var binary: ?[]const u8 = null;
-            while (it.next(io) catch null) |entry| {
+            while (it.next(io) catch |err| n: {
+                keepCancel(io, err);
+                break :n null;
+            }) |entry| {
                 if (entry.kind != .file) continue;
                 binary = try std.fs.path.join(arena, &.{ bin_dir, entry.name });
                 break;
@@ -1555,7 +1586,11 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 why.* = "zig build produced no binary";
                 return error.Failed;
             };
-            _ = linkBinary(io, arena, job.root, exe) catch "";
+            _ = linkBinary(io, arena, job.root, exe) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                // The binary is still there to `--install`.
+                error.LinkFailed => "",
+            };
             try run(io, gpa, arena, &.{ exe, "--install" }, null, &job.env, "--install", why);
             if (job.rebuild) return rebuiltStamp(io, arena, job, warn);
             return try std.fmt.allocPrint(arena, "built {s}", .{exe});
@@ -1589,6 +1624,14 @@ fn rebuiltStamp(io: Io, arena: Allocator, job: *InstallJob, warn: *bool) Allocat
 
 pub const LinkError = error{ OutOfMemory, LinkFailed };
 
+/// For a best-effort step that cannot return `error.Canceled` (it
+/// catches every error): re-arm a cancel it swallowed. The runtime
+/// reports a cancel once; dropped, the install's next child ran to the
+/// end with the canceller waiting on it.
+fn keepCancel(io: Io, err: anyerror) void {
+    if (err == error.Canceled) io.recancel();
+}
+
 /// `<root>/bin/<name>` → `target`, the one indirection that keeps a
 /// manifest's bare `binary` name honest: `integrations.resolveBinary`
 /// prefers this link over PATH, so relinking it (here, by `run.sh
@@ -1598,18 +1641,34 @@ pub const LinkError = error{ OutOfMemory, LinkFailed };
 /// privilege). Returns the link's path.
 pub fn linkBinary(io: Io, arena: Allocator, root: []const u8, target: []const u8) LinkError![]const u8 {
     const link_dir = try std.fs.path.join(arena, &.{ root, "bin" });
-    Io.Dir.cwd().createDirPath(io, link_dir) catch {};
+    Io.Dir.cwd().createDirPath(io, link_dir) catch |err| keepCancel(io, err);
     const link = try std.fs.path.join(arena, &.{ link_dir, std.fs.path.basename(target) });
     // The link is replaced, not written through: deleting it first is
     // what stops a copy overwriting the binary a symlink points at.
-    Io.Dir.cwd().deleteFile(io, link) catch {};
-    Io.Dir.cwd().symLink(io, target, link, .{}) catch {
-        Io.Dir.cwd().copyFile(target, Io.Dir.cwd(), link, io, .{}) catch return error.LinkFailed;
+    Io.Dir.cwd().deleteFile(io, link) catch |err| keepCancel(io, err);
+    Io.Dir.cwd().symLink(io, target, link, .{}) catch |serr| {
+        keepCancel(io, serr);
+        Io.Dir.cwd().copyFile(target, Io.Dir.cwd(), link, io, .{}) catch |err| {
+            keepCancel(io, err);
+            return error.LinkFailed;
+        };
     };
     return link;
 }
 
+/// How long a cancelled install's child gets between SIGTERM and SIGKILL.
+/// Quitting mid-install waits this long at most for a child that
+/// ignores the SIGTERM — `zig build`, git and a `--install` all act on it.
+const cancel_grace: Io.Duration = .fromMilliseconds(500);
+
+/// On POSIX the child leads its own process group, so a cancel stops
+/// what it started too — `zig build`'s compiler, a script's `sleep`.
+const own_group = builtin.os.tag != .windows;
+
 /// Run a child to completion; a non-zero exit is `Failed` with its stderr tail in `why`.
+/// A cancel stops the child and its group and returns `Canceled`: the
+/// group's `cancel` (quit) returns at once instead of waiting out the
+/// child.
 fn run(io: Io, gpa: Allocator, arena: Allocator, argv: []const []const u8, cwd: ?[]const u8, env: *const std.process.Environ.Map, what: []const u8, why: *[]const u8) InstallError!void {
     var child = std.process.spawn(io, .{
         .argv = argv,
@@ -1618,6 +1677,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, argv: []const []const u8, cwd: 
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .pipe,
+        .pgid = if (own_group) 0 else null,
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
@@ -1626,18 +1686,34 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, argv: []const []const u8, cwd: 
             return error.Failed;
         },
     };
-    defer child.kill(io);
+    // Every early return — a cancel mid-read, out of memory — stops the
+    // child and its group; after a finished `wait` this does nothing.
+    defer child_os.terminate(io, &child, .{ .group = own_group, .grace = cancel_grace });
     var err_buf: [4096]u8 = undefined;
     var err_reader = child.stderr.?.reader(io, &err_buf);
     var tail: Io.Writer.Allocating = .init(gpa);
     defer tail.deinit();
-    _ = err_reader.interface.streamRemaining(&tail.writer) catch {};
-    const term = child.wait(io) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
-        else => {
-            why.* = try std.fmt.allocPrint(arena, "{s}: wait failed", .{what});
-            return error.Failed;
-        },
+    // The read is where a cancel lands while the child runs: the
+    // runtime reports it once, so it goes up, never into a `catch {}`
+    // — swallowed, the `wait` below could not be interrupted and the
+    // canceller waited for the child to exit on its own. Any other read
+    // failure only costs the tail; the `wait` says how the child ended.
+    _ = err_reader.interface.streamRemaining(&tail.writer) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        error.ReadFailed => if (err_reader.err) |e| if (e == error.Canceled) return error.Canceled,
+    };
+    // A cancelled `wait` clears `child.id` without stopping anything
+    // (`core/child.zig`), so the pid is taken first.
+    const pid = child.id;
+    const term = child.wait(io) catch |err| {
+        child_os.reapAbandonedGroup(pid, own_group);
+        switch (err) {
+            error.Canceled => return error.Canceled,
+            else => {
+                why.* = try std.fmt.allocPrint(arena, "{s}: wait failed", .{what});
+                return error.Failed;
+            },
+        }
     };
     const ok = switch (term) {
         .exited => |code| code == 0,
@@ -2648,6 +2724,45 @@ fn fakeBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, pref
     };
 }
 
+// ─── an install's child against a refresh and a quit ────────────────────
+
+/// The `--install` of the slow fixture: it starts a `sleep 30` in the
+/// background, writes both pids (each file renamed into place, so a pid
+/// file that exists is whole), and waits — an install that is still
+/// running when the test acts, with a child of its own.
+const slow_install_script =
+    \\#!/bin/sh
+    \\sleep 30 &
+    \\echo $! > "$SLOW_PIDDIR/gc.part" && mv "$SLOW_PIDDIR/gc.part" "$SLOW_PIDDIR/grandchild.pid"
+    \\echo $$ > "$SLOW_PIDDIR/c.part" && mv "$SLOW_PIDDIR/c.part" "$SLOW_PIDDIR/child.pid"
+    \\wait
+    \\
+;
+
+/// A builder that "builds" the slow fixture: the script, executable, as
+/// the one file under `<prefix>/bin`.
+fn slowBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void {
+    _ = gpa;
+    _ = app_dir;
+    _ = env;
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {
+        why.* = "slow build: cannot make bin/";
+        return error.Failed;
+    };
+    const exe = try std.fs.path.join(arena, &.{ bin, "mnml-slow" });
+    const perms: Io.File.Permissions = .fromMode(0o755);
+    const file = Io.Dir.cwd().createFile(io, exe, .{ .truncate = true, .permissions = perms }) catch {
+        why.* = "slow build: cannot write the script";
+        return error.Failed;
+    };
+    defer file.close(io);
+    file.writeStreamingAll(io, slow_install_script) catch {
+        why.* = "slow build: cannot write the script";
+        return error.Failed;
+    };
+}
+
 test "addSource: a folder that IS an integration (build.zig + manifest.zon) lists as that one app and Install builds it in place — its manifest is never a launcher" {
     const gpa = testing.allocator;
     const io = testing.io;
@@ -2880,4 +2995,130 @@ test "addSource: a folder's rows are listed the moment it is added, beside the r
     // The fetch's own listing replaces it with the same rows.
     try settle(app);
     try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
+}
+
+const SlowPids = struct { child: std.posix.pid_t, grandchild: std.posix.pid_t };
+
+fn readPid(io: Io, arena: Allocator, path: []const u8) ?std.posix.pid_t {
+    const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64)) catch return null;
+    return std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, text, " \r\n"), 10) catch null;
+}
+
+/// An app on a scratch workspace whose only source is a local folder
+/// holding the `slow` app integration, with `slowBuild` as its builder
+/// and the workspace as its data root.
+fn slowApp(gpa: Allocator, io: Io) !App {
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("PATH", "/bin:/usr/bin");
+    var app = try App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24, .env = &env });
+    errdefer app.deinit();
+    gpa.free(app.data_root);
+    app.data_root = try gpa.dupe(u8, app.workspace);
+    var ws = try Io.Dir.cwd().openDir(io, app.workspace, .{});
+    defer ws.close(io);
+    try ws.createDirPath(io, "src/slow");
+    try ws.createDirPath(io, "pids");
+    try ws.writeFile(io, .{ .sub_path = "src/slow/build.zig", .data = "" });
+    try ws.writeFile(io, .{ .sub_path = "src/slow/manifest.zon", .data = ".{ .id = \"slow\", .label = \"Slow\", .description = \"An install that takes a while\", .version = \"0.1.0\", .binary = \"mnml-slow\" }" });
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    try app.env.put("MNML_MARKETPLACE_LOCAL", try std.fmt.bufPrint(&buf, "{s}/src", .{app.workspace}));
+    try app.env.put("SLOW_PIDDIR", try std.fmt.bufPrint(&buf, "{s}/pids", .{app.workspace}));
+    app.marketplace.builder = slowBuild;
+    return app;
+}
+
+/// List the fixture, install `slow`, and tick until its `--install` is
+/// running: the pids of the script and of its `sleep`.
+fn startSlowInstall(app: *App, arena: Allocator) !SlowPids {
+    const io = app.io;
+    try refresh(app);
+    var waited: u32 = 0;
+    while (app.marketplace.fetching and waited < 10_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    const idx = find(app, "slow") orelse return error.TestExpectedSlowRow;
+    try install(app, idx);
+    const child_path = try std.fs.path.join(arena, &.{ app.workspace, "pids", "child.pid" });
+    const gc_path = try std.fs.path.join(arena, &.{ app.workspace, "pids", "grandchild.pid" });
+    waited = 0;
+    while (waited < 20_000) : (waited += 10) {
+        if (readPid(io, arena, child_path)) |c| {
+            const g = readPid(io, arena, gc_path) orelse return error.TestExpectedGrandchild;
+            return .{ .child = c, .grandchild = g };
+        }
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    return error.TestInstallNeverStarted;
+}
+
+fn msSince(io: Io, start: Io.Timestamp) i64 {
+    return @intCast(@divTrunc(start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+}
+
+test "a refresh while an install's child runs returns at once, the listing lands, and the install keeps running" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    var app = try slowApp(gpa, io);
+    var app_live = true;
+    defer if (app_live) app.deinit();
+    const pids = try startSlowInstall(&app, mem.allocator());
+    const st = &app.marketplace;
+    try testing.expect(st.installing != null);
+
+    // The refresh: it used to cancel the group the install shares and
+    // block the UI thread until the install's child exited — 30 s here.
+    const t0 = Io.Timestamp.now(io, .awake);
+    try refresh(&app);
+    const refresh_ms = msSince(io, t0);
+    try testing.expect(refresh_ms < 1000);
+
+    // The loop keeps ticking: the new listing lands while the install's
+    // child is still running, untouched.
+    var waited: u32 = 0;
+    while (st.fetching and waited < 5_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(!st.fetching);
+    try testing.expect(find(&app, "slow") != null);
+    try testing.expect(st.installing != null);
+    try testing.expect(!child_os.gone(pids.child));
+    try testing.expect(!child_os.gone(pids.grandchild));
+
+    // Quit with it still running: prompt, and nothing is left behind.
+    app_live = false;
+    const t1 = Io.Timestamp.now(io, .awake);
+    app.deinit();
+    try testing.expect(msSince(io, t1) < 1500);
+    try testing.expect(child_os.goneWithin(io, pids.child, .fromSeconds(2)));
+    try testing.expect(child_os.goneWithin(io, pids.grandchild, .fromSeconds(2)));
+}
+
+test "quitting mid-install stops the install's child and what it started, and returns promptly" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    var app = try slowApp(gpa, io);
+    var app_live = true;
+    defer if (app_live) app.deinit();
+    const pids = try startSlowInstall(&app, mem.allocator());
+    try testing.expect(!child_os.gone(pids.child));
+
+    // `App.deinit` is what quit runs: it cancels the install's group,
+    // which used to wait out the child's 30 s.
+    app_live = false;
+    const t0 = Io.Timestamp.now(io, .awake);
+    app.deinit();
+    try testing.expect(msSince(io, t0) < 1500);
+    // Reaped, not orphaned: the script and its `sleep` are both gone.
+    try testing.expect(child_os.gone(pids.child));
+    try testing.expect(child_os.goneWithin(io, pids.grandchild, .fromSeconds(2)));
 }
