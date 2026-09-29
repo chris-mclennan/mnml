@@ -29,9 +29,9 @@ pub fn entry(id: u32) ?Entry {
 pub fn toolbar(a: git_toolbar.Action) Entry {
     return switch (a) {
         .undo => .{
-            .title = "Undo — the last commit",
-            .body = "Click runs `git reset --soft HEAD~1`: the last commit goes and its changes stay staged, ready to commit again with a better message or a missing file. Nothing in the working tree is touched. Redo puts the commit back.",
-            .links = &.{ .{ .command = .{ .id = .@"git.undo", .label = "Undo the last commit" } }, .{ .command = .{ .id = .@"git.redo", .label = "Redo it" } } },
+            .title = "Undo — the last git step",
+            .body = "Click undoes the last git step mnml made — a commit or an amend goes back with its changes staged, a checkout returns to the branch before. It refuses when HEAD has moved since, and a commit made outside mnml is not on its list. Redo puts the step back.",
+            .links = &.{ .{ .command = .{ .id = .@"git.undo", .label = "Undo the last git step" } }, .{ .command = .{ .id = .@"git.redo", .label = "Redo it" } } },
         },
         .redo => .{
             .title = "Redo — the undone commit",
@@ -120,7 +120,7 @@ pub fn column(c: graph_view.SortCol) Entry {
         },
         .sha => .{
             .title = "SHA column",
-            .body = "Each commit's short hash. Click sorts the list by hash (a second click reverses it) — handy for finding a hash someone pasted; COMMIT MESSAGE puts back the graph order. Right-click on a row copies its full hash.",
+            .body = "Each commit's short hash. Click sorts the list by hash (a second click reverses it) — handy for finding a hash someone pasted; COMMIT MESSAGE puts back the graph order. Right-click on a row is the commit's menu; its detail pane's row menu copies the full hash.",
             .links = &.{.{ .command = .{ .id = .@"git.graph_sort", .label = "Cycle the sort" } }},
         },
     };
@@ -140,7 +140,7 @@ pub fn wipButton(b: graph_view.WipButton) Entry {
         },
         .commit => .{
             .title = "Commit — from the box",
-            .body = "Click commits the staged changes with the box's text as the message and empties the box. An empty box asks for the message in a prompt instead; while an AI message is still streaming it waits.",
+            .body = "Click commits the staged changes with the box's text as the message and empties the box. An empty box asks for the message in a prompt instead; while an AI message is still streaming it refuses and says so.",
             .links = &.{ .{ .command = .{ .id = .@"git.commit", .label = "Commit with a prompt" } }, .{ .command = .{ .id = .@"git.stage_all", .label = "Stage everything first" } } },
         },
         .ai_message => .{

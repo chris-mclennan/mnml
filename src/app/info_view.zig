@@ -890,7 +890,9 @@ test "the ladder: Sidebar at rest, the row past the first when the tree walks, t
     const rs = try pick(&app, arena);
     try t.expectEqualStrings("main.rs — Rust source", rs.title);
     try t.expect(std.mem.indexOf(u8, rs.body, "Compiled with cargo.") != null);
-    try t.expect(std.mem.indexOf(u8, rs.body, "[Enter] Open in the active pane  [Ctrl+Enter] Open in a horizontal split") != null);
+    try t.expect(std.mem.indexOf(u8, rs.body, "[Enter] Open in the active pane") != null);
+    // The tree binds no Ctrl+Enter (`tree.open_in_split` is menu-only), so none is promised.
+    try t.expect(std.mem.indexOf(u8, rs.body, "Ctrl+Enter") == null);
     try t.expectEqual(@as(usize, 0), rs.shortcuts.len);
     // A directory row.
     app.tree.cursor = 0;
