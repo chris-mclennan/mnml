@@ -1,40 +1,60 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS           │ 󰐕                                                                            󱸀  󲀀    
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │ INTEGRATIONS           │ 󰐕                                                                                                                                                            󱸀  󲀀    
   │ Inst (4) Mkt (0)  (1)   │
    │  󰍉 / filter              │
  󰍉 │                          │
    │▌  Browser  first-party  │
- 󰊢 │▌   browser.open          │                                                            _
-   │                          │                            _ __ ___    _ __    _ __ ___   | |
-  │  󱸀 Claude Code  first-par│                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │    95% session · 52% week│                           | | | | | | | | | | | | | | | | | |
-▌󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰊢 │▌   browser.open          │
+   │                          │
+  │  󱸀 Claude Code  first-par│
+   │    95% session · 52% week│
+▌󰐱 │                          │
    │  󱸁 Codex (hidden)  first-│
- 󰎒 │    not read yet          │                        workspace · ws  on main · 1 changed file
+ 󰎒 │    not read yet          │
    │                          │
-  │   HTTP (hidden)  first-p│   WORKSPACES                                  SESSIONS
-   │    view.activity_http    │    ws                                open
-  │                          │                                                + New Claude Code session here
-   │                          │   RECENT FILES
-  │                          │    main.zig                           src      No session to resume
+  │   HTTP (hidden)  first-p│
+   │    view.activity_http    │
+  │                          │                                                                                                    _
+   │                          │                                                                    _ __ ___    _ __    _ __ ___   | |
+  │                          │                                                                   | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                                                                   | | | | | | | | | | | | | | | | | |
+ 󱘣 │                          │                                                                   |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │                          │
- 󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P         find a file
- 󰢱 │                          │                                                Ctrl+R         recent files
-   │                          │                                                Ctrl+Shift+E   the file tree
-   │                          │                                                Ctrl+B         toggle the tree
-   │                          │                                                Ctrl+Shift+P   command palette
-   │                          │                                                Ctrl+K         which-key menu
-   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
-   │                          │                                                Ctrl+,         settings
-   │                          │                                                Ctrl+N         new file
-   │──────────────────────────│                                                Ctrl+Q         quit
+ 󰢱 │                          │                                                                workspace · ws  on main · 1 changed file
+   │                          │
+   │                          │                                   WORKSPACES                                          SESSIONS
+   │                          │                                    ws                                        open
+   │                          │                                                                                        + New Claude Code session here
+   │                          │                                   RECENT FILES
+   │                          │                                    main.zig                                   src      No session to resume
+   │                          │
+   │                          │                                                                                       SHORTCUTS
+   │                          │                                                                                        Ctrl+P         find a file
+   │                          │                                                                                        Ctrl+R         recent files
+   │                          │                                                                                        Ctrl+Shift+E   the file tree
+   │                          │                                                                                        Ctrl+B         toggle the tree
+   │                          │                                                                                        Ctrl+Shift+P   command palette
+   │                          │                                                                                        Ctrl+K         which-key menu
+   │                          │                                                                                        Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                                                        Ctrl+,         settings
+   │                          │                                                                                        Ctrl+N         new file
+   │                          │                                                                                        Ctrl+Q         quit
+   │                          │
+   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │──────────────────────────│
    │ Integrations         󰐃 ⋮ │
-   │                          │                             mnml 0.3.0-dev+g2a054a3c-dirty
+   │                          │
    │ Installed integrations.  │
    │ Enter fires the command. │
    │ Right-click for          │
   │ Configure / Uninstall.   │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  21:30  ws   —
-                                                           ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:33  ws   —
+                                                                                                   ⋯

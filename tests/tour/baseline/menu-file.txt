@@ -1,40 +1,60 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /┌─────────────────────────────┐                                                                    󱸀  󲀀    
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /┌─────────────────────────────┐                                                                                                                                                    󱸀  󲀀    
 ▌ │▌   │  󰈤  New file                │
    │     󱼅│    Open file…              │
  󰍉 │    │    Add folder to workspace…│
    │     󱼄│    Open recent file       ▸│
- 󰊢 │     󱼅│    Switch workspace…       │                                                  _
-   │     │─────────────────────────────│                  _ __ ___    _ __    _ __ ___   | |
-  │     │  󰆓  Save                    │                 | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │     󰂺│  󰆔  Save all                │                 | | | | | | | | | | | | | | | | | |
- 󰐱 │      │─────────────────────────────│                 |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰊢 │     󱼅│    Switch workspace…       │
+   │     │─────────────────────────────│
+  │     │  󰆓  Save                    │
+   │     󰂺│  󰆔  Save all                │
+ 󰐱 │      │─────────────────────────────│
    │      │    Close tab               │
- 󰎒 │      │─────────────────────────────│              workspace · ws  on main · 1 changed file
+ 󰎒 │      │─────────────────────────────│
    │      │    Settings…               │
-  │      │    Quit                    │CES                                  SESSIONS
-   │      └─────────────────────────────┘                            open
-  │                          │                                                + New Claude Code session here
-   │                          │   RECENT FILES
-  │                          │    util.zig                           src      No session to resume
-   │                          │    main.zig                           src
- 󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P         find a file
- 󰢱 │                          │                                                Ctrl+R         recent files
-   │                          │                                                Ctrl+Shift+E   the file tree
-   │                          │                                                Ctrl+B         toggle the tree
-   │                          │                                                Ctrl+Shift+P   command palette
-   │                          │                                                Ctrl+K         which-key menu
-   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
-   │                          │                                                Ctrl+,         settings
-   │                          │                                                Ctrl+N         new file
-   │──────────────────────────│                                                Ctrl+Q         quit
+  │      │    Quit                    │
+   │      └─────────────────────────────┘
+  │                          │                                                                                                    _
+   │                          │                                                                    _ __ ___    _ __    _ __ ___   | |
+  │                          │                                                                   | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                                                                   | | | | | | | | | | | | | | | | | |
+ 󱘣 │                          │                                                                   |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                          │
+ 󰢱 │                          │                                                                workspace · ws  on main · 1 changed file
+   │                          │
+   │                          │                                   WORKSPACES                                          SESSIONS
+   │                          │                                    ws                                        open
+   │                          │                                                                                        + New Claude Code session here
+   │                          │                                   RECENT FILES
+   │                          │                                    util.zig                                   src      No session to resume
+   │                          │                                    main.zig                                   src
+   │                          │                                                                                       SHORTCUTS
+   │                          │                                                                                        Ctrl+P         find a file
+   │                          │                                                                                        Ctrl+R         recent files
+   │                          │                                                                                        Ctrl+Shift+E   the file tree
+   │                          │                                                                                        Ctrl+B         toggle the tree
+   │                          │                                                                                        Ctrl+Shift+P   command palette
+   │                          │                                                                                        Ctrl+K         which-key menu
+   │                          │                                                                                        Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                                                        Ctrl+,         settings
+   │                          │                                                                                        Ctrl+N         new file
+   │                          │                                                                                        Ctrl+Q         quit
+   │                          │
+   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │──────────────────────────│
    │ Sidebar              󰐃 ⋮ │
-   │                          │                                mnml 0.3.0-dev+g1cb0b5c4
+   │                          │
    │ Arrows or j/k walk rows. │
    │ Enter opens the          │
    │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  22:15  ws   —
-                                                           ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:34  ws   —
+                                                                                                   ⋯
