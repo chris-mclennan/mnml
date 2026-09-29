@@ -5,6 +5,6 @@
 {"cmd":"set-activity-badge","section":"todos","count":0}
 {"cmd":"notify","text":"done","title":"build","level":"warn","sound":true,"source":"ci"}
 {"cmd":"notify","text":"no title"}
-{"cmd":"open-pty","command":["ls","-la"],"cwd":"/tmp"}
+{"cmd":"open-pty","command":["ls","-la"],"cwd":"."}
 {"cmd":"open-pty","command":[]}
 {"cmd":"quit"}
