@@ -49,10 +49,11 @@ regression, not a discovery.
    ```
    *(published)* or the Homebrew tap / the installer script — both in
    `README.md` → *Install*.
-   *Pass:* `install` ends with `installed. ~/.local/bin/mnml is the
-   stable profile`, and `~/.local/bin/mnml --version` prints
-   `mnml-zig <version> (stable profile)`. If it says `~/.local/bin is
-   not on your PATH`, add it and open a new shell.
+   *Pass:* `install` ends with ``installed. `~/.local/bin/mnml` is the
+   stable profile; `./run.sh` here is the dev one.``, and
+   `~/.local/bin/mnml --version` prints
+   `mnml-zig <version> (stable profile)`. If it says `note: ~/.local/bin
+   is not on your PATH`, add it and open a new shell.
 
 4. **The symbols font.** `./run.sh install-font`, then **fully quit and
    reopen the terminal** (ghostty: Cmd+Q, not just the window). For
@@ -65,9 +66,9 @@ regression, not a discovery.
 
 5. **First launch.** `cd` to a git checkout of anything and run `mnml`.
    *Pass:* the first-launch wizard opens, titled **First-launch setup**,
-   with seven numbered sections — *Nerd Font*, *Keyboard*, *Input
+   with eight numbered sections — *Nerd Font*, *Keyboard*, *Input
    style*, *Claude Code + Codex*, *AI billing preference*, *AI
-   ghost-text*, *VSCode `code` shim*. Answer the Nerd Font row
+   ghost-text*, *VSCode `code` shim*, *Integrations*. Answer the Nerd Font row
    (boxes: yes/no), press `Enter`. It must not reopen on the next
    launch.
 
@@ -89,9 +90,9 @@ regression, not a discovery.
    copies — it lives in `zig-out/bin/`):
    ```sh
    ./zig-out/bin/mnml-fake-jira --url-file /tmp/jira-url &
-   mkdir -p ~/.config/mnml/integrations
-   # the integration's own config; `mnml-jira --write-config` writes a
-   # starting config.zon and prints its path. Set .email = "fake@acme.com".
+   # the integration's own config: writes <data root>/integrations/jira/config.zon
+   # (creating the directory) and prints its path. Set .email = "fake@acme.com".
+   ./zig-out/bin/mnml-jira --write-config
    JIRA_BASE_URL=@/tmp/jira-url JIRA_API_TOKEN=fake-token mnml
    ```
    Open the INTEGRATIONS section and click the Jira chip.
@@ -150,7 +151,7 @@ regression, not a discovery.
    `install-font` (or a copy into `~/.local/share/fonts` plus
    `fc-cache -f`) is still the step.
 
-5. **First launch.** Same as macOS step 5 — the same seven wizard
+5. **First launch.** Same as macOS step 5 — the same eight wizard
    sections.
 
 6. **The file tree and a file.** Same as macOS step 6.
@@ -245,8 +246,9 @@ not.
    **open a new terminal**.
    *Things to record:* did the dirty-tree / Debug / foreign-binary
    refusals behave? Did `-DryRun` name every copy? Did
-   `mnml-jira.exe --install` succeed (it writes
-   `<data root>\integrations\jira_work.zon`) or warn?
+   `mnml-jira.exe --install` succeed (it writes three manifests,
+   `<data root>\integrations\jira_work.zon`, `jira_fix_versions.zon`
+   and `jira_boards.zon`) or warn?
 
 4. **The symbols font.**
    ```powershell
@@ -274,15 +276,15 @@ not.
    mnml .
    ```
    *Pass:* the alt screen, the file tree, and the **First-launch setup**
-   wizard with its seven sections — *Nerd Font*, *Keyboard*, *Input
+   wizard with its eight sections — *Nerd Font*, *Keyboard*, *Input
    style*, *Claude Code + Codex*, *AI billing preference*, *AI
-   ghost-text*, *VSCode `code` shim*. No stray escape text for a frame
+   ghost-text*, *VSCode `code` shim*, *Integrations*. No stray escape text for a frame
    before it paints (if there is, `applyTerminalQuirks` in
    `src/tui/caps.zig` is where a `WT_SESSION` correction goes).
    Answer the Nerd Font row, press `Enter`; it must not reopen next
    launch.
    *Things to record:* the *Keyboard* section probes `Ctrl+→` /
-   `Ctrl+←` / `Alt+→` / `Alt+←`. Windows Terminal does not speak the
+   `Ctrl+←` / `Option/Alt+→` / `Option/Alt+←`. Windows Terminal does not speak the
    kitty keyboard protocol, so chords only CSI u can distinguish will
    not register — note which of the four the section ticks.
 
@@ -323,7 +325,7 @@ not.
    `zig build` puts in `zig-out\bin` and `install` does **not** copy, so
    this step runs from the checkout:
    ```powershell
-   Start-Process .\zig-out\bin\mnml-fake-jira.exe -ArgumentList '--url-file','$env:TEMP\jira-url'
+   Start-Process .\zig-out\bin\mnml-fake-jira.exe -ArgumentList '--url-file',"$env:TEMP\jira-url"
    $env:JIRA_BASE_URL = "@$env:TEMP\jira-url"
    $env:JIRA_API_TOKEN = 'fake-token'
    # the integration's config, with .email = "fake@acme.com":
