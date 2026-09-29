@@ -109,6 +109,16 @@ already running.
 If either is missing, stop and grant it. There is no workaround, and
 anything that looks like one is posting events somewhere it should not.
 
+`tools/tour.sh run` and `sweep` hop instead of stopping: macOS ties the
+grants to the *responsible* process, which for a background Claude Code
+session is Claude's versioned binary — every Claude update silently
+drops them — so without the grants the tour re-runs itself inside a new
+Ghostty window (Ghostty holds both under a stable identity), hands the
+keyboard straight back, relays the output and exit code, and closes the
+window (`tools/tour/ghostty-hop.sh`). `--in-ghostty` /
+`MNML_TOUR_GHOSTTY=1` forces the hop; `--no-ghostty` /
+`MNML_TOUR_GHOSTTY=0` never hops.
+
 ## Using it
 
 ```
