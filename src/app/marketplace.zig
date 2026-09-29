@@ -175,7 +175,12 @@ pub const Result = struct {
         /// `warn`: it finished, but not as asked — a rebuild whose
         /// manifest is still stamped behind this mnml's SDK.
         installed: struct { id: []u8, detail: []u8, rebuilt: bool = false, warn: bool = false },
+        /// An install or rebuild failed: the toast. The listing's
+        /// state is not this one's to touch.
         failed: []u8,
+        /// The listing fetch failed (out of memory): the toast, and the
+        /// fetch is over.
+        fetch_failed: []u8,
     },
 
     pub fn destroy(self: *Result, gpa: Allocator) void {
@@ -185,7 +190,7 @@ pub const Result = struct {
                 gpa.free(i.id);
                 gpa.free(i.detail);
             },
-            .failed => |s| gpa.free(s),
+            .failed, .fetch_failed => |s| gpa.free(s),
         }
         gpa.destroy(self);
     }
@@ -600,7 +605,8 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []Sourc
         };
         listSource(io, gpa, arena, api, s, fetcher, &entries, &problems) catch {
             arena_state.deinit();
-            postFailed(events, io, gpa, generation, "marketplace: out of memory", .{});
+            const msg = gpa.dupe(u8, "marketplace: out of memory") catch return;
+            post(events, io, gpa, .{ .generation = generation, .kind = .{ .fetch_failed = msg } });
             return;
         };
     }
@@ -1779,9 +1785,16 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
                 app.toast("marketplace: installed {s} — {s}", .{ i.id, i.detail });
             pumpOrToast(app);
         },
+        .fetch_failed => |msg| {
+            defer r.destroy(gpa);
+            // A superseded fetch's failure says nothing about the one running.
+            if (r.generation != st.generation) return;
+            st.fetching = false;
+            try app.toastLevel(.err, "{s}", .{msg});
+            pumpOrToast(app);
+        },
         .failed => |msg| {
             defer r.destroy(gpa);
-            st.fetching = false;
             // // changed (bottom-row): a failed install carries the way
             // back to the entry, where its source and version say why —
             // the id is gone from the state a line later.
@@ -3298,4 +3311,60 @@ test "a cancel that lands while the catalogue is read ends the listing — it do
     for (fifos) |f| try makeFifo(arena, f);
     const ms = try cancelListingMs(&app, &.{ .{ .kind = .mnml, .path = fifos[0] }, .{ .kind = .mnml, .path = fifos[1] } }, &fifos);
     try testing.expect(ms < 1000);
+}
+
+// ─── an install's failure against a running fetch ───────────────────────
+
+/// A builder that fails at once.
+fn failBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void {
+    _ = .{ io, gpa, arena, app_dir, prefix, env };
+    why.* = "fail build: on purpose";
+    return error.Failed;
+}
+
+test "an install that fails leaves a listing fetch that is still running showing as running" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    const arena = mem.allocator();
+    var app = try slowApp(gpa, io);
+    defer app.deinit();
+    const st = &app.marketplace;
+    st.builder = failBuild;
+    try refresh(&app);
+    try settle(&app);
+    const idx = find(&app, "slow") orelse return error.TestExpectedSlowRow;
+
+    // The next listing blocks reading a loose manifest that is a pipe.
+    const fifo = try wsPath(&app, arena, "held.pipe");
+    try makeFifo(arena, fifo);
+    try Io.Dir.cwd().symLink(io, fifo, try wsPath(&app, arena, "src/held.zon"), .{});
+    var rel: FifoRelease = .{ .io = io, .paths = &.{fifo} };
+    const th = try std.Thread.spawn(.{}, FifoRelease.run, .{&rel});
+    defer {
+        rel.done.store(true, .release);
+        th.join();
+    }
+
+    // The install fails in its builder at once; its result waits for a
+    // tick, by which time the fetch is running.
+    try install(&app, idx);
+    try refresh(&app);
+    try testing.expect(st.fetching);
+    var waited: u32 = 0;
+    while (st.installing != null and waited < 5_000) : (waited += 10) {
+        try app.tick(App.nowMs(io));
+        io.sleep(.fromMilliseconds(10), .awake) catch {};
+    }
+    try testing.expect(st.installing == null);
+    // The failure is the install's; the fetch is still going.
+    try testing.expect(st.fetching);
+
+    // Let the fetch finish: its listing lands and ends it.
+    rel.go.store(true, .release);
+    try settle(&app);
+    try testing.expect(!st.fetching);
+    try testing.expect(find(&app, "slow") != null);
 }
