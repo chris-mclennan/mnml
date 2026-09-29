@@ -638,7 +638,7 @@ def run(args):
             shutil.rmtree(fr.run_dir, ignore_errors=True)
     total = int((now_ms() - started) / 1000)
     log(f"sweep: {done} run, {skipped} already shot, {errors} error(s), {total} s; record {record}")
-    from tour import SWEEP_BASELINE, compare, load_masks
+    from tour import LOOK_COLS, LOOK_ROWS, SWEEP_BASELINE, compare, load_masks
     if os.path.isdir(SWEEP_BASELINE):
         masks = load_masks()
         thr = args.threshold if args.threshold is not None else float(masks.get("threshold_pct", 0.02))
@@ -650,7 +650,8 @@ def run(args):
             base = os.path.join(SWEEP_BASELINE, p)
             if not os.path.exists(base):
                 continue
-            pct, bbox, ch = compare(p[:-4], os.path.join(out, p), base, masks, thr, tol)
+            pct, bbox, ch = compare(p[:-4], os.path.join(out, p), base, masks, thr, tol,
+                                   cols=LOOK_COLS, rows=LOOK_ROWS)
             if ch:
                 changed += 1
                 log(f"  CHANGED {pct:7.3f}%  {p[:-4]}")

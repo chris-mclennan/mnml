@@ -1,6 +1,6 @@
 // Masks for the tour's pixel diff (tools/tour.sh diff). A mask is a
-// rectangle of CELLS (col, row, w, h at 120x40) blanked in both the
-// baseline and the fresh shot before they are compared.
+// rectangle of CELLS (col, row, w, h on the tour's 200x60 grid) blanked
+// in both the baseline and the fresh shot before they are compared.
 //
 // `patterns` are regexes run over the shot's screen.txt (saved beside
 // every PNG): each match becomes a one-row mask, one cell wider on each
@@ -8,8 +8,11 @@
 // statusline clock, the version hash on the start surface — without a
 // rectangle that goes stale the day a chip moves.
 .{
-    // A shot is CHANGED when more than this percent of its pixels moved
-    // (0.02% of a 1920x1360 capture is ~520 pixels: one cell's glyph).
+    // A shot is CHANGED when more than this percent of its pixels moved:
+    // ~520 pixels, one 16x34 cell's glyph. The tour's 200x60 capture is
+    // 3200x2040, so 0.008%; the sweep's (the corpus size, 120x40) is
+    // 1920x1360, so 0.02%.
+    .tour_threshold_pct = 0.008,
     .threshold_pct = 0.02,
     // A pixel moved when any channel changed by more than this.
     .tolerance = 24,

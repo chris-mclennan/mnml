@@ -287,13 +287,13 @@ def read_text(path):
         return ""
 
 
-def compare(name, fresh_png, base_png, masks, threshold_pct, tolerance):
+def compare(name, fresh_png, base_png, masks, threshold_pct, tolerance, cols=COLS, rows=ROWS):
     fresh_txt = read_text(os.path.splitext(fresh_png)[0] + ".txt")
     base_txt = read_text(os.path.splitext(base_png)[0] + ".txt")
     cells = masks_for(name, masks, fresh_txt, base_txt)
     a = imgdiff.load(base_png)
     b = imgdiff.load(fresh_png)
-    changed, total, bbox = imgdiff.diff(a, b, COLS, ROWS, cells, tolerance=tolerance)
+    changed, total, bbox = imgdiff.diff(a, b, cols, rows, cells, tolerance=tolerance)
     pct = 100.0 * changed / total if total else 0.0
     return pct, bbox, pct > threshold_pct
 
@@ -461,7 +461,8 @@ def diff_results(out, baseline, args, names=None):
     the threshold, the tolerance and one (kind, name, pct, bbox, png) per
     shot — kind `ok`, `CHANGED` or `new`. Writes flagged.txt."""
     masks = load_masks()
-    thr = args.threshold if args.threshold is not None else float(masks.get("threshold_pct", 0.02))
+    thr = args.threshold if args.threshold is not None else float(
+        masks.get("tour_threshold_pct", masks.get("threshold_pct", 0.02)))
     tol = args.tolerance if args.tolerance is not None else int(masks.get("tolerance", 24))
     rows = []
     fresh = sorted(p for p in os.listdir(out) if p.endswith(".png")) if os.path.isdir(out) else []

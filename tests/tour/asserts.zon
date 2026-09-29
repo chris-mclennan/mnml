@@ -12,25 +12,25 @@
 //                          The pane rail is a `▌` half block: its centre
 //                          is background, so it is sampled at fx 0.25.
 //
-// The hexes were measured on this machine at 120x40 with onedark
+// The hexes were measured on this machine at 200x60 with onedark
 // (docs/DRIVE.md: "a pixel is not a theme hex" — a different display
 // profile can move them; re-measure with `look.sh pixel`, never guess).
 .{
     // The pane rails: the focused pane's `▌` is bright, a stepped-back
     // pane's is dimmed. The shell was just opened and holds the focus.
-    .{ .shot = "split-shell", .col = 76, .row = 10, .fx = 0.25, .expect = "#abb2bf", .why = "the focused shell pane's rail is bright" },
+    .{ .shot = "split-shell", .col = 116, .row = 10, .fx = 0.25, .expect = "#abb2bf", .why = "the focused shell pane's rail is bright" },
     .{ .shot = "split-shell", .col = 31, .row = 10, .fx = 0.25, .expect = "#4c5e47", .why = "the unfocused editor's rail is its stepped-back green" },
-    .{ .shot = "split-shell", .col = 76, .row = 10, .fx = 0.25, .unlike = .{ .col = 31, .row = 10, .fx = 0.25, .min_delta = 60 }, .why = "focused and stepped-back rails are told apart" },
+    .{ .shot = "split-shell", .col = 116, .row = 10, .fx = 0.25, .unlike = .{ .col = 31, .row = 10, .fx = 0.25, .min_delta = 60 }, .why = "focused and stepped-back rails are told apart" },
     // Focus back on the editor: the two swap.
     .{ .shot = "editor-refocused", .col = 31, .row = 10, .fx = 0.25, .expect = "#98c379", .why = "the focused editor's rail is full green" },
-    .{ .shot = "editor-refocused", .col = 76, .row = 10, .fx = 0.25, .expect = "#525861", .why = "the unfocused shell's rail steps back to grey" },
+    .{ .shot = "editor-refocused", .col = 116, .row = 10, .fx = 0.25, .expect = "#525861", .why = "the unfocused shell's rail steps back to grey" },
     // The statusline mode chip: TREE blue at rest, HELP lavender while
     // the info panel holds the keys (`help.focus`).
-    .{ .shot = "start", .col = 0, .row = 38, .fx = 0.1, .fy = 0.1, .expect = "#61afef", .why = "the mode chip is TREE blue at rest" },
-    .{ .shot = "hover-help-focus", .col = 0, .row = 38, .fx = 0.1, .fy = 0.1, .expect = "#a4b8ef", .why = "the HELP focus cue: the mode chip turns lavender" },
+    .{ .shot = "start", .col = 0, .row = 58, .fx = 0.1, .fy = 0.1, .expect = "#61afef", .why = "the mode chip is TREE blue at rest" },
+    .{ .shot = "hover-help-focus", .col = 0, .row = 58, .fx = 0.1, .fy = 0.1, .expect = "#a4b8ef", .why = "the HELP focus cue: the mode chip turns lavender" },
     // The Claude usage chip: the worst account is at 95% (the fixture's
     // `personal`), so the percent sits on ink in the hot tier's red.
-    .{ .shot = "start", .col = 85, .row = 38, .fx = 0.1, .fy = 0.1, .expect = "#1a1a1a", .why = "the usage chip's percent is on ink: a tier is set" },
-    .{ .shot = "start", .col = 84, .row = 38, .expect = "#e06c75", .tolerance = 40, .why = "the hot tier paints the percent red" },
-    .{ .shot = "start", .col = 85, .row = 38, .fx = 0.1, .fy = 0.1, .unlike = .{ .col = 81, .row = 38, .fx = 0.1, .fy = 0.1, .min_delta = 80 }, .why = "the tier's ink is not the chip's coral" },
+    .{ .shot = "start", .col = 165, .row = 58, .fx = 0.1, .fy = 0.1, .expect = "#1a1a1a", .why = "the usage chip's percent is on ink: a tier is set" },
+    .{ .shot = "start", .col = 164, .row = 58, .expect = "#e06c75", .tolerance = 40, .why = "the hot tier paints the percent red" },
+    .{ .shot = "start", .col = 165, .row = 58, .fx = 0.1, .fy = 0.1, .unlike = .{ .col = 161, .row = 58, .fx = 0.1, .fy = 0.1, .min_delta = 80 }, .why = "the tier's ink is not the chip's coral" },
 }
