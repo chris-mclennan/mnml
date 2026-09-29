@@ -123,8 +123,8 @@ pub const table = .{
 
 const cut_forge = "the cross-host PR picker returns with the Zig forge integrations (docs/PARITY.md § Git)";
 const cut_glyph_svg = "the per-integration glyph builder and its SVG preview are cut — SVG-to-font itself is not: `view.terminal_glyph_custom` bakes one (docs/PARITY.md § Headless, IPC & extensibility)";
-const cut_audio = "now-playing, Sonos and mixr control are gone from mnml 0.3 (docs/PARITY.md § UI & theming)";
-const cut_integration_updates = "the cargo / git integration auto-updater is gone from mnml 0.3 — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
+const cut_audio = "now-playing, Sonos and mixr control are cut from mnml 0.3 (docs/PARITY.md § UI & theming)";
+const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml 0.3 — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
 
 /// A command that was cut on purpose: the reason, and where the ledger
 /// records it, as one toast. Fails so a keybinding does not look like it
