@@ -974,24 +974,48 @@ test "MNML_E2E_WORKSPACE naming this workspace makes it trusted at launch; anoth
 
 /// `MNML_IPC_DIR` relocates the channel. Exit 75 asks the wrapper to
 /// rebuild and relaunch.
-fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
-    // `-Dmem-report`: every byte of the session goes through the counter.
-    var counting: mem_report.Counting = .{ .child = gpa_in };
-    const gpa = if (mem_report.enabled) counting.allocator() else gpa_in;
-    if (mem_report.enabled) mem_report.installTreeSitter();
-    var use_stub = false;
-    var workspace: ?[]const u8 = null;
+/// What `--headless` reads from its arguments: the workspace (the
+/// first non-flag word that is not a flag's value), `--stub`, and
+/// `--ascii` — which the usage line lists for it, and which paints the
+/// virtual screen the way it paints the terminal.
+const HeadlessArgs = struct { workspace: ?[]const u8 = null, stub: bool = false, ascii: bool = false };
+
+fn headlessArgs(argv: []const [:0]const u8) HeadlessArgs {
+    var out: HeadlessArgs = .{};
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
         if (takesValue(a)) {
             i += 1; // `--input vim`: the value is not a workspace
         } else if (std.mem.eql(u8, a, "--stub")) {
-            use_stub = true;
-        } else if (a.len > 0 and a[0] != '-') workspace = a;
+            out.stub = true;
+        } else if (std.mem.eql(u8, a, "--ascii")) {
+            out.ascii = true;
+        } else if (a.len > 0 and a[0] != '-') out.workspace = a;
     }
+    return out;
+}
+
+test "--headless reads --ascii, --stub and the workspace, and a flag's value is not the workspace" {
+    const a = headlessArgs(&.{ "--headless", "--ascii", "--input", "vim", "ws" });
+    try std.testing.expect(a.ascii);
+    try std.testing.expect(!a.stub);
+    try std.testing.expectEqualStrings("ws", a.workspace.?);
+    const b = headlessArgs(&.{ "--headless", "--stub" });
+    try std.testing.expect(!b.ascii);
+    try std.testing.expect(b.stub);
+    try std.testing.expect(b.workspace == null);
+}
+
+fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
+    // `-Dmem-report`: every byte of the session goes through the counter.
+    var counting: mem_report.Counting = .{ .child = gpa_in };
+    const gpa = if (mem_report.enabled) counting.allocator() else gpa_in;
+    if (mem_report.enabled) mem_report.installTreeSitter();
+    const args = headlessArgs(argv);
+    const use_stub = args.stub;
     var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const ws_rel = workspace orelse ".";
+    const ws_rel = args.workspace orelse ".";
     const ws = Io.Dir.cwd().realPathFile(io, ws_rel, &cwd_buf) catch return usage(w, null, "workspace is not a directory");
     const ws_abs = cwd_buf[0..ws];
 
@@ -1011,7 +1035,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     // (`mnml_sdk.platform.openUrlRoute`) unless whoever launched it
     // said otherwise — a log path, or an empty value to open for real.
     if (env.get(sdk_platform.open_url_env) == null) try env.put(sdk_platform.open_url_env, "none");
-    const startup = try loadConfig(gpa, io, env, ws_abs, argv, false);
+    const startup = try loadConfig(gpa, io, env, ws_abs, argv, args.ascii);
     defer gpa.free(startup.data_root);
     // Headless has no first frame to toast on; the seed still happened.
     defer if (startup.note) |n| gpa.free(n);
