@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `owner/repo` sources are de-duplicated case-sensitively: `someone/tools`, `Someone/Tools` and `SOMEONE/TOOLS` are added as three sources
 

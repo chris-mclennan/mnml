@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # The same folder can be added as several sources by spelling it differently (letter case on macOS, a symlink) — every integration in it is then listed once per spelling
 

@@ -938,6 +938,16 @@ pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocato
     return .{ .folder = .{ .abs = abs, .keep = keep } };
 }
 
+/// `path` as the OS spells it — symlinks followed, and on a volume that
+/// folds case, the case it was created with. A folder that cannot be
+/// resolved (gone) is its own spelling.
+fn realFolder(io: Io, arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    return Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => path,
+    };
+}
+
 fn isDir(io: Io, path: []const u8) bool {
     var d = Io.Dir.cwd().openDir(io, path, .{}) catch return false;
     d.close(io);
@@ -964,15 +974,16 @@ fn nameOk(s: []const u8) bool {
 }
 
 /// `base`, or `base-2`, `base-3`… — the first no configured source and
-/// none of mnml's own uses.
+/// none of mnml's own uses, in any letter case: two sources whose ids
+/// differ only by case read as one in a row's `(source)`.
 fn uniqueId(app: *App, arena: Allocator, base: []const u8) Allocator.Error![]const u8 {
     var n: usize = 1;
     while (true) : (n += 1) {
         const id = if (n == 1) base else try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, n });
         const taken = for (reserved_ids) |r| {
-            if (std.mem.eql(u8, r, id)) break true;
+            if (std.ascii.eqlIgnoreCase(r, id)) break true;
         } else for (app.cfg.marketplace.sources) |s| {
-            if (std.mem.eql(u8, sourceId(s), id)) break true;
+            if (std.ascii.eqlIgnoreCase(sourceId(s), id)) break true;
         } else false;
         if (!taken) return id;
     }
@@ -1022,9 +1033,13 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     switch (parsed) {
         .folder => |f| {
             if (!isDir(app.io, f.abs)) return app.diag.fail(arena, "marketplace: {s} is not a folder", .{f.keep});
+            // Compared by where the folder really is: a symlink to it, or
+            // its name in other letters on a volume that folds case, is
+            // the same folder (the OS's real path spells it one way).
+            const real = try realFolder(app.io, arena, f.abs);
             for (app.cfg.marketplace.sources) |s| if (s == .local_folder) {
                 const spec = try specOf(app, arena, s);
-                if (std.mem.eql(u8, spec.path, f.abs)) return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ f.keep, s.local_folder.id });
+                if (std.mem.eql(u8, try realFolder(app.io, arena, spec.path), real)) return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ f.keep, s.local_folder.id });
             };
             // What the tab will list, listed now: the count, and the
             // refusal of a folder with nothing in it.
@@ -1040,7 +1055,9 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
             entry = .{ .local_folder = .{ .id = try uniqueId(app, arena, try idFrom(arena, base)), .path = f.keep } };
         },
         .repo => |r| {
-            for (app.cfg.marketplace.sources) |s| if (s == .github_monorepo_apps and std.mem.eql(u8, s.github_monorepo_apps.repo, r.repo) and std.mem.eql(u8, s.github_monorepo_apps.apps_dir, r.apps_dir)) {
+            // GitHub owner and repo names are case-insensitive; the apps
+            // dir is a path in the repo, which is not.
+            for (app.cfg.marketplace.sources) |s| if (s == .github_monorepo_apps and std.ascii.eqlIgnoreCase(s.github_monorepo_apps.repo, r.repo) and std.mem.eql(u8, s.github_monorepo_apps.apps_dir, r.apps_dir)) {
                 return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ r.repo, s.github_monorepo_apps.id });
             };
             const name = r.repo[std.mem.indexOfScalar(u8, r.repo, '/').? + 1 ..];
@@ -2519,4 +2536,68 @@ test "addSource with the Marketplace disabled refuses before writing: config.zon
     defer gpa.free(got);
     try testing.expectEqualStrings(add_source_before, got);
     try testing.expectEqual(@as(usize, 1), app.cfg.marketplace.sources.len);
+}
+
+test "addSource: owner/repo is compared case-insensitively, as GitHub does — Someone/Tools after someone/tools is already the source, and an id never differs from another by case alone" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expectEqualStrings("tools", (try addSource(app, "someone/tools")).id);
+    for ([_][]const u8{ "Someone/Tools", "SOMEONE/TOOLS" }) |again| {
+        app.diag.clear();
+        try testing.expectError(error.Failed, addSource(app, again));
+        try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source tools") != null);
+    }
+    // Another repo whose name is `tools` in other letters: its own id,
+    // not one that reads the same as `tools`.
+    try testing.expectEqualStrings("Tools-2", (try addSource(app, "other/Tools")).id);
+    try testing.expectEqual(@as(usize, 3), app.cfg.marketplace.sources.len);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, got, "someone/tools"));
+    try testing.expect(std.mem.indexOf(u8, got, "Someone/Tools") == null);
+    try settle(app);
+}
+
+test "addSource: the same folder by another spelling — a symlink to it, or its name in other letters on a case-insensitive volume — is already the source, nothing written" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expectEqualStrings("acme", (try addSource(app, "acme")).id);
+    const before = try rig.config();
+    defer gpa.free(before);
+    var refused: usize = 0;
+    const acme_abs = try std.fs.path.join(gpa, &.{ rig.ws, "acme" });
+    defer gpa.free(acme_abs);
+    // A symlink, where the platform lets a test make one.
+    if (rig.tmp.dir.symLink(io, acme_abs, "ws/link", .{ .is_directory = true })) |_| {
+        app.diag.clear();
+        try testing.expectError(error.Failed, addSource(app, "link"));
+        try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source acme") != null);
+        refused += 1;
+    } else |_| {}
+    // Letter case, where the volume folds it (macOS and Windows by
+    // default): `ACME` is then the same folder.
+    const upper = try std.fs.path.join(gpa, &.{ rig.ws, "ACME" });
+    defer gpa.free(upper);
+    if (isDir(io, upper)) {
+        for ([_][]const u8{ "ACME", "Acme" }) |spelling| {
+            app.diag.clear();
+            try testing.expectError(error.Failed, addSource(app, spelling));
+            try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source acme") != null);
+            refused += 1;
+        }
+    }
+    // A POSIX CI box without either still ran the check above.
+    try testing.expect(refused > 0 or @import("builtin").os.tag == .windows);
+    const after = try rig.config();
+    defer gpa.free(after);
+    try testing.expectEqualStrings(before, after);
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try settle(app);
 }
