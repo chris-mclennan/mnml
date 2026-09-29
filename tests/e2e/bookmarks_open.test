@@ -1,10 +1,10 @@
 # `bookmarks.open` lists the workspace's `.mnml/bookmarks.zon` as a
 # picker — the env on each label, the URL as its detail; Esc dismisses.
-write .mnml/bookmarks.zon ".{ .sites = .{ .{ .name = \"ADX\", .dev = \"https://adx.dev.example.net/admin\", .prod = \"https://adx.example.com/admin\" } }, .bookmarks = .{ .{ .label = \"Metabase\", .url = \"https://metabase.example.net\" } } }"
+write .mnml/bookmarks.zon ".{ .sites = .{ .{ .name = \"Admin\", .dev = \"https://admin.dev.example.net\", .prod = \"https://admin.example.com\" } }, .bookmarks = .{ .{ .label = \"Metabase\", .url = \"https://metabase.example.net\" } } }"
 command bookmarks.open
 expect screen contains "Bookmarks"
-expect screen contains "dev  ·  ADX"
-expect screen contains "prod  ·  ADX"
+expect screen contains "dev  ·  Admin"
+expect screen contains "prod  ·  Admin"
 expect screen contains "other  ·  Metabase"
 key escape
 expect screen lacks "other  ·  Metabase"
