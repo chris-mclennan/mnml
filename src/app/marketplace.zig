@@ -1122,6 +1122,8 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     if (!app.cfg.marketplace.enabled) return app.diag.fail(arena, "marketplace: disabled in config (marketplace.enabled) \u{2014} nothing added", .{});
     const parsed = try parseSourceInput(app, arena, raw);
     var found: ?usize = null;
+    // A folder's rows, read to count them: listed at once (`showNow`).
+    var rows: []const Entry = &.{};
     var entry: Config.MarketplaceSource = undefined;
     switch (parsed) {
         .refused => |why| return app.diag.fail(arena, "marketplace: {s}", .{why}),
@@ -1145,6 +1147,7 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
                 return app.diag.fail(arena, "marketplace: nothing to install in {s} — it needs a *.zon manifest, or a folder with build.zig and manifest.zon", .{f.keep});
             }
             found = entries.items.len;
+            rows = entries.items;
             const base = std.fs.path.basename(std.mem.trimEnd(u8, f.abs, "/\\"));
             entry = .{ .local_folder = .{ .id = try uniqueId(app, arena, try idFrom(arena, base)), .path = f.keep } };
         },
@@ -1183,6 +1186,7 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     const id = sourceId(grown[old.len]);
 
     try refresh(app);
+    try showNow(app, id, rows);
     try integrations.showTab(app, .marketplace);
     if (found) |n| {
         app.toast("added {s}: {d} integration{s} found", .{ id, n, if (n == 1) "" else "s" });
@@ -1190,6 +1194,40 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
         app.toast("added {s}: {s} ({s}/) — listing it now", .{ id, entry.github_monorepo_apps.repo, entry.github_monorepo_apps.apps_dir });
     }
     return .{ .id = id, .found = found };
+}
+
+/// A folder just added is listed now, beside the rows already shown:
+/// listing a folder is quick and was done already to count it, while
+/// the fetch `refresh` started re-lists every source and may wait on a
+/// slow one. That fetch's listing replaces this one when it lands.
+fn showNow(app: *App, id: []const u8, rows: []const Entry) Allocator.Error!void {
+    if (rows.len == 0) return;
+    const st = &app.marketplace;
+    var next = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer next.deinit();
+    const a = next.allocator();
+    const entries = try a.alloc(Entry, st.entries.len + rows.len);
+    for (st.entries, 0..) |e, i| entries[i] = try dupeEntry(a, e);
+    for (rows, st.entries.len..) |e, i| {
+        entries[i] = try dupeEntry(a, e);
+        entries[i].source = try a.dupe(u8, id);
+    }
+    const problems = try a.alloc([]const u8, st.problems.len);
+    for (st.problems, 0..) |p, i| problems[i] = try a.dupe(u8, p);
+    if (st.arena) |*old| old.deinit();
+    st.arena = next;
+    st.entries = entries;
+    st.problems = problems;
+    app.needs_render = true;
+}
+
+/// `e` with every string copied onto `a`.
+fn dupeEntry(a: Allocator, e: Entry) Allocator.Error!Entry {
+    var out = e;
+    inline for (std.meta.fields(Entry)) |f| if (f.type == []const u8) {
+        @field(out, f.name) = try a.dupe(u8, @field(e, f.name));
+    };
+    return out;
 }
 
 /// The prompt's title and its placeholder — one prompt for every entry
@@ -2778,4 +2816,35 @@ test "addSource: a folder named with non-ASCII letters gets an id that reads lik
     try testing.expectEqualStrings("integrations", (try addSource(app, "intégrations")).id);
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added integrations: 1 integration found") != null);
     try settle(app);
+}
+
+test "addSource: a folder's rows are listed the moment it is added, beside the rows already there — not when every source's fetch lands" {
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    _ = try addSource(app, "tools/acme");
+    try settle(app);
+    try testing.expectEqual(@as(usize, 1), app.marketplace.entries.len);
+    // No tick in between: nothing the worker posts has been handled.
+    const added = try addSource(app, "acme");
+    try testing.expectEqualStrings("acme-2", added.id);
+    try testing.expect(app.marketplace.fetching);
+    try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
+    var mine: usize = 0;
+    for (app.marketplace.entries) |e| {
+        if (std.mem.eql(u8, e.source, "acme-2")) {
+            try testing.expect(e.private);
+            mine += 1;
+        } else try testing.expectEqualStrings("acme", e.source);
+    }
+    try testing.expectEqual(@as(usize, 3), mine);
+    // The tab shows them now.
+    try app.render();
+    const text = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "Mkt (4)") != null);
+    // The fetch's own listing replaces it with the same rows.
+    try settle(app);
+    try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
 }
