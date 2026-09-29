@@ -26,7 +26,10 @@ expect screen contains "Mkt (1)"
 key i
 expect screen contains "installed bitbucket_prs"
 command integrations.show_installed
-expect screen contains "Bitbucket PRs  0.2.0"
+# A manifest copied in by hand carries no `.sdk` stamp (only a binary's
+# own `--install` writes one), so the row wears the `rebuild` chip at its
+# right edge — which, at the shipped column width, is where the version was.
+expect screen contains "Bitbucket PRs rebuild"
 expect screen contains "bitbucket_prs.open"
 
 # The pane mounts on the PR family — two tabs, the strip — resolves

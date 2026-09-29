@@ -2054,3 +2054,47 @@ test "a $BITBUCKET_BASE_URL=@file that never arrives refuses to start — no fal
     defer s.deinit(t.allocator);
     try t.expectEqualStrings("http://127.0.0.1:9", s.base_url);
 }
+
+/// The pane on the offline fixture, for the SDK's design-language
+/// suite: the PR tree over enough repos that its list outruns the body
+/// at 80×24, so the scrollbar rule has something to hold.
+const Probe = struct {
+    pub const Target = @import("src/hit.zig").Target;
+    rig: *app_mod.Rig,
+    f: sdk.Frame,
+    ascii: bool,
+
+    const repos = [_][]const u8{ "api", "web", "r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10", "r11", "r12", "r13", "r14", "r15", "r16", "r17", "r18" };
+    const config: cfg.Config = .{ .email = "me@x.com", .workspace = "acme", .repos = &repos, .refresh_interval_secs = 0, .tabs = &cfg.default_tabs };
+
+    pub fn init(gpa: Allocator, size: sdk.testing.Size) !Probe {
+        return .{ .rig = try app_mod.Rig.init(config, .{}), .f = try sdk.Frame.init(gpa, size.cols, size.rows), .ascii = size.ascii };
+    }
+
+    pub fn deinit(p: *Probe) void {
+        p.f.deinit();
+        p.rig.deinit();
+    }
+
+    pub fn paint(p: *Probe, arena: Allocator) !sdk.testing.Painted(Target) {
+        try screen.paint(arena, &p.f, &p.rig.app, !p.ascii);
+        var segs: std.ArrayList([]const u8) = .empty;
+        try segs.append(arena, segmentText(try arena.alloc(u8, 64), .{ .open_mine = 12, .unapproved_mine = 11 }, p.ascii));
+        try segs.append(arena, reviewText(try arena.alloc(u8, 64), 3, p.ascii));
+        try segs.append(arena, awaitingText(try arena.alloc(u8, 64), 2, p.ascii));
+        return .{
+            .frame = &p.f,
+            .hits = &p.rig.app.hits.inner,
+            .theme = p.rig.app.theme,
+            .title = .{ .text = "BITBUCKET PRS" },
+            .ladder_y = 0,
+            .gutter = .{ .h = p.f.rows - 1 },
+            .list = .{ .bar_x = p.f.cols - 1, .y0 = 1, .h = p.f.rows - 2 },
+            .statusline = segs.items,
+        };
+    }
+};
+
+test "the design language: the SDK's conformance suite at 120x40 and 80x24, with and without --ascii" {
+    try sdk.testing.conformance(Probe);
+}

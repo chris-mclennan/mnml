@@ -224,6 +224,28 @@ from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
 
+### A table's column header, and a fill meter
+
+Two pieces a private pane used to have to draw itself are the toolkit's:
+
+```zig
+// The header row over a table: names in `Theme.label()`, clipped to
+// their widths, one cell of air between. `cols` is your own column
+// type after `sdk.pane.columns.fit` — anything with `name` and `w`.
+_ = p.columnHeader(x0, y, max_w, cols, 1); // or sdk.pane.columns.header(f, …, th)
+
+// A bucket / quota / budget meter: full cells in the budget chip's tier
+// ink (`budgetStyle`'s tiers — good, warn, bad), the rest a dim track;
+// `█`/`░`, and `#`/`-` under `--ascii`.
+const tier = sdk.pane.meter.tierOfFraction(used_fraction);
+_ = p.meter(x, y, 20, remaining_fraction, tier);
+```
+
+`sdk.pane.expect.columnHeader(&frame, theme, x0, y, &.{ "KEY", "STATUS" })`
+asserts a header row: every name in label ink, and never run into the
+next (`STATUSASSIGNEE`). The Bitbucket pane's tables wear this header;
+its suite proves it cell for cell what the pane painted before.
+
 ### The design language, in full
 
 The toolkit is the list. A pane that paints all of it belongs beside
@@ -367,6 +389,7 @@ try sdk.pane.expect.statuslineFigure(my_segment_text);
 try sdk.pane.expect.buildLineHit(Target, &hits, y, x0, x1, .{ .build_line = i });
 try sdk.pane.expect.gutterFullHeight(&frame, theme, 0, 0, frame.rows - 1, ascii);
 try sdk.pane.expect.actionRun(Target, &frame, &hits, y, &targets, form);
+try sdk.pane.expect.columnHeader(&frame, theme, x0, y, &.{ "KEY", "SUMMARY" });
 ```
 
 Both official integrations call these, which is the point: one
@@ -375,6 +398,46 @@ checking whatever they happened to be written against. The 2026-09-19
 audit (`docs/research/pane-drift-audit-2026-09-19.md`) found seven
 elements that had come apart precisely where no shared assertion
 existed.
+
+### The conformance suite — one call, every rule
+
+Every integration — the official three and every external one — should
+also make this call from its own tests:
+
+```zig
+const Probe = struct {
+    pub const Target = MyTarget;
+    // … the pane mounted on its own fixture …
+    pub fn init(gpa: Allocator, size: sdk.testing.Size) !Probe { … }
+    pub fn deinit(p: *Probe) void { … }
+    pub fn paint(p: *Probe, arena: Allocator) !sdk.testing.Painted(MyTarget) {
+        try paintMyPane(arena, &p.frame, &p.app, p.ascii); // `init` kept `size.ascii`
+        return .{ .frame = &p.frame, .hits = &p.hits, .theme = p.theme,
+            .title = .{ .text = "MY PANE" }, .ladder_y = 0,
+            .gutter = .{ .h = p.frame.rows - 1 },
+            .list = .{ .bar_x = p.frame.cols - 1, .y0 = 1, .h = p.frame.rows - 2 },
+            .statusline = &.{my_segment_text} };
+    }
+};
+test "the design language" { try sdk.testing.conformance(Probe); }
+```
+
+`sdk.testing.conformance` mounts the pane at 120×40 and 80×24, each with
+and without `--ascii`, and asserts: the caps title is painted in
+`label()`; the header ladder ends in refresh then `?` on the chip
+ground; the gutter runs its full height in its ink (`|` under
+`--ascii`); a list whose bar column shows any bar shows a thumb over a
+track, and a declared list outruns its body at one size at least (so the
+fixture really exercises the bar — `ListNeverOutruns` otherwise); every
+statusline segment obeys the figure rule; under `--ascii` no cell holds a
+Private Use Area codepoint; and no hit lies off the frame. A failure
+prints the rule and the size (`conformance: GutterBroken at 120x40
+--ascii`). A field left null (no ladder, no list, no segments) is a rule
+the pane says does not apply; the title and the gutter apply to all.
+
+Rules are added in `sdk/mnml-sdk/src/conformance.zig`, and a rule added
+there reaches every pane that calls the suite at its next test run. Jira,
+Bitbucket and the sample call it from their `main.zig`.
 
 ### Build lines under a pull-request row
 
@@ -1544,6 +1607,51 @@ Both shipped integrations expose that door — bitbucket's
 `Rig.initOn(config, opts, gpa)` and jira's
 `Harness.startOn(config, family, gpa)` — and a third should, for the
 same reason.
+
+## Keeping an external integration current
+
+An integration that lives outside this repository — a private one
+installed from a `local_folder` marketplace source, or anyone's —
+depends on the SDK by path and draws through its components. A change
+to the SDK's look reaches it only when it is BUILT again. Four pieces
+keep that from going quiet:
+
+* **The stamp.** `--install` (`sdk.manifest.write` / `render`) records
+  the SDK the binary was compiled against as the manifest's `.sdk`
+  (`sdk.version`, which mnml's release test holds to
+  `sdk/mnml-sdk/build.zig.zon`). You never write it; a launcher (no
+  binary) is never stamped.
+* **The `rebuild` chip and commands.** mnml reads the stamp. An
+  Installed row built on an SDK behind the one mnml carries — or with no
+  stamp at all, i.e. installed before the stamp existed — wears a
+  `rebuild` chip at its right edge; its hover says "built against SDK
+  0.1.0, current 0.2.0". `integrations.rebuild_stale` rebuilds every such
+  row that came from a folder on this machine (the install leaves
+  `<data root>/integrations/<id>/built-from` naming it) with the same
+  in-place `zig build` the install ran, then `--install` again, a toast
+  per row; a stale row with no folder behind it is named, not built.
+  The row menu's *Rebuild* (`integrations.rebuild_focused`) does one.
+* **The conformance call.** `try sdk.testing.conformance(Probe);` in the
+  integration's own tests (above) holds its pane to every design-language
+  rule the SDK knows, including the ones added after it was written.
+* **The extra-roots check.** `tools/check-integration-roots.sh` builds
+  and tests every integration under the folders named in
+  `MNML_EXTRA_INTEGRATION_ROOTS` (a `:`-separated list of
+  `integrations/`-shaped folders — each subfolder with a `build.zig` and
+  a `manifest.zon`), one line each, `ok|FAIL <root>/<id> (<n> tests)`,
+  exiting non-zero on any failure; unset means no extra roots and exit 0.
+  Put it in a verification chain so an SDK change that breaks a private
+  integration fails there, before the author finds out at their next
+  build.
+
+**The rule: a component a private pane needs and the SDK lacks is added
+to the SDK first.** A pane that draws its own meter or its own table
+header today misses every polish pass the family gets tomorrow, and two
+panes drawing one thing two ways is exactly the drift the toolkit exists
+to stop. Add it to `sdk.pane` (with its `--ascii` twin, a test and, when
+the family asserts it, an `expect` helper), move the in-repo panes that
+draw the same thing onto it, and only then use it from the private pane.
+`sdk.pane.meter` and `sdk.pane.columns.header` came in exactly that way.
 
 ## Layout of the package
 

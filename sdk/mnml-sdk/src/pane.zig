@@ -17,7 +17,9 @@
 //!           `chrome.Painter.keySheet`)
 //!   columns how a table gives way when the pane is narrow: shrink
 //!           together to a floor, then drop whole by rank — never clip
-//!           the column a row is known by
+//!           the column a row is known by; and its header row
+//!   meter   a fill meter (a bucket, a quota) in the budget chip's
+//!           tier inks, with its `--ascii` twin
 //!   figure  what a statusline segment is allowed to say — one named
 //!           figure, and a bracketed subset only when the pane has one
 //!   expect  what an integration's OWN tests assert about the chrome
@@ -59,8 +61,11 @@ pub const build = @import("pane/build.zig");
 pub const merge = @import("pane/merge.zig");
 pub const chrome = @import("pane/chrome.zig");
 pub const text = @import("pane/text.zig");
-/// How a table gives way at a narrow width — one rule for every pane.
+/// How a table gives way at a narrow width — one rule for every pane —
+/// and the header row its columns wear (`columns.header`).
 pub const columns = @import("pane/columns.zig");
+/// A fill meter in the budget chip's tier inks (`meter.paint`).
+pub const meter = @import("pane/meter.zig");
 /// Hover help for a pane's elements: the toolkit's own chrome has one
 /// entry each, sent up with `Mount.hover` for the host's info view.
 pub const help = @import("pane/help.zig");
@@ -107,6 +112,7 @@ test {
     _ = chrome;
     _ = text;
     _ = columns;
+    _ = meter;
     _ = help;
     _ = keysheet;
     _ = work;

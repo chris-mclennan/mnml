@@ -1928,3 +1928,52 @@ test "a $JIRA_BASE_URL=@file that never arrives is the setup screen, and no requ
     try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ data, "requests", "jira.jsonl" }), .{}));
     try testing.expectError(error.FileNotFound, Io.Dir.cwd().access(testing.io, try std.fs.path.join(arena, &.{ data, "requests", "bitbucket.jsonl" }), .{}));
 }
+
+/// The pane on the offline fixture, for the SDK's design-language suite.
+const Probe = struct {
+    pub const Target = hit.Target;
+    // The tree's body sits under the header, the strip, the toolbar and
+    // the column header; `list` covers the rows below the header so the
+    // bar column is read where the bar can be.
+    h: *app_mod.Harness,
+    f: sdk.Frame,
+    ascii: bool,
+
+    pub fn init(gpa: Allocator, size: sdk.testing.Size) !Probe {
+        const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+        errdefer h.stop();
+        // Forty more open tickets than the fixture's twelve, so the tree
+        // outruns its body at 80×24 and the scrollbar rule has a bar.
+        try h.store.addExtraIssues(40);
+        try h.app.ensureLoaded();
+        h.app.resize(size.cols, size.rows);
+        return .{ .h = h, .f = try sdk.Frame.init(gpa, size.cols, size.rows), .ascii = size.ascii };
+    }
+
+    pub fn deinit(p: *Probe) void {
+        p.f.deinit();
+        p.h.stop();
+    }
+
+    pub fn paint(p: *Probe, arena: Allocator) !sdk.testing.Painted(Target) {
+        const ui: screen.Ui = .{ .ascii = p.ascii, .nerd = !p.ascii };
+        try screen.paint(arena, &p.f, &p.h.app, ui);
+        var segs: std.ArrayList([]const u8) = .empty;
+        try segs.append(arena, sdk.pane.figure.text(try arena.alloc(u8, 32), .{ .glyph = if (p.ascii) segment_ascii else segment_glyph, .n = 43 }));
+        try segs.append(arena, sdk.pane.figure.text(try arena.alloc(u8, 32), .{ .glyph = if (p.ascii) qa_segment_ascii else qa_segment_glyph, .n = 3 }));
+        return .{
+            .frame = &p.f,
+            .hits = &p.h.app.hits,
+            .theme = ui.th,
+            .title = .{ .text = "JIRA WORK" },
+            .ladder_y = 0,
+            .gutter = .{ .h = p.f.rows - 1 },
+            .list = .{ .bar_x = p.f.cols - 1, .y0 = 1, .h = p.f.rows - 2 },
+            .statusline = segs.items,
+        };
+    }
+};
+
+test "the design language: the SDK's conformance suite at 120x40 and 80x24, with and without --ascii" {
+    try sdk.testing.conformance(Probe);
+}

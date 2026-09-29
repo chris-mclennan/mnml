@@ -176,12 +176,30 @@ pub const Manifest = struct {
     requires: []const []const u8 = &.{},
     auth: []const AuthField = &.{},
     values_sources: []const ValuesSource = &.{},
+    /// The SDK version the binary was built against — `sdk.version`,
+    /// stamped by `render` (so by every `--install`) when the author
+    /// leaves it out, which is always. mnml compares it with its own
+    /// SDK: an Installed row built behind it wears a `rebuild` chip,
+    /// and `integrations.rebuild_stale` rebuilds every one that came
+    /// from a folder on this machine. A launcher has no binary and is
+    /// never stamped. Empty on a manifest written before the field
+    /// existed, which counts as behind.
+    sdk: []const u8 = "",
 
     /// No binary: the commands' `run` lines are all there is.
     pub fn isLauncher(m: Manifest) bool {
         return m.binary.len == 0;
     }
+
+    /// Built on an SDK behind `current` (the host's `sdk.version`), or
+    /// never stamped. A launcher is never stale: nothing was built.
+    pub fn staleAgainst(m: Manifest, current: []const u8) bool {
+        if (m.isLauncher()) return false;
+        return sdk_root.behind(m.sdk, current);
+    }
 };
+
+const sdk_root = @import("root.zig");
 
 pub const IdError = error{InvalidId};
 
@@ -255,8 +273,13 @@ pub fn pathUnder(gpa: Allocator, root: []const u8, id: []const u8) PathError![]u
 }
 
 /// The manifest as ZON text, owned. Fields at their default are left
-/// out, so the file reads as what the author chose.
-pub fn render(gpa: Allocator, m: Manifest) Allocator.Error![]u8 {
+/// out, so the file reads as what the author chose — except `.sdk`,
+/// which a binary's manifest always carries: the SDK this code was
+/// compiled against, so the host can tell a stale build from a current
+/// one. A launcher (no binary) is written without it.
+pub fn render(gpa: Allocator, m_in: Manifest) Allocator.Error![]u8 {
+    var m = m_in;
+    if (!m.isLauncher() and m.sdk.len == 0) m.sdk = sdk_root.version;
     var out: Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     if (m.isLauncher()) {
@@ -305,6 +328,14 @@ pub fn remove(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, id: [
 
 const testing = std.testing;
 const sdk_testing = @import("testing.zig");
+
+test "stale: an older stamp and a missing one are stale against the host's SDK; an equal one is not" {
+    const bin: Manifest = .{ .id = "x", .label = "x", .binary = "mnml-x", .sdk = "0.1.0" };
+    try testing.expect(bin.staleAgainst("0.2.0"));
+    try testing.expect(!bin.staleAgainst("0.1.0"));
+    const unstamped: Manifest = .{ .id = "x", .label = "x", .binary = "mnml-x" };
+    try testing.expect(unstamped.staleAgainst("0.1.0"));
+}
 
 test "ids are file names" {
     try validateId("jira");
@@ -428,6 +459,11 @@ test "write renders ZON that parses back with the same shape" {
     try testing.expectEqualStrings("term mnml-hello --shell", back.commands[1].ex.?);
     try testing.expectEqualStrings("hello", back.settings[0].options[1]);
     try testing.expectEqualStrings("HELLO_TOKEN", back.requires[0]);
+    // `--install` stamps the SDK it was compiled against, which the
+    // author never wrote; the host reads it back to call a build stale.
+    try testing.expectEqualStrings(sdk_root.version, back.sdk);
+    try testing.expect(std.mem.indexOf(u8, text, ".sdk = \"" ++ sdk_root.version ++ "\"") != null);
+    try testing.expect(!back.staleAgainst(sdk_root.version));
     var env = std.process.Environ.Map.init(testing.allocator);
     defer env.deinit();
     try env.put("MNML_DATA_ROOT", root);
@@ -441,6 +477,9 @@ test "write renders ZON that parses back with the same shape" {
     defer testing.allocator.free(ltext);
     try testing.expect(std.mem.startsWith(u8, ltext, "// A launcher manifest"));
     try testing.expect(std.mem.indexOf(u8, ltext, ".binary") == null);
+    // Nothing was compiled, so nothing is stamped — and nothing is stale.
+    try testing.expect(std.mem.indexOf(u8, ltext, ".sdk") == null);
+    try testing.expect(!launcher.staleAgainst("9.9.9"));
     try testing.expect(std.mem.indexOf(u8, ltext, ".run = \":term htop\"") != null);
     try testing.expect(std.mem.indexOf(u8, ltext, ".glyph_codepoint = \"F1D00\"") != null);
     var ldiag: std.zon.parse.Diagnostics = .{};

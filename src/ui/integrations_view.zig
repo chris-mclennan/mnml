@@ -143,7 +143,14 @@ pub const Entry = struct {
     /// nothing, so a well-behaved script's row is unchanged and a slow
     /// one is visible before it is annoying (the platform design, §5).
     budget_hits: u32 = 0,
+    /// An installed integration built on an SDK behind this mnml's (or
+    /// never stamped): the `rebuild` chip at the row's right edge, in
+    /// the same place and the same ink as the budget chip.
+    rebuild: bool = false,
 };
+
+/// The `rebuild` chip's words. Plain ASCII, so it needs no twin.
+pub const rebuild_text = "rebuild";
 
 /// The budget chip's glyph and its `--ascii` twin. U+23F1 is a plain
 /// Unicode symbol, not a Nerd Font one, so it needs no codepoint pin.
@@ -397,7 +404,9 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     // shipped `ui.tree_width = 30` the column is 26 cells wide and the
     // label, version and badge already fill them, so a chip appended
     // after all of those would never be on screen at all.
-    const chip_text: []const u8 = if (e.budget_hits == 0)
+    const chip_text: []const u8 = if (e.rebuild)
+        rebuild_text
+    else if (e.budget_hits == 0)
         ""
     else if (ui.ascii)
         ui.fmt("{s}{d}", .{ budget_ascii, e.budget_hits })
