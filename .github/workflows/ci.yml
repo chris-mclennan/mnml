@@ -244,8 +244,12 @@ jobs:
       - name: zig fmt --check
         run: zig fmt --check build.zig build.zig.zon src themes tools integrations sdk
 
-      - name: zig build -Doptimize=ReleaseSafe
-        run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
+      # Built for a baseline CPU: this build is unpacked and RUN on other
+      # runners (the corpus shards, linux-checks), and a native build uses
+      # instructions some of those machines lack — it died with SIGILL
+      # (exit 132) on two of them. The release builds pin baseline too.
+      - name: zig build -Doptimize=ReleaseSafe -Dcpu=baseline
+        run: zig build -j2 -Doptimize=ReleaseSafe -Dcpu=baseline --summary failures
 
       - name: mnml-zig --version
         run: ./zig-out/bin/mnml-zig --version
