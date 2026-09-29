@@ -20,14 +20,14 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .picker => |*p| try picker(app, arena, p.kind, id),
         .help => .{
             .title = "Keymap reference",
-            .body = "Every chord of the active profile grouped by area, with the command it runs — a header row folds its group on click or Enter. Esc or F1 closes it. The cheatsheet pane is the same list as a tab, with a filter, for keeping open beside the code.",
-            .keys = &.{ .{ .chord = "Enter", .label = "Fold / unfold the group" }, .{ .chord = "Esc", .label = "Close" } },
+            .body = "Every chord of the active profile grouped by area, with the command it runs — a click on a header row folds its group, `c` folds every group and `e` opens them all, `/` filters. Esc or F1 closes it. The cheatsheet pane is the same list as a tab, with a filter, for keeping open beside the code.",
+            .keys = &.{ .{ .chord = "c", .label = "Fold every group" }, .{ .chord = "/", .label = "Filter" }, .{ .chord = "Esc", .label = "Close" } },
             .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "Open the cheatsheet pane" } }, .{ .command = .{ .id = .@"keys.edit", .label = "Rebind keys" } } },
         },
         .which_key => .{
             .title = "Leader menu",
-            .body = "The chords that continue from the key you pressed — vim's leader menu, which-key style (the standard profile's popup is its own Ctrl+K chords): each row is the next key and what the full chord runs, a `+` row a group that opens another page. Press the key, or click the row; Esc backs out. The rows come from the keymap, rebinds included.",
-            .keys = &.{ .{ .chord = "Esc", .label = "Back out" }, .{ .command = .@"whichkey.leader", .label = "The leader menu" } },
+            .body = "The chords that continue from the key you pressed — vim's leader menu, which-key style (the standard profile's popup is its own Ctrl+K chords): each row is the next key and what the full chord runs, a `+` row a group that opens another page. Press the key, or click the row; Backspace goes back up a level and Esc closes the popup. The rows come from the keymap, rebinds included.",
+            .keys = &.{ .{ .chord = "Esc", .label = "Close" }, .{ .command = .@"whichkey.leader", .label = "The leader menu" } },
             .links = &.{ .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } }, .{ .command = .{ .id = .@"keys.edit", .label = "Rebind keys" } } },
         },
         .discovery => .{
@@ -38,14 +38,14 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .wizard => .{
             .title = "First-launch wizard",
-            .body = "The one-time setup: the input style (vim or standard), the theme, whether the fonts are installed, and where the data root goes. Every choice is a Settings row you can change later; Esc skips the rest and keeps the defaults. `first_launch.show` opens it again.",
-            .keys = &.{ .{ .chord = "Enter", .label = "Next" }, .{ .chord = "Esc", .label = "Skip" } },
+            .body = "The one-time setup: the Nerd Font, the keyboard, the input style (vim or standard), Claude Code and Codex, AI billing and ghost text, the `code` shim, the integrations to install. Enter saves the answers and closes; Esc writes nothing and asks again at the next launch. `first_launch.show` opens it again.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Save and close" }, .{ .chord = "Esc", .label = "Later" } },
             .links = &.{ .{ .command = .{ .id = .@"view.settings", .label = "Settings" } }, .{ .command = .{ .id = .@"first_launch.show", .label = "Run the wizard again" } } },
         },
         .info => |kind| switch (kind) {
             .about => .{
                 .title = "About mnml",
-                .body = "The version, the build's profile, the workspace and data root paths, and the terminal mnml is running in. Copy from here when filing an issue — the version line is what a bug report needs first. Esc closes it.",
+                .body = "The version, the workspace, how many commands are implemented, the keymap and its binding count, and the Zig it was built with. Copy from here when filing an issue — the version line is what a bug report needs first. Any key closes it.",
                 .links = &.{ .{ .command = .{ .id = .@"app.check_updates", .label = "Check for updates" } }, .{ .url = .{ .url = "https://github.com/chris-mclennan/mnml-zig/issues", .label = "File an issue" } } },
             },
         },
@@ -103,7 +103,7 @@ fn quitChoice(app: *App, arena: Allocator, label: []const u8, clean: bool) Alloc
     };
     if (std.mem.eql(u8, label, "Save all")) return .{
         .title = "Save all, then quit",
-        .body = try std.fmt.allocPrint(arena, "Writes every dirty buffer to disk — {d} of them — and then quits; a buffer that has never been saved asks for a path first, and Cancel on that prompt stops the quit. The session is written on the way out either way, so the tabs come back at the next start.", .{dirty}),
+        .body = try std.fmt.allocPrint(arena, "Writes every dirty buffer to disk — {d} of them — and then quits; a scratch buffer that was never saved has no path, so it is skipped and its text is lost, and a save that fails stops the quit. The session is written on the way out either way, so the tabs come back at the next start.", .{dirty}),
         .keys = &.{.{ .chord = "s", .label = "Save all" }},
         .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all and stay" } }, .{ .command = .{ .id = .@"buffer.next_dirty", .label = "Go to the next dirty buffer" } } },
     };
@@ -134,7 +134,7 @@ fn restartChoice(app: *App, arena: Allocator, label: []const u8) Allocator.Error
     };
     if (std.mem.eql(u8, label, "Save all")) return .{
         .title = "Save all, then restart",
-        .body = try std.fmt.allocPrint(arena, "Writes every dirty buffer to disk — {d} of them — and then relaunches; the relaunch reads each file back from disk, so this is the answer that keeps the edits. A buffer that has never been saved asks for a path first, and Cancel on that prompt stops the restart.", .{dirty}),
+        .body = try std.fmt.allocPrint(arena, "Writes every dirty buffer to disk — {d} of them — and then relaunches; the relaunch reads each file back from disk, so this is the answer that keeps the edits. A scratch buffer that was never saved has no path and is skipped, and a save that fails stops the restart.", .{dirty}),
         .keys = &.{.{ .chord = "s", .label = "Save all" }},
         .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save all and stay" } }, .{ .command = .{ .id = .@"buffer.next_dirty", .label = "Go to the next dirty buffer" } } },
     };
@@ -155,13 +155,13 @@ fn restartChoice(app: *App, arena: Allocator, label: []const u8) Allocator.Error
 fn closeChoice(label: []const u8) Entry {
     if (std.mem.eql(u8, label, "Save")) return .{
         .title = "Save, then close",
-        .body = "Writes this buffer to disk and closes the pane; a buffer that has never been saved asks for a path first. Other panes showing the same document keep it open — the text lives on there — so only this window goes.",
+        .body = "Writes this buffer to disk and closes the pane. A scratch buffer that was never saved has no path to write to, so this row only toasts — pick Discard or Cancel for one of those.",
         .keys = &.{ .{ .chord = "s", .label = "Save and close" }, .{ .command = .@"file.save", .label = "Save without closing" } },
         .links = &.{.{ .command = .{ .id = .@"file.save", .label = "Save and stay" } }},
     };
     if (std.mem.eql(u8, label, "Discard")) return .{
         .title = "Discard the edits and close",
-        .body = "Closes the pane and throws away its unsaved edits — the file on disk stays as it was last saved, and there is no recovery file. If another pane shows the same document, the edits live on there and nothing is lost. Cancel keeps the pane if you want to look first.",
+        .body = "Closes the pane and throws away its unsaved edits — the file on disk stays as it was last saved, and there is no recovery file. Cancel keeps the pane if you want to look first.",
         .keys = &.{.{ .chord = "d", .label = "Discard" }},
         .links = &.{ .{ .command = .{ .id = .@"file.save", .label = "Save instead" } }, .{ .command = .{ .id = .@"git.diff_file", .label = "See what changed" } } },
     };
@@ -177,9 +177,9 @@ fn picker(app: *App, arena: Allocator, kind: app_mod.PickerKind, idx: u32) Alloc
     const p = &app.overlay.picker;
     const label: []const u8 = if (idx < p.filtered.items.len and p.filtered.items[idx] < p.labels.len) p.labels[p.filtered.items[idx]] else "";
     const what: []const u8 = switch (kind) {
-        .files => "a file of the workspace, matched fuzzily against what you typed — Enter opens it in the active pane, Ctrl+Enter in a split; the tree excludes `.git/` and this picker does too",
+        .files => "a file of the workspace, matched fuzzily against what you typed — Enter opens it in the active pane; the tree excludes `.git/` and this picker does too",
         .commands => "a palette command — Enter runs it; the chord on the right is the active profile's binding, empty when the command has none. `>` in the file picker gets here too",
-        .buffers => "an open buffer, shown or hidden in the strip — Enter shows it; the hidden ones are the `+N` chip's",
+        .buffers => "an open buffer, shown or hidden in the strip — Enter shows it; the hidden ones are the `+N hidden` chip's",
         .recent => "a recently opened file, newest first — Enter opens it; `file.clear_recent` empties the list",
         .themes => "a theme — the list previews it as the cursor moves and Enter keeps it (`ui.theme`); Esc puts the one you came in with back",
         .tabs => "a tab page — Enter switches to it; Alt+1..9 do the same by number",
@@ -189,7 +189,7 @@ fn picker(app: *App, arena: Allocator, kind: app_mod.PickerKind, idx: u32) Alloc
         .ai_session => "an AI session — Enter opens its pane",
         .ai_suggest_backend => "a ghost-text backend — Enter picks it (`ai.suggest_backend`) and the setup checks it can be reached",
         .snippets => "a snippet — Enter expands it at the cursor",
-        .tools => "a tool that runs in a terminal pane — Enter starts it; a tool not on PATH toasts instead",
+        .tools => "an external tool — Enter on a missing one offers to install it or copy the install command; one already installed says so",
         .tasks, .go_run_cmd => "a task or a run target — Enter runs it in a terminal pane",
         .lua => "a script — Enter runs the row's action",
         else => "a candidate — Enter picks it, Esc closes the picker",

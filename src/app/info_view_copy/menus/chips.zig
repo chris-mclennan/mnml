@@ -22,7 +22,7 @@ pub const rows = [_]Row{
     // ── the branch chip: `Git` ──
     .{ .menu = "Git", .label = "Status / staging", .entry = .{
         .title = "Status / staging",
-        .body = "Opens the git status pane on the chip's repo — every changed file in one list, Space staging and unstaging a row, Enter opening that file's diff — and asks the worker for a fresh status as it opens. Outside a git repository the row toasts rather than opening anything. *Commit graph* is the other half: the history rather than the working tree.",
+        .body = "Opens the git status pane on the chip's repo — every changed file in one list, `-` (Space too, in the standard profile) staging and unstaging a row, `s` / `u` staging or unstaging it outright, Enter opening that file's diff — and asks the worker for a fresh status as it opens. Outside a git repository the row toasts rather than opening anything. *Commit graph* is the other half: the history rather than the working tree.",
         .keys = &.{ .{ .command = .@"git.status_pane", .label = "Status / staging" }, .{ .command = .@"git.commit", .label = "Commit what is staged" } },
         .links = &.{ .{ .command = .{ .id = .@"git.status_pane", .label = "Open it" } }, .{ .command = .{ .id = .@"git.diff", .label = "Diff the worktree" } }, .{ .command = .{ .id = .@"git.commit", .label = "Commit the staged files" } } },
     } },
@@ -132,7 +132,7 @@ pub const rows = [_]Row{
     // Shared with the Language chip's menu, the same command in both.
     .{ .label = "Symbols in file", .entry = .{
         .title = "Symbols in file",
-        .body = "Asks the buffer's language server for its symbols and offers them as a fuzzy picker — functions, types, fields — Enter jumping to the definition with the preview column showing it. It needs a server for that language; with none the picker says so. The outline pane is the same list kept open in the right column.",
+        .body = "Asks the buffer's language server for its symbols and offers them as a fuzzy picker — functions, types, fields — Enter jumping to the definition with the preview column showing it. It needs a server for that language; with none it toasts and no picker opens. The outline pane is the same list kept open in the right column.",
         .keys = &.{.{ .command = .@"lsp.symbols", .label = "Symbols in this file" }},
         .links = &.{ .{ .command = .{ .id = .@"lsp.symbols", .label = "List them" } }, .{ .command = .{ .id = .@"outline.show", .label = "Keep the list open" } }, .{ .command = .{ .id = .@"lsp.status", .label = "Which servers are running" } } },
     } },
@@ -161,7 +161,7 @@ pub const rows = [_]Row{
     // Shared with the Language chip's menu, the same command in both.
     .{ .label = "Format file", .entry = .{
         .title = "Format file",
-        .body = "Formats the buffer with its language server when one offers formatting, and with the tool in `.formatters` for the extension when none does, splicing the result back as one undo step with the cursor where it was. A tool that wants the file on disk is handed it, so that path does write. `editor.format_on_save` does this on every save instead; with neither a server nor a tool for the extension it toasts.",
+        .body = "Formats the buffer with the tool `.formatters` names for the extension when there is one (or a builtin tool whose project config is present and which is installed), else with the language server, else with the builtin tool, splicing the result back as one undo step with the cursor where it was. A tool that wants the file on disk is handed it, so that path does write. `editor.format_on_save` does this on every save instead; with neither a server nor a tool for the extension it toasts.",
         .keys = &.{.{ .command = .@"lsp.format", .label = "Format the document" }},
         .links = &.{ .{ .command = .{ .id = .@"lsp.format", .label = "Format it" } }, .{ .settings = .{ .row = copy.settingsRow("editor.format_on_save"), .label = "Format on save" } }, .{ .command = .{ .id = .@"lsp.status", .label = "Which servers are running" } } },
     } },
@@ -199,7 +199,7 @@ pub const rows = [_]Row{
     .{ .menu = "Tests", .label = "Run at cursor", .entry = testScope("Run at cursor", "the one test the cursor is inside", "The name is read from the nearest test above the cursor; with none above it, it toasts.", .@"test.run_at_cursor") },
     .{ .menu = "Tests", .label = "Re-run failed", .entry = .{
         .title = "Re-run failed",
-        .body = "Runs the failures again rather than the whole suite: pytest re-runs with `--lf`, dotnet re-runs the results pane's failed tests by name, and every other project re-runs the last command this menu ran, since its tool has no last-failed mode. With nothing run yet this session it toasts.",
+        .body = "Runs the failures again rather than the whole suite: pytest, dotnet, zig and vitest re-run the results pane's failed tests by name (pytest falls back to `--lf` before a run has finished), and cargo, go and plain npm re-run the last command this menu ran, since their tools have no last-failed mode. With nothing run yet this session it toasts.",
         .links = &.{ .{ .command = .{ .id = .@"test.rerun_failed", .label = "Re-run them" } }, .{ .command = .{ .id = .@"test.run_all", .label = "The whole suite" } }, .{ .command = .{ .id = .@"test.run_file", .label = "This file" } } },
     } },
 
@@ -253,7 +253,7 @@ pub const rows = [_]Row{
     .{ .menu = "Find", .label = "Previous match", .entry = findStep("Previous match", "previous", "from the top back to the end", .@"find.prev", .@"find.next") },
     .{ .menu = "Find", .label = "Clear highlight", .entry = .{
         .title = "Clear highlight",
-        .body = "Drops the match highlights and this chip's counter for the active editor, leaving the cursor and the text as they are; the query goes with them, so *Next match* has nothing to step through until a new search. Esc in the find bar is the other half of the pair — it throws the live query away and puts back the search that was highlighted before the bar opened, cursor included.",
+        .body = "Drops the match highlights and this chip's counter for the active editor, leaving the cursor and the text as they are; under vim the query goes with them, so *Next match* has nothing to step through until a new search; the standard profile's *Next match* takes the last query back. Esc in the find bar is the other half of the pair — it throws the live query away and puts back the search that was highlighted before the bar opened, cursor included.",
         .links = &.{ .{ .command = .{ .id = .@"find.clear", .label = "Clear them" } }, .{ .command = .{ .id = .@"find.find", .label = "Search again" } } },
     } },
     // The Edit menu has its own `Find…`; this one is the chip's.
@@ -267,7 +267,7 @@ pub const rows = [_]Row{
     // ── the diagnostics chip: `Diagnostics` ──
     .{ .menu = "Diagnostics", .label = "Diagnostics panel", .entry = .{
         .title = "Diagnostics panel",
-        .body = "Opens the problems panel in the dock (the bottom one by default) — every diagnostic the servers have reported, by file, Enter opening the file at the line. The counts on this chip are the same numbers the panel lists. It is the panel the LSP chip's *Diagnostics list* opens as well.",
+        .body = "Opens the problems panel in the dock (the bottom one by default) — every diagnostic the servers have reported, by file, Enter opening the file at the line. This chip counts the active file's errors and warnings; the panel lists every file's, through its severity filter. It is the panel the LSP chip's *Diagnostics list* opens as well.",
         .keys = &.{.{ .command = .@"lsp.diagnostics", .label = "The problems panel" }},
         .links = &.{ .{ .command = .{ .id = .@"lsp.diagnostics", .label = "Open it" } }, .{ .command = .{ .id = .@"lsp.diagnostics_filter", .label = "Cycle the filter" } }, .{ .command = .{ .id = .@"lsp.code_action", .label = "Fix the one at the cursor" } } },
     } },
@@ -275,7 +275,7 @@ pub const rows = [_]Row{
     .{ .menu = "Diagnostics", .label = "Previous diagnostic", .entry = diagStep("Previous diagnostic", "previous", "from the first back to the last", .@"lsp.prev_diagnostic", .@"lsp.next_diagnostic") },
     .{ .menu = "Diagnostics", .label = "Cycle severity filter", .entry = .{
         .title = "Cycle severity filter",
-        .body = "Steps the filter the chip and the panel share — All, then warnings and above, then errors only — and toasts where it landed. It changes what the panel and this chip list — the two jumps step every diagnostic regardless — never what the servers actually reported. The panel's cursor goes back to its first row on every step.",
+        .body = "Steps the problems panel's severity filter — All, then warnings and above, then errors only — and toasts where it landed. It changes what the panel lists — this chip's counts and the two jumps take every diagnostic regardless — never what the servers actually reported. The panel's cursor goes back to its first row on every step.",
         .links = &.{ .{ .command = .{ .id = .@"lsp.diagnostics_filter", .label = "Cycle it" } }, .{ .command = .{ .id = .@"lsp.diagnostics", .label = "The problems panel" } } },
     } },
 
@@ -311,7 +311,7 @@ pub const rows = [_]Row{
     .{ .menu = "Clock", .label = "UTC", .entry = clockMode("UTC", "UTC with a `Z` after it, `HH:MMZ`", .@"clock.utc") },
     .{ .menu = "Clock", .label = "Hide the clock", .entry = .{
         .title = "Hide the clock",
-        .body = "Takes the clock out of the statusline and writes `ui.clock = false` to the home config, so it stays gone on the next launch. There is no chip left to bring it back from — Settings → UI, or the `clock.local` command, is the way back. The local-or-UTC choice is remembered for when it returns.",
+        .body = "Takes the clock out of the statusline and writes `ui.clock = false` to the home config, so it stays gone on the next launch. There is no chip left to bring it back from — Settings → UI, or the `clock.local` command, is the way back. It comes back as the local clock; a UTC pick is not kept.",
         .links = &.{ .{ .command = .{ .id = .@"clock.local", .label = "Show it again" } }, .{ .settings = .{ .row = copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } },
     } },
 
@@ -321,7 +321,7 @@ pub const rows = [_]Row{
     .{ .label = "Disable wrap", .entry = wrapToggle(false) },
     .{ .label = "Editor settings\u{2026}", .entry = .{
         .title = "Editor settings\u{2026}",
-        .body = "Opens the Settings overlay, where wrap sits among the rest of the editor's rows — tab width, format on save, the clipboard — as a scrollable list: ←→ changes a value, Enter saves and closes, Esc reverts what this visit changed. Each row writes to its own file — wrap, tab width and format-on-save to this workspace's `.mnml/config.zon`, the home-scoped rows to the home config — where the row above is this pane's alone.",
+        .body = "Opens the Settings overlay, where wrap sits in the UI section and the editor's rows — tab width, format on save, the clipboard — in the Editor one, as a scrollable list: ←→ changes a value, Enter saves and closes, Esc reverts what this visit changed. Each row writes to its own file — wrap, tab width and format-on-save to this workspace's `.mnml/config.zon`, the home-scoped rows to the home config — where the row above is this pane's alone.",
         .keys = &.{.{ .command = .@"view.settings", .label = "Settings" }},
         .links = &.{ .{ .command = .{ .id = .@"view.settings", .label = "Open Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.wrap"), .label = "Wrap in Settings" } }, copy.docsSection("The settings overlay") },
     } },
@@ -445,7 +445,7 @@ fn missingServer(comptime mark: []const u8, comptime form: []const u8) Entry {
 fn repoStep(comptime which: []const u8, comptime dir: []const u8, comptime wrap: []const u8, comptime id: command.CommandId, comptime back: command.CommandId) Entry {
     return .{
         .title = which ++ " repo",
-        .body = "Makes the " ++ dir ++ " repository in discovery order the active one, wrapping " ++ wrap ++ " — the way round a multi-repo workspace without the picker. Everything git follows at once: this chip, the branch chip, the status pane, the graph. With only one repo found it does nothing, silently — the row is not in the menu then either.",
+        .body = "Makes the " ++ dir ++ " repository in discovery order the active one, wrapping " ++ wrap ++ " — the way round a multi-repo workspace without the picker. Everything git follows at once: this chip, the branch chip, the status pane, the graph. With only one repo found it toasts that there is only one — the row is not in the menu then either.",
         .keys = &.{ .{ .command = id, .label = which ++ " repo" }, .{ .command = back, .label = "The other way" } },
         .links = &.{ .{ .command = .{ .id = id, .label = "Go " ++ dir } }, .{ .command = .{ .id = .@"git.switch_repo", .label = "Pick one instead" } } },
     };
@@ -456,7 +456,7 @@ fn repoStep(comptime which: []const u8, comptime dir: []const u8, comptime wrap:
 fn testScope(comptime label: []const u8, comptime what: []const u8, comptime caveat: []const u8, comptime id: command.CommandId) Entry {
     return .{
         .title = label,
-        .body = "Runs " ++ what ++ " with the project's own tool, whichever manifest is nearest the active file — cargo, npm, go or pytest in a terminal pane below the active one, dotnet in the test-results pane. " ++ caveat ++ " The pane keeps the output, and closing it ends the run.",
+        .body = "Runs " ++ what ++ " with the project's own tool, whichever manifest is nearest the active file — cargo, npm or go in a terminal pane below the active one; pytest, dotnet, zig and vitest in the test-results pane. " ++ caveat ++ " The pane keeps the output, and closing it ends the run.",
         .links = &.{ .{ .command = .{ .id = id, .label = "Run it" } }, .{ .command = .{ .id = .@"test.rerun_failed", .label = "Re-run the failures" } } },
     };
 }

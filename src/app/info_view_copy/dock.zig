@@ -56,8 +56,8 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
         },
         .launcher => .{
             .title = "Launcher",
-            .body = "A launcher from `launchers` in config.zon — a program mnml starts for you in a terminal pane, with its own glyph and colour. Click runs it (a second click focuses the pane already running it); right-click has the strip's move and mode rows. `launcher.add_local` makes one from a binary on this machine.",
-            .links = &.{ .{ .command = .{ .id = .@"launcher.add_local", .label = "Add a launcher" } }, .{ .command = .{ .id = .@"file.open_settings", .label = "Open config.zon" } }, comptime copy.docsSection("Launchers and integration manifests") },
+            .body = "An installed launcher — a manifest with commands and no chip of its own, from `launcher.add_local` or a Marketplace source — shown with the launcher glyph in purple. Click runs its first command, which usually starts a program in a terminal pane; right-click has the strip's move and mode rows.",
+            .links = &.{ .{ .command = .{ .id = .@"launcher.add_local", .label = "Add a launcher" } }, .{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
         .terminal_new => .{
             .title = "New terminal",
@@ -67,13 +67,13 @@ pub fn itemKind(kind: launcher_dock.Kind, label: ?[]const u8, running: bool) Ent
         },
         .terminal => .{
             .title = if (running) "An open terminal — running" else "An open terminal",
-            .body = "One of the terminals open right now — a shell, a tool, a Claude session — named by its tab. Click focuses it, wherever it is: its tab is shown in its split and page. The dot marks one whose child is still running. Closing the tab takes the item off the strip.",
+            .body = "One of the terminals open right now — a shell, a tool, a Claude session — named by its tab. Click focuses it, wherever it is: its tab is shown in its split and page. One whose child is still running is marked the `ui.dock.running_mark` way — a brighter icon by default. Closing the tab takes the item off the strip.",
             .keys = &.{.{ .command = .@"buffer.close", .label = "Close it" }},
             .links = &.{ .{ .command = .{ .id = .@"term.rename", .label = "Rename it" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
         },
         .pin => .{
             .title = "Pinned command",
-            .body = "A command pinned onto the dock — `ui.dock.pins` in the home config, which *Pin to dock* on a chip's right-click menu and *Show on dock instead* on an activity-bar row write, and where any command id can be listed by hand — with its title as the label. Click runs it; right-click unpins. The strip clips a long title; the tooltip carries the whole one.",
+            .body = "A command pinned onto the dock — `ui.dock.pins` in the home config, which *Pin to dock* on a chip's right-click menu and *Show on dock instead* on an activity-bar row write, and where any command id can be listed by hand — with its title as the label. Click runs it; right-click is its menu — Unpin from dock, the move rows, the dock's pin and mode rows. The strip clips a long title; the tooltip carries the whole one.",
             .keys = &.{.{ .command = .palette, .label = "The command palette" }},
             .links = &.{ .{ .command = .{ .id = .@"view.dock_unpin_item", .label = "Unpin it" } }, .{ .command = .{ .id = .@"integrations.pin_to_dock", .label = "Pin an integration to the dock" } } },
         },
@@ -93,22 +93,22 @@ pub fn widget(app: *App, arena: Allocator, id: u32, part: hit.DockPart) Allocato
     return switch (part) {
         .body => .{
             .title = try std.fmt.allocPrint(arena, "Dock widget — {s}", .{kind}),
-            .body = "A small panel pinned to a corner of the editor area — a text note, the tail of a log file, a clock, the branch — painted over the buffer or docked beside it. Click focuses it; the wheel scrolls its rows; right-click is the widget menu. These are the dock WIDGETS; the strip of launchers along an edge is the launcher dock, a different thing.",
+            .body = "A small panel pinned to a corner of the editor area — a text note, the tail of a log file, a clock, the branch — painted over the buffer or inline beside it. Click focuses it; the wheel scrolls its rows; right-click is the widget menu. These are the dock WIDGETS; the strip of launchers along an edge is the launcher dock, a different thing.",
             .links = &.{ .{ .command = .{ .id = .@"dock.new_text", .label = "New text widget" } }, .{ .command = .{ .id = .@"dock.toggle", .label = "Hide the widgets" } } },
         },
         .title => .{
             .title = try std.fmt.allocPrint(arena, "Dock widget title — {s}", .{kind}),
-            .body = "The widget's header: drag it to move the widget to another corner, or click to focus. The kebab at its right end is the widget menu — rename, its corner, its size as a percent of the editor body, overlay or docked placement, opacity, close. The title is the widget's own (`dock.rename`).",
+            .body = "The widget's header: drag it to move the widget to another corner, or click to focus. The kebab at its right end is the widget menu — rename, its corner, its size as a percent of the editor body, Overlay or Inline placement, opacity, close. The title is the widget's own (`dock.rename`).",
             .links = &.{ .{ .command = .{ .id = .@"dock.rename", .label = "Rename it" } }, .{ .command = .{ .id = .@"dock.move_corner_next", .label = "Move to the next corner" } } },
         },
         .kebab => .{
             .title = "Dock widget menu",
-            .body = "Click opens the widget's rows: rename, the corner it sits in, its width and height as a percent of the editor body, overlay (over the buffer) or docked (beside it), opacity, close. Each row is one setting on this one widget; `dock.close_all` is the way to clear the corner in one go.",
+            .body = "Click opens the widget's rows: rename, the corner it sits in, its width and height as a percent of the editor body, Overlay (over the buffer) or Inline (beside it), opacity, close. Each row is one setting on this one widget; `dock.close_all` clears every widget in one go.",
             .links = &.{ .{ .command = .{ .id = .@"dock.edit", .label = "Edit it" } }, .{ .command = .{ .id = .@"dock.remove", .label = "Close it" } } },
         },
         .close => .{
             .title = "Close the dock widget",
-            .body = "Takes this widget off the corner. A text widget's note is kept in the session's widget list until the session forgets it, so close is not a delete of the words; `dock.add_preset` puts a standard one back.",
+            .body = "Takes this widget off and discards it — a text widget's note goes with it, and nothing reopens it. `dock.add_preset` or `dock.new_text` makes a new one.",
             .links = &.{.{ .command = .{ .id = .@"dock.add_preset", .label = "Add a preset widget" } }},
         },
     };

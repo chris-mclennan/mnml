@@ -2,4 +2,3 @@
 # One key per line, as `mnml-zig hover-audit` prints them. The audit fails on an
 # uncovered target that is NOT listed here, and reports a listed one that is
 # covered now (delete the line). Regenerate: mnml-zig hover-audit --write-todo docs/hover-help-todo.txt
-statusline:dyn:plain

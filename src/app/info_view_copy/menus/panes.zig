@@ -31,7 +31,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Paste", .command = .@"editor.paste", .entry = .{
         .title = "Paste",
-        .body = "Drops the clipboard in at the cursor, replacing the selection when there is one; a line that was yanked whole comes back as a line rather than landing mid-word. Pasted text is not re-indented, so a block from elsewhere keeps the indentation it was copied with. A terminal pane's own *Paste* writes to the shell instead, and is a different row.",
+        .body = "Drops the clipboard in at the cursor, replacing the selection when there is one; the text lands exactly at the cursor, even a line yanked whole — vim's `p` / `P` are the keys that put a whole line on its own row. Pasted text is not re-indented, so a block from elsewhere keeps the indentation it was copied with. A terminal pane's own *Paste* writes to the shell instead, and is a different row.",
         .links = &.{ .{ .command = .{ .id = .@"editor.paste", .label = "Paste" } }, .{ .command = .{ .id = .@"editor.undo", .label = "Undo that" } }, .{ .settings = .{ .row = copy.settingsRow("editor.clipboard"), .label = "Clipboard in Settings" } } },
     } },
     .{ .menu = "Editor", .label = "Undo", .entry = .{
@@ -180,7 +180,7 @@ pub const rows = [_]Row{
     } },
     .{ .menu = "Breakpoint", .label = "Peek change", .entry = .{
         .title = "Peek change",
-        .body = "Opens this file's diff against HEAD in a pane and lands the cursor on the hunk the pointer's line belongs to, so the change the gutter marked can be read in full. It is the working tree against the last commit, not against the index. A file with nothing changed opens an empty diff; outside a repo the row says there is none.",
+        .body = "Opens this file's diff in a pane and lands the cursor on the hunk the pointer's line belongs to, so the change the gutter marked can be read in full. It is the working tree against the index — the unstaged change only; what is already staged does not show. A file with nothing changed opens an empty diff; outside a repo the row says there is none.",
         .links = &.{ .{ .command = .{ .id = .@"git.peek_change", .label = "Peek it" } }, .{ .command = .{ .id = .@"git.diff_file", .label = "The whole file's diff" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "The status pane" } } },
     } },
     .{ .menu = "Breakpoint", .label = "Toggle blame", .entry = .{
@@ -235,7 +235,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Open in split", .entry = .{
         .title = "Open in split",
-        .body = "Splits the active leaf and opens this file in the new side, next to what you were already reading; the new split takes the focus. A directory has nothing to put there and the row says so. An already-open file is re-used, so the same buffer can show in both halves at once.",
+        .body = "Splits the active leaf and opens this file in the new side, next to what you were already reading; the new split takes the focus. A directory has nothing to put there and the row says so. An already-open file is re-used; when it is the file already active, nothing splits.",
         .links = &.{ .{ .command = .{ .id = .@"tree.open_in_split", .label = "Open it beside" } }, .{ .command = .{ .id = .@"tree.open_selected", .label = "Open it here instead" } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } } },
     } },
     .{ .label = "Cut", .command = .@"file.cut", .entry = .{
@@ -312,7 +312,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Switch to this workspace", .entry = .{
         .title = "Switch to this workspace",
-        .body = "Opens the workspace picker so this added root can be made the primary one — the tree, the panels and the git chip follow it, and open tabs stay open. The row is only on an added root's header, because the primary one is already current. *Remove workspace…* is the row for dropping a root rather than moving to it.",
+        .body = "Switches the tree to this added root — it opens, every other root folds and the cursor lands on its header, with the keys in the tree; open tabs stay open. The row is only on an added root's header, because the primary one is already current. *Remove workspace…* is the row for dropping a root rather than moving to it.",
         .keys = &.{.{ .command = .@"view.switch_workspace", .label = "Switch workspace" }},
         .links = &.{ .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch" } }, .{ .command = .{ .id = .@"view.remove_workspace", .label = "Remove it instead" } } },
     } },
@@ -328,7 +328,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Switch workspace\u{2026}", .entry = .{
         .title = "Switch workspace…",
-        .body = "Lists the primary root and every extra one, each with its path in the second column, and makes the chosen one current — the tree, the panels and the git chip move with it while open tabs stay open. With only one root open there is nothing to switch to and the row says so. The workspace chip's menu in the statusline has this row too.",
+        .body = "Lists the primary root and every extra one, each with its path in the second column, and switches the tree to the chosen one — it opens, the others fold and the cursor lands on its header, while open tabs stay open. With only one root open there is nothing to switch to and the row says so. The workspace chip's menu in the statusline has this row too.",
         .keys = &.{.{ .command = .@"view.switch_workspace", .label = "Switch workspace" }},
         .links = &.{ .{ .command = .{ .id = .@"view.switch_workspace", .label = "Pick one" } }, .{ .command = .{ .id = .@"view.add_workspace", .label = "Add another root" } }, .{ .command = .{ .id = .@"git.worktrees", .label = "A worktree instead" } } },
     } },
@@ -349,7 +349,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Show workspace dots", .entry = .{
         .title = "Show workspace dots",
-        .body = "Paints ● on a root's header while its repo has uncommitted changes and ○ while it is clean, so a tree of several roots says which one needs attention without anything being opened; the tick marks the state now. The row flips it for this run only; the Settings row is what writes `ui.show_workspace_dots` to the home config. The git chip has the counts for the active repo either way.",
+        .body = "Paints ● on the primary root's header and ○ on each added root's, so a tree of several roots says which one is the primary at a glance; the tick marks the state now. The row flips it for this run only; the Settings row is what writes `ui.show_workspace_dots` to the home config. The git chip has the counts for the active repo either way.",
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_workspace_dots", .label = "Toggle them" } }, .{ .settings = .{ .row = copy.settingsRow("ui.show_workspace_dots"), .label = "Workspace dots in Settings" } }, .{ .command = .{ .id = .@"git.status_pane", .label = "The status pane" } } },
     } },
 
@@ -475,7 +475,7 @@ pub const rows = [_]Row{
     // Unqualified: the rail's HTTP section has this row too.
     .{ .label = "Paste curl from clipboard", .entry = .{
         .title = "Paste curl from clipboard",
-        .body = "Reads a `curl` command off the clipboard — the one a browser's network tab copies — and fills the request's method, URL, headers and body from it, replacing what was there. It is the shortest route from a call you watched happen to one you can re-fire and edit. Clipboard text that is not a curl command is refused rather than half-parsed.",
+        .body = "Reads a `curl` command off the clipboard — the one a browser's network tab copies — and fills the request's method, URL, headers and body from it, replacing what was there. It is the shortest route from a call you watched happen to one you can re-fire and edit. A `.http` request is read too; text with no URL, or with an unterminated quote, is refused rather than half-parsed.",
         .links = &.{ .{ .command = .{ .id = .@"http.paste_curl", .label = "Paste it" } }, .{ .command = .{ .id = .@"http.copy_curl", .label = "Copy back out as curl" } }, .{ .command = .{ .id = .@"http.send", .label = "Send it" } } },
     } },
     .{ .label = "Copy as curl", .entry = .{
@@ -485,7 +485,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Cycle method", .entry = .{
         .title = "Cycle method",
-        .body = "Steps the request's verb round the ring — GET, POST, PUT, DELETE, PATCH and on — without the cursor having to enter the field. The URL, headers and body are left exactly as they are, so a GET turned POST keeps a body it was already carrying. Press again to keep going; there is no way back except round.",
+        .body = "Steps the request's verb round the ring — GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS — without the cursor having to enter the field. The URL, headers and body are left exactly as they are, so a GET turned POST keeps a body it was already carrying. Press again to keep going; there is no way back except round.",
         .links = &.{ .{ .command = .{ .id = .@"http.cycle_method", .label = "Cycle it" } }, .{ .command = .{ .id = .@"http.send", .label = "Send it" } } },
     } },
     .{ .label = "Format body as JSON", .entry = .{
@@ -622,7 +622,7 @@ pub const rows = [_]Row{
 fn dockPane(comptime edge: []const u8, comptime where: []const u8, comptime id: command.CommandId) Entry {
     return .{
         .title = "Dock " ++ edge,
-        .body = "Moves this pane to " ++ where ++ " of the split it lives in, rebuilding the layout around it — vim's Ctrl+W move, from a menu. The pane keeps its contents, its scrollback and its focus; only where it sits changes. With nothing else in the split there is nowhere to move to and the layout stays as it was.",
+        .body = "Moves this pane to " ++ where ++ " of the whole window, rebuilding the layout around it — vim's Ctrl+W move, from a menu. The pane keeps its contents, its scrollback and its focus; only where it sits changes. With only one pane there is nowhere to move to: it says so and the layout stays as it was.",
         .links = &.{ .{ .command = .{ .id = id, .label = "Dock it " ++ edge } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize the splits" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the view" } } },
     };
 }

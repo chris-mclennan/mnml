@@ -117,7 +117,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Show sidebar", .entry = .{
         .title = "Show sidebar",
-        .body = "Brings the left column back on whatever section it showed last, else the first that lives on that side — the explorer, as a rule. With nothing assigned to the left it toasts and points at a rail icon's *Move to left* row. In the vim profile the tree takes the keys as it opens.",
+        .body = "Brings the left column back on whatever section it showed last, else the first that lives on that side — the explorer, as a rule. With nothing assigned to the left it toasts and points at a rail icon's *Move to left side* row. In the vim profile the tree takes the keys as it opens.",
         .keys = &.{ .{ .command = .@"view.toggle_tree", .label = "Toggle the left column" }, .{ .command = .@"view.focus_tree", .label = "Focus the tree" } },
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_tree", .label = "Show it" } }, .{ .command = .{ .id = .@"view.focus_tree", .label = "Open it with the keys" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Column width" } } },
     } },
@@ -128,7 +128,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Focus sidebar", .entry = .{
         .title = "Focus sidebar",
-        .body = "Puts the keyboard in the file tree, opening the column first when it was closed — NvChad's `<leader>e`. The cursor lands where the tree left it; Esc or a click in a pane hands the keys back. A section other than the explorer is reached from its own rail icon rather than here.",
+        .body = "Puts the keyboard in the file tree, opening the column first when it was closed — NvChad's `<leader>e`. The cursor lands on the active file's row (where the tree left it when the buffer has no file); Esc or a click in a pane hands the keys back. A section other than the explorer is reached from its own rail icon rather than here.",
         .keys = &.{ .{ .command = .@"view.focus_tree", .label = "Focus the tree" }, .{ .command = .@"view.toggle_tree", .label = "Toggle the column" } },
         .links = &.{ .{ .command = .{ .id = .@"view.focus_tree", .label = "Focus it" } }, .{ .command = .{ .id = .@"picker.files", .label = "Fuzzy-open a file instead" } } },
     } },
@@ -136,7 +136,7 @@ pub const rows = [_]Row{
     // ── the palette bar's right-column toggle ──
     .{ .label = "Show right column", .entry = .{
         .title = "Show right column",
-        .body = "Opens the right column on the section it showed last, else the first that lives on that side — the outline and the problems list start there. With nothing assigned to the right it toasts and points at a rail icon's *Move to right* row. The panes give up the width; the keys stay where they are.",
+        .body = "Opens the right column on the section it showed last, else the first that lives on that side — the outline starts there; the problems list lives in the bottom dock. With nothing assigned to the right it toasts and points at a rail icon's *Move to right side* row. The panes give up the width; the keys stay where they are.",
         .keys = &.{.{ .command = .@"view.toggle_right_panel", .label = "Toggle the right column" }},
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_right_panel", .label = "Show it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_visible"), .label = "Right column in Settings" } }, .{ .settings = .{ .row = copy.settingsRow("ui.right_panel_width"), .label = "Its width" } } },
     } },
@@ -159,7 +159,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Add Problems", .entry = .{
         .title = "Add Problems",
-        .body = "Puts the project's diagnostics list in its column — every error, warning and hint the language servers have reported, with the file and line on each row. Enter opens that file at the line. An empty list means the servers have nothing to say yet, not that the project is clean: they report as they index.",
+        .body = "Puts the project's diagnostics list in its place — the bottom dock by default — every error, warning and hint the language servers have reported, with the file and line on each row. Enter opens that file at the line. An empty list means the servers have nothing to say yet, not that the project is clean: they report as they index.",
         .keys = &.{ .{ .command = .@"lsp.diagnostics", .label = "Problems" }, .{ .command = .@"lsp.next_diagnostic", .label = "Next diagnostic" } },
         .links = &.{ .{ .command = .{ .id = .@"lsp.diagnostics", .label = "Add it" } }, .{ .command = .{ .id = .@"lsp.diagnostics_filter", .label = "Filter by severity" } }, ask },
     } },
@@ -212,20 +212,20 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Tests", .entry = .{
         .title = "Tests",
-        .body = "Runs the whole suite for whichever project this workspace is and shows it in a runner terminal beside you — `cargo test`, `npm test`, `go test ./...` or pytest — while a .NET solution streams into the Tests pane a row per test. A workspace none of those fit says so rather than guessing a command. Re-run last-failed is the quick loop once something is red.",
+        .body = "Runs the whole suite for whichever project this workspace is and shows it in a runner terminal beside you — `cargo test`, `npm test` or `go test ./...` — while pytest, vitest, zig and .NET stream into the Tests pane a row per test. A workspace none of those fit says so rather than guessing a command. Re-run last-failed is the quick loop once something is red.",
         .links = &.{ .{ .command = .{ .id = .@"test.run_all", .label = "Run them" } }, .{ .command = .{ .id = .@"test.rerun_failed", .label = "Re-run the failures" } }, ask },
     } },
 
     // ── the palette bar's ` ← ` / ` → ` ──
     .{ .label = "Previous buffer", .entry = .{
         .title = "Previous buffer",
-        .body = "Steps one tab to the left in this leaf's strip, wrapping round at the front — the same thing the ← chip's own left click does, so this row is the menu's spelling of the button. It is by position, not by history: `buffer.last` is the one that retraces where you have been. A leaf with one tab has nowhere to step.",
+        .body = "Steps one tab to the left in this leaf's strip, wrapping round at the front — the same thing the ← chip's own left click does, so this row is the menu's spelling of the button. It is by position, not by history: `buffer.last` is the one that retraces where you have been. Terminal tabs are stepped over; a leaf with one tab has nowhere to step.",
         .keys = &.{ .{ .command = .@"buffer.prev", .label = "Previous buffer" }, .{ .command = .@"buffer.next", .label = "Next buffer" } },
         .links = &.{ .{ .command = .{ .id = .@"buffer.prev", .label = "Step back" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Pick one instead" } } },
     } },
     .{ .label = "Next buffer", .entry = .{
         .title = "Next buffer",
-        .body = "Steps one tab to the right in this leaf's strip, wrapping round at the end — again by position, so a tab dragged along the strip changes where this lands. Only this leaf's tabs are walked; another split keeps its own strip and its own place in it.",
+        .body = "Steps one tab to the right in this leaf's strip, wrapping round at the end — again by position, so a tab dragged along the strip changes where this lands. Only this leaf's tabs are walked, terminal tabs stepped over; another split keeps its own strip and its own place in it.",
         .keys = &.{ .{ .command = .@"buffer.next", .label = "Next buffer" }, .{ .command = .@"buffer.prev", .label = "Previous buffer" } },
         .links = &.{ .{ .command = .{ .id = .@"buffer.next", .label = "Step on" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Pick one instead" } } },
     } },
@@ -334,7 +334,7 @@ pub const rows = [_]Row{
     .{ .label = "Shrink height", .entry = splitResize("Shrink", "height", "shorter", "rows", .@"view.split_shrink_height", .@"view.split_grow_height", "Ctrl+W -") },
     .{ .label = "Close active pane", .entry = .{
         .title = "Close active pane",
-        .body = "Closes the active pane's tab rather than the split around it: with other tabs in that leaf the next one takes its place, and only the last tab leaves the leaf empty for its neighbour to absorb. Unsaved work asks first. *Close split* is the row for the split itself, whatever it is holding.",
+        .body = "Closes the active pane's tab rather than the split around it: with other tabs in that leaf the next one takes its place, and only the last tab leaves the leaf empty for its neighbour to absorb. Unsaved work asks first. Window ▸ *Close split* is the row for the split itself, whatever it is holding.",
         .keys = &.{.{ .command = .@"buffer.close", .label = "Close tab" }},
         .links = &.{ .{ .command = .{ .id = .@"buffer.close", .label = "Close it" } }, .{ .command = .{ .id = .@"view.close_split", .label = "Close the split instead" } }, .{ .command = .{ .id = .@"buffer.reopen", .label = "Reopen the last closed" } } },
     } },
@@ -362,7 +362,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Save all", .entry = .{
         .title = "Save all",
-        .body = "Writes every dirty buffer to disk in one pass before the window closes — the dot on each tab clears as its file lands. A scratch buffer with no path is skipped rather than prompted for one, so it is still unsaved when the quit box counts. Format-on-save and the trailing-whitespace rules run per file as usual.",
+        .body = "Writes every dirty buffer to disk in one pass and closes nothing — the dot on each tab clears as its file lands, and a quit after it has nothing left to ask about. A scratch buffer with no path is skipped rather than prompted for one, so it is still unsaved when the quit box counts. Format-on-save and the trailing-whitespace rules run per file as usual.",
         .links = &.{ .{ .command = .{ .id = .@"file.save_all", .label = "Save them" } }, .{ .command = .{ .id = .@"buffer.next_dirty", .label = "Go to the next unsaved one" } }, .{ .settings = .{ .row = copy.settingsRow("editor.format_on_save"), .label = "Format on save" } } },
     } },
     .{ .label = "Restart", .command = .@"app.restart", .entry = .{

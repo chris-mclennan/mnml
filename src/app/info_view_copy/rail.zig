@@ -49,25 +49,25 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
             .links = &.{ .{ .command = .{ .id = .@"view.activity_explorer", .label = "Show the tree" } }, .{ .command = .{ .id = .@"picker.files", .label = "Fuzzy-open a file" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.sidebar_side"), .label = "Default sidebar side" } } },
         },
         .search => .{
-            .title = "Search — ripgrep across the workspace",
-            .body = try std.fmt.allocPrint(arena, "Workspace-wide text search with the three flags on its header — `Aa` case, `\\b` whole word, `.*` regex. Type the query and Enter runs it; the hits group by file, Enter on one jumps to the line. Click shows the section; right-click is its menu. The search needs `rg` on PATH — without it the section says so instead of searching.{s}", .{marked(app, .search)}),
+            .title = "Search — text across the workspace",
+            .body = try std.fmt.allocPrint(arena, "Workspace-wide text search with the three flags on its header — `Aa` case, `\\b` whole word, `.*` regex. Type the query and Enter runs it; the hits group by file, Enter on one jumps to the line. Click shows the section; right-click is its menu. It asks `git grep` first, then ripgrep, then a built-in walk, so it works with neither tool installed.{s}", .{marked(app, .search)}),
             .links = &.{ .{ .command = .{ .id = .@"view.activity_search", .label = "Show search" } }, .{ .command = .{ .id = .@"grep.open", .label = "Open the grep pane" } } },
         },
         .git => .{
             .title = "Git",
-            .body = try std.fmt.allocPrint(arena, "Enters git mode: the sidebar becomes the git palette — status, commits, branches, worktrees, stashes for the active repo, with the repo pill at the top to switch — and the editor area shows the commit graph. Click enters or leaves it; right-click is the section's menu. Every other section's click leaves git mode, which puts the layout back the way it was.{s}", .{marked(app, .git)}),
+            .body = try std.fmt.allocPrint(arena, "Enters git mode: the sidebar becomes the git palette — status, commits, branches, worktrees, stashes for the active repo, with the repo pill at the top to switch — and the editor area shows the commit graph. Click enters it — a second click stays; right-click is the section's menu. Every other section's click leaves git mode, which puts the layout back the way it was.{s}", .{marked(app, .git)}),
             .keys = &.{ .{ .command = .@"view.activity_git", .label = "Git mode" }, .{ .command = .@"git.commit", .label = "Commit" }, .{ .command = .@"git.status_pane", .label = "Status pane" } },
             .links = &.{ .{ .command = .{ .id = .@"view.activity_git", .label = "Enter git mode" } }, .{ .command = .{ .id = .@"git.graph", .label = "The commit graph" } }, ask },
         },
         .debug => .{
             .title = "Debug — DAP",
-            .body = try std.fmt.allocPrint(arena, "The debugger's column: variables, watches, the call stack and breakpoints, fed by a Debug Adapter Protocol server named in `dap` in config.zon. Click shows it; right-click is its menu. Breakpoints are set in the editor gutter (click the sign cell) and survive here without a session; the run itself starts from the Run menu or `dap.run`.{s}", .{marked(app, .debug)}),
+            .body = try std.fmt.allocPrint(arena, "The debugger's column: variables, watches, the call stack and breakpoints, fed by a Debug Adapter Protocol server named in `dap` in config.zon. Click shows it; right-click is its menu. Breakpoints are set in the editor gutter (a click there, once the file has an adapter or a breakpoint) and survive here without a session; the run itself starts from the Run menu or `dap.run`.{s}", .{marked(app, .debug)}),
             .keys = &.{ .{ .command = .@"view.activity_debug", .label = "Debug" }, .{ .command = .@"dap.toggle_breakpoint", .label = "Toggle breakpoint" } },
             .links = &.{ .{ .command = .{ .id = .@"view.activity_debug", .label = "Show the debug column" } }, .{ .command = .{ .id = .@"dap.run", .label = "Start debugging" } }, ask },
         },
         .integrations => .{
             .title = "Integrations",
-            .body = try std.fmt.allocPrint(arena, "The installed integrations — Jira, Bitbucket, the browser, the tools — on the Installed tab, with the Marketplace beside it; a row's Enter opens the integration and its right-click offers configure, disable, pin to the rail or the dock, uninstall. Click shows the section; right-click is its menu. An integration's own settings land in Settings → Integrations once it is installed.{s}", .{marked(app, .integrations)}),
+            .body = try std.fmt.allocPrint(arena, "The installed integrations — Jira, Bitbucket, the browser, the tools — on the Installed tab, with the Marketplace beside it; a row's Enter opens the integration and its right-click offers details, disable, show on the top bar, add to the activity bar, the manifest, update, uninstall. Click shows the section; right-click is its menu. An integration's own settings land in Settings → Integrations once it is installed.{s}", .{marked(app, .integrations)}),
             .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
             .links = &.{ .{ .command = .{ .id = .@"view.activity_integrations", .label = "Show integrations" } }, .{ .command = .{ .id = .@"integrations.show_marketplace", .label = "The marketplace" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
@@ -89,7 +89,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
         },
         .todos => .{
             .title = "TODOs — the markers in the code",
-            .body = try std.fmt.allocPrint(arena, "Every TODO / FIXME / XXX / HACK / REVIEW marker in the workspace, grouped by file and rescanned as files change (throttled to once every two seconds — the scan walks the tree). Click shows the section; right-click is its menu. Enter jumps to the line; a row's kebab hands the marker to a Claude or Codex session with the file and line filled in.{s}", .{marked(app, .todos)}),
+            .body = try std.fmt.allocPrint(arena, "Every TODO / FIXME / XXX / HACK / REVIEW marker in the workspace, grouped by file and rescanned half a second after files stop changing and on every save. Click shows the section; right-click is its menu. Enter jumps to the line; a row's kebab hands the marker to a Claude or Codex session with the file and line filled in.{s}", .{marked(app, .todos)}),
             .links = &.{ .{ .command = .{ .id = .@"view.activity_todos", .label = "Show TODOs" } }, .{ .command = .{ .id = .@"todos.refresh", .label = "Rescan now" } }, .{ .command = .{ .id = .@"todos.fix_with_agent", .label = "Hand one to an agent" } } },
         },
         .findings => .{
@@ -99,7 +99,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
         },
         .scripts => .{
             .title = "Scripts — what init.lua registered",
-            .body = try std.fmt.allocPrint(arena, "Every command, section and hook the Lua scripts registered, each with the file and line it came from, plus the installed script packages. Click shows the section; right-click is its menu. The ⟳ chip reloads every script; a script that failed to load shows its error here rather than in a toast you may have missed.{s}", .{marked(app, .scripts)}),
+            .body = try std.fmt.allocPrint(arena, "Every command, section and hook the Lua scripts registered, each with the file and line it came from, plus the installed script packages. Click shows the section; right-click is its menu. The refresh chip (↺) reloads every script; a script that failed to load shows its error here rather than in a toast you may have missed.{s}", .{marked(app, .scripts)}),
             .links = &.{ .{ .command = .{ .id = .@"view.activity_scripts", .label = "Show scripts" } }, .{ .command = .{ .id = .@"script.reload", .label = "Reload" } }, .{ .command = .{ .id = .@"script.doctor", .label = "Script doctor" } } },
         },
         .script => .{
@@ -109,7 +109,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
         },
         .diagnostics => .{
             .title = "Diagnostics",
-            .body = "The language servers' problems for every open file, worst first, with a jump to the line on Enter and a filter by severity. It is not a rail section of its own — it lives in the right column — which is why this row does not take the mark. Click shows it; the statusline's count chip opens the same list.",
+            .body = "The language servers' problems for every open file, by path and line, with a jump to the line on Enter and a filter by severity. It is not a rail section of its own — it lives in the bottom dock by default — which is why this row does not take the mark. Click shows it; the statusline's count chip opens the same list.",
             .keys = &.{ .{ .command = .@"lsp.diagnostics", .label = "Diagnostics" }, .{ .command = .@"lsp.next_diagnostic", .label = "Next problem" } },
             .links = &.{ .{ .command = .{ .id = .@"lsp.diagnostics", .label = "Show diagnostics" } }, ask },
         },
@@ -126,7 +126,7 @@ fn pinned(app: *App, arena: Allocator, i: u16) Allocator.Error!?Entry {
     const pins = try integrations.pinnedChips(app, arena);
     if (i >= pins.len) return .{
         .title = "Pinned launcher",
-        .body = "An integration pinned to the rail from its chip's menu (*Pin to activity bar*). Click runs the integration's command; right-click offers disable, show on the top bar, remove from the rail, pin to the dock, copy id. The pin is remembered in `ui.activity_bar_pinned_integrations`.",
+        .body = "An integration pinned to the rail from its chip's menu (*Add to activity bar*). Click runs the integration's command; right-click offers disable, show on the top bar, remove from the rail, pin to the dock, copy id. The pin is remembered in `ui.activity_bar_pinned_integrations`.",
         .links = &.{.{ .command = .{ .id = .@"view.activity_integrations", .label = "The integrations section" } }},
     };
     const c = pins[i].chip;

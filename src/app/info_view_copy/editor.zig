@@ -32,7 +32,7 @@ fn diagnosticsOn(app: *App, arena: Allocator, pane: app_mod.PaneId, line: u32) A
 pub fn cell(app: *App, arena: Allocator, pane: app_mod.PaneId, line: u32, col: u32) Allocator.Error!?Entry {
     if (try dap.hoverValue(app, arena, pane, line, col)) |tip| return .{
         .title = tip.title,
-        .body = try std.fmt.allocPrint(arena, "{s} The debugger is stopped, so the word under the pointer shows its value from the variables the last stop fetched — no round trip to the adapter. Add it as a watch to keep it in the Debug column; `dap.evaluate_hover` evaluates an expression the pointer is not on.", .{tip.detail orelse ""}),
+        .body = try std.fmt.allocPrint(arena, "{s} The debugger is stopped, so the word under the pointer shows its value from the variables the last stop fetched — no round trip to the adapter. A watch (type the expression) keeps a value in the Debug column; `dap.evaluate_hover` evaluates the word under the text cursor, which need not be the one under the pointer.", .{tip.detail orelse ""}),
         .keys = &.{ .{ .command = .@"dap.add_watch", .label = "Add a watch" }, .{ .command = .@"dap.evaluate_hover", .label = "Evaluate" }, .{ .command = .@"dap.continue", .label = "Continue" } },
         .links = &.{ .{ .command = .{ .id = .@"dap.add_watch", .label = "Watch it" } }, .{ .command = .{ .id = .@"dap.continue", .label = "Continue" } }, ask },
     };
@@ -40,11 +40,11 @@ pub fn cell(app: *App, arena: Allocator, pane: app_mod.PaneId, line: u32, col: u
     return .{
         .title = try std.fmt.allocPrint(arena, "Line {d}", .{line + 1}),
         .body = if (diags.len > 0)
-            try std.fmt.allocPrint(arena, "This line has a diagnostic —{s}. Click places the cursor there and the code action (the lightbulb chord) offers the server's fixes; drag selects; right-click is the editor menu. The statusline's count chip lists every problem in the file, worst first.", .{diags})
+            try std.fmt.allocPrint(arena, "This line has a diagnostic —{s}. Click places the cursor there and the code action (the lightbulb chord) offers the server's fixes; drag selects; right-click is the editor menu. The statusline's count chip opens the Diagnostics list — every file's problems, by path and line.", .{diags})
         else
-            "Click places the cursor on this cell; drag selects; a double-click takes the word and a triple the line; right-click is the editor menu — the clipboard, go to definition and references, the AI rows, format. The wheel scrolls by `ui.wheel_lines`; Ctrl+click on a symbol goes to its definition.",
+            "Click places the cursor on this cell; drag selects; a double-click takes the word and a triple the line; right-click is the editor menu — the clipboard, go to definition and references, rename, the AI rows, save. The wheel scrolls by `ui.wheel_lines`; go to definition is also on the keys below.",
         .keys = &.{ .{ .command = .@"lsp.goto_definition", .label = "Go to definition" }, .{ .command = .@"lsp.code_action", .label = "Code actions" }, .{ .command = .@"lsp.hover", .label = "Hover" } },
-        .links = if (diags.len > 0) &.{ .{ .command = .{ .id = .@"lsp.quick_fix", .label = "Quick fix" } }, .{ .command = .{ .id = .@"lsp.diagnostics", .label = "Every problem in the file" } }, ask } else &.{ .{ .command = .{ .id = .@"lsp.code_action", .label = "Code actions" } }, .{ .command = .{ .id = .@"ai.explain", .label = "Explain the selection" } } },
+        .links = if (diags.len > 0) &.{ .{ .command = .{ .id = .@"lsp.quick_fix", .label = "Quick fix" } }, .{ .command = .{ .id = .@"lsp.diagnostics", .label = "The Diagnostics list" } }, ask } else &.{ .{ .command = .{ .id = .@"lsp.code_action", .label = "Code actions" } }, .{ .command = .{ .id = .@"ai.explain", .label = "Explain the selection" } } },
     };
 }
 
@@ -53,9 +53,9 @@ pub fn gutter(app: *App, arena: Allocator, g: hit.GutterRef) Allocator.Error!?En
     return .{
         .title = try std.fmt.allocPrint(arena, "Line {d} — the gutter", .{g.line + 1}),
         .body = if (diags.len > 0)
-            try std.fmt.allocPrint(arena, "The line number and the sign cell. The sign here is a diagnostic —{s}. Click the sign cell to toggle a breakpoint on this line (a breakpoint's own sign wins the cell); right-click is the breakpoint menu — conditional, hit count, log message. The pane's colour rail paints into an empty sign cell.", .{diags})
+            try std.fmt.allocPrint(arena, "The line number and the sign cell. The sign here is a diagnostic —{s}. When the file has breakpoints or a debug adapter covers it, a click here toggles a breakpoint on this line (a breakpoint's own sign wins the cell), otherwise it selects the line; right-click is the breakpoint menu — conditional, hit count, log message. The pane's colour rail paints into an empty sign cell.", .{diags})
         else
-            "The line number and the sign cell beside it. Click the sign cell to set or clear a breakpoint on this line — kept without a debug session and listed in the Debug column; right-click is the breakpoint menu: conditional, hit count, a log message instead of a stop. A diagnostic or a git change paints its sign here, and the pane's colour rail takes the cell when nothing else does.",
+            "The line number and the sign cell beside it. When the file has breakpoints or a debug adapter covers it, a click here sets or clears a breakpoint on this line — kept without a debug session and listed in the Debug column; otherwise a click selects the line. Right-click is the breakpoint menu: conditional, hit count, a log message instead of a stop. A diagnostic or a git change paints its sign here, and the pane's colour rail takes the cell when nothing else does.",
         .keys = &.{ .{ .command = .@"dap.toggle_breakpoint", .label = "Toggle a breakpoint" }, .{ .command = .@"dap.toggle_breakpoint_conditional", .label = "Conditional breakpoint" } },
         .links = &.{ .{ .command = .{ .id = .@"dap.toggle_breakpoint", .label = "Toggle a breakpoint" } }, .{ .command = .{ .id = .@"dap.list_breakpoints", .label = "List the breakpoints" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.line_numbers"), .label = "Line numbers" } } },
     };
@@ -66,7 +66,7 @@ pub fn foldArrow(app: *App, arena: Allocator, g: hit.GutterRef) Allocator.Error!
     return .{
         .title = try std.fmt.allocPrint(arena, "Line {d} — fold", .{g.line + 1}),
         .body = if (closed) |end|
-            try std.fmt.allocPrint(arena, "A closed fold: lines {d} to {d} are hidden behind this one, and the marker at the line's end says how many. Click the chevron to open it; `zo` opens and `zc` closes under vim, `editor.toggle_fold` under either profile. Folds are per window and forgotten when the file closes.", .{ g.line + 1, end + 1 })
+            try std.fmt.allocPrint(arena, "A closed fold: lines {d} to {d} are hidden behind this one, and the marker at the line's end says how many. Click the chevron to open it; `zo` opens and `zc` closes under vim, `editor.toggle_fold` under either profile. Folds are per window and forgotten when the file closes.", .{ g.line + 2, end + 1 })
         else
             "The chevron marks a block that can fold — a function, a bracket pair, a heading's section. Click it to close the fold: the lines under this one hide behind it and a marker at the line's end counts them. `zc` / `zo` under vim, `editor.toggle_fold` under either profile; `ui.always_show_fold_arrows` keeps the chevrons visible instead of on hover.",
         .keys = &.{ .{ .command = .@"editor.toggle_fold", .label = "Toggle the fold" }, .{ .command = .@"editor.unfold_all", .label = "Open every fold" } },

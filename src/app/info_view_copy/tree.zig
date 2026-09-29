@@ -18,7 +18,6 @@ const ask = copy.ask_link;
 
 const open_keys = [_]Key{
     .{ .chord = "Enter", .label = "Open in the active pane" },
-    .{ .chord = "Ctrl+Enter", .label = "Open in a horizontal split" },
 };
 
 const dir_keys = [_]Key{
@@ -185,7 +184,7 @@ pub fn node(app: *App, arena: Allocator, idx: u32) Allocator.Error!?Entry {
 pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
     if (r == 0) return .{
         .title = "Workspace root",
-        .body = "Names the folder the tree is rooted at — click to collapse or expand the whole tree, Alt+click to fold or open every directory. The chips on the row make a folder or a file, pull, fold every directory, and rescan. Right-click is the workspace menu: add a root, switch, the trash.",
+        .body = "Names the folder the tree is rooted at — click to collapse or expand the whole tree, Alt+click to fold or open every directory. The chips on the row make a folder or a file, pull, fold every directory, and rescan. Right-click is the workspace menu: a new file or folder, add, switch or manage workspaces, copy the path, refresh.",
         .keys = &.{.{ .chord = "Alt+click", .label = "Fold / open every directory" }},
         .links = &.{ .{ .command = .{ .id = .@"view.add_workspace", .label = "Add a workspace root" } }, .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch workspace" } } },
     };
@@ -201,7 +200,7 @@ pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
 pub fn empty() Entry {
     return .{
         .title = "Workspace — the empty rows",
-        .body = "The tree's rows below the last file. A click here focuses the tree without picking a row; right-click opens the workspace menu — a new file or folder at the root, add a root, switch workspace, the trash — the same rows the root's header offers. Drop a file here to move it to the root.",
+        .body = "The tree's rows below the last file. A click here focuses the tree without picking a row; right-click opens the workspace menu — a new file or folder at the root, add, switch or manage workspaces — the same rows the root's header offers. Drop a file here to move it to the root.",
         .keys = &.{ .{ .chord = "Right-click", .label = "The workspace menu" }, .{ .command = .@"file.new", .label = "New file at the root" } },
         .links = &.{ .{ .command = .{ .id = .@"file.new", .label = "New file" } }, .{ .command = .{ .id = .@"file.new_folder", .label = "New folder" } } },
     };
@@ -246,7 +245,9 @@ test "the dictionary: a directory, package.json, a .d.ts, a plain .txt, and an u
     try t.expectEqualStrings("types.d.ts — TypeScript declarations", dts.title);
     const txt = (try rowEntry(a, "notes.txt", false)).?;
     try t.expectEqualStrings("notes.txt — Plain text", txt.title);
-    try t.expectEqualStrings("Ctrl+Enter", txt.keys[1].chord);
+    // `tree.open_in_split` has no chord in either profile, so the row
+    // names only Enter — the split is the row menu's *Open in split*.
+    try t.expectEqual(@as(usize, 1), txt.keys.len);
     try t.expect((try rowEntry(a, "weird.xyz", false)) == null);
     try t.expectEqualStrings("weird.xyz", (try rowOrGeneric(a, "weird.xyz", false)).title);
     try t.expect((try rowEntry(a, "Makefile", false)) != null);

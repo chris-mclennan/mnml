@@ -14,6 +14,8 @@ const app_mod = @import("../../app.zig");
 const App = app_mod.App;
 const copy = @import("../info_view_copy.zig");
 const Entry = copy.Entry;
+const Link = copy.Link;
+const context_menus = @import("../context_menus.zig");
 const sl = @import("../../ui/statusline.zig");
 const statusline_app = @import("../statusline.zig");
 const SegId = statusline_app.SegId;
@@ -28,25 +30,25 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
     switch (seg) {
         sl.seg_mode => return .{
             .title = if (App.profileOf(app.input_style) == .vim) "Mode chip — vim keymap" else "Mode chip — standard keymap",
-            .body = "The leftmost chip is the keymap's state: under vim it reads NORMAL / INSERT / VISUAL / REPLACE as you edit, and under either profile it names the surface the keys go to when that is not an editor (TREE, a section, a terminal). Click swaps the profile — vim to standard and back, written to `editor.input_style` — and right-click lists both plus the keymap doctor. The swap rebuilds every chord at once, so a chord you learned under one profile may not exist under the other.",
+            .body = "The leftmost chip is the keymap's state: under vim it reads NORMAL / INSERT / VISUAL / REPLACE as you edit, and under either profile it names the surface the keys go to when that is not an editor (TREE, a section, a terminal). Click swaps the profile — vim to standard and back — and right-click lists both plus the cheatsheet. The swap rebuilds every chord at once, so a chord you learned under one profile may not exist under the other.",
             .keys = &.{.{ .command = .@"focus.cycle", .label = "Cycle keyboard focus" }},
             .links = &.{ .{ .command = .{ .id = .@"editor.toggle_keymap", .label = "Swap vim ↔ standard" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.input_style"), .label = "Input style in Settings" } }, .{ .command = .{ .id = .@"keys.doctor", .label = "Keymap doctor" } } },
         },
         sl.seg_file => return .{
             .title = "File chip",
-            .body = "The active buffer's name, with ● in front while it has unsaved edits and nothing while it is clean. A left click does nothing — the chip is words — and right-click offers the buffer's own rows: copy its path, reveal it in the tree, close it. The chip follows the focused pane, so with a terminal focused it goes blank rather than name a file the keys are not in.",
+            .body = "The active buffer's name, with ● in front while it has unsaved edits and nothing while it is clean. A left click does nothing — the chip is words — and right-click offers the buffer's own rows: copy its path, reveal it in the tree, close it. The chip follows the focused pane, so with a terminal focused it reads `[no file]` rather than name a file the keys are not in.",
             .keys = &.{.{ .command = .@"file.save", .label = "Save" }},
             .links = &.{ .{ .command = .{ .id = .@"view.reveal_in_tree", .label = "Reveal in the tree" } }, .{ .command = .{ .id = .@"file.copy_path", .label = "Copy the path" } } },
         },
         sl.seg_position => return .{
             .title = "Cursor position",
-            .body = "Line and column of the cursor in the active editor, one-based, the column counted in characters rather than bytes. Click opens the go-to-line prompt (`:42` does the same from the command line); right-click lists the jumps — go to line, the top, the bottom. A selection adds its own chip further right with the character count.",
+            .body = "Line and column of the cursor in the active editor, one-based, the column counted in characters rather than bytes. Click opens the go-to-line prompt (`:42` does the same from the command line); right-click offers Go to line… and a copy of the position as `line:col`. A selection adds its own chip further right with the character count.",
             .keys = &.{.{ .command = .@"editor.goto_line", .label = "Go to line" }},
             .links = &.{.{ .command = .{ .id = .@"editor.goto_line", .label = "Go to line…" } }},
         },
         sl.seg_language => return .{
             .title = "Language chip",
-            .body = "The language mnml picked for the active file, by its extension — this is what chooses the highlighter and which LSP server is asked. Click says so in a toast; right-click lists the languages so a file with an odd extension can be read as the one it is. Changing it here does not rename the file and does not persist: reopen the file and the extension decides again.",
+            .body = "The language mnml picked for the active file, by its name, its extension or a shebang — this is what chooses the highlighter and which LSP server is asked. Click says how in a toast; right-click copies the language's name, lists the file's symbols or formats it. There is no picker here: the file's name decides.",
             .links = &.{ .{ .command = .{ .id = .@"editor.highlight_this_file", .label = "Highlight this file as…" } }, .{ .command = .{ .id = .@"editor.lsp_this_file", .label = "Ask an LSP for this file" } } },
         },
         sl.seg_restricted => return if (app.workspace_toml != null and (app.loaded == null or app.loaded.?.trust_prompt == null)) .{
@@ -89,7 +91,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         },
         .test_run => .{
             .title = "Test run",
-            .body = "The last test run's tally — passed, failed, still running — from whichever runner mnml drove (cargo, pytest, go, npm, the e2e corpus). Click focuses the tests pane, where each failure has its output and a jump to the line; right-click offers rerun-failed and the sort. A red count is the thing to click on: the pane's failure text is what to read, not the number.",
+            .body = "The last test run's tally — passed, failed, still running — from whichever runner mnml drove (cargo, pytest, go, npm, the e2e corpus). Click focuses the tests pane, where each failure has its output and a jump to the line; right-click runs all, the file, the test at the cursor, or re-runs the failed ones. A red count is the thing to click on: the pane's failure text is what to read, not the number.",
             .links = &.{ .{ .command = .{ .id = .@"test.rerun_failed", .label = "Rerun the failures" } }, .{ .command = .{ .id = .@"test.run_all", .label = "Run everything" } }, ask },
         },
         .ai_claude => try aiChip(app, arena, .claude),
@@ -103,17 +105,17 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         },
         .np_brand => .{
             .title = "Now playing — the player",
-            .body = "The music app mnml is talking to (`ui.preferred_music_app`): Sonos, mixr or Spotify. Click opens that player's pane; right-click is the player menu with play / pause, next, the rooms and volume for Sonos. The cluster only paints while the player reports a track, so a silent player means no chips rather than an empty one.",
+            .body = "The music app mnml is talking to (`ui.preferred_music_app`): mixr, Music or Spotify. Click opens mixr's pane, or brings Music or Spotify forward; right-click is the player menu — pick the player, play a random chart, open mixr's views, copy the track title.",
             .links = &.{ .{ .command = .{ .id = .@"mixr.show", .label = "Open the player" } }, .{ .command = .{ .id = .@"sonos.status", .label = "Sonos status" } } },
         },
         .np_play => .{
             .title = "Play / pause",
-            .body = "Starts or pauses the player mnml is driving — the glyph flips with the player's own state, so it reads as what the next click does. Right-click opens the player menu. A player that is not reachable (Sonos off the network, mixr not running) leaves the click a toast rather than a silent nothing.",
+            .body = "Starts or pauses the player mnml is driving — the glyph flips with the player's own state, so it reads as what the next click does. Music and Spotify get the command through osascript; mixr's transport is cut in this build, so on mixr a playing track only toasts that, and an idle mixr starts a random chart. Right-click opens the player menu.",
             .links = &.{.{ .command = .{ .id = .@"sonos.play_pause", .label = "Play / pause" } }},
         },
         .np_next => .{
             .title = "Next track",
-            .body = "Skips to the next track on the player mnml is driving. Right-click opens the player menu, where previous, volume and the rooms live — there is no previous chip, to keep the cluster narrow. The skip reaches the player in a moment; the track chip beside it updates when the player reports the change.",
+            .body = "Skips to the next track on Music or Spotify, through osascript; on mixr the skip is cut in this build and the click toasts that. Right-click opens the player menu. The track chip beside it updates when the player reports the change.",
             .links = &.{ .{ .command = .{ .id = .@"sonos.next", .label = "Next" } }, .{ .command = .{ .id = .@"sonos.previous", .label = "Previous" } } },
         },
         .np_track => .{
@@ -129,7 +131,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .lsp => try lsp(app, arena),
         .wrap => .{
             .title = "WRAP — soft wrap is on",
-            .body = "Lines longer than the pane fold at its right edge instead of scrolling sideways, and the horizontal scroll is pinned to 0 while they do. Click turns wrapping off for the workspace (`ui.wrap`); right-click lists on and off. Wrapping is visual only — the file's line breaks are untouched — and `:set wrap` / `:set nowrap` do the same from the command line.",
+            .body = "Lines longer than the pane fold at its right edge instead of scrolling sideways, and the horizontal scroll is pinned to 0 while they do. Click turns wrapping off for the active editor only and saves nothing (`ui.wrap` is the default for new buffers); right-click has the same toggle and Editor settings…. Wrapping is visual only — the file's line breaks are untouched — and `:set wrap` / `:set nowrap` do the same from the command line.",
             .links = &.{ .{ .command = .{ .id = .@"view.toggle_wrap", .label = "Turn wrapping off" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.wrap"), .label = "Soft wrap in Settings" } } },
         },
         .autosave => .{
@@ -140,25 +142,25 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         .highlight => try highlight(app, arena),
         .filesize => .{
             .title = "File size",
-            .body = "The active buffer's size in memory, bytes rather than the on-disk size, so unsaved edits count. Click toasts the exact bytes and the line count; right-click offers the file's stats. Past `editor.highlight_max_bytes` the highlighter stands down for the file and the HL chip says so — this chip is where the number that tripped it comes from.",
+            .body = "The active buffer's size in memory, bytes rather than the on-disk size, so unsaved edits count. Click toasts the exact bytes and the line count; right-click copies the size. Past `editor.highlight_max_bytes` the highlighter stands down for the file and the highlight chip says so — this chip is where the number that tripped it comes from.",
             .links = &.{ .{ .command = .{ .id = .@"editor.file_stats", .label = "Show the stats" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.highlight_max_bytes"), .label = "Highlight size limit" } } },
         },
         .sel => .{
             .title = "Selection",
-            .body = "How many characters the active editor's selection covers, counted in characters rather than bytes so a CJK run counts once per glyph. The chip appears with the selection and goes with it. Right-click offers copy, cut and select-all; the editing chords are the profile's own.",
+            .body = "How many characters the active editor's selection covers, counted in characters rather than bytes so a CJK run counts once per glyph. The chip appears with the selection and goes with it. Right-click offers copy and cut; the editing chords are the profile's own.",
             .links = &.{.{ .command = .{ .id = .@"editor.copy", .label = "Copy the selection" } }},
         },
         .stress => try stress(app, arena),
         .bell => try bell(app, arena),
         .clock => .{
             .title = if (app.clock.mode == .utc) "Clock — UTC" else "Clock — local time",
-            .body = "Wall-clock time, redrawn with the frame so it lags a render tick at most. A trailing Z means it is UTC. Click flips local ↔ UTC; right-click lists local, UTC and hide, and `ui.clock` in Settings is the same three. It is the statusline's rightmost chip, so a narrow terminal drops it first.",
+            .body = "Wall-clock time, redrawn with the frame so it lags a render tick at most. A trailing Z means it is UTC. Click flips local ↔ UTC for this session; right-click is the clock's menu. `ui.clock` in Settings only shows or hides it — local or UTC is not saved.",
             .links = if (app.clock.mode == .utc) &.{ .{ .command = .{ .id = .@"clock.local", .label = "Show local time" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } } else &.{ .{ .command = .{ .id = .@"clock.utc", .label = "Show UTC" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.clock"), .label = "Clock in Settings" } } },
         },
         .workspace => .{
             .title = try std.fmt.allocPrint(arena, "Workspace — {s}", .{std.fs.path.basename(app.workspace)}),
             .body = if (app.git.repos.items.len > 1)
-                "The folder mnml is rooted at, and with several repos discovered under it the click switches the ACTIVE REPO — the one the branch chip and the git panels follow — rather than the workspace. Right-click lists the workspaces from `workspaces` in config.zon plus add and manage. Switching workspace reloads the tree and the session for that root."
+                "The folder mnml is rooted at, and with several repos discovered under it the click switches the ACTIVE REPO — the one the branch chip and the git panels follow — rather than the workspace. Right-click has the repo rows (switch, next, previous), worktrees, switch / add / manage workspace and a rescan. Switching workspace reloads the tree and the session for that root."
             else
                 "The folder mnml is rooted at — the tree's root, where `.mnml/` lives and what a relative path in a command means. Click opens the workspace picker (the roots from `workspaces` in config.zon, recent ones first); right-click adds or manages workspaces. Switching reloads the tree and restores that workspace's own session, so the tabs you see now come back when you switch back.",
             .keys = &.{.{ .command = .@"view.switch_workspace", .label = "Switch workspace" }},
@@ -245,7 +247,7 @@ fn aiChip(app: *App, arena: Allocator, product: enum { claude, codex }) Allocato
         },
         .codex => .{
             .title = "Codex usage chip",
-            .body = "The Codex CLI's usage today — tokens spent and sessions run — for the account it is signed in as. Click opens the Codex usage pane; right-click picks what the chip shows and can turn all AI chips off or make them a ticker. Codex has no API route in this build, so the chip is empty until a Codex CLI session has run at least once.",
+            .body = "The Codex CLI's tokens spent today for the account it is signed in as — `…` until the first scan. Click opens the Codex usage pane; right-click opens that pane, refreshes the usage, shows the last response, or picks session, weekly or both for the chip. Codex has no API route in this build, so the chip is empty until a Codex CLI session has run at least once.",
             .links = &.{ .{ .command = .{ .id = .@"ai.codex_usage", .label = "Open the usage pane" } }, .{ .command = .{ .id = .@"ai.dashboard", .label = "The sessions dashboard" } } },
         },
     };
@@ -255,7 +257,7 @@ fn jobsChip(app: *App, arena: Allocator) Allocator.Error!Entry {
     const tip = try @import("../jobs.zig").tip(app, arena);
     return .{
         .title = tip.title,
-        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed — only the kind (`✗ tests`) when another chip already states that failure, and on a row too narrow for the file name as well; nothing when idle. `space j` (vim) / `Ctrl+K J` (standard) or either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
+        .body = "What mnml is doing in the background — a language server starting or indexing, a git fetch / pull / push, a test run, an HTTP send, chain or bench, a linter, a search walk, Chrome coming up, a session spawning. A spinner and a count while any runs; for ten seconds after one fails, its words, dimmed — only the kind (`✗ tests`) when another chip already states that failure, and on a row too narrow for the file name as well; nothing when idle. `space j` (either profile; `Ctrl+K j` too under standard) or either click opens the JOBS list: the running ones with a Cancel row where they can be stopped, the last fifty finished with how they ended.",
         .links = &.{ .{ .command = .{ .id = .@"jobs.show", .label = "Open the jobs list" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.jobs_chip"), .label = "Jobs chip in Settings" } }, .{ .command = .{ .id = .@"messages.show", .label = "The messages log" } } },
     };
 }
@@ -271,7 +273,7 @@ fn ghost(app: *App, arena: Allocator) Allocator.Error!Entry {
             .inflight => "A suggestion request is out to the backend and the editor is waiting for the ghost text. A request that takes longer than `ai.suggest_timeout_ms` is dropped and the chip says so. Click opens the suggestion setup; the backend named there is the first thing to check when this state lasts.",
             .shown => "Ghost text is on screen after the cursor — Tab accepts it, any other key dismisses it. The suggestion came from the backend `ai.suggest_backend` names. Click opens the suggestion setup; right-click shows the request statistics.",
             .empty => "The backend answered with nothing to suggest — not an error, just no completion for this spot. The chip clears on its own after a moment. Click opens the suggestion setup if empty answers are the rule rather than the exception.",
-            .err => "The last suggestion request FAILED — the backend is unreachable, the key is missing, or the CLI is not on PATH. Nothing else in the editor is affected; suggestions stay off until a request succeeds. Click opens the suggestion setup, which names the backend and where its credential comes from; the statistics row in the right-click menu has the last error's text.",
+            .err => "The last suggestion request FAILED — the backend is unreachable, the key is missing, or the CLI is not on PATH. Nothing else in the editor is affected: the `!` holds for five seconds and the next pause sends a request as usual. Click opens the suggestion setup, which names the backend and where its credential comes from.",
         },
         .links = &.{ .{ .command = .{ .id = .@"ai.setup_suggestions", .label = "Suggestion setup" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ai.suggest_backend"), .label = "Suggestion backend" } }, ask },
     };
@@ -284,7 +286,7 @@ fn lsp(app: *App, arena: Allocator) Allocator.Error!Entry {
     };
     return .{
         .title = if (live == 0) "Language servers — none running" else try std.fmt.allocPrint(arena, "Language servers — {d} running", .{live}),
-        .body = "How many language servers mnml has started for the open files, each on the root it found the project at; the hover lists them by name and root. Click opens the status pane with the same list and each server's state; right-click is the LSP menu — restart, the log, the missing-server defaults. A server that is installed but not running usually means the file's language is not one `lsp` in config.zon names.",
+        .body = "How many language servers mnml has started for the open files, each on the root it found the project at; the hover lists them by name and root. Click opens the status pane with the same list and each server's state; right-click is the LSP menu — status, an install row for each missing server, then symbols, references, rename, format, code actions and inlay hints. A server that is installed but not running usually means the file's language is not one `lsp` in config.zon names.",
         .keys = &.{ .{ .command = .@"lsp.hover", .label = "Hover at the cursor" }, .{ .command = .@"lsp.goto_definition", .label = "Go to definition" } },
         .links = &.{ .{ .command = .{ .id = .@"lsp.status", .label = "Open the status pane" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.lsp_missing_defaults"), .label = "Missing-server defaults" } }, ask },
     };
@@ -323,31 +325,44 @@ fn bell(app: *App, arena: Allocator) Allocator.Error!Entry {
     const u = app.messages.unread();
     return .{
         .title = if (u.err + u.warn == 0) "Messages — nothing unread" else try std.fmt.allocPrint(arena, "Messages — {d} unread ({d} error{s})", .{ u.err + u.warn, u.err, if (u.err == 1) "" else "s" }),
-        .body = "Every toast is also kept in a history, so a message that scrolled past is not lost. The bell is quiet when there is nothing, carries a count in yellow for warnings and in red for errors — the colour is the level, so the number does not have to be. Click opens the history; right-click marks everything read or clears it. The list holds the last 200 entries and forgets anything older than seven days.",
+        .body = "Every toast is also kept in a history, so a message that scrolled past is not lost. The bell is quiet when there is nothing, carries a count in yellow for warnings and in red for errors — the colour is the level, so the number does not have to be. Click opens the history; right-click shows it or clears it. The list holds the last 200 entries.",
         .links = &.{ .{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }, .{ .command = .{ .id = .@"messages.clear", .label = "Clear the messages" } }, ask },
     };
 }
 
-/// A host's own segment: its `tooltip` is the publisher's help — the
-/// first line is the title, the rest the body — and it counts as
-/// curated; a segment sent without one falls through to the generic
-/// line, which the audit lists.
+/// A host's own segment — a chip an integration (or a script over the
+/// IPC channel) publishes. With a `tooltip`, its first line is the
+/// title and the rest opens the body; without one, the entry names the
+/// segment by its id. Either way the rest is read off the segment: what
+/// its left click runs, and the rows its right-click menu really has
+/// (`context_menus.openIntegrationSegmentMenu`).
 fn dynamic(app: *App, arena: Allocator, slot: u32) Allocator.Error!?Entry {
     const segs = app.ipc_fx.segments.items;
     if (slot >= segs.len) return null;
     const seg = segs[slot];
-    const tip = seg.tooltip orelse return null;
-    var it = std.mem.splitScalar(u8, tip, '\n');
-    const head = try arena.dupe(u8, it.first());
+    const polled = app.integration_poll.jobForSegment(seg.id) != null;
+    var title: []const u8 = undefined;
     var body: std.ArrayListUnmanaged(u8) = .empty;
-    while (it.next()) |l| {
-        if (body.items.len > 0) try body.append(arena, ' ');
-        try body.appendSlice(arena, l);
+    if (seg.tooltip) |tip| {
+        var it = std.mem.splitScalar(u8, tip, '\n');
+        title = try arena.dupe(u8, it.first());
+        while (it.next()) |l| {
+            if (body.items.len > 0) try body.append(arena, ' ');
+            try body.appendSlice(arena, l);
+        }
+        if (body.items.len > 0) try body.appendSlice(arena, " ");
+    } else {
+        title = try std.fmt.allocPrint(arena, "Chip `{s}`", .{seg.id});
+        try body.print(arena, "A chip published to the statusline as `{s}`, sent without hover text of its own, so its figure is all it says. ", .{seg.id});
     }
-    if (body.items.len > 0) try body.appendSlice(arena, " ");
-    if (seg.click_command) |c| try body.print(arena, "Click runs `{s}`; ", .{c}) else try body.appendSlice(arena, "The chip is passive — a click runs nothing; ");
-    try body.print(arena, "right-click offers Refresh now and the segment's own rows. Published by the `{s}` integration over the statusline channel, so it is as fresh as that integration's last poll.", .{seg.id});
-    return .{ .title = head, .body = body.items, .links = &.{ .{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }, ask } };
+    if (seg.click_command) |c| try body.print(arena, "Click runs `{s}`. ", .{c}) else try body.appendSlice(arena, "The chip is passive — a click runs nothing. ");
+    try body.appendSlice(arena, "Right-click lists ");
+    if (polled) try body.appendSlice(arena, "Refresh now (every integration polls at once), ");
+    if (seg.click_command != null) try body.appendSlice(arena, "Open (the click's command), ");
+    try body.print(arena, "Requests… (the request log filtered to `{s}`) and Integrations…. ", .{context_menus.serviceOfSegment(seg.id)});
+    try body.appendSlice(arena, if (polled) "It is as fresh as that integration's last poll." else "Nothing here polls it; it is as fresh as the publisher's last send.");
+    const links: []const Link = if (polled) &.{ .{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }, ask } else &.{ .{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }, ask };
+    return .{ .title = title, .body = body.items, .links = links };
 }
 
 // ─── the state, spelled for the AI ──────────────────────────────────────
@@ -391,6 +406,14 @@ test "every fixed segment and every SegId has an entry; the branch entry names t
         try t.expect(e.body.len >= 40);
     }
     try t.expect(std.mem.startsWith(u8, (try entry(&app, a, SegId.branch.raw())).?.title, "Branch "));
-    // A dynamic segment without a tooltip is not curated; with one, it is.
+    // A dynamic segment past the end has nothing; one without a tooltip
+    // is curated by its id and the rows its menu really has.
     try t.expect((try entry(&app, a, sl.seg_dyn_base)) == null);
+    try app.ipc_fx.setSegment(app.gpa, .{ .id = "demo_prs.open", .text = " 3 " });
+    const plain = (try entry(&app, a, sl.seg_dyn_base)).?;
+    try t.expectEqualStrings("Chip `demo_prs.open`", plain.title);
+    try t.expect(std.mem.indexOf(u8, plain.body, "a click runs nothing") != null);
+    try t.expect(std.mem.indexOf(u8, plain.body, "Requests… (the request log filtered to `demo`)") != null);
+    // Nothing polls it, so no Refresh now row is promised.
+    try t.expect(std.mem.indexOf(u8, plain.body, "Refresh now") == null);
 }

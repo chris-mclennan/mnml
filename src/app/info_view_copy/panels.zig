@@ -56,8 +56,8 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
             .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.todos_sort"), .label = "TODOS sort in Settings" } }},
         },
         .refresh => .{
-            .title = "⟳ refresh",
-            .body = "Rescans this section now. Right-click turns auto-refresh on or off for it — per section, persisted; on by default, with TODOS throttled to once every two seconds because its scan walks the whole workspace. The chip spins while a scan runs; a section that never changes on its own (notes, findings) refreshes when its folder does.",
+            .title = "↻ refresh",
+            .body = "Rescans this section now. Right-click turns auto-refresh on or off for it — per section, persisted; on by default, with TODOS waiting half a second after the last file change so a burst of saves is one scan of the workspace. A section that never changes on its own (notes, findings) refreshes when its folder does.",
             .links = &.{.{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }},
         },
         .new => if (panel == .integrations) .{
@@ -66,7 +66,7 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
             .links = &.{ .{ .command = .{ .id = .@"marketplace.add_source", .label = "Add a source" } }, .{ .command = .{ .id = .@"marketplace.refresh", .label = "Refresh the sources" } } },
         } else .{
             .title = "+ new",
-            .body = "Creates an entry in this section: a todo is appended to TODO.md at the workspace root under an `## Inbox` heading; a note becomes a file in `.mnml/notes/`, a finding one in `.mnml/findings/` from a template; a session starts a Claude Code or Codex session. The section refreshes at once rather than waiting for the next scan.",
+            .body = "Creates an entry in this section: a todo is appended to TODO.md at the workspace root under an `## Inbox` heading; a note becomes a file in `.mnml/notes/`, a finding one in `.mnml/findings/` from a template; SESSIONS' `+` opens the New session menu — a local Claude Code session, one in a worktree, two, four or eight at once, or a cloud run. The section refreshes at once rather than waiting for the next scan.",
             .links = &.{ .{ .command = .{ .id = .@"notes.new", .label = "New note" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "New Claude session" } } },
         },
         .view => .{
@@ -85,7 +85,7 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
 pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry {
     // The SESSIONS card and the git palette row have rich tips of
     // their own; those are the entry's body.
-    if (r.panel == .sessions) if (try sessions.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A session's card: Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.", &.{ .{ .command = .@"sessions.open", .label = "Open the pane" }, .{ .command = .@"sessions.open_transcript", .label = "The transcript" }, .{ .command = .@"sessions.kill", .label = "Kill" } }, &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask });
+    if (r.panel == .sessions) if (try sessions.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A session's card: a click selects it, a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Its Move rows reorder it under the Manual sort.", &.{ .{ .command = .@"sessions.open", .label = "Open the pane" }, .{ .command = .@"sessions.open_transcript", .label = "The transcript" }, .{ .command = .@"sessions.kill", .label = "Kill" } }, &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask });
     if (r.panel == .git) if (try git_palette.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A git palette row: Enter acts on it — checkout a branch, open a commit, apply a stash; right-click is its menu with the rest.", &.{}, &.{ .{ .command = .{ .id = .@"git.status_pane", .label = "The status pane" } }, .{ .command = .{ .id = .@"git.checkout", .label = "Checkout" } }, ask });
     return switch (r.panel) {
         .jobs => try jobsRow(app, arena, r.idx),
@@ -97,7 +97,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
         },
         .notes => .{
             .title = try std.fmt.allocPrint(arena, "Note {d}", .{r.idx + 1}),
-            .body = "A markdown file in the workspace's `.mnml/notes/`. Enter or double-click opens it in an editor; the kebab has delete and copy the path; drag it onto the tree to move it. Notes travel with the checkout, not with mnml, so a note is as shared as the folder is.",
+            .body = "A markdown file in the workspace's `.mnml/notes/`. Enter or double-click opens it in an editor; the kebab has delete and copy the path. Notes travel with the checkout, not with mnml, so a note is as shared as the folder is.",
             .keys = &.{.{ .chord = "Enter", .label = "Open" }},
             .links = &.{ .{ .command = .{ .id = .@"notes.open", .label = "Open it" } }, .{ .command = .{ .id = .@"notes.new", .label = "New note" } } },
         },
@@ -109,7 +109,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
         },
         .sessions => .{
             .title = try std.fmt.allocPrint(arena, "Session {d}", .{r.idx + 1}),
-            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you. Enter or a click opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Drag reorders under the Manual sort.",
+            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you. A click selects it and a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows, and its Move rows reorder it under the Manual sort.",
             .keys = &.{ .{ .chord = "Enter", .label = "Open the pane" }, .{ .command = .@"sessions.next_waiting", .label = "Next that needs you" } },
             .links = &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask },
         },
@@ -152,9 +152,14 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .body = try std.fmt.allocPrint(arena, "The `rebuild` chip: {s}. An integration draws through the SDK it was compiled against, so this one misses whatever the SDK has changed since. Right-click \u{2192} Rebuild builds it again from its folder and re-runs `--install`; `integrations.rebuild_stale` does every one.", .{why}),
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
             .links = &.{ .{ .command = .{ .id = .@"integrations.rebuild_focused", .label = "Rebuild it" } }, .{ .command = .{ .id = .@"integrations.rebuild_stale", .label = "Rebuild every stale one" } } },
+        } else if (app.integrations.tab != .installed) .{
+            .title = try std.fmt.allocPrint(arena, "{s} entry {d}", .{ if (app.integrations.tab == .marketplace) "Marketplace" else "Dev", r.idx + 1 }),
+            .body = "An integration this tab lists but that is not necessarily installed — its name, source and state. Enter or a second click opens its detail pane, where it is described and installed from; the Installed tab holds the ones already on this machine.",
+            .keys = &.{.{ .chord = "Enter", .label = "Open the detail pane" }},
+            .links = &.{.{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed ones" } }},
         } else .{
             .title = try std.fmt.allocPrint(arena, "Integration {d}", .{r.idx + 1}),
-            .body = "An installed integration — its chip, label and state. Enter opens it; right-click is its menu: configure, disable or enable, pin to the rail or the dock, show the manifest, uninstall. A disabled row is dimmed and Enter toasts.",
+            .body = "An installed integration — its chip, label and state. Enter opens it; right-click is its menu: details, disable or enable, show on the top bar, add to the activity bar, the manifest, copy the id, open as, update, rebuild, uninstall. A disabled row is dimmed.",
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
             .links = &.{ .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } }, .{ .command = .{ .id = .@"integrations.show_manifest", .label = "Show the manifest" } } },
         },
@@ -231,8 +236,8 @@ pub fn kebab(r: hit.PanelRow) Entry {
             else => "Row actions",
         },
         .body = switch (r.panel) {
-            .todos => "Shown on the focused row only — the hover-reveal idiom rather than a marker down every row. Click opens the row's rows: this workspace's own Claude agents, skills and slash commands (found under `.claude/`), then plain Claude Code or Codex, so the marker can be handed to an agent with the file and line filled in; mark done; ignore the file.",
-            .sessions => "Shown on the focused card. Click opens its rows: rename, pin to the top, the accent colour (the card and the pane's rail share it), pause, kill, open the transcript, and the worktree rows — open its tree, merge it, remove it. Right-click on the card is the same menu.",
+            .todos => "Shown on the focused row only — the hover-reveal idiom rather than a marker down every row. Click opens the row's menu: open; fix with an agent — Claude Code when the workspace has a `.claude/`, else whichever CLI is on PATH — with the file and line filled in; open in Claude Code or Codex; copy the path; mark done; ignore the file.",
+            .sessions => "Shown on the focused card. Click opens its rows: rename, pin to the top, the accent colour (the card and the pane's rail share it), kill, open the transcript, and the worktree rows — open its tree, merge it, remove it. Right-click on the card is the same menu.",
             else => "Shown on the focused row only — the hover-reveal idiom rather than a marker down every row. Click opens the row's actions: open, copy the path, resolve or delete, whatever the section's rows do. Right-click on the row is the same menu.",
         },
         .keys = &.{ .{ .chord = "Enter", .label = "Open the row" }, .{ .chord = "Right-click", .label = "The same menu" } },
@@ -263,7 +268,7 @@ pub fn searchChip(f: search_view.Flag) Entry {
     return switch (f) {
         .case_sensitive => .{
             .title = "Aa — case-sensitive",
-            .body = "Click toggles whether the query's case must match — `Foo` finds `foo` with it off, only `Foo` with it on — and reruns the search. Off is ripgrep's smart-case default here: all-lowercase queries ignore case. The flag is per search, not persisted.",
+            .body = "Click toggles whether the query's case must match — `foo` finds `Foo` with it off, only `foo` with it on — and reruns the search. Off is smart case: an all-lowercase query ignores case, and one with a capital letter matches case anyway. The flag is per search, not persisted.",
             .links = &.{ .{ .command = .{ .id = .@"search.toggle_case_sensitive", .label = "Toggle it" } }, .{ .command = .{ .id = .@"search.refresh", .label = "Rerun" } } },
         },
         .whole_word => .{
@@ -339,7 +344,7 @@ pub fn http(part: http_panel.Part) Entry {
         .link => |l| switch (l) {
             .new_request => .{
                 .title = "New HTTP request",
-                .body = "Opens a blank Request pane as a new tab — method, URL, headers, body as fields, Enter sends, Ctrl+S saves it as a `.http` file into a collection. The env picked in its header resolves `{{VAR}}` at send time.",
+                .body = "Opens a blank Request pane as a new tab — method, URL, headers, body as fields; Enter edits a field, Ctrl+Enter sends, Ctrl+S saves it as a `.http` file into a collection. The env picked in its header resolves `{{VAR}}` at send time.",
                 .links = &.{ .{ .command = .{ .id = .@"http.new", .label = "New request" } }, .{ .command = .{ .id = .@"http.paste_curl", .label = "From a curl command" } } },
             },
             .paste_curl => .{
