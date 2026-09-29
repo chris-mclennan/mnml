@@ -1302,8 +1302,9 @@ pub const MarketplaceSource = union(enum) {
     /// A folder on this machine (or a mounted share — the private
     /// path): every `*.zon` in it is a manifest to install as-is, every
     /// subfolder with a `build.zig` and a `manifest.zon` a Zig
-    /// integration to build and install. Relative to the workspace,
-    /// `~` expanded.
+    /// integration to build and install — or, when the folder itself
+    /// has both, that one integration. Relative to the workspace, `~`
+    /// expanded.
     local_folder: struct { id: []const u8 = "", path: []const u8 = "" },
     /// A release index — `integrations.json`, the file every mnml
     /// release carries: per integration its version, the SDK it was
