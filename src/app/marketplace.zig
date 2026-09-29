@@ -96,6 +96,7 @@ const catalogue = @import("marketplace_catalogue.zig");
 const release = @import("marketplace_release.zig");
 const build_options = @import("build_options");
 const settings = @import("settings.zig");
+const keepCancel = release.keepCancel;
 const child_os = @import("../core/child.zig");
 const builtin = @import("builtin");
 
@@ -603,6 +604,11 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []Sourc
             return;
         };
     }
+    // A cancel that landed in the last source is not a listing.
+    io.checkCancel() catch {
+        arena_state.deinit();
+        return;
+    };
     dropShadowedBuiltins(&entries);
     post(events, io, gpa, .{ .generation = generation, .kind = .{ .listing = .{
         .arena = arena_state,
@@ -706,6 +712,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
 /// The `mnml` source: one ZON file, one row per binary mnml ships.
 fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     const text = Io.Dir.cwd().readFileAllocOptions(io, s.path, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+        keepCancel(io, err);
         try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: cannot read {s}: {s}", .{ s.id, s.path, @errorName(err) }));
         return;
     };
@@ -811,7 +818,8 @@ pub fn appendIndexRows(arena: Allocator, s: SourceSpec, idx: release.Index, host
 /// is that one app, built in place — its `manifest.zon` is never a
 /// launcher to copy.
 fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
-    var dir = Io.Dir.cwd().openDir(io, s.path, .{ .iterate = true }) catch {
+    var dir = Io.Dir.cwd().openDir(io, s.path, .{ .iterate = true }) catch |err| {
+        keepCancel(io, err);
         try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s} is not a directory", .{ s.id, s.path }));
         return;
     };
@@ -820,6 +828,7 @@ fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnm
     // walked for the integrations under it.
     if (isIntegrationDir(io, dir)) {
         const text = dir.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+            keepCancel(io, err);
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/manifest.zon: {s}", .{ s.id, @errorName(err) }));
             return;
         };
@@ -832,8 +841,12 @@ fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnm
 
 /// A Zig integration's folder: `build.zig` and `manifest.zon` side by side.
 fn isIntegrationDir(io: Io, dir: Io.Dir) bool {
-    _ = dir.statFile(io, "build.zig", .{}) catch return false;
-    _ = dir.statFile(io, "manifest.zon", .{}) catch return false;
+    for ([_][]const u8{ "build.zig", "manifest.zon" }) |name| {
+        _ = dir.statFile(io, name, .{}) catch |err| {
+            keepCancel(io, err);
+            return false;
+        };
+    }
     return true;
 }
 
@@ -870,7 +883,10 @@ const local_depth = 3;
 
 fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []const u8, depth: usize, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (it.next(io) catch |err| n: {
+        keepCancel(io, err);
+        break :n null;
+    }) |entry| {
         // Re-armed: the worker's own check between sources must see it.
         io.checkCancel() catch |err| return keepCancel(io, err);
         if (!safeName(entry.name)) continue;
@@ -883,20 +899,30 @@ fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []co
             if (depth > 0 or std.mem.eql(u8, entry.name, "build.zig.zon")) continue;
             kind = .launcher;
             text = dir.readFileAllocOptions(io, entry.name, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+                keepCancel(io, err);
                 try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, entry.name, @errorName(err) }));
                 continue;
             };
         } else if (entry.kind == .directory or entry.kind == .sym_link) {
             if (skipDir(entry.name)) continue;
-            var sub = dir.openDir(io, entry.name, .{ .iterate = true }) catch continue;
+            var sub = dir.openDir(io, entry.name, .{ .iterate = true }) catch |err| {
+                keepCancel(io, err);
+                continue;
+            };
             defer sub.close(io);
-            const is_app = if (sub.statFile(io, "build.zig", .{})) |_| true else |_| false;
+            const is_app = if (sub.statFile(io, "build.zig", .{})) |_| true else |err| no: {
+                keepCancel(io, err);
+                break :no false;
+            };
             if (!is_app) {
                 if (depth + 1 < local_depth) try listLocalDir(io, arena, s, sub, full, depth + 1, entries, problems);
                 continue;
             }
             kind = .app;
-            text = sub.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch continue;
+            text = sub.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+                keepCancel(io, err);
+                continue;
+            };
         } else continue;
         try appendManifest(arena, s, kind, text, entry.name, full, entries, problems);
     }
@@ -1604,7 +1630,8 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
 /// so, and `warn` is set.
 fn rebuiltStamp(io: Io, arena: Allocator, job: *InstallJob, warn: *bool) Allocator.Error![]const u8 {
     const path = manifest_mod.manifest.pathUnder(arena, job.root, job.id) catch return "rebuilt";
-    const text = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(1 << 20), .of(u8), 0) catch {
+    const text = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+        keepCancel(io, err);
         warn.* = true;
         return std.fmt.allocPrint(arena, "rebuilt, but --install wrote no manifest at {s}", .{path});
     };
@@ -1623,14 +1650,6 @@ fn rebuiltStamp(io: Io, arena: Allocator, job: *InstallJob, warn: *bool) Allocat
 }
 
 pub const LinkError = error{ OutOfMemory, LinkFailed };
-
-/// For a best-effort step that cannot return `error.Canceled` (it
-/// catches every error): re-arm a cancel it swallowed. The runtime
-/// reports a cancel once; dropped, the install's next child ran to the
-/// end with the canceller waiting on it.
-fn keepCancel(io: Io, err: anyerror) void {
-    if (err == error.Canceled) io.recancel();
-}
 
 /// `<root>/bin/<name>` → `target`, the one indirection that keeps a
 /// manifest's bare `binary` name honest: `integrations.resolveBinary`
@@ -3121,4 +3140,162 @@ test "quitting mid-install stops the install's child and what it started, and re
     // Reaped, not orphaned: the script and its `sleep` are both gone.
     try testing.expect(child_os.gone(pids.child));
     try testing.expect(child_os.goneWithin(io, pids.grandchild, .fromSeconds(2)));
+}
+
+// ─── a cancel that lands in the listing ─────────────────────────────────
+
+extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
+
+/// A named pipe at `path`: opening it to read blocks until something
+/// opens it to write — a listing read that is still running when the
+/// test acts, and one a cancel can interrupt.
+fn makeFifo(arena: Allocator, path: []const u8) !void {
+    if (mkfifo(try arena.dupeZ(u8, path), 0o644) != 0) return error.TestMkfifo;
+}
+
+/// From another thread, from `after_ms` on or once `go` is set: opens
+/// each pipe read-write and holds it a moment, over and over until
+/// `done`, so a read blocked opening one gets through and reads it
+/// empty. The way out for a read the cancel could not reach.
+const FifoRelease = struct {
+    io: Io,
+    paths: []const []const u8,
+    after_ms: u32 = std.math.maxInt(u32),
+    go: std.atomic.Value(bool) = .init(false),
+    done: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *FifoRelease) void {
+        var slept: u32 = 0;
+        while (!self.done.load(.acquire)) : (slept +|= 20) {
+            if (slept >= self.after_ms or self.go.load(.acquire)) for (self.paths) |p| {
+                const f = Io.Dir.cwd().openFile(self.io, p, .{ .mode = .read_write }) catch continue;
+                self.io.sleep(.fromMilliseconds(30), .awake) catch {};
+                f.close(self.io);
+            };
+            self.io.sleep(.fromMilliseconds(20), .awake) catch {};
+        }
+    }
+};
+
+/// One listing source for `cancelListingMs`.
+const FifoSource = struct { kind: @FieldType(SourceSpec, "kind"), path: []const u8 };
+
+/// Run the listing worker over `srcs` in a group of its own, let it
+/// block opening the first of `fifos`, and cancel the group: how long
+/// the cancel took. A cancel the worker swallows lets it go on to the
+/// next pipe and block again, out of the cancel's reach, until the
+/// release thread opens that pipe 3 s in.
+fn cancelListingMs(app: *App, srcs: []const FifoSource, fifos: []const []const u8) !i64 {
+    const gpa = app.gpa;
+    const io = app.io;
+    var rel: FifoRelease = .{ .io = io, .paths = fifos, .after_ms = 3000 };
+    const th = try std.Thread.spawn(.{}, FifoRelease.run, .{&rel});
+    defer {
+        rel.done.store(true, .release);
+        th.join();
+    }
+    const specs = try gpa.alloc(SourceSpec, srcs.len);
+    for (srcs, specs) |s, *spec| spec.* = .{
+        .id = try gpa.dupe(u8, "fifo"),
+        .kind = s.kind,
+        .repo = try gpa.dupe(u8, ""),
+        .path = try gpa.dupe(u8, s.path),
+    };
+    const api = try gpa.dupe(u8, "http://127.0.0.1:9");
+    var group: Io.Group = .init;
+    try group.concurrent(io, fetchWorker, .{ app.events, io, gpa, specs, api, app.marketplace.generation, app.marketplace.fetcher });
+    // Long enough to reach the first pipe and block opening it.
+    io.sleep(.fromMilliseconds(300), .awake) catch {};
+    const t0 = Io.Timestamp.now(io, .awake);
+    group.cancel(io);
+    return msSince(io, t0);
+}
+
+/// A scratch app and `<workspace>/<rel>` as an absolute path.
+fn wsPath(app: *App, arena: Allocator, rel: []const u8) ![]const u8 {
+    return std.fs.path.join(arena, &.{ app.workspace, rel });
+}
+
+fn scratchApp(gpa: Allocator, io: Io) !App {
+    return App.initWith(gpa, io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 24 });
+}
+
+test "a cancel that lands while a local folder's loose manifest is read ends the listing — it does not go on to the next one" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    const arena = mem.allocator();
+    var app = try scratchApp(gpa, io);
+    defer app.deinit();
+    const folder = try wsPath(&app, arena, "src");
+    try Io.Dir.cwd().createDirPath(io, folder);
+    const fifos = [_][]const u8{ try wsPath(&app, arena, "a.pipe"), try wsPath(&app, arena, "b.pipe") };
+    for (fifos, [_][]const u8{ "a.zon", "b.zon" }) |f, name| {
+        try makeFifo(arena, f);
+        try Io.Dir.cwd().symLink(io, f, try std.fs.path.join(arena, &.{ folder, name }), .{});
+    }
+    const ms = try cancelListingMs(&app, &.{.{ .kind = .local_folder, .path = folder }}, &fifos);
+    try testing.expect(ms < 1000);
+}
+
+test "a cancel that lands while a local folder's app manifest is read ends the listing — it does not go on to the next app" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    const arena = mem.allocator();
+    var app = try scratchApp(gpa, io);
+    defer app.deinit();
+    const folder = try wsPath(&app, arena, "src");
+    var fifos: [2][]const u8 = undefined;
+    for (&fifos, [_][]const u8{ "a", "b" }) |*f, name| {
+        const dir = try std.fs.path.join(arena, &.{ folder, name });
+        try Io.Dir.cwd().createDirPath(io, dir);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(arena, &.{ dir, "build.zig" }), .data = "" });
+        f.* = try std.fs.path.join(arena, &.{ dir, "manifest.zon" });
+        try makeFifo(arena, f.*);
+    }
+    const ms = try cancelListingMs(&app, &.{.{ .kind = .local_folder, .path = folder }}, &fifos);
+    try testing.expect(ms < 1000);
+}
+
+test "a cancel that lands while an integration folder's manifest is read ends the listing — it does not go on to the next source" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    const arena = mem.allocator();
+    var app = try scratchApp(gpa, io);
+    defer app.deinit();
+    var fifos: [2][]const u8 = undefined;
+    var srcs: [2]FifoSource = undefined;
+    for (&fifos, &srcs, [_][]const u8{ "one", "two" }) |*f, *s, name| {
+        const dir = try wsPath(&app, arena, name);
+        try Io.Dir.cwd().createDirPath(io, dir);
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(arena, &.{ dir, "build.zig" }), .data = "" });
+        f.* = try std.fs.path.join(arena, &.{ dir, "manifest.zon" });
+        try makeFifo(arena, f.*);
+        s.* = .{ .kind = .local_folder, .path = dir };
+    }
+    const ms = try cancelListingMs(&app, &srcs, &fifos);
+    try testing.expect(ms < 1000);
+}
+
+test "a cancel that lands while the catalogue is read ends the listing — it does not go on to the next source" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var mem = std.heap.ArenaAllocator.init(gpa);
+    defer mem.deinit();
+    const arena = mem.allocator();
+    var app = try scratchApp(gpa, io);
+    defer app.deinit();
+    const fifos = [_][]const u8{ try wsPath(&app, arena, "one.zon"), try wsPath(&app, arena, "two.zon") };
+    for (fifos) |f| try makeFifo(arena, f);
+    const ms = try cancelListingMs(&app, &.{ .{ .kind = .mnml, .path = fifos[0] }, .{ .kind = .mnml, .path = fifos[1] } }, &fifos);
+    try testing.expect(ms < 1000);
 }

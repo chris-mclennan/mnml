@@ -310,32 +310,51 @@ pub fn fromTarXz(gpa: Allocator, arena: Allocator, bytes: []const u8, file_name:
 /// unpacked there, and the file read back; `scratch` is removed after.
 pub fn fromZip(io: Io, arena: Allocator, bytes: []const u8, file_name: []const u8, scratch: []const u8) ExtractError![]const u8 {
     const cwd = Io.Dir.cwd();
-    cwd.deleteTree(io, scratch) catch {};
-    defer cwd.deleteTree(io, scratch) catch {};
-    cwd.createDirPath(io, scratch) catch return error.WriteFailed;
+    cwd.deleteTree(io, scratch) catch |err| keepCancel(io, err);
+    defer cwd.deleteTree(io, scratch) catch |err| keepCancel(io, err);
+    cwd.createDirPath(io, scratch) catch |err| return failOr(err, error.WriteFailed);
     const zip_path = std.fs.path.join(arena, &.{ scratch, "download.zip" }) catch return error.OutOfMemory;
-    cwd.writeFile(io, .{ .sub_path = zip_path, .data = bytes }) catch return error.WriteFailed;
+    cwd.writeFile(io, .{ .sub_path = zip_path, .data = bytes }) catch |err| return failOr(err, error.WriteFailed);
     const unpack = std.fs.path.join(arena, &.{ scratch, "unpacked" }) catch return error.OutOfMemory;
-    cwd.createDirPath(io, unpack) catch return error.WriteFailed;
+    cwd.createDirPath(io, unpack) catch |err| return failOr(err, error.WriteFailed);
     {
-        const file = cwd.openFile(io, zip_path, .{}) catch return error.WriteFailed;
+        const file = cwd.openFile(io, zip_path, .{}) catch |err| return failOr(err, error.WriteFailed);
         defer file.close(io);
         var rbuf: [16 * 1024]u8 = undefined;
         var fr = file.reader(io, &rbuf);
-        var dest = cwd.openDir(io, unpack, .{}) catch return error.WriteFailed;
+        var dest = cwd.openDir(io, unpack, .{}) catch |err| return failOr(err, error.WriteFailed);
         defer dest.close(io);
-        std.zip.extract(dest, &fr, .{ .allow_backslashes = true }) catch return error.BadArchive;
+        std.zip.extract(dest, &fr, .{ .allow_backslashes = true }) catch |err| {
+            // A cancel mid-read arrives as ReadFailed, the cause on the reader.
+            const e: anyerror = err;
+            return failOr(if (e == error.ReadFailed) fr.err orelse e else e, error.BadArchive);
+        };
     }
-    var dir = cwd.openDir(io, unpack, .{ .iterate = true }) catch return error.WriteFailed;
+    var dir = cwd.openDir(io, unpack, .{ .iterate = true }) catch |err| return failOr(err, error.WriteFailed);
     defer dir.close(io);
     var walker = dir.walk(arena) catch return error.OutOfMemory;
     defer walker.deinit();
-    while (walker.next(io) catch return error.BadArchive) |entry| {
+    while (walker.next(io) catch |err| return failOr(err, error.BadArchive)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.eql(u8, entry.basename, file_name)) continue;
-        return dir.readFileAlloc(io, entry.path, arena, .limited(max_unpacked)) catch return error.BadArchive;
+        return dir.readFileAlloc(io, entry.path, arena, .limited(max_unpacked)) catch |err| return failOr(err, error.BadArchive);
     }
     return error.NotInArchive;
+}
+
+/// For a best-effort step that cannot return `error.Canceled` (it
+/// catches every error): re-arm a cancel it swallowed. The runtime
+/// reports a cancel once; dropped, the worker's next wait — an
+/// install's child, a listing's next file — ran to the end with the
+/// canceller waiting on it.
+pub fn keepCancel(io: Io, err: anyerror) void {
+    if (err == error.Canceled) io.recancel();
+}
+
+/// A failed unpack step's error: a cancel stays a cancel, anything
+/// else is `other`.
+fn failOr(err: anyerror, other: ExtractError) ExtractError {
+    return if (err == error.Canceled) error.Canceled else other;
 }
 
 // ─── the install ────────────────────────────────────────────────────────
@@ -401,7 +420,8 @@ pub fn install(io: Io, gpa: Allocator, arena: Allocator, fetcher: Fetcher, root:
     };
     const bin_dir = try std.fs.path.join(arena, &.{ prefix, "bin" });
     const dest = try std.fs.path.join(arena, &.{ bin_dir, file_name });
-    writeExecutable(io, arena, bin_dir, dest, binary) catch {
+    writeExecutable(io, arena, bin_dir, dest, binary) catch |err| {
+        if (err == error.Canceled) return error.Canceled;
         why.* = try std.fmt.allocPrint(arena, "cannot write {s}", .{dest});
         return error.Failed;
     };
@@ -420,11 +440,11 @@ fn writeExecutable(io: Io, arena: Allocator, dir: []const u8, dest: []const u8, 
         const file = try cwd.createFile(io, part, .{ .truncate = true, .permissions = perms });
         defer file.close(io);
         try file.writeStreamingAll(io, bytes);
-        file.setPermissions(io, perms) catch {};
+        file.setPermissions(io, perms) catch |err| keepCancel(io, err);
     }
     // Windows will not rename over a file a process has open; the old
     // one goes first there.
-    if (builtin.os.tag == .windows) cwd.deleteFile(io, dest) catch {};
+    if (builtin.os.tag == .windows) cwd.deleteFile(io, dest) catch |err| keepCancel(io, err);
     try Io.Dir.rename(cwd, part, cwd, dest, io);
 }
 
