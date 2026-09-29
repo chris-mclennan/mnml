@@ -406,6 +406,10 @@ otherwise. Copy what you need; leave the rest out.
         // DECSCUSR and gets it (.pty_cursor above).
         .cursor_shape = .terminal, // .terminal | .block | .bar | .underline
         .external_browser = "", // a program to spawn; "" = the OS default (exec-bearing)
+        // MNML_OPEN_URL in mnml's environment overrides every opener,
+        // this one included: unset or empty opens as usual, `none`
+        // drops the URL, any other value is a file each URL is
+        // appended to (`<epoch seconds>\t<url>`) and nothing opens.
         // The icon every terminal wears — a pty tab's icon, the strip's
         // terminal chip. .ghostty is Ghostty's ghost, which mnml bakes
         // into its own face at U+F2000 and paints whatever emulator it
@@ -1104,11 +1108,17 @@ otherwise. Copy what you need; leave the rest out.
             // No need to write this by hand: `marketplace.add_source`
             // (the palette, the Marketplace tab's `+ source` chip, the
             // INTEGRATIONS tab strip's right-click menu) and the
-            // first-launch setup's Private integrations row take a folder
-            // or `owner/repo[:apps_dir]` and append the entry here, in
-            // the HOME config.zon only (never a workspace's), comments
-            // and order kept. A folder with nothing to install is refused;
-            // the id is the folder's or repo's name, made unique.
+            // first-launch setup's Private integrations row take a folder,
+            // `owner/repo[:apps_dir]`, or a GitHub repo URL (https or no
+            // scheme, a trailing `.git`, `…/tree/<branch>/<dir>` for the
+            // apps dir, `git@github.com:owner/repo.git`; the branch is
+            // dropped — a source lists the default branch) and append
+            // the entry here, in the HOME config.zon only (never a
+            // workspace's), comments and order kept. Refused: a folder
+            // with nothing to install, a folder or repo already a source
+            // (folders compared by real path, repos ignoring case), and
+            // anything while `.enabled = false`. The id is the folder's
+            // or repo's name, made unique.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
             // A release index somewhere else — a mirror, or a fork's
             // releases. `{version}` in the URL is this mnml's version; a
@@ -1436,8 +1446,9 @@ stays, and its grip goes with it. Closing the line asks for a fresh
 
 ## Split zoom
 
-`view.toggle_zoom` ("Zoom the split") — vim `Ctrl-W z`, standard `Ctrl+K Ctrl+M` (VS Code's Toggle Maximize Editor Group), which-key
-`space s z`, the tab strip's maximize button (with `ui.maximize_click =
+`view.toggle_zoom` ("Zoom the split") — vim `Ctrl-W z` or which-key
+`space s z`, standard `Ctrl+K Ctrl+M` (VS Code's Toggle Maximize
+Editor Group), the tab strip's maximize button (with `ui.maximize_click =
 .zoom_pane`, the default) — gives the focused split the whole editor
 area. The other splits of the tab page are hidden, not closed: the tab
 strip shows only the zoomed split's tabs, the statusline carries a
@@ -1609,7 +1620,7 @@ reports the shell's directory (OSC 7) and its prompt marks (OSC 133).
 ## Bookmarks
 
 `bookmarks.open` is a picker over your web bookmarks, grouped by
-environment — `dev  ·  ADX Admin`, the URL as the row's detail; Enter
+environment — `dev  ·  Admin console`, the URL as the row's detail; Enter
 hands the URL to the browser (`.ui.external_browser`, or the OS
 default). The mechanism is mnml's; the URLs are yours, in two files
 that both load and add up — a repo's file extends your own set rather
@@ -1624,11 +1635,11 @@ than hiding it:
         // One destination in several environments: dev / staging /
         // prod as fields, any other name under .envs.
         .{
-            .name = "ADX Admin",
-            .dev = "https://adx.dev.example.net/admin",
-            .staging = "https://adx.staging.example.net/admin",
-            .prod = "https://adx.example.com/admin",
-            .envs = .{ .{ .env = "uat", .url = "https://adx.uat.example.net/admin" } },
+            .name = "Admin console",
+            .dev = "https://admin.dev.example.net",
+            .staging = "https://admin.staging.example.net",
+            .prod = "https://admin.example.com",
+            .envs = .{ .{ .env = "uat", .url = "https://admin.uat.example.net" } },
         },
     },
     .bookmarks = .{
@@ -1720,15 +1731,22 @@ resolved for the profile, so its config, cache, sync marks, etags and
 request log land under the dev root without the integration knowing
 profiles exist.
 
-The one thing deliberately NOT per-profile is the cross-process
-rate-limit bucket in the shared-state directory
-(`$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`, resolved ahead of
-the data root in `sdk/mnml-sdk/src/ratelimit.zig`). It is one budget
-per machine: two profiles each spending a full budget against the same
-API is the bug, not the feature. With `MNML_SHARED_STATE_DIR` unset
-the bucket falls back under the data root, which is the profile's —
-set the variable to have every profile, and any other tool on the
-machine that agrees to the file format, share one budget.
+The one thing meant NOT to be per-profile is the cross-process
+rate-limit bucket. Its file is the first of these that applies
+(`sdk/mnml-sdk/src/ratelimit.zig`):
+
+1. `<SERVICE>_RATELIMIT_STATE` (`JIRA_RATELIMIT_STATE`, …) names the
+   file outright
+2. `$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`
+3. `<MNML_DATA_ROOT>/ratelimit/<service>.json`
+4. `~/.config/mnml/ratelimit/<service>.json`
+
+It should be one budget per machine: two profiles each spending a full
+budget against the same API is the bug, not the feature. With
+`MNML_SHARED_STATE_DIR` unset the bucket falls back under the data
+root, which is the profile's — set the variable to have every profile,
+and any other tool on the machine that agrees to the file format,
+share one budget.
 
 ## Sandbox
 
@@ -1915,8 +1933,8 @@ listing, which opening the wizard fetches.
 
 Under the checkboxes, the Private integrations row: Space (or a click)
 on it opens the Marketplace's add-a-source prompt — the same one as
-`marketplace.add_source` and the tab's `+ source` chip — for a folder
-or `owner/repo[:apps_dir]`. Enter adds the source to
+`marketplace.add_source` and the tab's `+ source` chip — for a folder,
+`owner/repo[:apps_dir]` or a GitHub repo URL. Enter adds the source to
 `marketplace.sources` in the home config.zon and the setup comes back
 with its id and how many integrations it found; Esc, or an empty line,
 changes nothing. The row is optional: skipping it adds nothing.
