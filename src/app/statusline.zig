@@ -1270,8 +1270,8 @@ test "every chip on the row registers its hit, has words, and its click does wha
     try testing.expect(std.mem.indexOf(u8, try b.row(38), " WRAP ") == null);
     try testing.expect(b.colOf(38, SegId.wrap.raw()) == null);
     // A host's segment on the left lane is a hit too, at its slot.
-    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira", .text = "TE-1", .side = .left, .priority = 5, .max_width = 8, .color = "yellow", .click_command = "view.toggle_wrap" });
-    try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira", .text = "ENG-1", .side = .left, .priority = 5, .max_width = 8, .color = "yellow", .click_command = "view.toggle_wrap" });
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " ENG-1 ") != null);
     try testing.expect(b.colOf(38, sl.seg_dyn_base) != null);
     try testing.expect((try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })) != null);
 
@@ -1280,7 +1280,7 @@ test "every chip on the row registers its hit, has words, and its click does wha
     // A manifest's segment is keyed `<integration>.<segment>`, which is
     // how the poller knows whose chip it is.
     _ = b.app.ipc_fx.clearSegment(testing.allocator, "jira");
-    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.assigned", .text = "TE-1", .side = .left, .priority = 5, .max_width = 8, .tooltip = "Jira · 7 open items — 4 In Progress" });
+    try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "jira_work.assigned", .text = "ENG-1", .side = .left, .priority = 5, .max_width = 8, .tooltip = "Jira · 7 open items — 4 In Progress" });
     const hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
     try testing.expectEqualStrings("Jira · 7 open items — 4 In Progress", hover.title);
 
@@ -1302,7 +1302,7 @@ test "every chip on the row registers its hit, has words, and its click does wha
     b.app.needs_render = true;
     // A poll in flight leaves the chip as it was: no glyph, the count still there…
     try testing.expect(std.mem.indexOf(u8, try b.row(38), integration_poll.busy_glyph) == null);
-    try testing.expect(std.mem.indexOf(u8, try b.row(38), " TE-1 ") != null);
+    try testing.expect(std.mem.indexOf(u8, try b.row(38), " ENG-1 ") != null);
     // …and the hover says so, and offers the way to ask again by hand.
     const busy_hover = (try discovery.describe(&b.app, arena_state.allocator(), .{ .statusline_seg = sl.seg_dyn_base })).?;
     try testing.expect(std.mem.indexOf(u8, busy_hover.detail orelse "", "refreshing") != null);

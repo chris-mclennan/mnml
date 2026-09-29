@@ -457,8 +457,8 @@ test "parseRuns: the DynamoDB items become cloud rows — the ticket as the prom
     const a = arena.allocator();
     const text =
         \\{"Items":[
-        \\ {"runId":{"S":"run-aaa"},"ticket":{"S":"TE-1"},"flow":{"S":"fix"},"state":{"S":"staged"},"createdAt":{"S":"2026-09-01T10:00:00Z"},"taskArn":{"S":"arn:aws:ecs:x"}},
-        \\ {"runId":{"S":"run-bbb"},"ticket":{"S":"TE-2"},"state":{"S":"shipped"},"createdAt":{"S":"2026-09-01T10:00:00Z"},"finishedAt":{"S":"2026-09-02T00:00:00.123Z"},"prUrl":{"S":"https://x/pr/1"}},
+        \\ {"runId":{"S":"run-aaa"},"ticket":{"S":"ENG-1"},"flow":{"S":"fix"},"state":{"S":"staged"},"createdAt":{"S":"2026-09-01T10:00:00Z"},"taskArn":{"S":"arn:aws:ecs:x"}},
+        \\ {"runId":{"S":"run-bbb"},"ticket":{"S":"ENG-2"},"state":{"S":"shipped"},"createdAt":{"S":"2026-09-01T10:00:00Z"},"finishedAt":{"S":"2026-09-02T00:00:00.123Z"},"prUrl":{"S":"https://x/pr/1"}},
         \\ {"runId":{"S":"run-ccc"},"state":{"S":"failed"},"createdAt":{"S":"bogus"}},
         \\ {"ticket":{"S":"no id"}}
         \\]}
@@ -469,7 +469,7 @@ test "parseRuns: the DynamoDB items become cloud rows — the ticket as the prom
     const r0 = rows.items[0];
     try t.expectEqual(sessions.Where.cloud, r0.where);
     try t.expectEqual(agents.AgentState.waiting, r0.state);
-    try t.expectEqualStrings("TE-1", r0.last_user_msg.?);
+    try t.expectEqualStrings("ENG-1", r0.last_user_msg.?);
     try t.expectEqualStrings("staged — fix", r0.last_assistant_msg.?);
     try t.expectEqualStrings("arn:aws:ecs:x", r0.cloud.?.task_arn.?);
     try t.expectEqualStrings("cloud", r0.groupKey());
@@ -484,7 +484,7 @@ test "parseRuns: the DynamoDB items become cloud rows — the ticket as the prom
     try t.expect(r2.last_user_msg == null);
     // The duped copy keeps the cloud info.
     const d = try sessions.dupeItem(a, r0);
-    try t.expectEqualStrings("TE-1", d.cloud.?.ticket);
+    try t.expectEqualStrings("ENG-1", d.cloud.?.ticket);
 }
 
 test "isoToUnix: the epoch, a known instant, and the rejects" {
@@ -500,7 +500,7 @@ test "the argv builders: describe by task or by record, stop, run-task with the 
     defer arena.deinit();
     const a = arena.allocator();
     const o = Opts{ .region = @constCast("r"), .profile = null, .runs_table = @constCast("runs"), .cluster = @constCast("c"), .log_group = @constCast("g"), .task_definition = @constCast("td"), .label = @constCast("cloud") };
-    var it = sessions.testItem("run-1", .streaming, 0, "cloud", "TE-1");
+    var it = sessions.testItem("run-1", .streaming, 0, "cloud", "ENG-1");
     it.where = .cloud;
     const by_record = try describeArgv(a, o, it);
     try t.expectEqualStrings("get-item", by_record[2]);
@@ -511,11 +511,11 @@ test "the argv builders: describe by task or by record, stop, run-task with the 
     try t.expectEqualStrings("arn:1", by_task[6]);
     const stop = try stopArgv(a, o, "arn:1");
     try t.expectEqualStrings("stop-task", stop[2]);
-    const run = try runTaskArgv(a, o, "TE-9", "opus");
+    const run = try runTaskArgv(a, o, "ENG-9", "opus");
     try t.expectEqualStrings("run-task", run[2]);
-    try t.expect(std.mem.indexOf(u8, run[10], "\"TICKET\",\"value\":\"TE-9\"") != null);
+    try t.expect(std.mem.indexOf(u8, run[10], "\"TICKET\",\"value\":\"ENG-9\"") != null);
     try t.expect(std.mem.indexOf(u8, run[10], "\"MODEL\",\"value\":\"opus\"") != null);
-    const run_plain = try runTaskArgv(a, o, "TE-9", null);
+    const run_plain = try runTaskArgv(a, o, "ENG-9", null);
     try t.expect(std.mem.indexOf(u8, run_plain[10], "MODEL") == null);
 }
 
@@ -553,13 +553,13 @@ test "the wizards refuse without the config; the New menu says so" {
     app.overlay = .none;
     try command.run(&app, .{ .static = .@"cloud_agents.new_run_wizard" });
     try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .cloud_run_wizard_ticket);
-    try acceptWizardTicket(&app, "TE-5");
+    try acceptWizardTicket(&app, "ENG-5");
     try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .cloud_run_model);
-    try t.expectEqualStrings("TE-5", app.overlay.prompt.purpose.cloud_run_model);
+    try t.expectEqualStrings("ENG-5", app.overlay.prompt.purpose.cloud_run_model);
     app.overlay.deinit(app.gpa);
     app.overlay = .none;
     // Without a cluster the run does not fire; it says what is missing.
-    try acceptRun(&app, "TE-5", null);
+    try acceptRun(&app, "ENG-5", null);
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "cluster") != null);
 }
 
