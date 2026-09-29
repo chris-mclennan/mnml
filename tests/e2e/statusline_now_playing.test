@@ -14,4 +14,4 @@ open notes.txt
 expect screen contains "Karma Police"
 expect screen lacks "󱼀"
 click 48 38
-expect screen contains "cut from mnml-zig"
+expect screen contains "gone from mnml 0.3"

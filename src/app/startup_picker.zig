@@ -100,7 +100,7 @@ fn accept(app: *App, idx: usize, label: []const u8) Allocator.Error!void {
         const name = label[ws_prefix.len..];
         for (app.cfg.workspaces) |w| {
             if (std.mem.eql(u8, name, if (w.name.len > 0) w.name else w.path)) {
-                app.toast("open it with: mnml-zig {s}", .{w.path});
+                app.toast("open it with: mnml {s}", .{w.path});
                 return;
             }
         }
@@ -148,7 +148,7 @@ test "startup picker: rows for new / open / recent / workspaces; 1 opens a scrat
     try app.handle(.{ .key = app_mod.Key.named(.down) });
     try app.handle(.{ .key = app_mod.Key.named(.down) });
     try app.handle(.{ .key = app_mod.Key.named(.enter) });
-    try t.expectEqualStrings("open it with: mnml-zig /srv/site", app.lastToast().?);
+    try t.expectEqualStrings("open it with: mnml /srv/site", app.lastToast().?);
     // Not wanted for an ordinary workspace; wanted when it is $HOME or asked for.
     try t.expect(!wanted(&app));
     try app.env.put("MNML_STARTUP_PICKER", "1");

@@ -88,7 +88,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -720,7 +720,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         stub_factory.factory()
     else
         app_factory orelse blk: {
-            try w.writeAll("mnml-zig test: no App driver yet — every file FAILs (use --parse to check scripts, --stub to exercise the harness)\n");
+            try w.writeAll("mnml test: no App driver yet — every file FAILs (use --parse to check scripts, --stub to exercise the harness)\n");
             break :blk .{ .ptr = &no_app, .create = noAppDriver };
         };
     // A path that is not there is a hard error, never a green `0/0`:
@@ -797,13 +797,13 @@ fn reportHarness(env: *const std.process.Environ.Map, w: *Io.Writer) !void {
         const value: []const u8 = env.get(h.name) orelse "";
         if (value.len != 0) continue;
         try w.print(
-            "mnml-zig test: ${s} is unset and no binary was found beside this exe or at its install path — the scripts that need it will fail on whatever they open first. Build it: `zig build {s}`.\n",
+            "mnml test: ${s} is unset and no binary was found beside this exe or at its install path — the scripts that need it will fail on whatever they open first. Build it: `zig build {s}`.\n",
             .{ h.name, h.step },
         );
     }
     if (@import("builtin").mode == .Debug) {
         try w.print(
-            "mnml-zig test: this is a DEBUG build. The corpus's timings assume the shipped one; the deadlines are scaled {d}× here, but a script's own `wait <ms>` is not, so the heaviest files (an integration pane mounting, a live Lua picker) can still fail on time alone. Re-run a timing failure with `zig build e2e -Doptimize=ReleaseSafe` before believing it.\n",
+            "mnml test: this is a DEBUG build. The corpus's timings assume the shipped one; the deadlines are scaled {d}× here, but a script's own `wait <ms>` is not, so the heaviest files (an integration pane mounting, a live Lua picker) can still fail on time alone. Re-run a timing failure with `zig build e2e -Doptimize=ReleaseSafe` before believing it.\n",
             .{e2e.runner.debug_slowdown},
         );
     }
@@ -840,10 +840,10 @@ fn parseSize(tok: []const u8) ?e2e.Size {
 }
 
 /// A usage error on stdout, prefixed by the subcommand it came from —
-/// `mnml-zig test: …`, `mnml-zig profile: …` — or by the app alone
-/// (`mnml-zig: stdout is not a terminal …`) when `verb` is null.
+/// `mnml test: …`, `mnml profile: …` — or by the app alone
+/// (`mnml: stdout is not a terminal …`) when `verb` is null.
 fn usage(w: *Io.Writer, verb: ?[]const u8, msg: []const u8) !u8 {
-    if (verb) |v| try w.print("mnml-zig {s}: {s}\n", .{ v, msg }) else try w.print("mnml-zig: {s}\n", .{msg});
+    if (verb) |v| try w.print("mnml {s}: {s}\n", .{ v, msg }) else try w.print("mnml: {s}\n", .{msg});
     try w.flush();
     return 2;
 }
@@ -852,10 +852,10 @@ test "usage names the subcommand it came from, and only the app when there is no
     var buf: [128]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
     try std.testing.expectEqual(@as(u8, 2), try usage(&w, null, "stdout is not a terminal (use --headless)"));
-    try std.testing.expectEqualStrings("mnml-zig: stdout is not a terminal (use --headless)\n", w.buffered());
+    try std.testing.expectEqualStrings("mnml: stdout is not a terminal (use --headless)\n", w.buffered());
     w = .fixed(&buf);
     _ = try usage(&w, "test", "--filter needs a name");
-    try std.testing.expectEqualStrings("mnml-zig test: --filter needs a name\n", w.buffered());
+    try std.testing.expectEqualStrings("mnml test: --filter needs a name\n", w.buffered());
 }
 
 test "mnml-zig test --shard: a bad slice is a usage error before anything runs" {
@@ -872,7 +872,7 @@ test "mnml-zig test --shard: a bad slice is a usage error before anything runs" 
         var buf: [256]u8 = undefined;
         var w: Io.Writer = .fixed(&buf);
         try std.testing.expectEqual(@as(u8, 2), try testSubcommand(std.testing.allocator, std.testing.io, &env, argv, &w));
-        try std.testing.expect(std.mem.startsWith(u8, w.buffered(), "mnml-zig test: --shard "));
+        try std.testing.expect(std.mem.startsWith(u8, w.buffered(), "mnml test: --shard "));
     }
 }
 
@@ -884,7 +884,7 @@ fn parseOnly(gpa: Allocator, io: Io, roots: []const []const u8, w: *Io.Writer) !
     for (roots) |root| {
         const files = e2e.runner.collectFiles(gpa, io, root) catch |err| switch (err) {
             error.PathNotFound => {
-                try w.print("mnml-zig test: no such path: {s}\n", .{root});
+                try w.print("mnml test: no such path: {s}\n", .{root});
                 try w.flush();
                 return 2;
             },
@@ -1026,7 +1026,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     };
     var stub_factory: e2e.driver.StubFactory = .{};
     const factory: e2e.Factory = if (use_stub) stub_factory.factory() else app_factory orelse {
-        try w.writeAll("mnml-zig --headless: no App driver yet (use --stub to drive the recording stub)\n");
+        try w.writeAll("mnml --headless: no App driver yet (use --stub to drive the recording stub)\n");
         try w.flush();
         return 2;
     };
