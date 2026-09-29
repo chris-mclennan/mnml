@@ -297,7 +297,7 @@ test "a multi-select picker toggles rows with a seed and reports the checked ids
 }
 
 test "the transition picker moves, jumps by digit and clamps; an error leaves an empty list" {
-    var p = try TransitionPicker.init(testing.allocator, "TE-1");
+    var p = try TransitionPicker.init(testing.allocator, "ENG-1");
     defer p.deinit();
     try testing.expect(p.current() == null);
     try p.setTransitions(&.{ .{ .id = "11", .name = "Start review", .to_name = "In Review" }, .{ .id = "21", .name = "Block", .to_name = "Blocked" }, .{ .id = "31", .name = "Resolve", .to_name = "Done" } });
@@ -311,7 +311,7 @@ test "the transition picker moves, jumps by digit and clamps; an error leaves an
     try testing.expectEqualStrings("31", p.current().?.id);
     p.jump(99);
     try testing.expectEqualStrings("31", p.current().?.id);
-    var q = try TransitionPicker.init(testing.allocator, "TE-2");
+    var q = try TransitionPicker.init(testing.allocator, "ENG-2");
     defer q.deinit();
     try q.fail("403 — not allowed");
     try testing.expectEqual(@as(usize, 0), q.transitions.?.len);

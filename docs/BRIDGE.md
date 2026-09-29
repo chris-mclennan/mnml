@@ -219,7 +219,7 @@ are mnml's — the same rule as a terminal pane.
 | `bye` | `{}` | a clean exit |
 
 ```json
-{"title":"Jira · TE-12"}
+{"title":"Jira · ENG-12"}
 {"cursor":{"x":4,"y":1}}
 {"command":{"id":"file.save"}}
 {"toast":{"level":"warn","text":"token expires in 2 days"}}
@@ -281,7 +281,7 @@ are mnml's `src/ipc/command.zig`; the ones an integration uses:
 {"cmd":"toast-persistent","id":"jira-sync","text":"syncing…","level":"info"}
 {"cmd":"toast-dismiss","id":"jira-sync"}
 {"cmd":"progress-start","id":"p1","text":"Fetching"}   {"cmd":"progress-update","id":"p1","count":40}   {"cmd":"progress-end","id":"p1","text":"success"}
-{"cmd":"statusline-set-segment","id":"jira","side":"right","text":"TE-12","priority":100,"min_width":4,"max_width":30}
+{"cmd":"statusline-set-segment","id":"jira","side":"right","text":"ENG-12","priority":100,"min_width":4,"max_width":30}
 {"cmd":"statusline-set-segment","id":"jira","text":"\uf0224 43","tooltip":"Jira \u00b7 43 open items assigned to me","items":[{"text":"ENG-12  Fix the login redirect","sub":"In Review","command":"jira_work.open"}]}
 {"cmd":"set-activity-badge","section":"integrations","count":3}
 {"cmd":"notify","title":"Jira","text":"assigned to you","level":"info","sound":false}

@@ -786,7 +786,7 @@ pub const example =
     \\        .{
     \\            .name = "Current Release",
     \\            .kind = .fix_version_tree,
-    \\            .project = "TE",
+    \\            .project = "ENG",
     \\            .mode = .current_release,
     \\            .status_order = .{ "Testing", "In PR Review", "In Progress", "To Do", "Done" },
     \\            .bumps = .{
@@ -795,8 +795,8 @@ pub const example =
     \\                .release_cut = .{ .{ .status = "Done", .target = "top" } },
     \\            },
     \\        },
-    \\        .{ .name = "Sprint", .kind = .board_active_sprint, .project = "TE", .board_id = 200 },
-    \\        .{ .name = "Backlog", .kind = .board_backlog, .project = "TE" },
+    \\        .{ .name = "Sprint", .kind = .board_active_sprint, .project = "ENG", .board_id = 200 },
+    \\        .{ .name = "Backlog", .kind = .board_backlog, .project = "ENG" },
     \\    },
     \\}
     \\
@@ -847,9 +847,9 @@ test "the families split the tabs the way --only does, and a legacy tab is dropp
     const tabs = [_]Tab{
         .{ .name = "A", .kind = .work_assigned },
         .{ .name = "R", .kind = .work_recently_done },
-        .{ .name = "C", .kind = .fix_version_tree, .project = "TE" },
-        .{ .name = "S", .kind = .board_active_sprint, .project = "TE" },
-        .{ .name = "B", .kind = .board_backlog, .project = "TE" },
+        .{ .name = "C", .kind = .fix_version_tree, .project = "ENG" },
+        .{ .name = "S", .kind = .board_active_sprint, .project = "ENG" },
+        .{ .name = "B", .kind = .board_backlog, .project = "ENG" },
         .{ .name = "L", .jql = "project = X" },
     };
     try testing.expectEqual(@as(usize, 2), (try tabsOfFamily(a.allocator(), &tabs, .work)).len);
@@ -967,7 +967,7 @@ test "validate: the reference's rules" {
     try testing.expectError(error.FilterWithoutId, validate(c, &why));
     c.tabs = &.{.{ .name = "Q", .kind = .jql_editable }};
     try testing.expectError(error.EditableWithoutJql, validate(c, &why));
-    c.tabs = &.{.{ .name = "Q", .kind = .jql_editable, .jql = "project = {p}", .vars = &.{.{ .name = "p", .value = "TE" }} }};
+    c.tabs = &.{.{ .name = "Q", .kind = .jql_editable, .jql = "project = {p}", .vars = &.{.{ .name = "p", .value = "ENG" }} }};
     try validate(c, &why);
     c.tabs = &.{.{ .name = "B", .kind = .work_assigned, .jql = "x", .mode = .next_release }};
     try testing.expectError(error.TabJqlAndMode, validate(c, &why));
@@ -975,7 +975,7 @@ test "validate: the reference's rules" {
     try testing.expectError(error.TabNeedsJqlOrMode, validate(c, &why));
     c.tabs = &.{.{ .name = "L", .mode = .current_release }};
     try testing.expectError(error.TabNeedsProject, validate(c, &why));
-    c.tabs = &.{ .{ .name = "T", .jql = "status = Testing" }, .{ .name = "C", .mode = .current_release, .project = "TE" } };
+    c.tabs = &.{ .{ .name = "T", .jql = "status = Testing" }, .{ .name = "C", .mode = .current_release, .project = "ENG" } };
     try validate(c, &why);
 }
 
@@ -997,7 +997,7 @@ test "a broken config is a parse error, a missing one is missing, normalise tidi
     try testing.expect(bad.parse_error != null);
     const gone = try load(a.allocator(), testing.io, "/nowhere/at/all/config.zon");
     try testing.expect(gone.missing);
-    const c = try normalise(a.allocator(), .{ .jira_url = " https://x/ ", .projects = &.{ "TE", "te", "TOOLONGPROJECTKEY" } });
+    const c = try normalise(a.allocator(), .{ .jira_url = " https://x/ ", .projects = &.{ "ENG", "eng", "TOOLONGPROJECTKEY" } });
     try testing.expectEqualStrings("https://x", c.jira_url);
     try testing.expectEqual(@as(usize, 1), c.projects.len);
 }

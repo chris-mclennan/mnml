@@ -130,7 +130,7 @@ pub fn looksLikeIssueKey(s: []const u8) bool {
     return true;
 }
 
-/// `ENG-1234` → `TE`.
+/// `ENG-1234` → `ENG`.
 pub fn projectOf(key: []const u8) ?[]const u8 {
     const dash = std.mem.indexOfScalar(u8, key, '-') orelse return null;
     if (dash == 0) return null;
@@ -483,28 +483,28 @@ test "an issue reads its fields, its parent epic, the team select and the sprint
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const i = try parseIssue(a.allocator(),
-        \\{"id":"1","key":"TE-9","fields":{"summary":"s","status":{"name":"In PR Review","statusCategory":{"key":"indeterminate"}},
+        \\{"id":"1","key":"ENG-9","fields":{"summary":"s","status":{"name":"In PR Review","statusCategory":{"key":"indeterminate"}},
         \\ "issuetype":{"name":"Bug"},"priority":{"name":"High"},"updated":"2026-09-15T09:00:00.000+0000",
         \\ "assignee":{"accountId":"a1","displayName":"Ada"},"reporter":null,"fixVersions":[{"name":"13.20.0"}],
-        \\ "components":[{"name":"web"}],"labels":["adx","tools"],"parent":{"key":"TE-1","fields":{"summary":"Epic one","issuetype":{"name":"Epic"}}},
+        \\ "components":[{"name":"web"}],"labels":["admin","tools"],"parent":{"key":"ENG-1","fields":{"summary":"Epic one","issuetype":{"name":"Epic"}}},
         \\ "customfield_10056":{"value":"Apollo"},"customfield_10020":[{"name":"Sprint 3"},"com.atlassian.greenhopper.service.sprint.Sprint@1[id=2,name=Sprint 4,state=CLOSED]"]}}
     , "customfield_10056");
-    try testing.expectEqualStrings("TE-9", i.key);
+    try testing.expectEqualStrings("ENG-9", i.key);
     try testing.expectEqualStrings("In PR Review", i.status);
     try testing.expectEqualStrings("Ada", i.assigneeName());
     try testing.expectEqualStrings("—", i.reporterName());
     try testing.expectEqualStrings("13.20.0", i.fix_versions[0]);
     try testing.expectEqualStrings("tools", i.labels[1]);
-    try testing.expectEqualStrings("TE-1", i.epicKey().?);
+    try testing.expectEqualStrings("ENG-1", i.epicKey().?);
     try testing.expectEqualStrings("Apollo", i.team);
     try testing.expectEqualStrings("Sprint 3, Sprint 4", i.sprint);
     try testing.expectEqualStrings("2026-09-15", i.updatedDay());
     try testing.expect(i.isUnresolved());
     // A parent that is a story is not an epic.
-    const sub = try parseIssue(a.allocator(), "{\"key\":\"TE-2\",\"fields\":{\"parent\":{\"key\":\"TE-3\",\"fields\":{\"issuetype\":{\"name\":\"Story\"}}},\"status\":{\"name\":\"Done\"}}}", "");
+    const sub = try parseIssue(a.allocator(), "{\"key\":\"ENG-2\",\"fields\":{\"parent\":{\"key\":\"ENG-3\",\"fields\":{\"issuetype\":{\"name\":\"Story\"}}},\"status\":{\"name\":\"Done\"}}}", "");
     try testing.expect(sub.epicKey() == null);
     try testing.expect(!sub.isUnresolved());
-    try testing.expectEqualStrings("TE", projectOf("TE-2").?);
+    try testing.expectEqualStrings("ENG", projectOf("ENG-2").?);
     try testing.expect(looksLikeIssueKey("NTL-12") and !looksLikeIssueKey("2026-08-21") and !looksLikeIssueKey("x"));
 }
 

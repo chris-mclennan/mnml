@@ -73,7 +73,7 @@ example.
 | `team_field_id = "customfield_10056"` | `.team_field_id = "…"` | the team select's id, read on every issue |
 | `team_field_name = "Team"` | `.team_field_name = "…"` | the JQL name of that field |
 | `dispatch_workspace = "/path"` | `.dispatch_workspace = "/path"` | where `queue.jsonl` and the `term` line go |
-| `projects = ["TE"]` | `.projects = .{ "TE" }` | scopes `--values` (both counts); the pane's tabs are not narrowed |
+| `projects = ["ENG"]` | `.projects = .{ "ENG" }` | scopes `--values` (both counts); the pane's tabs are not narrowed |
 | `[detail_modal] fields = [...]` | `.detail_modal = .{ .fields = .{ .{ .id = "type" }, .{ .id = "customfield_1", .label = "Severity" } } }` | a bare TOML string becomes `.{ .id = … }` |
 | `[detail_modal.field_alias] Severity = "customfield_1"` | `.detail_modal = .{ .field_alias = .{ .{ .name = "Severity", .id = "customfield_1" } } }` | |
 | `[[tabs]] name` | `.tabs = .{ .{ .name = "…", … } }` | |

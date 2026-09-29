@@ -4519,9 +4519,9 @@ test "Move to top / bottom lead or end the manual order under the pins; a cloud 
     const live = try f.openCard("plain-1");
     const idle = try f.openCard("plain-2");
     const gone = try f.openCard("exit-3");
-    var run = item("run-1", .streaming, 40, "cloud", "TE-1");
+    var run = item("run-1", .streaming, 40, "cloud", "ENG-1");
     run.where = .cloud;
-    run.cloud = .{ .ticket = "TE-1", .pr_url = "https://example.test/pr/1" };
+    run.cloud = .{ .ticket = "ENG-1", .pr_url = "https://example.test/pr/1" };
     try f.adopt(&.{run});
     try testing.expect(try f.waitGrid(live, "Claude Code v9", 5000));
     try testing.expect(try f.waitGrid(idle, "Claude Code v9", 5000));

@@ -126,10 +126,10 @@ test "bucket keeps rank order and honours the mask; colOf follows the cursor" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const issues = [_]Issue{
-        .{ .key = "TE-1", .status = "To Do" },
-        .{ .key = "TE-2", .status = "Testing" },
-        .{ .key = "TE-3", .status = "To Do" },
-        .{ .key = "TE-4", .status = "Done" },
+        .{ .key = "ENG-1", .status = "To Do" },
+        .{ .key = "ENG-2", .status = "Testing" },
+        .{ .key = "ENG-3", .status = "To Do" },
+        .{ .key = "ENG-4", .status = "Done" },
     };
     const b = try bucket(a.allocator(), &issues, null);
     try testing.expectEqual(@as(usize, 2), b[0].len);
@@ -145,7 +145,7 @@ test "bucket keeps rank order and honours the mask; colOf follows the cursor" {
 test "a card is a head, the wrapped summary, the assignee, the actions and a blank; expanded adds labels and the hint" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const iss: Issue = .{ .key = "TE-1", .status = "To Do", .issuetype = "Story", .summary = "Integrations API > Olo > Create Location returns 500", .assignee = .{ .display_name = "Chris" }, .labels = &.{"adx"} };
+    const iss: Issue = .{ .key = "ENG-1", .status = "To Do", .issuetype = "Story", .summary = "Reporting API > Export > Create Download returns 500", .assignee = .{ .display_name = "Chris" }, .labels = &.{"admin"} };
     const c = try layoutCard(a.allocator(), 0, iss, false, 28);
     try testing.expect(c.lines[0] == .head);
     try testing.expect(c.lines[1] == .summary);

@@ -4343,7 +4343,7 @@ const auth = @import("auth.zig");
 test "stripFixVersion drops the clause and its connector" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    try testing.expectEqualStrings("project = TE ORDER BY rank", try stripFixVersion(a.allocator(), "project = TE AND fixVersion = \"13.19.0\" ORDER BY rank"));
+    try testing.expectEqualStrings("project = ENG ORDER BY rank", try stripFixVersion(a.allocator(), "project = ENG AND fixVersion = \"13.19.0\" ORDER BY rank"));
     try testing.expectEqualStrings("ORDER BY rank", try stripFixVersion(a.allocator(), "fixVersion = \"1\" AND ORDER BY rank"));
     try testing.expectEqualStrings("a = 1", try stripFixVersion(a.allocator(), "a = 1"));
 }

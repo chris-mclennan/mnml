@@ -572,8 +572,8 @@ test "every sibling message round-trips; colours are externally tagged" {
     const dirty = try roundTrip(SiblingMessage, arena, .{ .frame_dirty = .{ .rows = &dirty_rows } });
     try testing.expectEqual(@as(u16, 5), dirty.frame_dirty.rows[0].y);
 
-    const title = try roundTrip(SiblingMessage, arena, .{ .title = "Jira · TE-12" });
-    try testing.expectEqualStrings("Jira · TE-12", title.title);
+    const title = try roundTrip(SiblingMessage, arena, .{ .title = "Jira · ENG-12" });
+    try testing.expectEqualStrings("Jira · ENG-12", title.title);
     const cursor = try roundTrip(SiblingMessage, arena, .{ .cursor = .{ .x = 1, .y = 2 } });
     try testing.expectEqual(@as(u16, 2), cursor.cursor.?.y);
     const no_cursor = try roundTrip(SiblingMessage, arena, .{ .cursor = null });

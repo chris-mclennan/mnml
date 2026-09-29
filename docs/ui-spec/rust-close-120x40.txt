@@ -13,7 +13,7 @@
   │                          │      │  main.rs has unsaved changes.             │
  󱘣 │  acmeco-mnml-workspace  │      │                                           │
    │                          │      │                                           │
-   │  adx                    │      │   [S]ave      [D]iscard      [C]ancel     │
+   │  web                    │      │   [S]ave      [D]iscard      [C]ancel     │
    │                          │      └───────────────────────────────────────────┘
    │  acmeco-claude-plugins  │
    │                          │

@@ -10,7 +10,7 @@
 //!     .sites = .{
 //!         // One destination in several environments: the three usual
 //!         // names as fields, any other under `.envs`.
-//!         .{ .name = "ADX Admin", .dev = "https://adx.dev.example.net/admin", .prod = "https://adx.example.com/admin", .envs = .{ .{ .env = "uat", .url = "https://adx.uat.example.net/admin" } } },
+//!         .{ .name = "Admin console", .dev = "https://admin.dev.example.net", .prod = "https://admin.example.com", .envs = .{ .{ .env = "uat", .url = "https://admin.uat.example.net" } } },
 //!     },
 //!     .bookmarks = .{
 //!         // A one-off; `.env` defaults to "other".
@@ -160,7 +160,7 @@ const Fixture = struct {
 const home_file =
     \\.{
     \\    .sites = .{
-    \\        .{ .name = "ADX", .dev = "https://adx.dev/x", .prod = "https://adx/x", .staging = "  ", .envs = .{ .{ .env = "uat", .url = "https://adx.uat/x" } } },
+    \\        .{ .name = "Admin", .dev = "https://admin.dev/x", .prod = "https://admin/x", .staging = "  ", .envs = .{ .{ .env = "uat", .url = "https://admin.uat/x" } } },
     \\    },
     \\}
 ;
@@ -183,8 +183,8 @@ test "bookmarks.open: the data root's file then the workspace's, sites expanded 
     const p = &f.app.overlay.picker;
     try t.expect(p.kind == .bookmarks);
     try t.expectEqualStrings("Bookmarks", p.state.title);
-    const want_labels = [_][]const u8{ "dev  ·  ADX", "prod  ·  ADX", "uat  ·  ADX", "prod  ·  Metabase", "other  ·  Plain" };
-    const want_urls = [_][]const u8{ "https://adx.dev/x", "https://adx/x", "https://adx.uat/x", "https://mb/", "not-a-url" };
+    const want_labels = [_][]const u8{ "dev  ·  Admin", "prod  ·  Admin", "uat  ·  Admin", "prod  ·  Metabase", "other  ·  Plain" };
+    const want_urls = [_][]const u8{ "https://admin.dev/x", "https://admin/x", "https://admin.uat/x", "https://mb/", "not-a-url" };
     try t.expectEqual(want_labels.len, p.labels.len);
     for (want_labels, want_urls, 0..) |l, u, i| {
         try t.expectEqualStrings(l, p.labels[i]);

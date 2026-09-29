@@ -1565,7 +1565,7 @@ test "--check prints the config and where the token is, never the token" {
     defer arena.deinit();
     const ar = arena.allocator();
     const loaded = try config.parse(ar,
-        \\.{ .jira_url = "https://acme.atlassian.net", .email = "me@acme.com", .tabs = .{ .{ .name = "Assigned", .kind = .work_assigned }, .{ .name = "Current Release", .kind = .fix_version_tree, .project = "TE", .mode = .current_release } } }
+        \\.{ .jira_url = "https://acme.atlassian.net", .email = "me@acme.com", .tabs = .{ .{ .name = "Assigned", .kind = .work_assigned }, .{ .name = "Current Release", .kind = .fix_version_tree, .project = "ENG", .mode = .current_release } } }
     , "/tmp/config.zon");
     var buf: [4096]u8 = undefined;
     var w: Io.Writer = .fixed(&buf);
@@ -1576,7 +1576,7 @@ test "--check prints the config and where the token is, never the token" {
     try testing.expect(std.mem.indexOf(u8, out, "  jira_url: https://acme.atlassian.net") != null);
     try testing.expect(std.mem.indexOf(u8, out, "  refresh:  60s") != null);
     try testing.expect(std.mem.indexOf(u8, out, "    1: Assigned → jql = ") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "    2: Current Release → CurrentRelease project=TE") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "    2: Current Release → CurrentRelease project=ENG") != null);
     try testing.expect(std.mem.indexOf(u8, out, "token:    /home/x/token (present, 18 chars") != null);
     try testing.expect(std.mem.indexOf(u8, out, "sekret") == null);
 }

@@ -456,7 +456,7 @@ fn issue(key: []const u8, status: []const u8) Issue {
 }
 
 fn fixTab() config.Tab {
-    return .{ .name = "Current", .kind = .fix_version_tree, .project = "TE" };
+    return .{ .name = "Current", .kind = .fix_version_tree, .project = "ENG" };
 }
 
 const approved_reviewer = [_]model.Reviewer{.{ .name = "r", .approved = true }};
@@ -470,7 +470,7 @@ test "groups follow the default order, the rest alphabetical at the end; a colla
     defer a.deinit();
     var st = State.init(testing.allocator);
     defer st.deinit();
-    const issues = [_]Issue{ issue("TE-1", "Done"), issue("TE-2", "Testing"), issue("TE-3", "To Do"), issue("TE-4", "Zombie"), issue("TE-5", "Aardvark") };
+    const issues = [_]Issue{ issue("ENG-1", "Done"), issue("ENG-2", "Testing"), issue("ENG-3", "To Do"), issue("ENG-4", "Zombie"), issue("ENG-5", "Aardvark") };
     const r = try computeRows(a.allocator(), &issues, &st, fixTab(), false, null);
     try testing.expectEqual(@as(usize, 5), r.ticket_count);
     try testing.expectEqualStrings("Testing", r.rows[0].group.status);
@@ -491,7 +491,7 @@ test "the widen row is the last row on a windowed tab, widens 14 -> 30 -> 90 -> 
     defer a.deinit();
     var st = State.init(testing.allocator);
     defer st.deinit();
-    const issues = [_]Issue{issue("TE-1", "To Do")};
+    const issues = [_]Issue{issue("ENG-1", "To Do")};
     var tab = fixTab();
     tab.kind = .work_reported;
     // No window: no row. Every other tab is this one.
@@ -537,7 +537,7 @@ test "the mask narrows the tree and drops an emptied group; a custom status_orde
     defer a.deinit();
     var st = State.init(testing.allocator);
     defer st.deinit();
-    const issues = [_]Issue{ issue("TE-1", "To Do"), issue("TE-2", "Testing"), issue("TE-3", "Testing") };
+    const issues = [_]Issue{ issue("ENG-1", "To Do"), issue("ENG-2", "Testing"), issue("ENG-3", "Testing") };
     var tab = fixTab();
     tab.status_order = &.{ "To Do", "Testing" };
     const mask = [_]bool{ true, false, true };
@@ -555,7 +555,7 @@ test "bumps: pr_approved and no_open_prs promote a PR-review ticket once its PRs
     defer a.deinit();
     var st = State.init(testing.allocator);
     defer st.deinit();
-    const issues = [_]Issue{issue("TE-1", "In PR Review")};
+    const issues = [_]Issue{issue("ENG-1", "In PR Review")};
     var tab = fixTab();
     tab.bumps = .{ .pr_approved = "Testing", .no_open_prs = "Testing" };
     // Nothing cached: no bump.
@@ -563,20 +563,20 @@ test "bumps: pr_approved and no_open_prs promote a PR-review ticket once its PRs
     try testing.expectEqualStrings("In PR Review", cold.rows[0].group.status);
     try testing.expect(!cold.rows[1].ticket.bumped);
     // One approved open PR: pr_approved.
-    try st.putPrs("TE-1", &.{mkPr("#1", "OPEN", true)});
+    try st.putPrs("ENG-1", &.{mkPr("#1", "OPEN", true)});
     const warm = try computeRows(a.allocator(), &issues, &st, tab, false, null);
     try testing.expectEqualStrings("Testing", warm.rows[0].group.status);
     try testing.expect(warm.rows[1].ticket.bumped);
     try testing.expectEqualStrings("Testing", warm.rows[1].ticket.effective_status);
     // One merged, unapproved PR: no_open_prs.
-    try st.putPrs("TE-1", &.{mkPr("#1", "MERGED", false)});
+    try st.putPrs("ENG-1", &.{mkPr("#1", "MERGED", false)});
     tab.bumps = .{ .no_open_prs = "Testing" };
     try testing.expectEqualStrings("Testing", (try computeRows(a.allocator(), &issues, &st, tab, false, null)).rows[0].group.status);
     // An empty cache is "unknown", not "none open".
-    try st.putPrs("TE-1", &.{});
+    try st.putPrs("ENG-1", &.{});
     try testing.expectEqualStrings("In PR Review", (try computeRows(a.allocator(), &issues, &st, tab, false, null)).rows[0].group.status);
     // release_cut: off, nothing; on, Done goes to the top sentinel.
-    const done = [_]Issue{ issue("TE-2", "Done"), issue("TE-3", "Testing") };
+    const done = [_]Issue{ issue("ENG-2", "Done"), issue("ENG-3", "Testing") };
     tab.bumps = .{ .release_cut = &.{.{ .status = "Done", .target = "top" }} };
     try testing.expectEqualStrings("Testing", (try computeRows(a.allocator(), &done, &st, tab, false, null)).rows[0].group.status);
     const cut = try computeRows(a.allocator(), &done, &st, tab, true, null);
@@ -589,38 +589,38 @@ test "an expanded ticket shows a loading row, then its PRs capped at three with 
     defer a.deinit();
     var st = State.init(testing.allocator);
     defer st.deinit();
-    const issues = [_]Issue{issue("TE-1", "Testing")};
-    try st.setExpanded("TE-1", true);
+    const issues = [_]Issue{issue("ENG-1", "Testing")};
+    try st.setExpanded("ENG-1", true);
     const loading = try computeRows(a.allocator(), &issues, &st, fixTab(), false, null);
     try testing.expect(loading.rows[2] == .pr_loading);
-    try st.putPrs("TE-1", &.{ mkPr("#1", "MERGED", true), mkPr("#2", "OPEN", false), mkPr("#3", "MERGED", false), mkPr("#4", "DECLINED", false), mkPr("#5", "OPEN", false) });
+    try st.putPrs("ENG-1", &.{ mkPr("#1", "MERGED", true), mkPr("#2", "OPEN", false), mkPr("#3", "MERGED", false), mkPr("#4", "DECLINED", false), mkPr("#5", "OPEN", false) });
     const capped = try computeRows(a.allocator(), &issues, &st, fixTab(), false, null);
     // group, ticket, #3 #4 #5, show-more(2)
     try testing.expectEqual(@as(usize, 6), capped.rows.len);
     try testing.expectEqual(@as(usize, 2), capped.rows[2].pr.pr_idx);
     try testing.expectEqual(@as(usize, 2), capped.rows[5].show_more.hidden);
-    try st.showAll("TE-1");
+    try st.showAll("ENG-1");
     const all = try computeRows(a.allocator(), &issues, &st, fixTab(), false, null);
     try testing.expectEqual(@as(usize, 7), all.rows.len);
     try testing.expectEqual(@as(usize, 0), all.rows[2].pr.pr_idx);
     // Expand #1 (merged): loading, then pipelines, then an error wins over a cache.
-    try st.setPrExpanded("TE-1", "#1", true);
+    try st.setPrExpanded("ENG-1", "#1", true);
     try testing.expect((try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows[3] == .pipeline_loading);
-    try st.putPipelines("TE-1", "#1", &.{ .{ .build_number = 1 }, .{ .build_number = 2 } });
+    try st.putPipelines("ENG-1", "#1", &.{ .{ .build_number = 1 }, .{ .build_number = 2 } });
     const piped = try computeRows(a.allocator(), &issues, &st, fixTab(), false, null);
     try testing.expect(piped.rows[3] == .pipeline and piped.rows[4] == .pipeline);
     try testing.expectEqual(@as(usize, 1), piped.rows[4].pipeline.pipeline_idx);
     try testing.expect(piped.rows[5] == .pr);
-    try st.putPipelines("TE-1", "#1", &.{});
+    try st.putPipelines("ENG-1", "#1", &.{});
     try testing.expect((try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows[3] == .pipeline_empty);
-    try st.putPipelineError("TE-1", "#1", "not a bitbucket PR URL");
+    try st.putPipelineError("ENG-1", "#1", "not a bitbucket PR URL");
     try testing.expect((try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows[3] == .pipeline_error);
-    try testing.expectEqualStrings("not a bitbucket PR URL", st.pipelineError("TE-1", "#1").?);
-    try st.setPrExpanded("TE-1", "#1", false);
+    try testing.expectEqualStrings("not a bitbucket PR URL", st.pipelineError("ENG-1", "#1").?);
+    try st.setPrExpanded("ENG-1", "#1", false);
     try testing.expect((try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows[3] == .pr);
     // A collapsed ticket has no children even with a full cache.
-    try st.setExpanded("TE-1", false);
+    try st.setExpanded("ENG-1", false);
     try testing.expectEqual(@as(usize, 2), (try computeRows(a.allocator(), &issues, &st, fixTab(), false, null)).rows.len);
-    try testing.expectEqual(@as(usize, 1), rowOfKey(all.rows, &issues, "TE-1").?);
-    try testing.expect(rowOfKey(all.rows, &issues, "TE-9") == null);
+    try testing.expectEqual(@as(usize, 1), rowOfKey(all.rows, &issues, "ENG-1").?);
+    try testing.expect(rowOfKey(all.rows, &issues, "ENG-9") == null);
 }

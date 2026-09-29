@@ -258,14 +258,14 @@ fn issue(key: []const u8, status: []const u8, t: []const u8, summary: []const u8
 }
 
 test "the buttons follow the reference's type + status table" {
-    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("TE-1", "To Do", "Story", "s")));
-    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("TE-1", "In Progress", "Task", "t")));
-    try testing.expectEqualSlices(Button, &.{ .triage, .fix }, buttonsForTicket(issue("TE-1", "To Do", "Bug", "b")));
-    try testing.expectEqualSlices(Button, &.{.test_}, buttonsForTicket(issue("TE-1", "Testing", "Bug", "b")));
-    try testing.expectEqualSlices(Button, &.{.review}, buttonsForTicket(issue("TE-1", "In PR Review", "Bug", "b")));
-    try testing.expectEqualSlices(Button, &.{.triage}, buttonsForTicket(issue("TE-1", "Reopened", "Bug", "b")));
-    try testing.expectEqual(@as(usize, 0), buttonsForTicket(issue("TE-1", "Done", "Story", "s")).len);
-    try testing.expectEqual(@as(usize, 0), buttonsForTicket(issue("TE-1", "Cancelled", "Task", "s")).len);
+    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("ENG-1", "To Do", "Story", "s")));
+    try testing.expectEqualSlices(Button, &.{ .triage, .implement }, buttonsForTicket(issue("ENG-1", "In Progress", "Task", "t")));
+    try testing.expectEqualSlices(Button, &.{ .triage, .fix }, buttonsForTicket(issue("ENG-1", "To Do", "Bug", "b")));
+    try testing.expectEqualSlices(Button, &.{.test_}, buttonsForTicket(issue("ENG-1", "Testing", "Bug", "b")));
+    try testing.expectEqualSlices(Button, &.{.review}, buttonsForTicket(issue("ENG-1", "In PR Review", "Bug", "b")));
+    try testing.expectEqualSlices(Button, &.{.triage}, buttonsForTicket(issue("ENG-1", "Reopened", "Bug", "b")));
+    try testing.expectEqual(@as(usize, 0), buttonsForTicket(issue("ENG-1", "Done", "Story", "s")).len);
+    try testing.expectEqual(@as(usize, 0), buttonsForTicket(issue("ENG-1", "Cancelled", "Task", "s")).len);
     try testing.expectEqual(Button.fix, Button.fromKind("fix").?);
     try testing.expect(Button.fromKind("nope") == null);
     try testing.expectEqualStrings("[ Implement ]", Button.implement.label());
@@ -303,7 +303,7 @@ test "fire writes the queue line and the IPC line where the directories exist, a
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
-    const d = Dispatch.forTicket("implement", issue("TE-1", "To Do", "Story", "s"), "https://x/browse/TE-1", "now");
+    const d = Dispatch.forTicket("implement", issue("ENG-1", "To Do", "Story", "s"), "https://x/browse/ENG-1", "now");
     // Nothing there: no channels, and the line says which two it looked for.
     const none = try fire(arena, io, d, try workspacePaths(arena, io, root, ""));
     try testing.expect(std.mem.startsWith(u8, none, "implement: nothing to dispatch to"));
@@ -316,7 +316,7 @@ test "fire writes the queue line and the IPC line where the directories exist, a
     _ = try fire(arena, io, d, try workspacePaths(arena, io, root, ""));
     const q = try tmp.dir.readFileAlloc(io, ".claude/queue.jsonl", arena, .unlimited);
     try testing.expectEqual(@as(usize, 2), std.mem.count(u8, q, "\n"));
-    try testing.expect(std.mem.indexOf(u8, q, "\"issue_key\":\"TE-1\"") != null);
+    try testing.expect(std.mem.indexOf(u8, q, "\"issue_key\":\"ENG-1\"") != null);
     // The Rust host's directory name is NOT the fallback: a `.mnml/ipc`
     // is what a Rust mnml reads, and writing there from inside a Zig
     // host is the bug this test exists for.

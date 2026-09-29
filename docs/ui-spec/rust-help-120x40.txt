@@ -13,7 +13,7 @@
   │              │  REPLACE               vim replace mode (orange)                                █│
  󱘣 │  acmeco-mnml│  TREE                  file tree focused (blue)                                 █│
    │              │  VIEW                  read-only pane focused (cyan)                            █│
-   │  adx        │  EDIT                  standard mode editing (green)                            █│
+   │  web        │  EDIT                  standard mode editing (green)                            █│
    │              │  PANEL                 right side panel focused (cyan)                          █│
    │  acmeco-clau│▾ ── stress meter ── (6)                                                         █│
    │              │  0-20                  1 block, green — idle / smooth (hidden at exactly 0)     █│

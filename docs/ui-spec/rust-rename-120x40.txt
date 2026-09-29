@@ -13,7 +13,7 @@
   │                          ┌ Rename .gitignore ───────────────────────────────────────┐
  󱘣 │  acmeco-mnml-workspace  │ .gitignore                                               │
    │                          │  enter to submit · esc to cancel                         │
-   │  adx                    └──────────────────────────────────────────────────────────┘
+   │  web                    └──────────────────────────────────────────────────────────┘
    │                          │
    │  acmeco-claude-plugins  │
    │                          │
