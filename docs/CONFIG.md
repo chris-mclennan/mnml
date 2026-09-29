@@ -272,7 +272,7 @@ otherwise. Copy what you need; leave the rest out.
             },
         },
         .integration_icon_order = .{}, // ids, left to right
-        .ticket_prefixes = .{}, // e.g. .{ "TE", "OPS" }
+        .ticket_prefixes = .{}, // e.g. .{ "ENG", "OPS" }
         .now_playing_source = .mixr, // .auto | .mixr | .macos
         .now_playing_marquee = false,
         .preferred_music_app = .mixr, // .mixr | .music | .spotify
