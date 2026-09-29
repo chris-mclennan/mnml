@@ -4,7 +4,7 @@ An integration is a program mnml opens in a pane. It draws into a cell
 grid, gets keys and clicks, and can ask mnml to run commands, toast, or
 put things on the statusline. `sdk/mnml-sdk` is the package; the wire it
 speaks is `docs/BRIDGE.md`. `integrations/sample` is the official
-sample — a counter pane on the SDK, ~200 lines, what mnml's own tests
+sample — a counter pane on the SDK, ~270 lines, what mnml's own tests
 install and mount; `sdk/examples/hello` is the smaller list that the
 host's mount test spawns.
 
@@ -77,9 +77,11 @@ right-click menu — and the first-launch setup's Private integrations
 row. Either takes the folder (`~` expanded, relative to the workspace)
 — a folder of integrations, or one integration's own folder, which is
 listed and built as that one integration — or a GitHub monorepo as
-`owner/repo[:apps_dir]` (a pasted `https://github.com/owner/repo` URL,
-`.git` or `/tree/<branch>/<dir>` included, is read as that; any other URL
-is refused). It refuses a folder with nothing to install, and a source
+`owner/repo[:apps_dir]`. A pasted GitHub URL is read as that repo —
+`https://github.com/owner/repo`, the same without a scheme, with a
+trailing `.git` or `/`, `…/tree/<branch>/<dir>` (the `<dir>` becomes the
+apps dir; the branch is dropped, the default branch is cloned), or
+`git@github.com:owner/repo.git`; any other URL is refused. It refuses a folder with nothing to install, and a source
 already there by another spelling (a repo in other letter case; a folder
 by a symlink, or in other case on a case-folding volume), and appends
 the entry to the home config.zon — nothing is written while the
@@ -103,7 +105,8 @@ const sdk = b.dependency("mnml_sdk", .{ .target = target, .optimize = optimize }
 exe.root_module.addImport("mnml_sdk", sdk.module("mnml_sdk"));
 ```
 
-The SDK has no dependencies beyond `std`; Zig 0.16.0.
+The SDK has no package dependencies beyond `std`; it links libc (for
+`kill` / `getpid`), and importers inherit that. Zig 0.16.0.
 
 ## The loop
 
@@ -664,7 +667,8 @@ every such command a `run` line — so `--install` and mnml's scan refuse
 the same files. mnml's own launchers live in the repo's `launchers/`.
 
 `sdk.manifest.write` picks the data root the way mnml does
-(`MNML_DATA_ROOT`, `XDG_CONFIG_HOME/mnml`, `HOME/.config/mnml`) and
+(`MNML_DATA_ROOT`, `XDG_CONFIG_HOME/mnml`, `HOME/.config/mnml`, with
+`USERPROFILE` standing in for an unset `HOME`) and
 returns the path it wrote. `sdk.manifest.remove(gpa, io, env, id)` is
 uninstall. mnml re-scans on `integrations.refresh` and at startup; an
 `id` must be a file name (`[A-Za-z0-9_.-]`).
@@ -1647,7 +1651,7 @@ keep that from going quiet:
   rule the SDK knows, including the ones added after it was written.
 * **The extra-roots check.** `tools/check-integration-roots.sh` builds
   and tests every integration under the folders named in
-  `MNML_EXTRA_INTEGRATION_ROOTS` (a `:`-separated list of
+  `MNML_EXTRA_INTEGRATION_ROOTS` (a `:`-separated list — `;` on Windows — of
   `integrations/`-shaped folders — each subfolder with a `build.zig` and
   a `manifest.zon`), one line each, `ok|FAIL <root>/<id> (<n> tests)`,
   exiting non-zero on any failure; unset means no extra roots and exit 0.

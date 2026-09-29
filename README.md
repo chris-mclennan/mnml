@@ -67,6 +67,26 @@ Coming from 0.2.x: config is `config.zon` now, written beside your
 `config.toml` and never touching it. Run `mnml export-config-zon` on 0.2.22
 once. `docs/CONFIG.md` is the complete commented file.
 
+## Command line
+
+The installed binary is `mnml` (`mnml.exe` on Windows); a source build is
+`zig-out/bin/mnml-zig`. `mnml --help` prints the whole usage line.
+
+```sh
+mnml [WORKSPACE] [FILE…]        # open a workspace (default: the cwd), and files in it
+  --input vim|standard          # the keymap profile for this launch (docs/KEYMAP_PROFILES.md)
+  --ascii                       # no Nerd Font glyphs — the terminal and --headless alike
+  --config PATH                 # one more config layer, applied last and always trusted
+  --no-session                  # do not restore the saved session
+  --startup-picker              # open on the startup picker (new file, recent files, workspaces)
+  --profile dev|stable          # which data root, session file and IPC mailbox
+  --sandbox [--sandbox-keep]    # a throwaway HOME and data root, removed on exit unless kept
+  --headless                    # a virtual screen driven by file IPC under <ws>/.mnml/ (MNML_COLS / MNML_ROWS size it)
+mnml --version
+mnml test [PATH…]               # run .test scripts (below)
+mnml run FILE | chain run FILE | discover SPEC   # the HTTP client, no UI
+```
+
 ## Build from source
 
 [Zig 0.16.0](https://ziglang.org/download/) exactly — `build.zig.zon` pins it
@@ -207,7 +227,7 @@ The end-to-end suite is a line-based script format — `write`, `open`, `key`,
 `type`, then `expect screen | status | file | dirty | pane` — run headlessly against the
 same `App` the terminal drives. The corpus in `tests/e2e` is the Rust
 repo's suite, copied here when Rust froze, plus the scripts written for this
-codebase; it is the definition of parity: 1040 `.test` files (2026-09-26, the
+codebase; it is the definition of parity: 1101 `.test` files (2026-09-29, the
 `http/` and `http_panel/` subfolders included), every one run at 120x40
 but the `# requires: network` file. `zig build test
 --summary all` prints the unit suite's count.
@@ -243,6 +263,8 @@ toolchain. `tools/debug-demo.sh` opens the same setup on a real screen.
 - `docs/CONFIG.md` — the complete commented `config.zon`.
 - `docs/KEYMAP_PROFILES.md` — the vim and standard profiles: every chord that
   differs, the debugger's two doors, the section moves.
+- `docs/LUA.md` — scripting: `init.lua`, the `mnml.*` API, hooks and tasks.
+- `docs/SDK.md` — writing an integration: the SDK, its manifest, the bridge.
 - `docs/CONTRIBUTING.md` — worktrees, commits, the oracle, the verification
   sequence, break-checks.
 - `docs/RELEASE.md` — cutting a release, and the two traps in it.

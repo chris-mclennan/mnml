@@ -492,7 +492,7 @@ mnml.buf.apply{ op = "atomic", ops = {                  -- one undo step
 } }
 ```
 
-`op` names the tag (`src/editor/edit_op.zig` lists all 131); the payload
+`op` names the tag (`src/editor/edit_op.zig` lists all 172); the payload
 follows its shape:
 
 | shape | ops | fields |
@@ -627,7 +627,7 @@ of strings and `{ text=, fg=, bg=, bold=, italic=, underline= }` tables.
 
 ```lua
 mnml.decor.virtual_text(ns, pane, 1,
-  { { text = "  chris · 3d ago", fg = "muted" } }, { at = "eol" })
+  { { text = "  you · 3d ago", fg = "muted" } }, { at = "eol" })
 ```
 
 | `at` | where |
@@ -1155,8 +1155,8 @@ mnml.operator: `run` must be a function(range) — range is { start, ["end"], mo
 
 #### `mnml.task.run{ cmd, cwd?, label?, hidden?, on_line?, on_done? }`
 
-The one way a script reaches the shell. `cmd` runs through `/bin/sh -c` in a
-task pane below the active one, at `cwd` (workspace-relative or absolute; the
+The one way a script reaches the shell. `cmd` runs through the shell
+(`/bin/sh -c`; `%COMSPEC% /d /c`, else `cmd.exe`, on Windows) in a task pane below the active one, at `cwd` (workspace-relative or absolute; the
 workspace by default). Answers the pane id — or the run's id when it is
 hidden.
 

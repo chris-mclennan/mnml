@@ -13,9 +13,9 @@ the release ships one file), and one line per change a user can see.
 ## v0.3.0 (unreleased)
 
 mnml 0.3.0 is the same editor, rewritten in Zig 0.16.0. One static binary per
-platform, no runtime, the same `.test` corpus green on both sides (225 of 226
-at 120x40; 80x24 and 200x60 sweeps free of panics, leaks and rects outside
-their parent). Everything below is what the 0.2.x user notices; the
+platform, no runtime, and the shared `.test` corpus as the definition of
+parity (every file at 120x40; the 80x24 and 200x60 sweeps check for panics,
+leaks and rects outside their parent). Everything below is what the 0.2.x user notices; the
 architecture behind it is in `docs/DESIGN.md`.
 
 ### The editor
@@ -45,8 +45,9 @@ architecture behind it is in `docs/DESIGN.md`.
   cell.
 - The 94 NvChad base46 palettes as ZON, derived into every UI role at compile
   time. `theme.pick` previews as you move; toggle, reset, follow-the-OS.
-- The first-launch wizard — seven sections, Enter writes only what was
-  touched. The settings overlay — sectioned rows, the file follows the row.
+- The first-launch wizard — eight sections, Enter writes only what was
+  touched; the last offers Jira and Bitbucket as checkboxes that install on
+  the spot, with a Private integrations row under them. The settings overlay — sectioned rows, the file follows the row.
 - Build-artifact directories stay hidden in the tree without a `.gitignore`.
 - A pane that opens beside another sizes itself by what is already there:
   the first one takes an empty editor area whole, the third makes thirds and
@@ -122,11 +123,70 @@ architecture behind it is in `docs/DESIGN.md`.
   snapshot, commands, panel, mouse — that every other panel is checked
   against.
 
+### Integrations and the Marketplace
+
+- Integrations are back, on the v2 bridge and the Zig SDK: each one is
+  released on its own `<id>-v<version>` tag, and every mnml release carries
+  `integrations.json`, the index the Marketplace tab reads by default. A row
+  is listed only when its SDK is compatible and it was built for your
+  platform; an install checks the sha256 before anything is written.
+- `marketplace.add_source` (the palette, the tab's `+ source` chip, the tab
+  strip's menu) adds a folder or `owner/repo[:dir]`, or a pasted GitHub repo
+  URL — `https://github.com/owner/repo`, the same without the scheme, with a
+  trailing `.git`, `…/tree/<branch>/<dir>` (the branch is dropped, the folder
+  kept) or `git@github.com:owner/repo.git`. Any other URL is refused by name.
+- A source already added is found under another spelling — the repo's case,
+  the folder's case, a symlink — instead of being added twice. Adding a
+  source while the Marketplace is disabled is refused before `config.zon` is
+  written. A folder just added lists at once, not when the slowest source
+  answers.
+- An integration row built on an older SDK wears a `rebuild` chip; one whose
+  source folder is gone wears `old SDK` instead and is not rebuilt. A
+  rebuild toasts the SDK its fresh manifest is stamped with.
+- A refresh or a quit no longer waits out a running install.
+- Jira and Bitbucket poll adaptively, write an event feed, and share one
+  rate-limit budget across windows and processes. The state file is the
+  first of `<SERVICE>_RATELIMIT_STATE`,
+  `$MNML_SHARED_STATE_DIR/<service>-ratelimit.json`,
+  `<MNML_DATA_ROOT>/ratelimit/<service>.json`,
+  `~/.config/mnml/ratelimit/<service>.json`.
+- `MNML_OPEN_URL` decides whether a URL reaches the browser, for the host and
+  every integration: unset or empty opens it, `none` drops it, any other
+  value is a file the URL is appended to instead. A `.test` run logs to a
+  file and `--headless` defaults to `none`, so neither opens a browser.
+
+### Fixes and polish since 2026-09-20
+
+- `--headless --ascii` paints the ASCII screen, as the terminal does.
+- The update check and the Nerd Fonts release fetch run only from the
+  terminal loop — never under `--headless`, a `.test` run or a unit test.
+- A workspace with nothing to distrust is trusted without a prompt; an
+  adapter added to its config later goes through the trust dialog.
+- Vim: dozens of Neovim-parity fixes — counts on `n` / `N`, `D`, `C`, `j` /
+  `k` under an operator; `u` and `gv` after Visual operators; case changes
+  and word motions over non-ASCII and CJK text; `whichwrap`-style `h` / `l`;
+  `&` / `g&`; Visual `p` and `"x`; puts setting `'[` / `']`; the "N fewer
+  lines" message past `'report'`; an underline cursor while an operator
+  waits. `:jumps`, `:changes`, `:display` and `:setlocal et / noet / wrap /
+  nowrap` are new, and `:term` opens in the focused leaf.
+- In the standard profile `Ctrl+N` asks for the new file's path from any
+  focus, and `Ctrl+Shift+S` is Save As. `F3` / `Shift+F3` search from the cursor with the find bar open or
+  closed. Typing over a selection is one undo stop.
+- A shell pane's bash and fish mark their prompts (OSC 133, OSC 7), and a
+  device-attributes query is answered.
+- Windows: paths spell one way everywhere — the tree, SEARCH, TODOS, notes,
+  LSP URIs, the HTTP panel — and installs, uninstalls, the bridge socket and
+  `cmd.exe` command lines behave as on macOS and Linux.
+- The statusline measures its chips in cells and never ends a lane on a
+  dangling powerline arrow; chips of equal priority lay out by id.
+- Restart outside `run.sh` relaunches mnml instead of quitting.
+
 ### Testing
 
 - `mnml-zig test` runs the shared `.test` corpus headlessly on a
   `DebugAllocator` with safety on; a leak fails the file. `--gate` runs the
-  47-file Phase-0 set, `--sizes 80x24,120x40,200x60` sweeps the widths.
+  52-file Phase-0 set, `--sizes 80x24,120x40,200x60` sweeps the widths, and
+  `--shard I/N` runs one of N disjoint slices of the corpus.
 - Every unit test runs on `std.testing.allocator`. Leak = failure. The suite
   runs in Debug and ReleaseSafe; every PR cross-compiles the exe and every test
   binary for all five shipped targets.
@@ -145,8 +205,8 @@ architecture behind it is in `docs/DESIGN.md`.
 
 ### Not in 0.3.0 (pin 0.2.x if you need one)
 
-- Integrations (the bridge protocol and every `mnml-*` integration) — back
-  when rewritten in Zig with the v2 protocol and SDK, jira and bitbucket
-  first.
-- Local FIM completion (API-only for now), brotli, WebP, the glyph-builder SVG
+- The 0.2.x integrations other than Jira and Bitbucket — each comes back
+  when it is rewritten on the v2 bridge and the SDK.
+- Local FIM completion (ghost text uses Claude Code, the Claude API or
+  Copilot), brotli, WebP, the glyph-builder SVG
   preview.

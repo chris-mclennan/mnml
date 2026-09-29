@@ -5,7 +5,7 @@ either profile; `vim` chords only when `editor.input_style = .vim`;
 `standard` only under `.standard`. `.keys.global` in `config.zon` still
 applies to both and `.keys.vim` / `.keys.standard` overlay their profile.
 
-This is the **spike-scope** split: Rust defaults into `both`, a small set of
+This is the **spike-scope** split: the shared defaults in `both`, a small set of
 mechanical rules, and the NvChad leader menus a vim user reaches for first.
 The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 `src/commands/specs.zig`).
@@ -108,10 +108,10 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `editor.jump_prev_edit` / `lsp.next_diagnostic` / `lsp.prev_diagnostic` / `lsp.goto_implementation` / `lsp.incoming_calls` / `view.toggle_wrap` / `editor.select_all_occurrences` / `nav.back` / `view.toggle_right_panel` / `find.grep_replace` / `view.menu_bar_open` / `file.copy_path` / `lsp.peek_definition_overlay` | `ctrl+k ctrl+q` / `alt+f8` / `shift+alt+f8` / `ctrl+f12` / `shift+alt+h` / `alt+z` / `ctrl+f2` / `ctrl+alt+minus` / `ctrl+alt+b` / `ctrl+shift+h` / `alt+f10` / `ctrl+alt+c`, `ctrl+k ctrl+alt+c` / `ctrl+shift+f10` | (new, 2026-09-24) | standard | VS Code 1.138's Linux defaults for commands mnml had and chords it left free — `docs/KEYMAP_PARITY.md` lists them, and what was NOT applied |
 | `view.toggle_tree` | `ctrl+b` | both | standard | vim: `Ctrl-B` is page-back (the pair of `Ctrl-F`); it was toggling the sidebar |
 | `editor.outdent_line` | `ctrl+[` | (new) | standard | VS Code outdent |
-| `picker.files` | `space f f` | both | both | NvChad <leader>ff (already the Rust default) |
+| `picker.files` | `space f f` | both | both | NvChad <leader>ff (already a shared default) |
 | `picker.files` | `ctrl+o` | both | standard | vim: `ctrl+o` is the jumplist (`nav.back`, with `ctrl+i` forward) in NORMAL and one-shot normal in INSERT (`:help i_CTRL-O`) — the chord chain runs before the vim handler, so a `both` binding shadowed both: the picker opened over insert mode and ate the next keys. `ctrl+p` stays in both |
 | `find.grep` | `space f w` | (new) | vim | NvChad <leader>fw |
-| `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already the Rust default) |
+| `picker.buffers` | `space f b` | both | both | NvChad <leader>fb (already a shared default) |
 | `view.toggle_tree` | `ctrl+n` | (new) | vim | NvChad <C-n> |
 | `view.focus_tree` | `space e` | (new) | vim | NvChad <leader>e is `NvimTreeFocus`: the tree takes the keys, opened first when hidden — never hidden. `<C-n>` (`NvimTreeToggle`) toggles, and the tree it opens is focused; VS Code's Ctrl+B leaves the focus in the editor |
 | `buffer.close` | `space x` | (new) | vim | NvChad <leader>x |
@@ -128,7 +128,7 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `view.cheatsheet` | `space c h` | (new) | vim | NvChad <leader>ch |
 | `whichkey.leader` | `space w K` | (new) | vim | NvChad <leader>wK |
 | `scratch.new` | `space b` | (new, 2026-09-24) | vim | NvChad `<leader>b` "buffer new" (`<Cmd>enew<CR>`, nvchad-probe): a fresh empty unnamed buffer in the current window; `:w name` gives it a file. It replaced the `+buffer` group — `space b b` / `b d` / `b r` / `b n` / `b p` / `b k` — whose rows each had another chord (`space f b`, `space x` / `space q`, `ctrl+shift+t`, Tab / Shift-Tab) except `view.keep_tab`, which is palette-only under vim until it gets a home (`docs/KEYMAP_PARITY.md`; `space B` is `browser.open`) |
-| `lsp.rename` / `lsp.code_action` / `git.status_pane` / `git.graph` / `picker.recent` / `find.find` | `space r a` / `space c a` / `space g t` / `space c m` / `space f o` / `space f z` | (new) | vim | NvChad mappings.lua: `<leader>ra` LSP renamer, `<leader>ca` code action, `<leader>gt` git status, `<leader>cm` git commits, `<leader>fo` oldfiles, `<leader>fz` find in current buffer. `<leader>th` (themes) stays `theme.pick` under `space t t`: `t h` is the Rust popup's hidden-files toggle |
+| `lsp.rename` / `lsp.code_action` / `git.status_pane` / `git.graph` / `picker.recent` / `find.find` | `space r a` / `space c a` / `space g t` / `space c m` / `space f o` / `space f z` | (new) | vim | NvChad mappings.lua: `<leader>ra` LSP renamer, `<leader>ca` code action, `<leader>gt` git status, `<leader>cm` git commits, `<leader>fo` oldfiles, `<leader>fz` find in current buffer. `<leader>th` (themes) stays `theme.pick` under `space t t`: `t h` is the popup's hidden-files toggle (`view.toggle_hidden`) |
 | `view.toggle_relative_numbers` / `lsp.diagnostics` | `space r n` / `space d s` | (new) | vim | NvChad mappings.lua: `<leader>rn` toggle relative number, `<leader>ds` LSP diagnostic loclist (here the DIAGNOSTICS section); both rows sit in the vim-only `+lsp` / `+debug` groups of the which-key popup |
 | `view.focus_top` / `view.focus_bottom` / `view.focus_previous` | `ctrl+w t` / `ctrl+w b` / `ctrl+w p` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_t` / `CTRL-W_b` / `CTRL-W_p`; from the tree `Ctrl-W p` returns to the window that was left |
 | `view.focus_next_split` / `view.focus_prev_split` | `ctrl+w w` / `ctrl+w W` | (new) | vim, through the handler's `Ctrl-W` prefix | `:help CTRL-W_w` / `CTRL-W_W` — the split walk both ways; the spec lists them in `Keys.vim_handler`, which the cheatsheet, palette and `docs/commands.md` show and the keymap never binds |
@@ -141,10 +141,10 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 | `lsp.hover` | `K` | (new) | vim | Neovim K |
 | `lsp.prev_diagnostic` | `[ d` | (new) | vim | Neovim [d |
 | `lsp.next_diagnostic` | `] d` | (new) | vim | Neovim ]d |
-| `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there (Rust parity). Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
+| `file.cut` / `file.copy` / `file.paste` / `file.duplicate` | `ctrl+x` / `ctrl+c` / `ctrl+v` / `ctrl+d` | (new) | both, tree and Files pane focus only | handled by the tree / Files pane key handlers, not the keymap: neither edits text, so the editor's insert-mode meanings cannot want them there. Under vim the Files pane's `ctrl+d` / `ctrl+u` stay half-page scroll and the ctrl chords fall through — see the next row |
 | `file.copy` / `file.paste` | `y y` / `P` | (new) | vim, tree and Files pane focus only | ranger's vocabulary: two keys so a stray press cannot copy a file; a stray key between the two cancels. `D` duplicates in both profiles |
 | `file.new` / `file.rename` / `file.delete` / `file.cut` / `tree.refresh` / `tree.expand_all` / `tree.collapse_all` | `a` / `r` / `d` / `x` / `R` / `E` / `W` | (new) | vim, tree focus only | nvim-tree's default `on_attach` verbs (create, rename, delete — a confirm box — cut, refresh, expand all, collapse all); `d d` cut gave way to `d` delete. The standard profile keeps `r` = refresh and none of the others |
-| `sessions.next_waiting` / `sessions.prev_waiting` | `space a j` / `space a k` (vim, under `+ai/term`) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits with the sessions in `+ai/term`, as `j` / `k` (down / up, the list's own keys); they are vim-only rows, so the standard profile's leader popup (`whichkey.leader`) keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `w` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
+| `sessions.next_waiting` / `sessions.prev_waiting` | `space a j` / `space a k` (vim, under `+ai/term`) · `ctrl+alt+n` / `ctrl+alt+shift+n` (standard) | (new) | vim / standard | Focus the next / previous pane whose child is blocked on a question (`sessions.needsYou`), in pane order, wrapping. The vim pair sits with the sessions in `+ai/term`, as `j` / `k` (down / up, the list's own keys); they are vim-only rows, so the standard profile's leader popup (`whichkey.leader`) keeps the rows it had. The standard pair collides with nothing in `specs.zig` (`ctrl+alt+` holds only the cursor adders, the buffer and split-walk arrows, `b`, `c`, `w`, `minus` and `enter`), and a focused terminal hands it to the app: a modified chord the keymap binds reaches the chord chain before the child (`dispatch.ptyKey`) |
 | `term.search` / `term.search_next` / `term.search_prev` | `/` / `?` / `n` / `N` | (new) | vim, a terminal pane in terminal-normal only | handled by the terminal pane's key handler (`pty_search.termNormalKey`), not the keymap: in terminal mode every plain key is the child's, and in an editor `/` `n` `N` are vim's own search. Neovim's terminal buffer answers them the same way: `/` searches down from the cursor's line (the bottom, so it wraps to the oldest match) and `?` up, `n` repeats the direction and `N` reverses it, and a wrap says `search hit BOTTOM, continuing at TOP` in the one step toast. In the bar Enter lands and closes, as vim's `/` does |
 | `term.search` | `ctrl+f` (whatever `find.find` is bound to) | (new) | standard, a terminal pane only | the pane's key handler reads the editor's find chord as the terminal's (`pty_search.findChord`), as VS Code's terminal takes `Ctrl+F`; `find.find` itself is untouched, so a rebind of it moves both. Under vim `ctrl+f` stays the child's (readline's forward-char). The search starts at the newest match; in the bar Enter is VS Code's terminal Find Previous (up, toward older output) and Shift+Enter Find Next (down) — the reverse of its editor find, verified in the 1.138 bundle (`workbench.action.terminal.findPrevious`: Enter with the find input focused, `findNext`: Shift+Enter); both wrap; Esc closes with the match selected |
 | `whichkey.leader` | `space` in the tree, the git status pane and every other window | tree: open the row; git status: stage toggle | vim | NvChad's `<leader>` maps are global (nvchad-probe: in the NvimTree buffer `maparg("<Space>ff")` is Telescope; nvim-tree maps no `<Space>`), so `Space f f` / `Space g c` reach the which-key menu from any window. The standard profile keeps Space as the pane's own key |
@@ -153,8 +153,8 @@ The full NvChad `mappings.lua` derivation is Phase 1 (`TODO(D4b)` in
 
 ## Sections and columns
 
-Every activity section has a side (`src/app/side.zig`); the two columns
-replace Rust's sidebar and tabbed right panel. The vim chords are
+Every activity section has a side (`src/app/side.zig`); sections sit in
+two columns, left and right. The vim chords are
 Neovim's window family read from a section; the standard profile has
 no chord for the moves — the palette, the rail's right-click menu
 (*Move to right / left side*) and `:sidebar left|right` are its doors.
@@ -165,7 +165,7 @@ Pinned by the `ctrlWCommand` and `vim:` tests in `src/app/side.zig`.
 | `view.move_section_left` | `Ctrl-W H` in a section or the tree; `<leader>sH` | — (`:sidebar left`, the rail menu, the palette) |
 | `view.move_section_right` | `Ctrl-W L` in a section or the tree; `<leader>sL` | — (`:sidebar right`) |
 | `view.toggle_tree` (the left column) | `Ctrl-N`, `<leader>te` (`<leader>e` is `view.focus_tree`) | `Ctrl+B` |
-| `view.toggle_right_panel` (the right column) | `<leader>tr` | `Ctrl+Shift+B` (both) |
+| `view.toggle_right_panel` (the right column) | `<leader>tr` | `Ctrl+Shift+B` (both), `Ctrl+Alt+B` |
 | `view.focus_right_panel` | — | — (the palette; `Ctrl+K R` is VS Code's reveal-in-OS since 2026-09-24) |
 | `view.right_panel_next_tab` / `prev_tab` | `<leader>t]` / `<leader>t[` | — |
 | `view.right_panel_close_tab` | `<leader>tx` | `Ctrl+Alt+W` (both) |
@@ -189,7 +189,7 @@ the far edge; only a focused section or the tree reads them as a side
 move. // changed (bottom-dock): `Ctrl-W J` / `K` read the same way —
 the section goes into the dock and comes back up to the column it came
 from — and they are not command ids, since the dock's two ids are
-Rust's `toggle` and `host_active`. Lowercase `j` / `k` stay the focus
+`view.toggle_bottom_panel` and `view.host_active_in_bottom_panel`. Lowercase `j` / `k` stay the focus
 step, and reach the dock because it is a window under everything.
 `Ctrl-W + / - / > / <` resize the window the keys are in: a row of the
 dock, or two cells of a focused column.
@@ -223,7 +223,7 @@ function keys. The F-keys are `both`, so a vim user keeps them too.
 
 Every chord above but `dap.exceptions`'s is checked against
 `src/commands/specs.zig` by the `both key profiles` test in `src/app/cmd_dap.zig`, which also asserts
-that no `dap.*` chord is standard-only. The `+debug` and `+lsp`-on-`r`
+that none of those commands has a standard-only chord. The `+debug` and `+lsp`-on-`r`
 which-key groups are `vim_only` (`src/app/whichkey.zig`): the standard
 profile's leader popup (`whichkey.leader`, headed `Ctrl+K`) keeps the
 reference editor's rows. `r` carries
@@ -238,7 +238,7 @@ chord in `keys.both` is a row in both profiles' popups, a chord in
 opens (the tree) are the same entry — before this, `space x`, `space h`,
 `space v`, `space f w` and `space w K` worked only typed fast. The only
 side tables are the group labels by prefix (`whichkey.groups`) and the
-Rust popup's two dead `+pr` rows; a spec chord under a prefix with no
+`+pr` group's two dead rows; a spec chord under a prefix with no
 group, or a chord that is both a leaf and a prefix, is a compile error.
 Following NvChad: `<leader>h` / `<leader>v` are the terminals and `+http`
 moved to `<leader>R`; `<leader>w` is the `wK` prefix, not a save;
@@ -310,7 +310,9 @@ Shift+F3, `dap.terminate` Shift+F5, `git.diff_prev_file` Shift+F7,
 `git.conflict_prev` Shift+F8, `dap.toggle_breakpoint_conditional`
 Shift+F9, `view.context_menu_at_focus` Shift+F10, `dap.step_out`
 Shift+F11, `lsp.references` Shift+F12, and `dap.restart` on
-Ctrl+Shift+F5). How they arrive depends on the terminal:
+Ctrl+Shift+F5); the standard profile adds two more, `help.focus` on
+Shift+F1 and `lsp.peek_definition_overlay` on Ctrl+Shift+F10. How they
+arrive depends on the terminal:
 
 | terminal | Shift+F5 arrives as | read as |
 |---|---|---|
@@ -328,7 +330,8 @@ Shift+F1–F8. `ESC O <m> P…S` (SS3 with a modifier digit) reads its
 modifier too. Two chords stay out of reach there: rxvt's Shift+F1 /
 F2 are the same bytes as F11 / F12, and neither Terminal.app nor rxvt
 sends anything for Ctrl+Shift+F5 — `dap.restart` has `<leader>dR` and
-the palette.
+the palette. On rxvt the standard profile's `help.focus` (Shift+F1) is
+out of reach the same way; it has the palette too.
 
 ## Quick open's prefixes — and the non-kitty route to the palette
 
@@ -345,8 +348,8 @@ the way VS Code's one quick-open widget does:
 Only a **leading** prefix counts, so `src/a>b.txt` stays a path.
 
 `>` is load-bearing rather than decorative. `palette` is bound to
-`ctrl+shift+p` and nothing else, and a terminal without the kitty
-keyboard protocol cannot tell `Ctrl+Shift+P` from `Ctrl+P` — both are
+`ctrl+shift+p` and the leader's `space p` and nothing else, and a
+terminal without the kitty keyboard protocol cannot tell `Ctrl+Shift+P` from `Ctrl+P` — both are
 byte `0x10` — so on Terminal.app, Alacritty's default config or plain
 tmux without passthrough, `Ctrl+Shift+P` arrives as `ctrl+p` and opens
 the file picker. `>` there is the door to every command that has no
