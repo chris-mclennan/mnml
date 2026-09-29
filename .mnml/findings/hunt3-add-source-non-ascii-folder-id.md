@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A private source added from a folder with non-ASCII letters gets an id with one `-` per UTF-8 byte (`intégrations` → `int--grations`)
 

@@ -1051,15 +1051,52 @@ fn sourceId(s: Config.MarketplaceSource) []const u8 {
     };
 }
 
-/// An id from a folder or repo name: its letters, digits, `-`, `_` and
-/// `.`, the rest `-`.
+/// An id from a folder or repo name, read per codepoint: ASCII letters,
+/// digits, `-`, `_` and `.` stay; an accented Latin letter is its base
+/// letter (`é` → `e`, `ß` → `ss`); a combining accent (how macOS may
+/// spell `é`) goes; any other run is one `-`. Ids stay ASCII, so every
+/// row's `(source)` and every toast reads the same in any terminal. A
+/// name with nothing left is `private`.
 fn idFrom(arena: Allocator, name: []const u8) Allocator.Error![]const u8 {
-    const out = try arena.dupe(u8, if (name.len == 0) "private" else name);
-    for (out) |*c| if (!(std.ascii.isAlphanumeric(c.*) or c.* == '-' or c.* == '_' or c.* == '.')) {
-        c.* = '-';
-    };
-    return out;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var dash = false;
+    var i: usize = 0;
+    while (i < name.len) {
+        const len = std.unicode.utf8ByteSequenceLength(name[i]) catch 1;
+        const cp: u21 = if (len > 1 and i + len <= name.len)
+            std.unicode.utf8Decode(name[i .. i + len]) catch 0xFFFD
+        else
+            name[i];
+        i += if (i + len <= name.len) len else 1;
+        if (cp >= 0x300 and cp <= 0x36F) continue;
+        const keep: []const u8 = if (cp < 0x80 and (std.ascii.isAlphanumeric(@intCast(cp)) or cp == '-' or cp == '_' or cp == '.'))
+            name[i - 1 .. i]
+        else if (cp >= 0xC0 and cp < 0xC0 + latin_fold.len)
+            latin_fold[cp - 0xC0]
+        else
+            "";
+        if (keep.len == 0) {
+            dash = true;
+            continue;
+        }
+        if (dash and out.items.len > 0) try out.append(arena, '-');
+        dash = false;
+        try out.appendSlice(arena, keep);
+    }
+    if (out.items.len == 0) return arena.dupe(u8, "private");
+    return out.items;
 }
+
+/// U+00C0…U+017F (Latin-1 Supplement, Latin Extended-A) as ASCII: the
+/// base letter, or "" for the two signs (`×`, `÷`) among them.
+const latin_fold = [_][]const u8{
+    "A", "A", "A", "A", "A", "A", "AE", "C", "E", "E", "E", "E", "I", "I", "I", "I", "D", "N", "O",  "O",  "O", "O", "O", "",  "O", "U", "U", "U", "U", "Y", "TH", "ss",
+    "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i", "d", "n", "o",  "o",  "o", "o", "o", "",  "o", "u", "u", "u", "u", "y", "th", "y",
+    "A", "a", "A", "a", "A", "a", "C",  "c", "C", "c", "C", "c", "C", "c", "D", "d", "D", "d", "E",  "e",  "E", "e", "E", "e", "E", "e", "E", "e", "G", "g", "G",  "g",
+    "G", "g", "G", "g", "H", "h", "H",  "h", "I", "i", "I", "i", "I", "i", "I", "i", "I", "i", "IJ", "ij", "J", "j", "K", "k", "k", "L", "l", "L", "l", "L", "l",  "L",
+    "l", "L", "l", "N", "n", "N", "n",  "N", "n", "n", "N", "n", "O", "o", "O", "o", "O", "o", "OE", "oe", "R", "r", "R", "r", "R", "r", "S", "s", "S", "s", "S",  "s",
+    "S", "s", "T", "t", "T", "t", "T",  "t", "U", "u", "U", "u", "U", "u", "U", "u", "U", "u", "U",  "u",  "W", "w", "Y", "y", "Y", "Z", "z", "Z", "z", "Z", "z",  "s",
+};
 
 /// Add `input` — a folder (`~` expanded, relative to the workspace) or
 /// `owner/repo[:apps_dir]` — to `marketplace.sources`, list it, and show
@@ -2709,5 +2746,36 @@ test "addSource: a pasted GitHub repo URL is that repo — scheme or not, .git, 
     try testing.expect(std.mem.indexOf(u8, msg, "https://gitlab.com/someone/tools") != null);
     try testing.expect(std.mem.indexOf(u8, msg, "owner/repo") != null);
     try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try settle(app);
+}
+
+test "idFrom reads like the name: accented Latin letters fold to their base letter, one - per run of anything else, and a name with nothing ASCII left is `private`" {
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    try testing.expectEqualStrings("integrations", try idFrom(a, "intégrations"));
+    // The same word as macOS may hand it over: e + a combining accent.
+    try testing.expectEqualStrings("integrations", try idFrom(a, "inte\u{301}grations"));
+    try testing.expectEqualStrings("uni-code", try idFrom(a, "ünï cødé"));
+    try testing.expectEqualStrings("Strasse-Lodz", try idFrom(a, "Straße Łódź"));
+    try testing.expectEqualStrings("my-tools", try idFrom(a, "my  tools"));
+    try testing.expectEqualStrings("tools-v2", try idFrom(a, "tools → v2"));
+    try testing.expectEqualStrings("acme_co.x", try idFrom(a, "acme_co.x"));
+    try testing.expectEqualStrings("private", try idFrom(a, "日本語"));
+    try testing.expectEqualStrings("private", try idFrom(a, ""));
+}
+
+test "addSource: a folder named with non-ASCII letters gets an id that reads like it" {
+    const io = testing.io;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const d = rig.tmp.dir;
+    try d.createDirPath(io, "ws/intégrations/one");
+    try d.writeFile(io, .{ .sub_path = "ws/intégrations/one/build.zig", .data = "" });
+    try d.writeFile(io, .{ .sub_path = "ws/intégrations/one/manifest.zon", .data = ".{ .id = \"one\", .label = \"One\", .version = \"0.1.0\", .binary = \"mnml-one\" }" });
+    try testing.expectEqualStrings("integrations", (try addSource(app, "intégrations")).id);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added integrations: 1 integration found") != null);
     try settle(app);
 }
