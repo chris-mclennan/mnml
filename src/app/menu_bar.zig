@@ -571,11 +571,11 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
         .toggle_tree => .{ .title = if (app.tree.visible) "file tree: open" else "file tree: off", .detail = "click: toggle file tree (Ctrl+B)" },
         .toggle_right_panel => .{ .title = if (side.shown(app, .right) != null) "right column: open" else "right column: off", .detail = "click: toggle the right column (Ctrl+Shift+B)" },
         .back => .{
-            .title = if (n <= 1) "back to previous buffer (Ctrl+[)" else try std.fmt.allocPrint(arena, "click: prev buffer (MRU) · {d} open", .{n}),
+            .title = if (n <= 1) "back to previous buffer (Ctrl+[)" else try std.fmt.allocPrint(arena, "click: previous tab in this split, by position · {d} open", .{n}),
             .detail = if (n <= 1) "disabled — no other buffers" else null,
         },
         .forward => .{
-            .title = if (n <= 1) "forward to next buffer (Ctrl+])" else try std.fmt.allocPrint(arena, "click: next buffer (MRU) · {d} open", .{n}),
+            .title = if (n <= 1) "forward to next buffer (Ctrl+])" else try std.fmt.allocPrint(arena, "click: next tab in this split, by position · {d} open", .{n}),
             .detail = if (n <= 1) "disabled — no other buffers" else null,
         },
         .dropdown => .{ .title = "recent files", .detail = "click: open recent" },
