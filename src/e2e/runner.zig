@@ -171,6 +171,8 @@ pub const Options = struct {
     /// File names (without `.test`) to skip, announced as such
     /// (`--skip`): what `zig build check` cuts by design.
     skip: []const []const u8 = &.{},
+    /// Run only this slice of the corpus (`--shard I/N`): see `Shard`.
+    shard: ?Shard = null,
     /// A file that fails is run once more; one that passes then is
     /// reported `FLAKY` — on its own line as it happens and again in
     /// the trailer — and does not fail the run. `mnml-zig test` turns
@@ -181,6 +183,36 @@ pub const Options = struct {
     /// file's App or `shell` steps run goes through it, and one whose
     /// repository is outside the run's temp root fails the file.
     git_guard: ?GitGuard = null,
+};
+
+/// `--shard I/N`: one of N disjoint slices of the corpus, so N runner
+/// processes can share it. Position P — a file's place in the list the
+/// runner discovered (every root, each sorted, in the order given) after
+/// `--filter` and `--skip` have taken theirs out — belongs to shard
+/// `P % N`. The N shards of the same invocation therefore run every such
+/// file exactly once between them, and the split depends on nothing but
+/// that list. A `--skip` announcement belongs to shard 0 alone, so a log
+/// merged from all N still names each cut once.
+pub const Shard = struct {
+    index: u32,
+    count: u32,
+
+    pub const ParseError = error{InvalidShard};
+
+    /// `I/N` with 0 ≤ I < N. Anything else is an error — never a
+    /// silent full run.
+    pub fn parse(text: []const u8) ParseError!Shard {
+        const slash = std.mem.indexOfScalar(u8, text, '/') orelse return error.InvalidShard;
+        const index = std.fmt.parseInt(u32, text[0..slash], 10) catch return error.InvalidShard;
+        const count = std.fmt.parseInt(u32, text[slash + 1 ..], 10) catch return error.InvalidShard;
+        if (count == 0 or index >= count) return error.InvalidShard;
+        return .{ .index = index, .count = count };
+    }
+
+    /// Does the file at `position` run in this shard?
+    pub fn keeps(self: Shard, position: usize) bool {
+        return position % self.count == self.index;
+    }
 };
 
 /// The file's name without its `.test`.
@@ -1563,6 +1595,14 @@ fn lessThan(_: void, a: []u8, b: []u8) bool {
 /// than after the whole root: a 500-file corpus takes ten minutes, and
 /// a run that prints only start lines for that long reads as a hang.
 pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: Options, out: *Io.Writer) !Stats {
+    var position: usize = 0;
+    return runPathAt(gpa, io, factory, root, opts, out, &position);
+}
+
+/// `runPath` with the shard position carried in from earlier roots, so
+/// `--shard` splits the whole list `runPaths` was given rather than
+/// each root on its own.
+fn runPathAt(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: Options, out: *Io.Writer, position: *usize) !Stats {
     const files = collectFiles(gpa, io, root) catch |err| switch (err) {
         error.PathNotFound => {
             try out.print("mnml-zig test: no such path: {s}\n", .{root});
@@ -1587,10 +1627,15 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
         var skipped = false;
         for (opts.skip) |s| skipped = skipped or std.mem.eql(u8, s, stem);
         if (skipped) {
-            try out.print("⊘ e2e SKIP (--skip): {s}\n", .{path});
-            try out.flush();
+            if (opts.shard == null or opts.shard.?.index == 0) {
+                try out.print("⊘ e2e SKIP (--skip): {s}\n", .{path});
+                try out.flush();
+            }
             continue;
         }
+        const here = position.*;
+        position.* += 1;
+        if (opts.shard) |sh| if (!sh.keeps(here)) continue;
         const header = readHeader(gpa, io, path);
         if (header.requires_network and !opts.network) {
             try out.print("⊘ e2e SKIP (network opt-in): {s}\n", .{path});
@@ -1687,6 +1732,9 @@ fn readHeader(gpa: Allocator, io: Io, path: []const u8) parser.Header {
 /// Run several roots and print the `N/M passed` trailer. Returns the
 /// number of failures — the exit status is 1 when it is not zero.
 ///
+/// Under `--shard I/N` the trailer ends its first line with
+/// `, shard I/N`.
+///
 /// The trailer keeps `N/M passed` as its first bytes (scripts grep for
 /// it) and then breaks M down by what the runs actually checked:
 /// `141/141 passed (141 content, 0 structure-only)`. The two numbers sum
@@ -1696,8 +1744,9 @@ fn readHeader(gpa: Allocator, io: Io, path: []const u8) parser.Header {
 pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const u8, opts: Options, out: *Io.Writer) !Stats {
     var total: Stats = .{};
     errdefer total.deinit(gpa);
+    var position: usize = 0;
     for (roots) |root| {
-        var s = try runPath(gpa, io, factory, root, opts, out);
+        var s = try runPathAt(gpa, io, factory, root, opts, out, &position);
         defer s.flaky.deinit(gpa);
         total.total += s.total;
         total.failed += s.failed;
@@ -1710,6 +1759,9 @@ pub fn runPaths(gpa: Allocator, io: Io, factory: Factory, roots: []const []const
         total.total - total.structure_only,
         total.structure_only,
     });
+    // Which slice this was, so a log merged from N shards can be checked
+    // for all N.
+    if (opts.shard) |sh| try out.print(", shard {d}/{d}", .{ sh.index, sh.count });
     // The flakes are in the count, and named right under it: a run that
     // only passed because of the retry says so in its last lines.
     if (total.flaky.items.len > 0) try out.print(", {d} FLAKY (passed only on a retry)", .{total.flaky.items.len});
@@ -2460,6 +2512,147 @@ test "runPath: --filter keeps the matching names silently, --skip announces the 
     try sdk_testing.expectPath(expected, out.written());
     try t.expectEqualStrings("alpha_one", stemOf("/x/alpha_one.test"));
     try t.expectEqualStrings("notes", stemOf("notes"));
+}
+
+/// The names `runPath` ran (`  ok   <name>` lines) under `opts`, in
+/// order. Owned, each and the list.
+fn ranNames(root: []const u8, opts: Options) ![][]u8 {
+    var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+    var out: Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+    var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out.writer);
+    defer stats.deinit(t.allocator);
+    try t.expectEqual(@as(usize, 0), stats.failed);
+    var names: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (names.items) |n| t.allocator.free(n);
+        names.deinit(t.allocator);
+    }
+    var lines = std.mem.splitScalar(u8, out.written(), '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "  ok   ")) continue;
+        try names.append(t.allocator, try t.allocator.dupe(u8, line["  ok   ".len..]));
+    }
+    try t.expectEqual(stats.total, names.items.len);
+    return names.toOwnedSlice(t.allocator);
+}
+
+fn freeNames(names: [][]u8) void {
+    for (names) |n| t.allocator.free(n);
+    t.allocator.free(names);
+}
+
+/// A root of `count` passing dummy files, `f00.test` … — sorted by name
+/// the way `collectFiles` sorts them. Owned.
+fn dummySuite(env: *TestEnv, dir: []const u8, count: usize) ![]u8 {
+    try env.tmp.dir.createDirPath(t.io, dir);
+    for (0..count) |i| {
+        var buf: [64]u8 = undefined;
+        const sub = try std.fmt.bufPrint(&buf, "{s}/f{d:0>2}.test", .{ dir, i });
+        try env.tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "expect screen contains ok\n" });
+    }
+    return std.fs.path.join(t.allocator, &.{ env.root, dir });
+}
+
+test "Shard.parse: I/N with 0 <= I < N, everything else is an error" {
+    const s = try Shard.parse("3/4");
+    try t.expectEqual(@as(u32, 3), s.index);
+    try t.expectEqual(@as(u32, 4), s.count);
+    _ = try Shard.parse("0/1");
+    for ([_][]const u8{ "4/4", "x/2", "1/0", "0/0", "5/4", "", "1", "/2", "1/", "-1/2", "1/2/3", " 1/2", "1/x" }) |bad| {
+        try t.expectError(error.InvalidShard, Shard.parse(bad));
+    }
+}
+
+test "--shard: every file runs in exactly one shard, and the split is the same every time" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    const files = 26;
+    const root = try dummySuite(&env, "suite", files);
+    defer t.allocator.free(root);
+
+    const all = try ranNames(root, env.opts());
+    defer freeNames(all);
+    try t.expectEqual(@as(usize, files), all.len);
+
+    for ([_]u32{ 1, 3, 4, 12 }) |n| {
+        // How many shards ran each file of the unsharded run.
+        var seen = [_]u32{0} ** files;
+        for (0..n) |i| {
+            var opts = env.opts();
+            opts.shard = .{ .index = @intCast(i), .count = n };
+            const got = try ranNames(root, opts);
+            defer freeNames(got);
+            // Deterministic: the same shard twice runs the same files.
+            const again = try ranNames(root, opts);
+            defer freeNames(again);
+            try t.expectEqual(got.len, again.len);
+            for (got, again) |a, b| try t.expectEqualStrings(a, b);
+            for (got) |name| {
+                const at = for (all, 0..) |x, k| {
+                    if (std.mem.eql(u8, x, name)) break k;
+                } else return error.TestUnexpectedResult;
+                // Position `at` belongs to shard `at % n` and nowhere else.
+                try t.expectEqual(i, at % n);
+                seen[at] += 1;
+            }
+        }
+        // The union is the unsharded set and the shards are disjoint.
+        for (seen) |c| try t.expectEqual(@as(u32, 1), c);
+    }
+}
+
+test "--shard splits the list left after --filter and --skip, and only shard 0 announces a skip" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "mixed");
+    for ([_][]const u8{ "alpha_a", "alpha_b", "alpha_c", "alpha_d", "alpha_e", "alpha_f", "alpha_g", "beta_a", "beta_b" }) |stem| {
+        var buf: [64]u8 = undefined;
+        const sub = try std.fmt.bufPrint(&buf, "mixed/{s}.test", .{stem});
+        try env.tmp.dir.writeFile(t.io, .{ .sub_path = sub, .data = "expect screen contains ok\n" });
+    }
+    const root = try std.fs.path.join(t.allocator, &.{ env.root, "mixed" });
+    defer t.allocator.free(root);
+    var base = env.opts();
+    base.name_filter = "alpha";
+    base.skip = &.{"alpha_c"};
+
+    const all = try ranNames(root, base);
+    defer freeNames(all);
+    // alpha_a b d e f g: the filter took beta, the skip took alpha_c.
+    try t.expectEqual(@as(usize, 6), all.len);
+
+    const n = 3;
+    var seen = [_]u32{0} ** 6;
+    var skip_lines: usize = 0;
+    for (0..n) |i| {
+        var opts = base;
+        opts.shard = .{ .index = @intCast(i), .count = n };
+        const got = try ranNames(root, opts);
+        defer freeNames(got);
+        // Two of the six each: positions in the filtered list, not the
+        // raw one — or the skipped file would leave one shard short.
+        try t.expectEqual(@as(usize, 2), got.len);
+        for (got) |name| {
+            try t.expect(std.mem.startsWith(u8, name, "alpha_"));
+            try t.expect(!std.mem.eql(u8, name, "alpha_c.test"));
+            for (all, 0..) |x, k| if (std.mem.eql(u8, x, name)) {
+                seen[k] += 1;
+            };
+        }
+        var sf: StubFactory = .{ .proto = .{ .text = "ok" } };
+        var out: Io.Writer.Allocating = .init(t.allocator);
+        defer out.deinit();
+        var stats = try runPaths(t.allocator, t.io, sf.factory(), &.{root}, opts, &out.writer);
+        defer stats.deinit(t.allocator);
+        skip_lines += std.mem.count(u8, out.written(), "SKIP (--skip)");
+        // The trailer names the slice.
+        const tail = try std.fmt.allocPrint(t.allocator, "\n2/2 passed (2 content, 0 structure-only), shard {d}/3\n", .{i});
+        defer t.allocator.free(tail);
+        try t.expect(std.mem.endsWith(u8, out.written(), tail));
+    }
+    for (seen) |c| try t.expectEqual(@as(u32, 1), c);
+    try t.expectEqual(@as(usize, 1), skip_lines);
 }
 
 test "`# requires: optimized` runs against a shipped build and is announced as skipped against a Debug one" {

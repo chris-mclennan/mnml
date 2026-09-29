@@ -88,7 +88,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml-zig [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -471,7 +471,7 @@ fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8)
     if (Io.Dir.cwd().access(io, installed, .{})) |_| return try gpa.dupe(u8, installed) else |_| return null;
 }
 
-/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--strict] [--parse] [--stub]`
+/// `mnml-zig test [PATH…] [--gate] [--sizes 80x24,120x40] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] [--parse] [--stub]`
 ///
 /// Runs `.test` scripts (default `tests/e2e`). `--gate` runs the Phase-0
 /// gate list from `tools/gate.txt`. `--filter` keeps the files whose
@@ -481,7 +481,9 @@ fn fakeToolPath(gpa: Allocator, io: Io, base: []const u8, installed: []const u8)
 /// exercises the harness, proves nothing about the editor. A file that
 /// fails is retried once (`--retry-flaky`, the default); a pass on the
 /// retry is reported `FLAKY` by name in the trailer and does not fail
-/// the run. `--strict` retries nothing. Exit 1 on any failure.
+/// the run. `--strict` retries nothing. `--shard I/N` runs slice I of N
+/// (`e2e.runner.Shard`): N such runs cover every file exactly once.
+/// Exit 1 on any failure.
 fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const [:0]const u8, w: *Io.Writer) !u8 {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
@@ -490,6 +492,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
     var skips: std.ArrayList([]const u8) = .empty;
     defer skips.deinit(gpa);
     var name_filter: ?[]const u8 = null;
+    var shard: ?e2e.runner.Shard = null;
     var gate = false;
     var parse_only = false;
     var use_stub = false;
@@ -514,6 +517,13 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
             try skips.append(gpa, argv[i]);
         } else if (std.mem.startsWith(u8, a, "--skip=")) {
             try skips.append(gpa, a["--skip=".len..]);
+        } else if (std.mem.eql(u8, a, "--shard") or std.mem.startsWith(u8, a, "--shard=")) {
+            const text = if (a.len > "--shard".len) a["--shard=".len..] else blk: {
+                i += 1;
+                if (i >= argv.len) return usage(w, "test", "--shard needs I/N (0 <= I < N)");
+                break :blk argv[i];
+            };
+            shard = e2e.runner.Shard.parse(text) catch return usage(w, "test", "--shard wants I/N with 0 <= I < N, e.g. --shard 0/4");
         } else if (std.mem.eql(u8, a, "--strict") or std.mem.eql(u8, a, "--no-retry-flaky")) {
             retry_flaky = false;
         } else if (std.mem.eql(u8, a, "--retry-flaky")) {
@@ -699,6 +709,7 @@ fn testSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: [
         .data_root = data_root,
         .name_filter = name_filter,
         .skip = skips.items,
+        .shard = shard,
         .env = &file_base,
         .retry_flaky = retry_flaky,
     };
@@ -845,6 +856,24 @@ test "usage names the subcommand it came from, and only the app when there is no
     w = .fixed(&buf);
     _ = try usage(&w, "test", "--filter needs a name");
     try std.testing.expectEqualStrings("mnml-zig test: --filter needs a name\n", w.buffered());
+}
+
+test "mnml-zig test --shard: a bad slice is a usage error before anything runs" {
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    const cases = [_][]const [:0]const u8{
+        &.{ "--shard", "4/4" },
+        &.{ "--shard", "x/2" },
+        &.{ "--shard", "1/0" },
+        &.{"--shard=2/2"},
+        &.{"--shard"},
+    };
+    for (cases) |argv| {
+        var buf: [256]u8 = undefined;
+        var w: Io.Writer = .fixed(&buf);
+        try std.testing.expectEqual(@as(u8, 2), try testSubcommand(std.testing.allocator, std.testing.io, &env, argv, &w));
+        try std.testing.expect(std.mem.startsWith(u8, w.buffered(), "mnml-zig test: --shard "));
+    }
 }
 
 /// Parse every file and report; the way to validate the corpus before

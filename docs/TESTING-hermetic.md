@@ -236,6 +236,52 @@ our runs' scans are scoped (its replacement survived both of ours in the
 --resume`, so the likely killer is an unfixed run's machine-wide scan —
 the bug this file is about, seen from the outside. Inferred, not traced.
 
+## Sharding the corpus
+
+Hermetic files are also independent files, so the corpus splits across
+processes. `mnml-zig test --shard I/N` (0 ≤ I < N) runs one slice:
+
+- The runner builds its list as usual — every root it was given, each
+  sorted, in order — takes out what `--filter` and `--skip` take out,
+  and keeps the file at position P when `P % N == I`. The N shards of
+  one invocation therefore run **every file exactly once** between them,
+  and the split depends on nothing but that list (a unit test checks N =
+  1, 3, 4 and 12 for exactly-once and for determinism).
+- Files the header skips (`# requires: network`, another OS, an
+  optimized build) are skipped by the one shard that owns them. A
+  `--skip` announcement is printed by shard 0 only.
+- The trailer ends `, shard I/N`, so a merged log shows which slices it
+  holds.
+- It composes with explicit paths, `--gate` and `--sizes`: a file runs
+  at all its sizes in its one shard.
+- A malformed slice (`4/4`, `x/2`, `1/0`) is a usage error (exit 2),
+  never a silent full run.
+
+Measured on an 18-core Mac, ReleaseSafe: the corpus took ~57 min
+sequentially. Twelve parallel shards took 265 s and returned the same
+set of verdicts. Four shards (2026-09-28, 1101 files) finished in 521 to
+686 s, 275/275 each. Their merged total was 1100: every file except the
+one network opt-in, which is also what an unsharded run reports.
+
+To run N shards and merge them:
+
+```sh
+zig build -Doptimize=ReleaseSafe -p .verify/prefix
+N=4
+for i in $(seq 0 $((N-1))); do
+  .verify/prefix/bin/mnml-zig test --shard $i/$N > .verify/shard-$i.log 2>&1 &
+done
+wait
+tail -qn1 .verify/shard-*.log          # one `a/b passed …, shard i/N` per slice
+grep -h '^  FAIL\|^FLAKY' .verify/shard-*.log
+grep -hE '^  ok' .verify/shard-*.log | sort | uniq -d   # must print nothing
+```
+
+Add the `b`s from the trailers: the sum must equal the total an
+unsharded run reports. CI runs the three-size gate, and the corpus when
+it is asked for, as four `corpus (shard i/4)` jobs from one ReleaseSafe
+build (`.github/workflows/ci.yml`).
+
 ## The real-screen layer
 
 Everything above is about the headless App: it sees the cell grid and
