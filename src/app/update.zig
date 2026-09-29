@@ -117,7 +117,7 @@ fn fetch(gpa: Allocator, io: Io) (Allocator.Error || Io.Cancelable)!Result {
     var req = try http_parse.Request.init(gpa);
     defer req.deinit(gpa);
     try req.setUrl(gpa, endpoint);
-    try req.addHeader(gpa, "User-Agent", "mnml-zig/" ++ current);
+    try req.addHeader(gpa, "User-Agent", "mnml/" ++ current);
     try req.addHeader(gpa, "Accept", "application/vnd.github+json");
     var outcome = try http_client.send(gpa, io, &req, .{});
     defer outcome.deinit(gpa);
