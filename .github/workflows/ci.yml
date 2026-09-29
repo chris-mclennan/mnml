@@ -96,16 +96,6 @@ jobs:
         timeout-minutes: 40
         run: zig build -j2 ${{ matrix.os == 'macos-latest' && 'unit -Dtest-trace=true -Dtest-trace-live=true' || 'test' }} -Doptimize=ReleaseSafe --summary failures
 
-      # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
-      # files, and the corpus's timings are the shipped build's
-      # (docs/CONTRIBUTING.md, "Run the corpus against an optimized
-      # build") — the gate subset includes an integration file that is
-      # timing-marginal in a Debug build. The Debug compile stays covered
-      # by the `zig build test -Doptimize=Debug` step above.
-      - name: zig build (ReleaseSafe — the build the gate runs against)
-        shell: bash
-        run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
-
       # A string that dies at the next frame reaching a consumer that
       # outlives the frame (a menu label, a prompt title, a confirm
       # message, the screen's grapheme slices). `zig build test` runs the
@@ -127,6 +117,19 @@ jobs:
       - name: zig build -Dpartial=false (every command id has a runner)
         shell: bash
         run: zig build -j2 -Dpartial=false --summary failures
+
+      # ReleaseSafe on purpose: the `--gate` sweep below runs `.test`
+      # files, and the corpus's timings are the shipped build's
+      # (docs/CONTRIBUTING.md, "Run the corpus against an optimized
+      # build") — the gate subset includes an integration file that is
+      # timing-marginal in a Debug build. The Debug compile stays covered
+      # by the `zig build test -Doptimize=Debug` step above. It runs after
+      # -Dpartial=false, whose Debug install lands in the same
+      # zig-out/bin/mnml-zig: in the old order the gate ran that Debug
+      # exe, not this one.
+      - name: zig build (ReleaseSafe — the build the gate runs against)
+        shell: bash
+        run: zig build -j2 -Doptimize=ReleaseSafe --summary failures
 
       # The Phase-0 gate (tools/gate.txt) at three sizes: content asserts at
       # 120x40; 80x24 and 200x60 assert no panic, no leak, no rect outside
