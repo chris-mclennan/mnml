@@ -2930,9 +2930,15 @@ test "docs/examples/init.lua loads and its surfaces are all there" {
     // reference file's own debugging command is worth pinning.
     try command.runNamed(&app, "user.notes_debug");
     try testing.expect(std.mem.startsWith(u8, app.lastToast().?, "{ notes = 1,"));
-    const ws_line = try std.fmt.allocPrint(testing.allocator, "workspace = \"{s}\"", .{app.workspace});
-    defer testing.allocator.free(ws_line);
-    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, ws_line) != null);
+    // The workspace is printed the way `mnml.inspect` quotes a string —
+    // a Windows path's backslashes doubled — so the check is on the
+    // key and the folder's own name, not the escaped spelling.
+    const shown = app.lastToast().?;
+    const key_at = std.mem.indexOf(u8, shown, "workspace = \"") orelse return error.WorkspaceNotInspected;
+    const ws_name = std.fs.path.basename(app.workspace);
+    const tail = try std.fmt.allocPrint(testing.allocator, "{s}\"", .{ws_name});
+    defer testing.allocator.free(tail);
+    try testing.expect(std.mem.indexOf(u8, shown[key_at..], tail) != null);
     // The operator, from the standard road: the word under the cursor
     // joins the notes.
     const e = app.activeEditor().?;
