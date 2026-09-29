@@ -517,6 +517,19 @@ check "tour.sh: a failed rebuild stops (exit 64) and names its log" '[ $rc -eq 6
 # line is the summary.
 out=$(MNML_DRIVE_NO_REBUILD=1 "$TR/tools/tour.sh" diff --out "$TMP/tourout-empty" 2>&1); rc=$?
 check "tour.sh diff: skips the driver check and leads with the summary" '[ $rc -eq 0 ] && ! echo "$out" | grep -q stale && [ "$(echo "$out" | head -1)" = "0 ok, 0 changed, 0 asserts ok" ]' "$out"
+# d) The permissions hop: a driver whose `doctor` refuses sends `run`
+# to a Ghostty window — here to a Ghostty that is not there, so nothing
+# opens — and `--no-ghostty` / `diff` never hop.
+if [ "$(uname -s)" = Darwin ]; then
+  fake_drive "$(stamp_hash "$TR")"
+  cp "$ROOT/tools/tour/ghostty-hop.sh" "$TR/tools/tour/"
+  out=$(MNML_DRIVE_NO_REBUILD=1 MNML_TOUR_GHOSTTY_APP="$TMP/no-such-ghostty.app" "$TR/tools/tour.sh" run --out "$TMP/tourout" 2>&1); rc=$?
+  check "tour.sh: without the grants, run hops to a Ghostty window" '[ $rc -eq 69 ] && echo "$out" | grep -q "running in a Ghostty window" && echo "$out" | grep -q "no Ghostty at $TMP/no-such-ghostty.app"' "$out"
+  out=$(MNML_DRIVE_NO_REBUILD=1 MNML_TOUR_IN_GHOSTTY=1 MNML_TOUR_GHOSTTY_APP="$TMP/no-such-ghostty.app" "$TR/tools/tour.sh" run --in-ghostty --out "$TMP/tourout" 2>&1)
+  check "tour.sh: inside the hop, never hops again" '! echo "$out" | grep -q "Ghostty"' "$out"
+  out=$(MNML_DRIVE_NO_REBUILD=1 MNML_TOUR_GHOSTTY_APP="$TMP/no-such-ghostty.app" "$TR/tools/tour.sh" diff --in-ghostty --out "$TMP/tourout-empty" 2>&1)
+  check "tour.sh diff: never hops, and --in-ghostty is not passed on" '[ "$(echo "$out" | head -1)" = "0 ok, 0 changed, 0 asserts ok" ]' "$out"
+fi
 # f2) The exit is 1 on a CHANGED shot or a failed assert and on nothing
 # else: a shot with no baseline is a note. Tiny synthetic PNGs.
 (cd "$TR" && python3 -c '
