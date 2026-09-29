@@ -1382,6 +1382,56 @@ test "a host chip with a wide glyph: the cells the pack plans are the cells pain
     }
 }
 
+/// Row `y`'s statusline hits, one per cell (0 for none), for comparing
+/// two rows' layouts cell for cell.
+fn hitRow(b: *Bench, arena: Allocator, y: u16) ![]u32 {
+    const out = try arena.alloc(u32, b.app.screen.width);
+    for (out, 0..) |*o, x| o.* = if (b.app.hits.at(@intCast(x), y)) |h| (if (h == .statusline_seg) h.statusline_seg + 1 else 0) else 0;
+    return out;
+}
+
+test "hunt3: three host chips with `界界` lay out exactly as the same chips with `abcd`, the same four cells, at 80x24" {
+    // hunt3-statusline-wide-segments-push-chips-offscreen: the pack
+    // counted each `界` as one cell, admitted a third chip the row had
+    // no room for, and the workspace chip was cut to `ws-`.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var layouts: [2][]u32 = undefined;
+    var rows: [2][]const u8 = undefined;
+    for ([_][]const u8{ "abcd", "\u{754c}\u{754c}" }, 0..) |mid, k| {
+        var b = try Bench.init(80, 24);
+        defer b.deinit();
+        for ([_]struct { []const u8, []const u8, u8 }{ .{ "seg1", "S1", 10 }, .{ "seg2", "S2", 20 }, .{ "seg3", "S3", 30 } }, 0..) |seg, n| {
+            const text = try std.fmt.allocPrint(arena, "{s} {s} {d}{d}", .{ seg[1], mid, n + 1, n + 1 });
+            try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = seg[0], .text = text, .side = .right, .priority = seg[2] });
+        }
+        rows[k] = try arena.dupe(u8, try b.row(22));
+        layouts[k] = try hitRow(&b, arena, 22);
+        // S1 does not fit beside S2 and S3 in either run.
+        try testing.expect(b.colOf(22, sl.seg_dyn_base + 0) == null);
+    }
+    try testing.expectEqualSlices(u32, layouts[0], layouts[1]);
+    // The wide run's text is the control's with each `abcd` now `界界`.
+    try testing.expect(std.mem.indexOf(u8, rows[1], "S3 \u{754c}") != null);
+}
+
+test "hunt3: a host chip cut to one cell paints the ellipsis whole, never half of its bytes" {
+    // hunt3-statusline-one-cell-segment-paints-replacement-char.
+    for ([_]bool{ false, true }) |ascii| {
+        var b = try Bench.init(120, 40);
+        defer b.deinit();
+        b.app.cfg.ui.ascii_icons = ascii;
+        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "tiny", .side = .right, .text = "abcdef", .priority = 90, .max_width = 1 });
+        const row = try b.row(38);
+        try testing.expect(std.unicode.utf8ValidateSlice(row));
+        try testing.expect(std.mem.indexOf(u8, row, "\u{fffd}") == null);
+        const x = b.colOf(38, sl.seg_dyn_base) orelse return error.ChipNotOnRow;
+        const want: []const u8 = if (ascii) "." else "\u{2026}";
+        try testing.expectEqualStrings(want, b.app.screen.readCell(x + 1, 38).?.char.grapheme);
+    }
+}
+
 // ─── the narrow rule, at four widths ─────────────────────────────────────
 
 test "the narrow rule at 120 / 100 / 80 / 60 columns: the gap shrinks, then the branch clips to `main …`, then to `…` and the edge cuts the right lane" {

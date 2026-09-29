@@ -876,6 +876,13 @@ test "pack: priority order, max_width truncation, min_width drop" {
     try t.expectEqual(@as(u16, 9), w[1].cells);
     // Nine cells of budget: `漢字 2` (8) fits and nothing else does.
     try t.expectEqual(@as(usize, 1), (try pack(a, st.segments.items, .left, 9, false, .unicode)).len);
+    // A cut to one cell is the whole mark, never its first byte.
+    try st.setSegment(t.allocator, .{ .id = "tiny", .text = "abcdef", .side = .left, .priority = 170, .max_width = 1 });
+    for ([_]bool{ false, true }) |ascii| for (try pack(a, st.segments.items, .left, 100, ascii, .unicode)) |r| if (std.mem.eql(u8, r.id, "tiny")) {
+        try t.expectEqualStrings(if (ascii) "." else "\u{2026}", r.text);
+        try t.expectEqual(@as(u16, 3), r.cells);
+    };
+    _ = st.clearSegment(t.allocator, "tiny");
     _ = st.clearSegment(t.allocator, "wide");
     _ = st.clearSegment(t.allocator, "cut");
     const l = try pack(a, st.segments.items, .left, 100, false, .unicode);

@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A host segment truncated to one cell paints U+FFFD — half of the `…` ellipsis's UTF-8 bytes
 
@@ -22,3 +22,10 @@ The chip holds the replacement character (`ef bf bd` in the dump).
 **Why:** `truncate` in `src/ipc/effects.zig:287` returns `ell[0..@min(ell.len, width)]` when `width <= ell_w`; the unicode ellipsis is 3 bytes with a width of 1, so `width == 1` slices its first byte, an invalid UTF-8 sequence.
 
 **Reproduced:** 3/3 fresh launches.
+
+**Fixed:** `ipc.effects.pack` cuts with `ui/clip.zig` `clipCells`, which
+returns the whole `…` (or `.` of `...` under `--ascii`) when only one
+cell remains, never a byte of it. Tests: `ipc/effects.zig` "pack:
+priority order…" (max_width 1 → `…` / `.`), and `app/statusline.zig`
+"hunt3: a host chip cut to one cell paints the ellipsis whole…" (the
+row is valid UTF-8 with no U+FFFD, both twins).

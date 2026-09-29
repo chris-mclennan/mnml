@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # Host statusline segments are fitted by codepoint count, so segments with wide glyphs overflow the row and push the workspace chip off the right edge
 
@@ -27,3 +27,11 @@ With wide text a third segment is admitted (each `界` counted as one cell), the
 **Why:** `ipc.effects.pack` measures `natural` with `std.unicode.utf8CountCodepoints` and `truncate` keeps "the first `width` codepoints" (`src/ipc/effects.zig:270`, `:284`) — codepoints, not display cells.
 
 **Reproduced:** 3/3 fresh launches.
+
+**Fixed:** `ipc.effects.pack` measures and cuts in display cells under
+the screen's width method — the measure the painter and the hits use —
+and reports the cells it charged. Tests: `app/statusline.zig` "hunt3:
+three host chips with `界界` lay out exactly as the same chips with
+`abcd`…" (this repro, cell-for-cell hit layout) and "a host chip with a
+wide glyph: the cells the pack plans are the cells painted and the cells
+the hit covers, at 80 and 120".
