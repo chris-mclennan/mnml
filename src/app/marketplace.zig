@@ -2231,8 +2231,11 @@ test "addSource: a folder with two integrations and a manifest — 3 found, the 
     // The expected bytes come from the writer's own serializer: a
     // Windows path's backslashes are escaped in the file, and the test
     // must expect the escaped spelling, not the raw one.
-    const lit1 = try config.persist.serializeLiteral(gpa, config.Config.MarketplaceSource{ .local_folder = .{ .id = "acme", .path = acme_abs } });
-    defer gpa.free(lit1);
+    // The serializer writes through an allocating writer, as the real
+    // caller's arena expects: give it one here too.
+    var lit_arena = std.heap.ArenaAllocator.init(gpa);
+    defer lit_arena.deinit();
+    const lit1 = try config.persist.serializeLiteral(lit_arena.allocator(), config.Config.MarketplaceSource{ .local_folder = .{ .id = "acme", .path = acme_abs } });
     const line1 = try std.fmt.allocPrint(gpa, "            {s},\n", .{lit1});
     defer gpa.free(line1);
     // Byte for byte: everything before the list's closing line, the one
@@ -2262,8 +2265,7 @@ test "addSource: a folder with two integrations and a manifest — 3 found, the 
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added acme-2: 1 integration found") != null);
     const tools_abs = try std.fs.path.join(gpa, &.{ rig.ws, "tools", "acme" });
     defer gpa.free(tools_abs);
-    const lit2 = try config.persist.serializeLiteral(gpa, config.Config.MarketplaceSource{ .local_folder = .{ .id = "acme-2", .path = tools_abs } });
-    defer gpa.free(lit2);
+    const lit2 = try config.persist.serializeLiteral(lit_arena.allocator(), config.Config.MarketplaceSource{ .local_folder = .{ .id = "acme-2", .path = tools_abs } });
     const line2 = try std.fmt.allocPrint(gpa, "            {s},\n", .{lit2});
     defer gpa.free(line2);
     const want2 = try std.mem.concat(gpa, u8, &.{ add_source_before[0..at], line1, line2, add_source_before[at..] });
