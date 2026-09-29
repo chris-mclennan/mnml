@@ -116,26 +116,26 @@ const testing = std.testing;
 
 test "every criterion narrows, and they compose" {
     const issues = [_]Issue{
-        .{ .key = "TE-1", .summary = "Fix the bufferline", .status = "To Do", .issuetype = "Bug", .assignee = .{ .account_id = "a1" }, .labels = &.{"adx"}, .components = &.{"web-team"}, .parent_key = "TE-9", .parent_type = "Epic" },
-        .{ .key = "TE-2", .summary = "AI panel margin", .status = "Done", .issuetype = "Story", .labels = &.{"tools"}, .team = "Apollo" },
-        .{ .key = "XX-3", .summary = "te-trap", .status = "Testing", .issuetype = "Bug", .assignee = .{ .account_id = "a2" } },
+        .{ .key = "ENG-1", .summary = "Fix the bufferline", .status = "To Do", .issuetype = "Bug", .assignee = .{ .account_id = "a1" }, .labels = &.{"admin"}, .components = &.{"web-team"}, .parent_key = "ENG-9", .parent_type = "Epic" },
+        .{ .key = "ENG-2", .summary = "AI panel margin", .status = "Done", .issuetype = "Story", .labels = &.{"tools"}, .team = "Apollo" },
+        .{ .key = "XX-3", .summary = "eng-trap", .status = "Testing", .issuetype = "Bug", .assignee = .{ .account_id = "a2" } },
     };
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const all = try mask(a.allocator(), &issues, .{});
     try testing.expectEqual(@as(usize, 3), countTrue(all));
     try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .text = "PANEL" })));
-    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .text = "te-1" })));
+    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .text = "eng-1" })));
     try testing.expectEqual(@as(usize, 2), countTrue(try mask(a.allocator(), &issues, .{ .scope = .unresolved })));
     try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .scope = .resolved })));
     try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .assignees = &.{"a1"} })));
     try testing.expectEqual(@as(usize, 2), countTrue(try mask(a.allocator(), &issues, .{ .assignees = &.{ "a1", model.unassigned_sentinel } })));
-    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .epics = &.{"TE-9"} })));
+    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .epics = &.{"ENG-9"} })));
     try testing.expectEqual(@as(usize, 2), countTrue(try mask(a.allocator(), &issues, .{ .issue_type = "bug" })));
-    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .label = "ADX" })));
+    try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .label = "ADMIN" })));
     try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .team = "apollo" })));
     try testing.expectEqual(@as(usize, 1), countTrue(try mask(a.allocator(), &issues, .{ .team = "web" })));
-    try testing.expectEqual(@as(usize, 0), countTrue(try mask(a.allocator(), &issues, .{ .text = "TE-", .scope = .resolved, .issue_type = "Bug" })));
+    try testing.expectEqual(@as(usize, 0), countTrue(try mask(a.allocator(), &issues, .{ .text = "ENG-", .scope = .resolved, .issue_type = "Bug" })));
     try testing.expect(!(Criteria{}).any() and (Criteria{ .scope = .resolved }).any());
     try testing.expectEqual(Scope.resolved, Scope.all.cycle().cycle());
     try testing.expectEqualStrings("Unresolved", Scope.unresolved.label());

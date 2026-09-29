@@ -29,7 +29,7 @@ last message is the only clue: `Recently Done · 12 issues`).
 | family | `--only` | tabs (author's config) | renderer |
 |---|---|---|---|
 | Jira Work | `work` | Assigned (`work_assigned`), Recently Done (`work_recently_done`) | status-grouped tree |
-| Jira Fix Versions | `fix-versions` | Current Release (`fix_version_tree`, `project = TE`, `mode = current_release`, `status_order`, `bumps`) | status-grouped tree |
+| Jira Fix Versions | `fix-versions` | Current Release (`fix_version_tree`, `project = ENG`, `mode = current_release`, `status_order`, `bumps`) | status-grouped tree |
 | Jira Boards | `boards` | Sprint (`board_active_sprint`, `board_id = 200`), Backlog (`board_backlog`) | kanban |
 
 ## Screen by screen
@@ -96,7 +96,7 @@ assignee`, `set assignee × 3` with a bulk selection.
 | `rust-work-filter-editing` / `-committed` | `/` (or click `[ 🔍 Search ]`) | The hint changes to `type to filter · Enter commit · Esc cancel` and the Search chip reads `[ 🔍 qr ]` once committed with ` · 28 tickets` after the chips — **but no filter strip is painted and the tree is not filtered** (see the notes). `Esc` clears. |
 | `rust-work-jql-editor` / `-typed` | `E`, or click `[ JQL ]` | A full-width box near the bottom: `┌  JQL — type to edit · Enter=run · Esc=cancel ┐` with the tab's resolved JQL hard-wrapped, a `│` caret, grows to 8 rows. Keys: `←` `→`, Home / End / `Ctrl+A` / `Ctrl+E`, `Alt+←` / `Alt+→` words, Backspace / Delete, `Ctrl+W` / `Alt+Backspace` word back, `Ctrl+U` kill to start, `Ctrl+K` kill to end, paste, a click places the caret. `Enter` replaces the tab's JQL (in memory) and re-fetches; `Esc` keeps the old one. |
 | `rust-work-chip-jql` / `-mode` | click `[ JQL ]` | Opens the editor and flips the mode chip: `[ JQL ]` active, `[ Basic ]` dim, until `[ Basic ]` is clicked. |
-| `rust-work-chip-space` | click `[ Space ▾ ]` (also `More filters`, `Save filter`) | Not wired: the status line says `filter not wired yet (round-1 visual)`. The chip reads `Space: TE ▾` on a tab with a `project`. |
+| `rust-work-chip-space` | click `[ Space ▾ ]` (also `More filters`, `Save filter`) | Not wired: the status line says `filter not wired yet (round-1 visual)`. The chip reads `Space: ENG ▾` on a tab with a `project`. |
 | `rust-work-chip-status-unresolved` / `-resolved` | click `[ Status: All ▾ ]` | Cycles All → Unresolved → Resolved → All: a client-side scope over the tree (empty groups dropped, counts rewritten). **Resolved on the Assigned tab empties it and the app paints `(no issues)` with the toolbar gone** — nothing brings it back but `q`. |
 
 ### Jira Fix Versions
@@ -105,8 +105,8 @@ Same renderer, chips and pickers as Work; these are the differences.
 
 | file | reached by | what it shows |
 |---|---|---|
-| `rust-fixv-current` | `--only fix-versions` | `[ Space: TE ▾ ]` in the toolbar; the release's tickets grouped by the tab's `status_order` (Testing, In PR Review, In Progress, To Do, Done); a ticket promoted by a bump carries ` ★` after its key and sits in the target group with its real status in the STATUS column (`ENG-14806 ★  PR Review` under `▼ Testing (11)`, from `pr_approved = "Testing"` / `no_open_prs = "Testing"`; `release_cut = { Done = "top" }` when the global `release_cut` flag is on). The resolved version name is **not** on screen: the `[ Fix versions = 13.19.0 ▾ ] [ⓧ]` pill and the ` · N tickets` count are dropped when the seven fixed chips fill the row, which they do at 120 columns. |
-| `rust-fixv-tab-version-picker` / `-filtered` | `f`, or click the pill | `┌ switch tab view to fixVersion ┐`: every version of the project, unreleased first; committing rewrites the tab's JQL to `project = TE AND fixVersion = "X" ORDER BY rank` and re-fetches. |
+| `rust-fixv-current` | `--only fix-versions` | `[ Space: ENG ▾ ]` in the toolbar; the release's tickets grouped by the tab's `status_order` (Testing, In PR Review, In Progress, To Do, Done); a ticket promoted by a bump carries ` ★` after its key and sits in the target group with its real status in the STATUS column (`ENG-14806 ★  PR Review` under `▼ Testing (11)`, from `pr_approved = "Testing"` / `no_open_prs = "Testing"`; `release_cut = { Done = "top" }` when the global `release_cut` flag is on). The resolved version name is **not** on screen: the `[ Fix versions = 13.19.0 ▾ ] [ⓧ]` pill and the ` · N tickets` count are dropped when the seven fixed chips fill the row, which they do at 120 columns. |
+| `rust-fixv-tab-version-picker` / `-filtered` | `f`, or click the pill | `┌ switch tab view to fixVersion ┐`: every version of the project, unreleased first; committing rewrites the tab's JQL to `project = ENG AND fixVersion = "X" ORDER BY rank` and re-fetches. |
 | `rust-fixv-ticket-version-picker` | `F` | The per-ticket picker (Work's `f`). |
 | `rust-fixv-review-on-ticket-row` | `V` on a ticket row | `no PR under cursor` on the status line; on a PR row `V` dispatches a Review for that PR. `I` / `X` / `T` dispatch Implement / Fix / Triage for the focused ticket (Fix Versions only; on Boards `T` is the team picker and `V` the tab-version picker). |
 | `rust-fixv-detail`, `-detail-modal`, `-transition-picker`, `-assignee-picker`, `-action-picker`, `-bulk-selected`, `-bulk-transition`, `-filter-*`, `-jql-editor`, `-end`, `-wheel-down`, `-chip-status-*` | as on Work | The same surfaces on the release tab. |
@@ -133,7 +133,7 @@ Same renderer, chips and pickers as Work; these are the differences.
 | (not captured) card click → modal, ` × ` click, `▶` click, `/` filter, the JQL editor, bulk selection, the wheel, `End`, the Backlog tab | click a card, click ` × `, click a card's `▶`, `/`, `E`, `Space`, wheel, `G`, `2` | From `ui.rs` / `keys.rs`: a card click opens the modal and ` × ` closes it; the `▶` is a one-cell target that wins over the card body; on the kanban the `/` filter **does** narrow the cards, the wheel scrolls the column under the pointer (three rows), `j` / `k` move the cursor through the issue list in rank order; the Backlog tab is `sprint is EMPTY AND status != Done` for the project — up to the 500-issue cap, each unresolved ticket auto-expanded with a linked-PR fetch. Two runs were cut for these (`steps-boards-c.txt`, `steps-boards-d.txt`): the first never finished its cold load, the second died at the ` +N ` overflow chip, which the author's board never shows (five assignees fit), and the `Esc` after the miss quit the app (note 4). |
 
 `[ ⚙ Settings ]` opens the board's configuration page in the browser
-(`…/jira/software/c/projects/TE/boards/200?config=filter`); `o` and
+(`…/jira/software/c/projects/ENG/boards/200?config=filter`); `o` and
 `Enter` on a flat row open the ticket, Enter on a PR row opens the PR.
 Neither was clicked.
 
@@ -168,7 +168,7 @@ Not captured live — it writes into the author's agent workspace.
 | file | what it shows |
 |---|---|
 | `rust-cli-help.txt` | `--config`, `--check`, `--install` / `--uninstall`, `--diag`, `--only`, `--values`, `--prefetch`. |
-| `rust-cli-check.txt` | `--check`: the config path, site, email, refresh, the tabs with their resolve (`CurrentRelease project=TE` / `jql = `), the token path and whether it is present. No network. |
+| `rust-cli-check.txt` | `--check`: the config path, site, email, refresh, the tabs with their resolve (`CurrentRelease project=ENG` / `jql = `), the token path and whether it is present. No network. |
 | `rust-cli-diag.txt` | `--diag`: a tree — Auth (token source, length, email, site, a live `/myself` probe), Config (path, site, projects allowlist, the tabs with their kinds), Runtime (version, os/arch). |
 | `rust-cli-values.txt` | `--values`: `{"assigned_open":28}`. |
 | `rust-cli-prefetch-shape.txt` | `--prefetch --only <family>`: `{"generated_at": secs, "tabs": [{"name", "jql", "issues": [Issue…]}]}` on stdout for mnml's prefetch worker (`[[prefetch]]` in the manifests, every 600 s; the pane hydrates from `$MNML_PREFETCH_CACHE_FILE` and skips its cold fetch). It has a 10 s ceiling of its own, and on this site it **timed out** — as the author's cache shows: `jira_boards` and `jira_fix_versions` caches hold zero issues since 2026-08-28. |
