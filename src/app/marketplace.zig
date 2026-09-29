@@ -648,7 +648,8 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
         return;
     };
     for (listing) |gh| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         if (!safeName(gh.name)) continue;
         switch (s.kind) {
             .launcher_folder => {
@@ -717,7 +718,8 @@ fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayLis
         },
     };
     for (cat.entries) |e| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         var glyph: []const u8 = "";
         if (e.chip) |c| {
             const chip: manifest_mod.Chip = .{ .glyph = c.glyph, .glyph_codepoint = c.glyph_codepoint, .fallback = c.fallback, .color = c.color };
@@ -869,7 +871,8 @@ const local_depth = 3;
 fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []const u8, depth: usize, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
-        io.checkCancel() catch return;
+        // Re-armed: the worker's own check between sources must see it.
+        io.checkCancel() catch |err| return keepCancel(io, err);
         if (!safeName(entry.name)) continue;
         const full = try std.fs.path.join(arena, &.{ path, entry.name });
         var kind: Kind = undefined;
@@ -1490,12 +1493,17 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                     why.* = "cannot read the manifest";
                     return error.Failed;
                 }
-            else switch (try fetch(gpa, io, arena, job.url)) {
-                .body => |b| b,
-                .err => |e| {
-                    why.* = e;
-                    return error.Failed;
-                },
+            else f: {
+                const got = try fetch(gpa, io, arena, job.url);
+                // Cut short by a cancel: a cancel, not a failure.
+                io.checkCancel() catch return error.Canceled;
+                break :f switch (got) {
+                    .body => |b| b,
+                    .err => |e| {
+                        why.* = e;
+                        return error.Failed;
+                    },
+                };
             };
             const path = manifest_mod.manifest.pathUnder(arena, job.root, job.id) catch {
                 why.* = "the id is not a file name";

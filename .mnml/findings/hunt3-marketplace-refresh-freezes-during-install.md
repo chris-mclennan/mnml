@@ -50,3 +50,14 @@ Headless, ReleaseSafe, the reproduction above with `SLOW_SECS=12`
 an add_source 11.7 s → 0.05 s; `quit` mid-install exits 11.7 s → 0.13 s,
 the script and its `sleep` both gone. Tests: `app.marketplace`'s "a
 refresh while an install's child runs…" and "quitting mid-install…".
+
+The same swallowed cancel sat on the listing side, which a refresh does
+still cancel: `http/client.zig` turned a cancelled send into an `.err`
+outcome and dropped the cancel (std reports it as a bare `ReadFailed`,
+the cause kept on the connection's stream), so a fetch worker went on
+through its remaining sources un-cancellable. The send now surfaces it as
+`Canceled` and re-arms it; the listing loops re-arm what their
+`checkCancel` caught; a cancelled download or manifest fetch in an
+install is a cancel, not a failure. Test: `http.client`'s "a cancelled
+send keeps the cancel armed…" (20 s → 0 s to cancel, 1.5 s is the mock
+server's own stop).
