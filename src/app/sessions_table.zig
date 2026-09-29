@@ -733,7 +733,7 @@ pub fn click(app: *App, id: PaneId, tp: *TablePane, hit_id: u32, m: Mouse) Alloc
         .sort => if (m.button == .right) try openSortMenu(app, tp, m.x, m.y) else runToast(app, sortCmd(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .sessions, m.x, m.y) else runToast(app, sessions.refresh(app)),
         .new => try sessions.openNewMenu(app, m.x, m.y + 1),
-        .view, .history => {},
+        .history => {},
     };
     switch (hit_id) {
         hit_ended => runToast(app, showEndedCmd(app)),

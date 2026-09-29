@@ -687,7 +687,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
         .sort => if (m.button == .right) try openSortMenu(app, m.x, m.y) else runToast(app, sortCmd(app)),
         .refresh => if (m.button == .right) try auto_refresh.openRefreshMenu(app, .findings, m.x, m.y) else runToast(app, refresh(app)),
         .new => runToast(app, newCmd(app)),
-        .view, .history => {},
+        .history => {},
     }
 }
 

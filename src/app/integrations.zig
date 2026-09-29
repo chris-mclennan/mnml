@@ -2155,7 +2155,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
         // The Marketplace tab's ` + source `: the add-a-source prompt;
         // right-click, the tab strip's menu, which has the same row.
         .new => if (m.button == .right) try @import("context_menus.zig").openIntegrationsTabsMenu(app, m.x, m.y) else runToast(app, command.run(app, .{ .static = .@"marketplace.add_source" })),
-        .view, .history => {},
+        .history => {},
     }
 }
 

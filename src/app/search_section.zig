@@ -600,7 +600,7 @@ pub fn chipMouse(app: *App, kind: hit.ChipKind, m: Mouse) Allocator.Error!void {
     if (m.kind != .press) return;
     switch (kind) {
         .refresh => runToast(app, run(app)),
-        .sort, .new, .view, .history => {},
+        .sort, .new, .history => {},
     }
 }
 

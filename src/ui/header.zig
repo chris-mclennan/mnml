@@ -358,23 +358,22 @@ test "a chip that shrinks keeps its right edge: the same cell hits before and af
     try f.expectContains(" sort: Oldest first ");
 }
 
-test "ascii glyphs, no refresh, a view chip, and degenerate areas" {
+test "ascii glyphs, no refresh, a short mode chip, and degenerate areas" {
     var f = try Fixture.init(30, 1);
     defer f.deinit();
     var ui = f.ui();
     ui.ascii = true;
-    var p = props(&f, null, " view: Compact ");
-    p.mode_kind = .view;
+    var p = props(&f, null, " sort: Manual ");
     const l = draw(ui, f.full(), p);
-    try f.expectRow(0, " TODOS      view: Compact   \u{21ba}");
-    try testing.expectEqual(ChipKind.view, f.hits.at(16, 0).?.chip.kind);
+    try f.expectRow(0, " TODOS       sort: Manual   \u{21ba}");
+    try testing.expectEqual(ChipKind.sort, f.hits.at(16, 0).?.chip.kind);
     try testing.expect(!l.mode_is_icon);
     // Without the refresh chip the mode chip takes the right edge.
     p.show_refresh = false;
     f.hits.reset();
     _ = draw(ui, f.full(), p);
-    try f.expectRow(0, " TODOS          view: Compact");
-    try testing.expectEqual(ChipKind.view, f.hits.at(29, 0).?.chip.kind);
+    try f.expectRow(0, " TODOS           sort: Manual");
+    try testing.expectEqual(ChipKind.sort, f.hits.at(29, 0).?.chip.kind);
     try testing.expectEqual(@as(usize, 1), f.hits.items.items.len);
     _ = draw(ui, Rect.empty, p);
     var g = try Fixture.init(3, 1);
