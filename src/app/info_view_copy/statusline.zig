@@ -91,7 +91,7 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
         },
         .test_run => .{
             .title = "Test run",
-            .body = "The last test run's tally — passed, failed, still running — from whichever runner mnml drove (cargo, pytest, go, npm, the e2e corpus). Click focuses the tests pane, where each failure has its output and a jump to the line; right-click runs all, the file, the test at the cursor, or re-runs the failed ones. A red count is the thing to click on: the pane's failure text is what to read, not the number.",
+            .body = "The tests pane's last run — ✓ every test passed, ✗ something failed, … still running — from the runner the pane drove: Playwright, dotnet test, zig build test, vitest or pytest. Cargo, go and a plain npm test run in a terminal instead and do not show here. Click focuses the tests pane, where each failure has its output and a jump to the line; right-click runs all, the file, the test at the cursor, or re-runs the failed ones. A red count is the thing to click on: the pane's failure text is what to read, not the number.",
             .links = &.{ .{ .command = .{ .id = .@"test.rerun_failed", .label = "Rerun the failures" } }, .{ .command = .{ .id = .@"test.run_all", .label = "Run everything" } }, ask },
         },
         .ai_claude => try aiChip(app, arena, .claude),
