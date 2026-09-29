@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # `integrations.rebuild_stale` on a stale row whose source folder is gone fails with "zig build: cannot run zig: FileNotFound" instead of naming the row as not rebuildable
 

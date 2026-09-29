@@ -1520,6 +1520,12 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 }
                 break :blk try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             };
+            // A folder deleted since it was listed (or queued for a
+            // rebuild): said so, not left to the spawn, which blames argv[0].
+            Io.Dir.cwd().access(io, app_dir, .{}) catch {
+                why.* = try std.fmt.allocPrint(arena, "its folder {s} is gone \u{2014} nothing to build", .{app_dir});
+                return error.Failed;
+            };
             const prefix = try std.fs.path.join(arena, &.{ job.root, manifest_mod.subdir, job.id });
             try job.builder(io, gpa, arena, app_dir, prefix, &job.env, why);
             // Where it came from, for a rebuild: a folder on this
