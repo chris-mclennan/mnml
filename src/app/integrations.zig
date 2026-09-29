@@ -2426,6 +2426,9 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                 // A binary that is not there has nothing to compare: the
                 // red `not installed` note is the row's one warning.
                 .rebuild = inst.binary_found and stale(inst),
+                // Only a stale row pays for the look: a file read and a
+                // stat, on the rows on screen.
+                .rebuild_blocked = inst.binary_found and stale(inst) and try localSource(app, arena, inst.id()) == null,
             };
         },
         .marketplace => {
@@ -2944,21 +2947,70 @@ pub fn rowStaleText(app: *App, arena: Allocator, idx: usize) Allocator.Error!?[]
     return try staleText(arena, &st.list[i]);
 }
 
+/// For a stale row at visible index `idx` that cannot be rebuilt here,
+/// why (`noRebuildReason`) — the `old SDK` chip's hover. Null otherwise.
+pub fn rowNoRebuild(app: *App, arena: Allocator, idx: usize) Allocator.Error!?[]const u8 {
+    const st = &app.integrations;
+    if (st.tab != .installed) return null;
+    const v = (try entryAt(app, idx)) orelse return null;
+    const i = switch (installedRow(v)) {
+        .first_party => return null,
+        .manifest => |m| m,
+    };
+    if (i >= st.list.len or !stale(&st.list[i])) return null;
+    return try noRebuildReason(app, arena, st.list[i].id());
+}
+
 /// The folder installed `id` builds from, if it came from one on this
-/// machine: the note its install left beside the binary, else a
-/// `local_folder` marketplace row with the id, else a Dev folder with
-/// it. Null for anything downloaded or shipped.
+/// machine and is still there: the note its install left beside the
+/// binary, else a `local_folder` marketplace row with the id, else a Dev
+/// folder with it. Null for anything downloaded or shipped, and for a
+/// folder that has been deleted (`goneSource` names that one).
 pub fn localSource(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?[]const u8 {
-    if (app.data_root.len > 0) if (marketplace.builtFrom(app.io, arena, app.data_root, id)) |d| return d;
+    return (try sourceFolder(app, arena, id)).dir;
+}
+
+/// The folder `id` was built from when it is no longer there — what a
+/// rebuild names instead of trying (a build in a missing folder fails
+/// as `zig` not found). Null when the folder is there or none is known.
+pub fn goneSource(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?[]const u8 {
+    const f = try sourceFolder(app, arena, id);
+    return if (f.dir == null) f.gone else null;
+}
+
+fn sourceFolder(app: *App, arena: Allocator, id: []const u8) Allocator.Error!struct { dir: ?[]const u8 = null, gone: ?[]const u8 = null } {
+    var gone: ?[]const u8 = null;
+    if (app.data_root.len > 0) if (marketplace.builtFrom(app.io, arena, app.data_root, id)) |d| {
+        if (folderThere(app.io, d)) return .{ .dir = d };
+        gone = d;
+    };
     for (app.marketplace.entries) |e| {
         if (e.kind != .app or !std.mem.eql(u8, e.id, id)) continue;
-        if (std.fs.path.isAbsolute(e.url)) return e.url;
+        if (!std.fs.path.isAbsolute(e.url)) continue;
+        if (folderThere(app.io, e.url)) return .{ .dir = e.url };
+        gone = gone orelse e.url;
     }
     for (app.integrations.dev) |*d| {
         if (d.launcher or !std.mem.eql(u8, d.id(), id)) continue;
-        return d.dir;
+        if (folderThere(app.io, d.dir)) return .{ .dir = d.dir };
+        gone = gone orelse d.dir;
     }
-    return null;
+    return .{ .gone = gone };
+}
+
+fn folderThere(io: Io, path: []const u8) bool {
+    var d = Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    d.close(io);
+    return true;
+}
+
+/// Why installed `id` cannot be rebuilt here, or null when it can: its
+/// folder is gone, or it never came from one.
+pub fn noRebuildReason(app: *App, arena: Allocator, id: []const u8) Allocator.Error!?[]const u8 {
+    const f = try sourceFolder(app, arena, id);
+    if (f.dir != null) return null;
+    if (f.gone) |g| return try std.fmt.allocPrint(arena, "its folder {s} is gone", .{g});
+    return "it was not built from a folder here";
 }
 
 /// `integrations.rebuild_stale`: every installed integration built from
@@ -2973,20 +3025,27 @@ fn rebuildStaleCmd(app: *App) CommandError!void {
     const Todo = struct { id: []const u8, dir: []const u8 };
     var todo: std.ArrayListUnmanaged(Todo) = .empty;
     var orphans: std.ArrayListUnmanaged([]const u8) = .empty;
+    var gone: std.ArrayListUnmanaged(Todo) = .empty;
     // Every finished rebuild re-scans the list, so collect first.
     for (st.list) |*inst| {
         if (!stale(inst)) continue;
         const id = try arena.dupe(u8, inst.id());
-        if (try localSource(app, arena, id)) |dir| {
+        const f = try sourceFolder(app, arena, id);
+        if (f.dir) |dir| {
             try todo.append(arena, .{ .id = id, .dir = dir });
+        } else if (f.gone) |dir| {
+            try gone.append(arena, .{ .id = id, .dir = dir });
         } else try orphans.append(arena, id);
     }
     for (todo.items) |r| try marketplace.enqueueRebuild(app, r.id, r.dir);
+    // A folder that was deleted is named, not built: the build would
+    // fail as `zig` not found, blaming the wrong thing.
+    for (gone.items) |g| try app.toastLevel(.warn, "integrations: {s} cannot be rebuilt \u{2014} its folder {s} is gone; reinstall it from the Marketplace", .{ g.id, g.dir });
     if (orphans.items.len > 0) {
         const names = try std.mem.join(arena, ", ", orphans.items);
         try app.toastLevel(.warn, "integrations: {s} {s} built on an older SDK but not from a folder here \u{2014} reinstall from the Marketplace", .{ names, if (orphans.items.len == 1) "is" else "are" });
     }
-    if (todo.items.len == 0 and orphans.items.len == 0) app.toast("integrations: every installed integration is built against SDK {s}", .{host_sdk});
+    if (todo.items.len == 0 and orphans.items.len == 0 and gone.items.len == 0) app.toast("integrations: every installed integration is built against SDK {s}", .{host_sdk});
     app.needs_render = true;
 }
 
@@ -3007,7 +3066,10 @@ fn rebuildAt(app: *App, i: usize) CommandError!void {
     if (inst.manifest.isLauncher())
         return app.diag.fail(arena, "integrations: {s} is a launcher \u{2014} there is nothing to build", .{inst.id()});
     const id = try arena.dupe(u8, inst.id());
-    const dir = (try localSource(app, arena, id)) orelse
+    const f = try sourceFolder(app, arena, id);
+    const dir = f.dir orelse if (f.gone) |g|
+        return app.diag.fail(arena, "integrations: {s} cannot be rebuilt \u{2014} its folder {s} is gone; reinstall it from the Marketplace", .{ id, g })
+    else
         return app.diag.fail(arena, "integrations: {s} was not built from a folder here \u{2014} reinstall it from the Marketplace", .{id});
     try marketplace.enqueueRebuild(app, id, dir);
 }
@@ -4190,7 +4252,7 @@ fn manifestRow(app: *App, arena: Allocator, id: []const u8) !view.Entry {
     return entryRow(app, arena, manifestVirtual(app.integrations.find(id) orelse return error.NoSuchRow));
 }
 
-test "the rebuild chip: an older stamp wears it, an equal one does not, a missing one does, a launcher never; the hover says which SDK" {
+test "the rebuild chip: an older stamp wears it, an equal one does not, a missing one does, a launcher never; one with no folder to build reads old SDK; the hover says which SDK" {
     const exe = build_options.sample_integration_exe;
     Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
@@ -4198,23 +4260,30 @@ test "the rebuild chip: an older stamp wears it, an equal one does not, a missin
     var mem = std.heap.ArenaAllocator.init(testing.allocator);
     defer mem.deinit();
     const a = mem.allocator();
-    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.createDirPath(testing.io, "integrations/older");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/older.zon", .data = try stampedManifest(a, "older", exe, "0.0.1") });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/equal.zon", .data = try stampedManifest(a, "equal", exe, host_sdk) });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/unstamped.zon", .data = try stampedManifest(a, "unstamped", exe, null) });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/lnch.zon", .data = ".{ .id = \"lnch\", .label = \"lnch\", .commands = .{ .{ .id = \"lnch.open\", .title = \"o\", .run = \":term htop\" } } }" });
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    // `older` was built from a folder that is still here; `unstamped`
+    // from nowhere on this machine.
+    try tmp.dir.createDirPath(testing.io, "repo/older");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/older/" ++ marketplace.built_from_file, .data = try std.fs.path.join(a, &.{ root, "repo", "older" }) });
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
     defer app.deinit();
     try refresh(&app);
     try testing.expectEqual(@as(usize, 4), app.integrations.list.len);
     try testing.expect((try manifestRow(&app, a, "older")).rebuild);
+    try testing.expect(!(try manifestRow(&app, a, "older")).rebuild_blocked);
     try testing.expect(!(try manifestRow(&app, a, "equal")).rebuild);
     try testing.expect((try manifestRow(&app, a, "unstamped")).rebuild);
+    try testing.expect((try manifestRow(&app, a, "unstamped")).rebuild_blocked);
     try testing.expect(!(try manifestRow(&app, a, "lnch")).rebuild);
 
-    // On screen: the chip at the right edge of exactly those two rows.
+    // On screen: the chip at the right edge of exactly those two rows —
+    // `rebuild` where there is a folder to build, `old SDK` where not.
     app.tree.width = 60;
     try command.run(&app, .{ .static = .@"integrations.show_installed" });
     app.integrations.panel.cursor = installedCount(&app) - 1;
@@ -4223,9 +4292,13 @@ test "the rebuild chip: an older stamp wears it, an equal one does not, a missin
     var seen: usize = 0;
     var it = std.mem.splitScalar(u8, txt, '\n');
     while (it.next()) |line| {
-        if (std.mem.indexOf(u8, line, view.rebuild_text) == null) continue;
-        seen += 1;
-        try testing.expect(std.mem.indexOf(u8, line, "older") != null or std.mem.indexOf(u8, line, "unstamped") != null);
+        if (std.mem.indexOf(u8, line, view.rebuild_text) != null) {
+            seen += 1;
+            try testing.expect(std.mem.indexOf(u8, line, "older") != null);
+        } else if (std.mem.indexOf(u8, line, view.old_sdk_text) != null) {
+            seen += 1;
+            try testing.expect(std.mem.indexOf(u8, line, "unstamped") != null);
+        }
     }
     try testing.expectEqual(@as(usize, 2), seen);
 
@@ -4348,4 +4421,131 @@ test "rebuild_stale builds exactly the stale rows that came from a folder here, 
     app.integrations.menu_row = .{ .tab = .installed, .idx = manifestVirtual(app.integrations.find("shipped").?) };
     try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"integrations.rebuild_focused" }));
     try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "not built from a folder here") != null);
+}
+
+test "a stale row whose source folder is gone: rebuild_stale and rebuild_focused say the folder is gone and start nothing, and its chip reads old SDK — never a rebuild it cannot do" {
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    const gone = try std.fs.path.join(a, &.{ root, "gone", "slow" });
+    try tmp.dir.createDirPath(testing.io, "integrations/slow");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/slow.zon", .data = try stampedManifest(a, "slow", exe, "0.0.1") });
+    // Built from a folder that has since been deleted.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/slow/" ++ marketplace.built_from_file, .data = gone });
+
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.marketplace.builder = fakeBuild;
+    try refresh(&app);
+    try testing.expect(try localSource(&app, a, "slow") == null);
+
+    try command.run(&app, .{ .static = .@"integrations.rebuild_stale" });
+    try testing.expect(app.marketplace.installing == null);
+    try testing.expectEqual(@as(usize, 0), app.marketplace.rebuilds.items.len);
+    const said = app.lastToast().?;
+    try testing.expect(std.mem.indexOf(u8, said, gone) != null);
+    try testing.expect(std.mem.indexOf(u8, said, "is gone") != null);
+    try testing.expect(std.mem.indexOf(u8, said, "cannot run") == null);
+
+    app.integrations.menu_row = .{ .tab = .installed, .idx = manifestVirtual(app.integrations.find("slow").?) };
+    try testing.expectError(error.Failed, command.run(&app, .{ .static = .@"integrations.rebuild_focused" }));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "is gone") != null);
+    try testing.expect(app.marketplace.installing == null);
+
+    // The chip still says the build is behind, and promises nothing.
+    const row = try manifestRow(&app, a, "slow");
+    try testing.expect(row.rebuild);
+    try testing.expect(row.rebuild_blocked);
+    app.tree.width = 60;
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    const txt = try screenText(&app);
+    defer testing.allocator.free(txt);
+    var it = std.mem.splitScalar(u8, txt, '\n');
+    var chip = false;
+    while (it.next()) |line| if (std.mem.indexOf(u8, line, "slow") != null) {
+        try testing.expect(std.mem.indexOf(u8, line, view.rebuild_text) == null);
+        if (std.mem.indexOf(u8, line, view.old_sdk_text) != null) chip = true;
+    };
+    try testing.expect(chip);
+    // Its hover says why, by the row's visible index.
+    const visible = try visibleEntries(&app, a);
+    var hovered = false;
+    for (visible, 0..) |v, vi| switch (installedRow(v)) {
+        .first_party => {},
+        .manifest => |mi| if (std.mem.eql(u8, app.integrations.list[mi].id(), "slow")) {
+            const why = (try rowNoRebuild(&app, a, vi)).?;
+            try testing.expect(std.mem.indexOf(u8, why, "is gone") != null);
+            hovered = true;
+        },
+    };
+    try testing.expect(hovered);
+
+    // A rebuild already queued when the folder went: the worker says
+    // the folder is gone rather than that `zig` cannot run.
+    try marketplace.enqueueRebuild(&app, "slow", gone);
+    try settleRebuilds(&app);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "is gone") != null);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "cannot run") == null);
+}
+
+/// A fake build whose binary is a shell script: its `--install` writes
+/// the manifest stamped `.sdk = "0.0.1"` — what an integration whose
+/// build.zig.zon still pins an older mnml-sdk does.
+fn oldStampBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) marketplace.InstallError!void {
+    _ = gpa;
+    _ = env;
+    _ = app_dir;
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {};
+    const script =
+        \\#!/bin/sh
+        \\mkdir -p "$MNML_DATA_ROOT/integrations"
+        \\printf '.{ .id = "old", .label = "old", .binary = "%s", .sdk = "0.0.1" }' "$0" > "$MNML_DATA_ROOT/integrations/old.zon"
+        \\
+    ;
+    const exe = try std.fs.path.join(arena, &.{ bin, "mnml-old" });
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = exe, .data = script, .flags = .{ .permissions = .executable_file } }) catch {
+        why.* = "fake build: cannot write the script";
+        return error.Failed;
+    };
+}
+
+test "a rebuild toasts the SDK the fresh manifest carries: one that is still behind says so and why, never 'rebuilt against' the host's SDK" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(testing.io, exe, .{}) catch return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "repo/old");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "repo/old/build.zig", .data = "" });
+    try tmp.dir.createDirPath(testing.io, "integrations/old");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/old.zon", .data = try stampedManifest(a, "old", exe, "0.0.1") });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/old/" ++ marketplace.built_from_file, .data = try std.fs.path.join(a, &.{ root, "repo", "old" }) });
+
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.marketplace.builder = oldStampBuild;
+    try refresh(&app);
+    try command.run(&app, .{ .static = .@"integrations.rebuild_stale" });
+    try settleRebuilds(&app);
+    // The manifest the rebuild wrote is still on 0.0.1…
+    const i = app.integrations.find("old").?;
+    try testing.expectEqualStrings("0.0.1", app.integrations.list[i].manifest.sdk);
+    try testing.expect(stale(&app.integrations.list[i]));
+    // …and the toast says exactly that, with the likely cause.
+    const said = app.lastToast().?;
+    try testing.expect(std.mem.indexOf(u8, said, "rebuilt against SDK " ++ host_sdk) == null);
+    try testing.expect(std.mem.indexOf(u8, said, "still on SDK 0.0.1") != null);
+    try testing.expect(std.mem.indexOf(u8, said, "mnml-sdk") != null);
 }

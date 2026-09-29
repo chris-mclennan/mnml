@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A folder just added as a source is not listed until every other source's fetch finishes, while the toast already says "N integrations found"
 

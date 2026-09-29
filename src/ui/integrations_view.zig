@@ -147,10 +147,17 @@ pub const Entry = struct {
     /// never stamped): the `rebuild` chip at the row's right edge, in
     /// the same place and the same ink as the budget chip.
     rebuild: bool = false,
+    /// With `rebuild`: there is no folder here to build it from (it was
+    /// downloaded, or its folder is gone), so the chip says what it is —
+    /// `old SDK` — rather than promise a rebuild that cannot run.
+    rebuild_blocked: bool = false,
 };
 
 /// The `rebuild` chip's words. Plain ASCII, so it needs no twin.
 pub const rebuild_text = "rebuild";
+/// The chip on a stale row that cannot be rebuilt here: the same width
+/// as `rebuild_text`, so a row's layout is one layout either way.
+pub const old_sdk_text = "old SDK";
 
 /// The budget chip's glyph and its `--ascii` twin. U+23F1 is a plain
 /// Unicode symbol, not a Nerd Font one, so it needs no codepoint pin.
@@ -405,7 +412,7 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     // label, version and badge already fill them, so a chip appended
     // after all of those would never be on screen at all.
     const chip_text: []const u8 = if (e.rebuild)
-        rebuild_text
+        (if (e.rebuild_blocked) old_sdk_text else rebuild_text)
     else if (e.budget_hits == 0)
         ""
     else if (ui.ascii)

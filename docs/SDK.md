@@ -75,8 +75,16 @@ source without editing config.zon, through one code path
 Marketplace tab's `+ source` chip and the INTEGRATIONS tab strip's
 right-click menu — and the first-launch setup's Private integrations
 row. Either takes the folder (`~` expanded, relative to the workspace)
-or a GitHub monorepo as `owner/repo[:apps_dir]`, refuses a folder with
-nothing to install, and appends the entry to the home config.zon.
+— a folder of integrations, or one integration's own folder, which is
+listed and built as that one integration — or a GitHub monorepo as
+`owner/repo[:apps_dir]` (a pasted `https://github.com/owner/repo` URL,
+`.git` or `/tree/<branch>/<dir>` included, is read as that; any other URL
+is refused). It refuses a folder with nothing to install, and a source
+already there by another spelling (a repo in other letter case; a folder
+by a symlink, or in other case on a case-folding volume), and appends
+the entry to the home config.zon — nothing is written while the
+Marketplace is disabled. A folder's rows show at once; the other sources
+re-list behind it.
 
 ## Set up
 
@@ -1629,7 +1637,10 @@ keep that from going quiet:
   row that came from a folder on this machine (the install leaves
   `<data root>/integrations/<id>/built-from` naming it) with the same
   in-place `zig build` the install ran, then `--install` again, a toast
-  per row; a stale row with no folder behind it is named, not built.
+  per row, naming the SDK the fresh manifest is stamped with — a build
+  still behind (its `build.zig.zon` pins an older `mnml-sdk`) says so. A
+  stale row with no folder behind it, or whose folder has been deleted,
+  is named, not built, and its chip reads `old SDK` instead of `rebuild`.
   The row menu's *Rebuild* (`integrations.rebuild_focused`) does one.
 * **The conformance call.** `try sdk.testing.conformance(Probe);` in the
   integration's own tests (above) holds its pane to every design-language

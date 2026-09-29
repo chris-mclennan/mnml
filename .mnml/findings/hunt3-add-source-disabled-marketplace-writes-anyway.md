@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # With `marketplace.enabled = false`, adding a source reports "disabled" as a failure but has already written the source to config.zon
 

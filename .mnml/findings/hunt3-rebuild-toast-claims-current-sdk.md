@@ -1,6 +1,6 @@
 ---
 severity: SEV-3
-status: open
+status: fixed
 ---
 # A rebuild toasts "rebuilt against SDK <current>" whatever the rebuilt binary stamped; the row keeps its `rebuild` chip with no word why
 

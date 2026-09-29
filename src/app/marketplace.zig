@@ -169,7 +169,9 @@ pub const Result = struct {
         /// An install finished; `id` names the entry. `rebuilt`: it was
         /// a rebuild of an installed integration from its folder
         /// (`integrations.rebuild_*`), not a first install.
-        installed: struct { id: []u8, detail: []u8, rebuilt: bool = false },
+        /// `warn`: it finished, but not as asked — a rebuild whose
+        /// manifest is still stamped behind this mnml's SDK.
+        installed: struct { id: []u8, detail: []u8, rebuilt: bool = false, warn: bool = false },
         failed: []u8,
     },
 
@@ -793,13 +795,61 @@ pub fn appendIndexRows(arena: Allocator, s: SourceSpec, idx: release.Index, host
 /// integrations repo symlinked in whole — is looked into for more of
 /// the same, a few levels down (`local_depth`), so its
 /// `integrations/<id>/` folders list without being linked one by one.
+/// A folder that is itself an integration (`build.zig` + `manifest.zon`)
+/// is that one app, built in place — its `manifest.zon` is never a
+/// launcher to copy.
 fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     var dir = Io.Dir.cwd().openDir(io, s.path, .{ .iterate = true }) catch {
         try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s} is not a directory", .{ s.id, s.path }));
         return;
     };
     defer dir.close(io);
+    // A repo root has a `build.zig` too, but no `manifest.zon`: it is
+    // walked for the integrations under it.
+    if (isIntegrationDir(io, dir)) {
+        const text = dir.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/manifest.zon: {s}", .{ s.id, @errorName(err) }));
+            return;
+        };
+        // `s.path` is the worker's, freed when it ends: the row keeps a copy.
+        try appendManifest(arena, s, .app, text, "manifest.zon", try arena.dupe(u8, s.path), entries, problems);
+        return;
+    }
     try listLocalDir(io, arena, s, dir, s.path, 0, entries, problems);
+}
+
+/// A Zig integration's folder: `build.zig` and `manifest.zon` side by side.
+fn isIntegrationDir(io: Io, dir: Io.Dir) bool {
+    _ = dir.statFile(io, "build.zig", .{}) catch return false;
+    _ = dir.statFile(io, "manifest.zon", .{}) catch return false;
+    return true;
+}
+
+/// Parse `text` and list it as a `kind` row at `full`; a manifest that
+/// does not parse is a problem named by `name`.
+fn appendManifest(arena: Allocator, s: SourceSpec, kind: Kind, text: [:0]const u8, name: []const u8, full: []const u8, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    var why: []const u8 = "";
+    const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadManifest => {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, name, why }));
+            return;
+        },
+    };
+    try entries.append(arena, .{
+        .source = try arena.dupe(u8, s.id),
+        .kind = kind,
+        .id = m.id,
+        .label = m.label,
+        .description = m.description,
+        .version = m.version,
+        .url = full,
+        .official = s.official,
+        .private = !s.official,
+        .glyph = try integrations.chipGlyph(arena, m.chip),
+        .fallback = if (m.chip) |c| c.fallback else "",
+        .color = if (m.chip) |c| c.color else "",
+    });
 }
 
 /// How far below a `local_folder` an integration folder may sit:
@@ -835,28 +885,7 @@ fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []co
             kind = .app;
             text = sub.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch continue;
         } else continue;
-        var why: []const u8 = "";
-        const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.BadManifest => {
-                try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, entry.name, why }));
-                continue;
-            },
-        };
-        try entries.append(arena, .{
-            .source = try arena.dupe(u8, s.id),
-            .kind = kind,
-            .id = m.id,
-            .label = m.label,
-            .description = m.description,
-            .version = m.version,
-            .url = full,
-            .official = s.official,
-            .private = !s.official,
-            .glyph = try integrations.chipGlyph(arena, m.chip),
-            .fallback = if (m.chip) |c| c.fallback else "",
-            .color = if (m.chip) |c| c.color else "",
-        });
+        try appendManifest(arena, s, kind, text, entry.name, full, entries, problems);
     }
 }
 
@@ -883,6 +912,8 @@ pub const SourceInput = union(enum) {
     folder: struct { abs: []const u8, keep: []const u8 },
     /// `owner/repo[:apps_dir]`, a `github_monorepo_apps` source.
     repo: struct { repo: []const u8, apps_dir: []const u8 },
+    /// A URL that names no repo this can add: why, for the toast.
+    refused: []const u8,
 };
 
 /// What `addSource` added: the id it chose, and for a folder how many
@@ -899,6 +930,10 @@ const reserved_ids = [_][]const u8{ "mnml", "local", "index", "github" };
 /// not there, which `addSource` refuses by name.
 pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocator.Error!SourceInput {
     const raw = std.mem.trim(u8, input, " \t\r\n");
+    // A URL is never a folder: `https://…` resolved against the
+    // workspace is a path nobody typed.
+    const schemed = std.mem.indexOf(u8, raw, "://") != null;
+    if (schemed or std.mem.startsWith(u8, raw, "git@")) return urlInput(arena, raw);
     const expanded = try app.expandTilde(raw);
     // Resolved, not joined: `tools/acme` typed on Windows becomes one
     // path with one separator, and `..` collapses, so the file keeps a
@@ -907,8 +942,68 @@ pub fn parseSourceInput(app: *App, arena: Allocator, input: []const u8) Allocato
     const keep = if (raw.len > 0 and raw[0] == '~') try arena.dupe(u8, raw) else abs;
     const says_path = raw.len > 0 and (raw[0] == '/' or raw[0] == '~' or raw[0] == '.' or raw[0] == '\\' or std.fs.path.isAbsolute(raw));
     if (says_path or isDir(app.io, abs)) return .{ .folder = .{ .abs = abs, .keep = keep } };
+    // `github.com/owner/repo` — a browser's address bar without its
+    // scheme — once no folder by that name is here.
+    if (githubHost(raw)) return urlInput(arena, raw);
     if (repoShape(raw)) |r| return .{ .repo = .{ .repo = try arena.dupe(u8, r.repo), .apps_dir = try arena.dupe(u8, r.dir) } };
     return .{ .folder = .{ .abs = abs, .keep = keep } };
+}
+
+/// `path` as the OS spells it — symlinks followed, and on a volume that
+/// folds case, the case it was created with. A folder that cannot be
+/// resolved (gone) is its own spelling.
+fn realFolder(io: Io, arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    return Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => path,
+    };
+}
+
+/// Whether `rest` (a URL without its scheme) starts with GitHub's host.
+fn githubHost(rest: []const u8) bool {
+    const end = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    const host = rest[0..end];
+    return std.ascii.eqlIgnoreCase(host, "github.com") or std.ascii.eqlIgnoreCase(host, "www.github.com");
+}
+
+const url_forms = "give a folder, owner/repo[:dir], or a GitHub repo URL (github.com/owner/repo, …/tree/<branch>/<dir>)";
+
+/// A URL typed or pasted where a folder or `owner/repo` was asked for:
+/// a GitHub repo URL — `https://`, `http://` or none, `www.`, a
+/// trailing `.git` or `/`, a `?query` or `#anchor`, `…/tree/<branch>/<dir>`
+/// for the apps dir, or `git@github.com:owner/repo.git` — is that repo.
+/// The branch is not kept: a source lists the repo's default branch.
+/// Anything else is refused by name.
+fn urlInput(arena: Allocator, raw: []const u8) Allocator.Error!SourceInput {
+    var rest = raw;
+    if (std.mem.startsWith(u8, raw, "git@github.com:")) {
+        rest = try std.fmt.allocPrint(arena, "github.com/{s}", .{raw["git@github.com:".len..]});
+    } else if (std.mem.indexOf(u8, raw, "://")) |i| {
+        const scheme = raw[0..i];
+        if (!std.ascii.eqlIgnoreCase(scheme, "https") and !std.ascii.eqlIgnoreCase(scheme, "http"))
+            return .{ .refused = try std.fmt.allocPrint(arena, "{s} is a URL, not a source \u{2014} {s}", .{ raw, url_forms }) };
+        rest = raw[i + 3 ..];
+    }
+    if (!githubHost(rest))
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} is not a GitHub repo URL \u{2014} {s}", .{ raw, url_forms }) };
+    var path = rest[(std.mem.indexOfScalar(u8, rest, '/') orelse rest.len)..];
+    if (std.mem.indexOfAny(u8, path, "?#")) |q| path = path[0..q];
+    path = std.mem.trim(u8, path, "/");
+    var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.tokenizeScalar(u8, path, '/');
+    while (it.next()) |seg| try segs.append(arena, seg);
+    const s = segs.items;
+    const dir: []const u8 = if (s.len == 2 or (s.len == 4 and std.mem.eql(u8, s[2], "tree")))
+        "apps"
+    else if (s.len >= 5 and std.mem.eql(u8, s[2], "tree"))
+        try std.mem.join(arena, "/", s[4..])
+    else
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} names no repo \u{2014} {s}", .{ raw, url_forms }) };
+    const name = if (std.mem.endsWith(u8, s[1], ".git")) s[1][0 .. s[1].len - 4] else s[1];
+    const shaped = try std.fmt.allocPrint(arena, "{s}/{s}:{s}", .{ s[0], name, dir });
+    const r = repoShape(shaped) orelse
+        return .{ .refused = try std.fmt.allocPrint(arena, "{s} names no repo \u{2014} {s}", .{ raw, url_forms }) };
+    return .{ .repo = .{ .repo = r.repo, .apps_dir = r.dir } };
 }
 
 fn isDir(io: Io, path: []const u8) bool {
@@ -937,15 +1032,16 @@ fn nameOk(s: []const u8) bool {
 }
 
 /// `base`, or `base-2`, `base-3`… — the first no configured source and
-/// none of mnml's own uses.
+/// none of mnml's own uses, in any letter case: two sources whose ids
+/// differ only by case read as one in a row's `(source)`.
 fn uniqueId(app: *App, arena: Allocator, base: []const u8) Allocator.Error![]const u8 {
     var n: usize = 1;
     while (true) : (n += 1) {
         const id = if (n == 1) base else try std.fmt.allocPrint(arena, "{s}-{d}", .{ base, n });
         const taken = for (reserved_ids) |r| {
-            if (std.mem.eql(u8, r, id)) break true;
+            if (std.ascii.eqlIgnoreCase(r, id)) break true;
         } else for (app.cfg.marketplace.sources) |s| {
-            if (std.mem.eql(u8, sourceId(s), id)) break true;
+            if (std.ascii.eqlIgnoreCase(sourceId(s), id)) break true;
         } else false;
         if (!taken) return id;
     }
@@ -957,15 +1053,52 @@ fn sourceId(s: Config.MarketplaceSource) []const u8 {
     };
 }
 
-/// An id from a folder or repo name: its letters, digits, `-`, `_` and
-/// `.`, the rest `-`.
+/// An id from a folder or repo name, read per codepoint: ASCII letters,
+/// digits, `-`, `_` and `.` stay; an accented Latin letter is its base
+/// letter (`é` → `e`, `ß` → `ss`); a combining accent (how macOS may
+/// spell `é`) goes; any other run is one `-`. Ids stay ASCII, so every
+/// row's `(source)` and every toast reads the same in any terminal. A
+/// name with nothing left is `private`.
 fn idFrom(arena: Allocator, name: []const u8) Allocator.Error![]const u8 {
-    const out = try arena.dupe(u8, if (name.len == 0) "private" else name);
-    for (out) |*c| if (!(std.ascii.isAlphanumeric(c.*) or c.* == '-' or c.* == '_' or c.* == '.')) {
-        c.* = '-';
-    };
-    return out;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var dash = false;
+    var i: usize = 0;
+    while (i < name.len) {
+        const len = std.unicode.utf8ByteSequenceLength(name[i]) catch 1;
+        const cp: u21 = if (len > 1 and i + len <= name.len)
+            std.unicode.utf8Decode(name[i .. i + len]) catch 0xFFFD
+        else
+            name[i];
+        i += if (i + len <= name.len) len else 1;
+        if (cp >= 0x300 and cp <= 0x36F) continue;
+        const keep: []const u8 = if (cp < 0x80 and (std.ascii.isAlphanumeric(@intCast(cp)) or cp == '-' or cp == '_' or cp == '.'))
+            name[i - 1 .. i]
+        else if (cp >= 0xC0 and cp < 0xC0 + latin_fold.len)
+            latin_fold[cp - 0xC0]
+        else
+            "";
+        if (keep.len == 0) {
+            dash = true;
+            continue;
+        }
+        if (dash and out.items.len > 0) try out.append(arena, '-');
+        dash = false;
+        try out.appendSlice(arena, keep);
+    }
+    if (out.items.len == 0) return arena.dupe(u8, "private");
+    return out.items;
 }
+
+/// U+00C0…U+017F (Latin-1 Supplement, Latin Extended-A) as ASCII: the
+/// base letter, or "" for the two signs (`×`, `÷`) among them.
+const latin_fold = [_][]const u8{
+    "A", "A", "A", "A", "A", "A", "AE", "C", "E", "E", "E", "E", "I", "I", "I", "I", "D", "N", "O",  "O",  "O", "O", "O", "",  "O", "U", "U", "U", "U", "Y", "TH", "ss",
+    "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i", "d", "n", "o",  "o",  "o", "o", "o", "",  "o", "u", "u", "u", "u", "y", "th", "y",
+    "A", "a", "A", "a", "A", "a", "C",  "c", "C", "c", "C", "c", "C", "c", "D", "d", "D", "d", "E",  "e",  "E", "e", "E", "e", "E", "e", "E", "e", "G", "g", "G",  "g",
+    "G", "g", "G", "g", "H", "h", "H",  "h", "I", "i", "I", "i", "I", "i", "I", "i", "I", "i", "IJ", "ij", "J", "j", "K", "k", "k", "L", "l", "L", "l", "L", "l",  "L",
+    "l", "L", "l", "N", "n", "N", "n",  "N", "n", "n", "N", "n", "O", "o", "O", "o", "O", "o", "OE", "oe", "R", "r", "R", "r", "R", "r", "S", "s", "S", "s", "S",  "s",
+    "S", "s", "T", "t", "T", "t", "T",  "t", "U", "u", "U", "u", "U", "u", "U", "u", "U", "u", "U",  "u",  "W", "w", "Y", "y", "Y", "Z", "z", "Z", "z", "Z", "z",  "s",
+};
 
 /// Add `input` — a folder (`~` expanded, relative to the workspace) or
 /// `owner/repo[:apps_dir]` — to `marketplace.sources`, list it, and show
@@ -986,15 +1119,25 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     const arena = app.frame.allocator();
     const raw = std.mem.trim(u8, input, " \t\r\n");
     if (raw.len == 0) return app.diag.fail(arena, "marketplace: give a folder or owner/repo", .{});
+    // Refused before anything is written: a source added to a disabled
+    // Marketplace would sit in config.zon behind an error toast.
+    if (!app.cfg.marketplace.enabled) return app.diag.fail(arena, "marketplace: disabled in config (marketplace.enabled) \u{2014} nothing added", .{});
     const parsed = try parseSourceInput(app, arena, raw);
     var found: ?usize = null;
+    // A folder's rows, read to count them: listed at once (`showNow`).
+    var rows: []const Entry = &.{};
     var entry: Config.MarketplaceSource = undefined;
     switch (parsed) {
+        .refused => |why| return app.diag.fail(arena, "marketplace: {s}", .{why}),
         .folder => |f| {
             if (!isDir(app.io, f.abs)) return app.diag.fail(arena, "marketplace: {s} is not a folder", .{f.keep});
+            // Compared by where the folder really is: a symlink to it, or
+            // its name in other letters on a volume that folds case, is
+            // the same folder (the OS's real path spells it one way).
+            const real = try realFolder(app.io, arena, f.abs);
             for (app.cfg.marketplace.sources) |s| if (s == .local_folder) {
                 const spec = try specOf(app, arena, s);
-                if (std.mem.eql(u8, spec.path, f.abs)) return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ f.keep, s.local_folder.id });
+                if (std.mem.eql(u8, try realFolder(app.io, arena, spec.path), real)) return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ f.keep, s.local_folder.id });
             };
             // What the tab will list, listed now: the count, and the
             // refusal of a folder with nothing in it.
@@ -1006,11 +1149,14 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
                 return app.diag.fail(arena, "marketplace: nothing to install in {s} — it needs a *.zon manifest, or a folder with build.zig and manifest.zon", .{f.keep});
             }
             found = entries.items.len;
+            rows = entries.items;
             const base = std.fs.path.basename(std.mem.trimEnd(u8, f.abs, "/\\"));
             entry = .{ .local_folder = .{ .id = try uniqueId(app, arena, try idFrom(arena, base)), .path = f.keep } };
         },
         .repo => |r| {
-            for (app.cfg.marketplace.sources) |s| if (s == .github_monorepo_apps and std.mem.eql(u8, s.github_monorepo_apps.repo, r.repo) and std.mem.eql(u8, s.github_monorepo_apps.apps_dir, r.apps_dir)) {
+            // GitHub owner and repo names are case-insensitive; the apps
+            // dir is a path in the repo, which is not.
+            for (app.cfg.marketplace.sources) |s| if (s == .github_monorepo_apps and std.ascii.eqlIgnoreCase(s.github_monorepo_apps.repo, r.repo) and std.mem.eql(u8, s.github_monorepo_apps.apps_dir, r.apps_dir)) {
                 return app.diag.fail(arena, "marketplace: {s} is already the source {s}", .{ r.repo, s.github_monorepo_apps.id });
             };
             const name = r.repo[std.mem.indexOfScalar(u8, r.repo, '/').? + 1 ..];
@@ -1042,6 +1188,7 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
     const id = sourceId(grown[old.len]);
 
     try refresh(app);
+    try showNow(app, id, rows);
     try integrations.showTab(app, .marketplace);
     if (found) |n| {
         app.toast("added {s}: {d} integration{s} found", .{ id, n, if (n == 1) "" else "s" });
@@ -1049,6 +1196,40 @@ pub fn addSource(app: *App, input: []const u8) CommandError!Added {
         app.toast("added {s}: {s} ({s}/) — listing it now", .{ id, entry.github_monorepo_apps.repo, entry.github_monorepo_apps.apps_dir });
     }
     return .{ .id = id, .found = found };
+}
+
+/// A folder just added is listed now, beside the rows already shown:
+/// listing a folder is quick and was done already to count it, while
+/// the fetch `refresh` started re-lists every source and may wait on a
+/// slow one. That fetch's listing replaces this one when it lands.
+fn showNow(app: *App, id: []const u8, rows: []const Entry) Allocator.Error!void {
+    if (rows.len == 0) return;
+    const st = &app.marketplace;
+    var next = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer next.deinit();
+    const a = next.allocator();
+    const entries = try a.alloc(Entry, st.entries.len + rows.len);
+    for (st.entries, 0..) |e, i| entries[i] = try dupeEntry(a, e);
+    for (rows, st.entries.len..) |e, i| {
+        entries[i] = try dupeEntry(a, e);
+        entries[i].source = try a.dupe(u8, id);
+    }
+    const problems = try a.alloc([]const u8, st.problems.len);
+    for (st.problems, 0..) |p, i| problems[i] = try a.dupe(u8, p);
+    if (st.arena) |*old| old.deinit();
+    st.arena = next;
+    st.entries = entries;
+    st.problems = problems;
+    app.needs_render = true;
+}
+
+/// `e` with every string copied onto `a`.
+fn dupeEntry(a: Allocator, e: Entry) Allocator.Error!Entry {
+    var out = e;
+    inline for (std.meta.fields(Entry)) |f| if (f.type == []const u8) {
+        @field(out, f.name) = try a.dupe(u8, @field(e, f.name));
+    };
+    return out;
 }
 
 /// The prompt's title and its placeholder — one prompt for every entry
@@ -1225,7 +1406,8 @@ fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Instal
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var why: []const u8 = "";
-    const detail = installInner(io, gpa, arena, job, &why) catch |err| switch (err) {
+    var warn = false;
+    const detail = installInner(io, gpa, arena, job, &why, &warn) catch |err| switch (err) {
         error.OutOfMemory => {
             postFailed(events, io, gpa, generation, "marketplace: out of memory installing {s}", .{job.id});
             return;
@@ -1241,10 +1423,10 @@ fn installWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Instal
         gpa.free(id);
         return;
     };
-    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d, .rebuilt = job.rebuild } } });
+    post(events, io, gpa, .{ .generation = generation, .kind = .{ .installed = .{ .id = id, .detail = d, .rebuilt = job.rebuild, .warn = warn } } });
 }
 
-fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why: *[]const u8) InstallError![]const u8 {
+fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why: *[]const u8, warn: *bool) InstallError![]const u8 {
     manifest_mod.validateId(job.id) catch {
         why.* = "the id is not a file name";
         return error.Failed;
@@ -1341,6 +1523,12 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
                 }
                 break :blk try std.fs.path.join(arena, &.{ clone_dir, job.subpath });
             };
+            // A folder deleted since it was listed (or queued for a
+            // rebuild): said so, not left to the spawn, which blames argv[0].
+            Io.Dir.cwd().access(io, app_dir, .{}) catch {
+                why.* = try std.fmt.allocPrint(arena, "its folder {s} is gone \u{2014} nothing to build", .{app_dir});
+                return error.Failed;
+            };
             const prefix = try std.fs.path.join(arena, &.{ job.root, manifest_mod.subdir, job.id });
             try job.builder(io, gpa, arena, app_dir, prefix, &job.env, why);
             // Where it came from, for a rebuild: a folder on this
@@ -1369,10 +1557,34 @@ fn installInner(io: Io, gpa: Allocator, arena: Allocator, job: *InstallJob, why:
             };
             _ = linkBinary(io, arena, job.root, exe) catch "";
             try run(io, gpa, arena, &.{ exe, "--install" }, null, &job.env, "--install", why);
-            if (job.rebuild) return try std.fmt.allocPrint(arena, "rebuilt against SDK {s}", .{sdk_version});
+            if (job.rebuild) return rebuiltStamp(io, arena, job, warn);
             return try std.fmt.allocPrint(arena, "built {s}", .{exe});
         },
     }
+}
+
+/// What a rebuild says: the SDK the manifest `--install` just wrote is
+/// stamped with — read back, not assumed. A build still behind this
+/// mnml's SDK (the folder's build.zig.zon pins an older mnml-sdk) says
+/// so, and `warn` is set.
+fn rebuiltStamp(io: Io, arena: Allocator, job: *InstallJob, warn: *bool) Allocator.Error![]const u8 {
+    const path = manifest_mod.manifest.pathUnder(arena, job.root, job.id) catch return "rebuilt";
+    const text = Io.Dir.cwd().readFileAllocOptions(io, path, arena, .limited(1 << 20), .of(u8), 0) catch {
+        warn.* = true;
+        return std.fmt.allocPrint(arena, "rebuilt, but --install wrote no manifest at {s}", .{path});
+    };
+    var why: []const u8 = "";
+    const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadManifest => {
+            warn.* = true;
+            return std.fmt.allocPrint(arena, "rebuilt, but the manifest --install wrote does not parse: {s}", .{why});
+        },
+    };
+    if (!m.staleAgainst(sdk_version)) return std.fmt.allocPrint(arena, "rebuilt against SDK {s}", .{m.sdk});
+    warn.* = true;
+    const on = if (m.sdk.len == 0) "no SDK stamp" else try std.fmt.allocPrint(arena, "SDK {s}", .{m.sdk});
+    return std.fmt.allocPrint(arena, "rebuilt, but still on {s} \u{2014} the mnml-sdk its build.zig.zon depends on is older than {s}; update that and rebuild", .{ on, sdk_version });
 }
 
 pub const LinkError = error{ OutOfMemory, LinkFailed };
@@ -1467,7 +1679,7 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             st.installing = null;
             try integrations.refresh(app);
             if (i.rebuilt)
-                app.toast("{s}: {s}", .{ i.id, i.detail })
+                try app.toastLevel(if (i.warn) .warn else .info, "{s}: {s}", .{ i.id, i.detail })
             else
                 app.toast("marketplace: installed {s} — {s}", .{ i.id, i.detail });
             pumpOrToast(app);
@@ -2412,4 +2624,260 @@ test "the Marketplace tab's + source chip and its menus fire marketplace.add_sou
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(app.overlay == .prompt);
     try testing.expect(app.overlay.prompt.purpose.marketplace_add_source == .palette);
+}
+
+/// The fake build a test swaps in for `zig build`: it leaves a
+/// `built.txt` in the folder it was asked to build (so the test can
+/// read back WHICH folder was built) and puts the prebuilt sample in
+/// `<prefix>/bin/`, so the link and `--install` run for real.
+fn fakeBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void {
+    _ = gpa;
+    _ = env;
+    const note = try std.fs.path.join(arena, &.{ app_dir, "built.txt" });
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = prefix }) catch {
+        why.* = "fake build: cannot write built.txt";
+        return error.Failed;
+    };
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {};
+    const exe = build_options.sample_integration_exe;
+    const dst = try std.fs.path.join(arena, &.{ bin, std.fs.path.basename(exe) });
+    Io.Dir.cwd().copyFile(exe, Io.Dir.cwd(), dst, io, .{}) catch {
+        why.* = "fake build: cannot copy the sample";
+        return error.Failed;
+    };
+}
+
+test "addSource: a folder that IS an integration (build.zig + manifest.zon) lists as that one app and Install builds it in place — its manifest is never a launcher" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const d = rig.tmp.dir;
+    try d.createDirPath(io, "ws/slowsrc/slow");
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/build.zig", .data = "" });
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/build.zig.zon", .data = ".{ .name = .slow, .version = \"0.1.0\" }" });
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/manifest.zon", .data = ".{ .id = \"slow\", .label = \"Slow\", .version = \"0.1.0\", .binary = \"mnml-slow\" }" });
+
+    const added = try addSource(app, "slowsrc/slow");
+    try testing.expectEqualStrings("slow", added.id);
+    try testing.expectEqual(@as(?usize, 1), added.found);
+    try settle(app);
+    const slow_abs = try std.fs.path.join(gpa, &.{ rig.ws, "slowsrc", "slow" });
+    defer gpa.free(slow_abs);
+    try testing.expectEqual(@as(usize, 1), app.marketplace.entries.len);
+    const e = app.marketplace.entries[0];
+    try testing.expectEqual(Kind.app, e.kind);
+    try testing.expectEqualStrings("slow", e.id);
+    try testing.expectEqualStrings(slow_abs, e.url);
+
+    // Install builds the folder itself, exactly as a subfolder of a
+    // source folder would be built.
+    app.marketplace.builder = fakeBuild;
+    try install(app, 0);
+    try settle(app);
+    const built = try std.fs.path.join(gpa, &.{ slow_abs, "built.txt" });
+    defer gpa.free(built);
+    try Io.Dir.cwd().access(io, built, .{});
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "installed slow") != null);
+}
+
+test "addSource with the Marketplace disabled refuses before writing: config.zon and the sources in memory are untouched, and the message says nothing was added" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    app.cfg.marketplace.enabled = false;
+    try testing.expectError(error.Failed, addSource(app, "acme"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "disabled") != null);
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "nothing added") != null);
+    try testing.expectError(error.Failed, addSource(app, "someone/tools"));
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expectEqualStrings(add_source_before, got);
+    try testing.expectEqual(@as(usize, 1), app.cfg.marketplace.sources.len);
+}
+
+test "addSource: owner/repo is compared case-insensitively, as GitHub does — Someone/Tools after someone/tools is already the source, and an id never differs from another by case alone" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expectEqualStrings("tools", (try addSource(app, "someone/tools")).id);
+    for ([_][]const u8{ "Someone/Tools", "SOMEONE/TOOLS" }) |again| {
+        app.diag.clear();
+        try testing.expectError(error.Failed, addSource(app, again));
+        try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source tools") != null);
+    }
+    // Another repo whose name is `tools` in other letters: its own id,
+    // not one that reads the same as `tools`.
+    try testing.expectEqualStrings("Tools-2", (try addSource(app, "other/Tools")).id);
+    try testing.expectEqual(@as(usize, 3), app.cfg.marketplace.sources.len);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, got, "someone/tools"));
+    try testing.expect(std.mem.indexOf(u8, got, "Someone/Tools") == null);
+    try settle(app);
+}
+
+test "addSource: the same folder by another spelling — a symlink to it, or its name in other letters on a case-insensitive volume — is already the source, nothing written" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    try testing.expectEqualStrings("acme", (try addSource(app, "acme")).id);
+    const before = try rig.config();
+    defer gpa.free(before);
+    var refused: usize = 0;
+    const acme_abs = try std.fs.path.join(gpa, &.{ rig.ws, "acme" });
+    defer gpa.free(acme_abs);
+    // A symlink, where the platform lets a test make one.
+    if (rig.tmp.dir.symLink(io, acme_abs, "ws/link", .{ .is_directory = true })) |_| {
+        app.diag.clear();
+        try testing.expectError(error.Failed, addSource(app, "link"));
+        try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source acme") != null);
+        refused += 1;
+    } else |_| {}
+    // Letter case, where the volume folds it (macOS and Windows by
+    // default): `ACME` is then the same folder.
+    const upper = try std.fs.path.join(gpa, &.{ rig.ws, "ACME" });
+    defer gpa.free(upper);
+    if (isDir(io, upper)) {
+        for ([_][]const u8{ "ACME", "Acme" }) |spelling| {
+            app.diag.clear();
+            try testing.expectError(error.Failed, addSource(app, spelling));
+            try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source acme") != null);
+            refused += 1;
+        }
+    }
+    // A POSIX CI box without either still ran the check above.
+    try testing.expect(refused > 0 or @import("builtin").os.tag == .windows);
+    const after = try rig.config();
+    defer gpa.free(after);
+    try testing.expectEqualStrings(before, after);
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try settle(app);
+}
+
+test "addSource: a pasted GitHub repo URL is that repo — scheme or not, .git, a trailing slash, /tree/<branch>/<dir>; any other URL is refused by name, never read as a folder" {
+    const gpa = testing.allocator;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const arena = app.frame.allocator();
+    const Want = struct { in: []const u8, repo: []const u8, dir: []const u8 };
+    for ([_]Want{
+        .{ .in = "https://github.com/someone/tools", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "http://github.com/someone/tools.git/", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "github.com/someone/tools", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "HTTPS://www.GitHub.com/someone/tools/", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools?tab=readme#top", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools/tree/main", .repo = "someone/tools", .dir = "apps" },
+        .{ .in = "https://github.com/someone/tools/tree/main/integrations", .repo = "someone/tools", .dir = "integrations" },
+        .{ .in = "https://github.com/someone/tools/tree/main/pkgs/zig/", .repo = "someone/tools", .dir = "pkgs/zig" },
+        .{ .in = "git@github.com:someone/tools.git", .repo = "someone/tools", .dir = "apps" },
+    }) |w| {
+        const got = try parseSourceInput(app, arena, w.in);
+        if (got != .repo) {
+            std.debug.print("{s}: read as {s}, not a repo\n", .{ w.in, @tagName(got) });
+            return error.TestExpectedRepo;
+        }
+        try testing.expectEqualStrings(w.repo, got.repo.repo);
+        try testing.expectEqualStrings(w.dir, got.repo.apps_dir);
+    }
+    for ([_][]const u8{ "https://gitlab.com/someone/tools", "ftp://example.com/x", "file:///Users/me/x", "https://github.com/someone", "https://github.com/someone/tools/blob/main/x.zon", "https://github.com/some one/tools" }) |in| {
+        const got = try parseSourceInput(app, arena, in);
+        try testing.expect(got == .refused);
+    }
+
+    const added = try addSource(app, "https://github.com/someone/tools");
+    try testing.expectEqualStrings("tools", added.id);
+    const got = try rig.config();
+    defer gpa.free(got);
+    try testing.expect(std.mem.indexOf(u8, got, ".repo = \"someone/tools\", .apps_dir = \"apps\"") != null);
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "github.com/someone/tools/"));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "already the source tools") != null);
+    // Refused by what it is, with the forms that work — never a path
+    // under the workspace the user did not type.
+    app.diag.clear();
+    try testing.expectError(error.Failed, addSource(app, "https://gitlab.com/someone/tools"));
+    const msg = app.diag.msg.?;
+    try testing.expect(std.mem.indexOf(u8, msg, "not a folder") == null);
+    try testing.expect(std.mem.indexOf(u8, msg, rig.ws) == null);
+    try testing.expect(std.mem.indexOf(u8, msg, "https://gitlab.com/someone/tools") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "owner/repo") != null);
+    try testing.expectEqual(@as(usize, 2), app.cfg.marketplace.sources.len);
+    try settle(app);
+}
+
+test "idFrom reads like the name: accented Latin letters fold to their base letter, one - per run of anything else, and a name with nothing ASCII left is `private`" {
+    var mem = std.heap.ArenaAllocator.init(testing.allocator);
+    defer mem.deinit();
+    const a = mem.allocator();
+    try testing.expectEqualStrings("integrations", try idFrom(a, "intégrations"));
+    // The same word as macOS may hand it over: e + a combining accent.
+    try testing.expectEqualStrings("integrations", try idFrom(a, "inte\u{301}grations"));
+    try testing.expectEqualStrings("uni-code", try idFrom(a, "ünï cødé"));
+    try testing.expectEqualStrings("Strasse-Lodz", try idFrom(a, "Straße Łódź"));
+    try testing.expectEqualStrings("my-tools", try idFrom(a, "my  tools"));
+    try testing.expectEqualStrings("tools-v2", try idFrom(a, "tools → v2"));
+    try testing.expectEqualStrings("acme_co.x", try idFrom(a, "acme_co.x"));
+    try testing.expectEqualStrings("private", try idFrom(a, "日本語"));
+    try testing.expectEqualStrings("private", try idFrom(a, ""));
+}
+
+test "addSource: a folder named with non-ASCII letters gets an id that reads like it" {
+    const io = testing.io;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const d = rig.tmp.dir;
+    try d.createDirPath(io, "ws/intégrations/one");
+    try d.writeFile(io, .{ .sub_path = "ws/intégrations/one/build.zig", .data = "" });
+    try d.writeFile(io, .{ .sub_path = "ws/intégrations/one/manifest.zon", .data = ".{ .id = \"one\", .label = \"One\", .version = \"0.1.0\", .binary = \"mnml-one\" }" });
+    try testing.expectEqualStrings("integrations", (try addSource(app, "intégrations")).id);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "added integrations: 1 integration found") != null);
+    try settle(app);
+}
+
+test "addSource: a folder's rows are listed the moment it is added, beside the rows already there — not when every source's fetch lands" {
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    _ = try addSource(app, "tools/acme");
+    try settle(app);
+    try testing.expectEqual(@as(usize, 1), app.marketplace.entries.len);
+    // No tick in between: nothing the worker posts has been handled.
+    const added = try addSource(app, "acme");
+    try testing.expectEqualStrings("acme-2", added.id);
+    try testing.expect(app.marketplace.fetching);
+    try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
+    var mine: usize = 0;
+    for (app.marketplace.entries) |e| {
+        if (std.mem.eql(u8, e.source, "acme-2")) {
+            try testing.expect(e.private);
+            mine += 1;
+        } else try testing.expectEqualStrings("acme", e.source);
+    }
+    try testing.expectEqual(@as(usize, 3), mine);
+    // The tab shows them now.
+    try app.render();
+    const text = try screen_mod.toTestText(testing.allocator, &app.screen);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "Mkt (4)") != null);
+    // The fetch's own listing replaces it with the same rows.
+    try settle(app);
+    try testing.expectEqual(@as(usize, 4), app.marketplace.entries.len);
 }
