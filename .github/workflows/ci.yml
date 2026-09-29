@@ -428,10 +428,27 @@ jobs:
             sleep $((i * 15))
           done
           exit 1
+      # Swap, so a compile that outgrows the runner's RAM slows down
+      # instead of the runner being shut down: aarch64 died that way
+      # (exit 143, "the runner has received a shutdown signal", 13-18 min
+      # in, no compiler error) on three of four runs on 2026-09-29, and
+      # passed in 24-31 min on the others. `free` before and after shows
+      # how close it came.
+      - name: Add swap
+        run: |
+          free -h
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /mnt/ci-swapfile
+          sudo chmod 600 /mnt/ci-swapfile
+          sudo mkswap /mnt/ci-swapfile
+          sudo swapon /mnt/ci-swapfile
+          free -h
       # -j1: one ReleaseSafe LLVM compile of the exe peaks at 9 GB for
       # aarch64 (measured locally), and gate-build has six of that size;
       # two at once is what the runner was shut down for at 12 minutes.
       - name: zig build gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
         run: zig build -j1 gate-build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe --summary failures
       - name: What was built
-        run: ls -la zig-out/gate/
+        run: |
+          ls -la zig-out/gate/
+          free -h
