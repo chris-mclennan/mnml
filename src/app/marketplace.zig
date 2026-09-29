@@ -793,13 +793,61 @@ pub fn appendIndexRows(arena: Allocator, s: SourceSpec, idx: release.Index, host
 /// integrations repo symlinked in whole — is looked into for more of
 /// the same, a few levels down (`local_depth`), so its
 /// `integrations/<id>/` folders list without being linked one by one.
+/// A folder that is itself an integration (`build.zig` + `manifest.zon`)
+/// is that one app, built in place — its `manifest.zon` is never a
+/// launcher to copy.
 fn listLocal(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     var dir = Io.Dir.cwd().openDir(io, s.path, .{ .iterate = true }) catch {
         try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s} is not a directory", .{ s.id, s.path }));
         return;
     };
     defer dir.close(io);
+    // A repo root has a `build.zig` too, but no `manifest.zon`: it is
+    // walked for the integrations under it.
+    if (isIntegrationDir(io, dir)) {
+        const text = dir.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch |err| {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/manifest.zon: {s}", .{ s.id, @errorName(err) }));
+            return;
+        };
+        // `s.path` is the worker's, freed when it ends: the row keeps a copy.
+        try appendManifest(arena, s, .app, text, "manifest.zon", try arena.dupe(u8, s.path), entries, problems);
+        return;
+    }
     try listLocalDir(io, arena, s, dir, s.path, 0, entries, problems);
+}
+
+/// A Zig integration's folder: `build.zig` and `manifest.zon` side by side.
+fn isIntegrationDir(io: Io, dir: Io.Dir) bool {
+    _ = dir.statFile(io, "build.zig", .{}) catch return false;
+    _ = dir.statFile(io, "manifest.zon", .{}) catch return false;
+    return true;
+}
+
+/// Parse `text` and list it as a `kind` row at `full`; a manifest that
+/// does not parse is a problem named by `name`.
+fn appendManifest(arena: Allocator, s: SourceSpec, kind: Kind, text: [:0]const u8, name: []const u8, full: []const u8, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    var why: []const u8 = "";
+    const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.BadManifest => {
+            try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, name, why }));
+            return;
+        },
+    };
+    try entries.append(arena, .{
+        .source = try arena.dupe(u8, s.id),
+        .kind = kind,
+        .id = m.id,
+        .label = m.label,
+        .description = m.description,
+        .version = m.version,
+        .url = full,
+        .official = s.official,
+        .private = !s.official,
+        .glyph = try integrations.chipGlyph(arena, m.chip),
+        .fallback = if (m.chip) |c| c.fallback else "",
+        .color = if (m.chip) |c| c.color else "",
+    });
 }
 
 /// How far below a `local_folder` an integration folder may sit:
@@ -835,28 +883,7 @@ fn listLocalDir(io: Io, arena: Allocator, s: SourceSpec, dir: Io.Dir, path: []co
             kind = .app;
             text = sub.readFileAllocOptions(io, "manifest.zon", arena, .limited(1 << 20), .of(u8), 0) catch continue;
         } else continue;
-        var why: []const u8 = "";
-        const m = manifest_mod.parse(arena, text, &why) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.BadManifest => {
-                try problems.append(arena, try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ s.id, entry.name, why }));
-                continue;
-            },
-        };
-        try entries.append(arena, .{
-            .source = try arena.dupe(u8, s.id),
-            .kind = kind,
-            .id = m.id,
-            .label = m.label,
-            .description = m.description,
-            .version = m.version,
-            .url = full,
-            .official = s.official,
-            .private = !s.official,
-            .glyph = try integrations.chipGlyph(arena, m.chip),
-            .fallback = if (m.chip) |c| c.fallback else "",
-            .color = if (m.chip) |c| c.color else "",
-        });
+        try appendManifest(arena, s, kind, text, entry.name, full, entries, problems);
     }
 }
 
@@ -2412,4 +2439,64 @@ test "the Marketplace tab's + source chip and its menus fire marketplace.add_sou
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expect(app.overlay == .prompt);
     try testing.expect(app.overlay.prompt.purpose.marketplace_add_source == .palette);
+}
+
+/// The fake build a test swaps in for `zig build`: it leaves a
+/// `built.txt` in the folder it was asked to build (so the test can
+/// read back WHICH folder was built) and puts the prebuilt sample in
+/// `<prefix>/bin/`, so the link and `--install` run for real.
+fn fakeBuild(io: Io, gpa: Allocator, arena: Allocator, app_dir: []const u8, prefix: []const u8, env: *const std.process.Environ.Map, why: *[]const u8) InstallError!void {
+    _ = gpa;
+    _ = env;
+    const note = try std.fs.path.join(arena, &.{ app_dir, "built.txt" });
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = note, .data = prefix }) catch {
+        why.* = "fake build: cannot write built.txt";
+        return error.Failed;
+    };
+    const bin = try std.fs.path.join(arena, &.{ prefix, "bin" });
+    Io.Dir.cwd().createDirPath(io, bin) catch {};
+    const exe = build_options.sample_integration_exe;
+    const dst = try std.fs.path.join(arena, &.{ bin, std.fs.path.basename(exe) });
+    Io.Dir.cwd().copyFile(exe, Io.Dir.cwd(), dst, io, .{}) catch {
+        why.* = "fake build: cannot copy the sample";
+        return error.Failed;
+    };
+}
+
+test "addSource: a folder that IS an integration (build.zig + manifest.zon) lists as that one app and Install builds it in place — its manifest is never a launcher" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const exe = build_options.sample_integration_exe;
+    Io.Dir.cwd().access(io, exe, .{}) catch return error.SkipZigTest;
+    var rig: AddSourceRig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    const app = &rig.app;
+    const d = rig.tmp.dir;
+    try d.createDirPath(io, "ws/slowsrc/slow");
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/build.zig", .data = "" });
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/build.zig.zon", .data = ".{ .name = .slow, .version = \"0.1.0\" }" });
+    try d.writeFile(io, .{ .sub_path = "ws/slowsrc/slow/manifest.zon", .data = ".{ .id = \"slow\", .label = \"Slow\", .version = \"0.1.0\", .binary = \"mnml-slow\" }" });
+
+    const added = try addSource(app, "slowsrc/slow");
+    try testing.expectEqualStrings("slow", added.id);
+    try testing.expectEqual(@as(?usize, 1), added.found);
+    try settle(app);
+    const slow_abs = try std.fs.path.join(gpa, &.{ rig.ws, "slowsrc", "slow" });
+    defer gpa.free(slow_abs);
+    try testing.expectEqual(@as(usize, 1), app.marketplace.entries.len);
+    const e = app.marketplace.entries[0];
+    try testing.expectEqual(Kind.app, e.kind);
+    try testing.expectEqualStrings("slow", e.id);
+    try testing.expectEqualStrings(slow_abs, e.url);
+
+    // Install builds the folder itself, exactly as a subfolder of a
+    // source folder would be built.
+    app.marketplace.builder = fakeBuild;
+    try install(app, 0);
+    try settle(app);
+    const built = try std.fs.path.join(gpa, &.{ slow_abs, "built.txt" });
+    defer gpa.free(built);
+    try Io.Dir.cwd().access(io, built, .{});
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "installed slow") != null);
 }

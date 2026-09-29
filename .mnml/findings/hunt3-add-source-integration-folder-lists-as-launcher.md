@@ -1,6 +1,6 @@
 ---
 severity: SEV-2
-status: open
+status: fixed
 ---
 # Adding one integration's own folder as a private source lists its `manifest.zon` as a `[launcher]`; Install then "installs" it without building, leaving a row whose binary is missing
 
