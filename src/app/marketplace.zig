@@ -1943,6 +1943,20 @@ const hello_zon =
     \\.{ .id = "hello", .label = "Hello", .description = "The sample", .version = "0.1.0", .binary = "mnml-hello" }
 ;
 
+test "the default index is chris-mclennan/mnml's, and a dev build never asks it: no release version, no URL" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expect((try release.resolveUrl(a, Config.default_index_url, "0.3.0-dev+g1a2b3c4-dirty")) == null);
+    try testing.expect((try release.resolveUrl(a, Config.default_index_url, "0.3.0-dev")) == null);
+    try testing.expect((try release.resolveUrl(a, Config.default_index_url, build_options.version)) == null);
+    try testing.expect(!sourceResolves(a, Config.default_marketplace_sources[0]));
+    try testing.expectEqualStrings(
+        "https://github.com/chris-mclennan/mnml/releases/download/v0.3.0/integrations.json",
+        (try release.resolveUrl(a, Config.default_index_url, "0.3.0")).?,
+    );
+}
+
 test "a dev build's default source is the mnml catalogue: its release index has no version to resolve, and nothing from the 0.2 monorepo, launchers or crates is prepended" {
     const gpa = testing.allocator;
     const io = testing.io;

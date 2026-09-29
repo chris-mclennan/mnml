@@ -97,7 +97,7 @@ An integration whose code did not change keeps its row and its old
 release, as long as its SDK is still compatible.
 
 **What mnml does with it.** The Marketplace tab's default source is
-`https://github.com/chris-mclennan/mnml-zig/releases/download/v<its
+`https://github.com/chris-mclennan/mnml/releases/download/v<its
 version>/integrations.json` (`Config.default_marketplace_sources`; a dev
 build has no release and skips it). A row is listed when its SDK is
 compatible and it has an asset for this platform. Install downloads

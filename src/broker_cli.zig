@@ -35,10 +35,10 @@ const sdk = @import("mnml_sdk");
 const broker_app = @import("app/broker.zig");
 
 pub const usage =
-    \\usage: mnml-zig broker acquire [--service NAME] [--class interactive|refresh|warm|batch]
+    \\usage: mnml broker acquire [--service NAME] [--class interactive|refresh|warm|batch]
     \\                              [--reason WORD] [--timeout-ms N] [--json]
-    \\       mnml-zig broker status  [--service NAME] [--json]
-    \\       mnml-zig broker serve   [--service NAME] [--rate N] [--capacity N]
+    \\       mnml broker status  [--service NAME] [--json]
+    \\       mnml broker serve   [--service NAME] [--rate N] [--capacity N]
 ;
 
 pub const Std = struct {

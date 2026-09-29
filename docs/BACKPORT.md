@@ -1,4 +1,4 @@
-# Backport notes — what mnml-zig proved, and how to do it in Rust mnml
+# Backport notes — what mnml 0.3 proved, and how to do it in the Rust mnml (0.2.x)
 
 `docs/DESIGN.md` D9 lists the designs that were meant to flow back to the
 Rust repo once the Zig side showed they hold. Each item below names the

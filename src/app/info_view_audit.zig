@@ -763,7 +763,7 @@ pub fn main(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []const
             }
             write_todo = argv[i];
         } else {
-            try w.print("hover-audit: unknown argument {s}\nusage: mnml-zig hover-audit [--strict] [--quiet] [--write-todo PATH]\n", .{a});
+            try w.print("hover-audit: unknown argument {s}\nusage: mnml hover-audit [--strict] [--quiet] [--write-todo PATH]\n", .{a});
             return 2;
         }
     }

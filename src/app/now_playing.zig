@@ -462,7 +462,7 @@ fn playerOf(app: *const App) Source {
     return Source.ofPreferred(app.cfg.ui.preferred_music_app);
 }
 
-const mixr_cut = "mixr transport is cut from mnml-zig (docs/PARITY.md § UI & theming)";
+const mixr_cut = "mixr transport is cut from mnml 0.3 (docs/PARITY.md § UI & theming)";
 
 /// The play / pause chip: `playpause` for a macOS player; mixr's IPC
 /// is cut. Idle: the preferred player starts (`mixr.play_now` for mixr).

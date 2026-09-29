@@ -1,6 +1,6 @@
 # Lua scripting — the `mnml` table
 
-mnml-zig embeds Lua 5.4 (compiled from C inside `zig build`, bound through
+mnml embeds Lua 5.4 (compiled from C inside `zig build`, bound through
 zlua). A script extends the editor the way an `init.lua` extends any editor
 that takes one, but against a small, curated surface: it registers commands
 and binds keys, subscribes to hooks, reads and edits buffers through the
@@ -1463,7 +1463,7 @@ on it. Unit tests reach the state as `app.script()` and run chunks with
 `runString`.
 
 A test that drives a script **file** rather than an inline one copies it in
-with a `shell` step; `mnml-zig test` exports the checkout as
+with a `shell` step; `mnml test` exports the checkout as
 `$MNML_REPO` (unless it is already set), so the step names it directly:
 
 ```

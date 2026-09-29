@@ -123,8 +123,8 @@ pub const table = .{
 
 const cut_forge = "the cross-host PR picker returns with the Zig forge integrations (docs/PARITY.md § Git)";
 const cut_glyph_svg = "the per-integration glyph builder and its SVG preview are cut — SVG-to-font itself is not: `view.terminal_glyph_custom` bakes one (docs/PARITY.md § Headless, IPC & extensibility)";
-const cut_audio = "now-playing, Sonos and mixr control are cut from mnml-zig (docs/PARITY.md § UI & theming)";
-const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml-zig — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
+const cut_audio = "now-playing, Sonos and mixr control are cut from mnml 0.3 (docs/PARITY.md § UI & theming)";
+const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml 0.3 — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
 
 /// A command that was cut on purpose: the reason, and where the ledger
 /// records it, as one toast. Fails so a keybinding does not look like it
@@ -132,7 +132,7 @@ const cut_integration_updates = "the cargo / git integration auto-updater is not
 fn cutRunner(comptime reason: []const u8) CommandFn {
     return &struct {
         fn run(app: *App) CommandError!void {
-            return app.diag.fail(app.frame.allocator(), "not in mnml-zig: " ++ reason, .{});
+            return app.diag.fail(app.frame.allocator(), "not in mnml 0.3: " ++ reason, .{});
         }
     }.run;
 }
@@ -1112,7 +1112,7 @@ test "the Codex glyph editor and the integration auto-updater are cut: each fail
     };
     for (ids) |id| {
         try t.expectError(error.Failed, command.run(&app, .{ .static = id }));
-        try t.expect(std.mem.startsWith(u8, app.lastToast().?, "not in mnml-zig: "));
+        try t.expect(std.mem.startsWith(u8, app.lastToast().?, "not in mnml 0.3: "));
         try t.expect(std.mem.indexOf(u8, app.lastToast().?, "docs/PARITY.md") != null);
     }
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "auto_update_*") != null);

@@ -11,7 +11,7 @@ So a hunter or fixer agent works in two gears on the **same workspace**:
 
 1. **Headless, for speed.** Drive the workspace through the file channel,
    read `screen.txt` / `status.json`, iterate on the fix.
-2. **The real window, to look.** Launch mnml-zig in its own ghostty window
+2. **The real window, to look.** Launch mnml in its own ghostty window
    on that workspace, send the same channel lines, take a PNG, `Read` it.
 
 ```
@@ -103,7 +103,7 @@ only the left half of its cell; sample it at `FX 0.25`.
 
 | | what it drives | when |
 |---|---|---|
-| `mnml-zig test` (the corpus) | the App, headless | every change |
+| `mnml test` (the corpus) | the App, headless | every change |
 | `tools/look.sh` | one real window, by hand | while fixing anything visual |
 | `tools/tour.sh` | the curated tour, 29 states, baselines + pixel asserts | after every green chain |
 | `tools/tour.sh sweep` | every `.test` through the real window | overnight |

@@ -1,4 +1,4 @@
-# mnml-zig on Windows
+# mnml on Windows
 
 The Windows backends were written without a Windows machine in the
 loop. This page says exactly what that means: what exists, what has
@@ -23,7 +23,7 @@ parsed events into the queue and into vaxis, key naming),
 (argv → `CreateProcessW` command line, exit code → `Exit`, the
 `COMSPEC` choice).
 
-`src/main.zig` no longer returns early on Windows: `mnml-zig [WS]`
+`src/main.zig` no longer returns early on Windows: `mnml [WS]`
 runs the interactive loop there, `test` and `--headless` as before.
 
 `docs/PORTABILITY.md` is the static audit beside this ledger: every
@@ -260,7 +260,7 @@ variable at `0` they are refused rather than run through `cmd`.
   terminates it first, so the close returns; but a child in an
   uninterruptible state could hold it. Untested.
 - **The e2e runner's `shell` steps** (`src/e2e/runner.zig`) are
-  `<shell> -c`; `mnml-zig test`'s shell is `MNML_E2E_SHELL` or
+  `<shell> -c`; `mnml test`'s shell is `MNML_E2E_SHELL` or
   `/bin/sh` (never `$SHELL`).
   Windows runs `.test` files fine as long as they have no `shell`
   step.

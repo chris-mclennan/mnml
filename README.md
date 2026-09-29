@@ -35,7 +35,7 @@ of the three.
 
 ```sh
 # macOS / Linux — into ~/.local/bin (MNML_INSTALL_DIR to change it)
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.sh | sh
 
 # Homebrew (macOS / Linux)
 brew install chris-mclennan/tap/mnml
@@ -43,7 +43,7 @@ brew install chris-mclennan/tap/mnml
 
 ```powershell
 # Windows — into %LOCALAPPDATA%\mnml\bin, added to your user PATH
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.ps1 | iex"
 
 # winget
 winget install ChrisMcLennan.mnml

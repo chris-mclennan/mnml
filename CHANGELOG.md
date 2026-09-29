@@ -183,7 +183,7 @@ architecture behind it is in `docs/DESIGN.md`.
 
 ### Testing
 
-- `mnml-zig test` runs the shared `.test` corpus headlessly on a
+- `mnml test` runs the shared `.test` corpus headlessly on a
   `DebugAllocator` with safety on; a leak fails the file. `--gate` runs the
   52-file Phase-0 set, `--sizes 80x24,120x40,200x60` sweeps the widths, and
   `--shard I/N` runs one of N disjoint slices of the corpus.

@@ -2,12 +2,12 @@
 # sha256, puts mnml.exe under %LOCALAPPDATA%\mnml\bin and adds that to the
 # user PATH.
 #
-#   powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnml-zig/releases/latest/download/mnml-installer.ps1 | iex"
+#   powershell -ExecutionPolicy Bypass -c "irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.ps1 | iex"
 #
 # Environment (same names as install.sh):
 #   MNML_VERSION       a tag without the v (0.3.0); default: the latest release
 #   MNML_INSTALL_DIR   where mnml.exe goes; default: %LOCALAPPDATA%\mnml\bin
-#   MNML_REPO          owner/repo on GitHub; default: chris-mclennan/mnml-zig
+#   MNML_REPO          owner/repo on GitHub; default: chris-mclennan/mnml
 #   MNML_BASE_URL      full URL of the release's asset directory; overrides
 #                      MNML_REPO + MNML_VERSION (mirrors, local testing)
 #
@@ -16,7 +16,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = if ($env:MNML_REPO) { $env:MNML_REPO } else { 'chris-mclennan/mnml-zig' }
+$Repo = if ($env:MNML_REPO) { $env:MNML_REPO } else { 'chris-mclennan/mnml' }
 $Version = $env:MNML_VERSION
 $InstallDir = if ($env:MNML_INSTALL_DIR) { $env:MNML_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'mnml\bin' }
 $BaseUrl = $env:MNML_BASE_URL

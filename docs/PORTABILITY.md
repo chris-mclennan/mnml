@@ -1,6 +1,6 @@
 # Portability audit — macOS, Linux, Windows
 
-mnml-zig ships for five targets: `aarch64-macos`, `x86_64-macos`,
+mnml ships for five targets: `aarch64-macos`, `x86_64-macos`,
 `x86_64-linux-gnu`, `aarch64-linux-gnu` and `x86_64-windows-gnu`. Zig
 analyses code lazily, so a `builtin.os.tag == .windows` branch, a
 Linux-only libc dependency or a Windows-skipped test that no longer
@@ -109,7 +109,7 @@ The SDK's URL opener is `sdk/mnml-sdk/src/platform.zig`.
 | `src/cdp/client.zig` `candidates` | fixed | Chrome / Chromium / Edge's `Program Files` paths (none is on `PATH` on Windows) |
 | `src/cdp/client.zig` `available` / `spawn` (puppeteer cache) | fixed | `~/.cache/puppeteer` under `USERPROFILE` (it read `HOME`) |
 | `src/app/cmd_app.zig` `onPath` | fixed | had `;`, lacked `PATHEXT`; now `os_path.which` |
-| `src/e2e/runner.zig` `shell` steps, `src/main.zig` `mnml-zig test` (`MNML_E2E_SHELL` or `/bin/sh`) | documented | `<shell> -c`: `.test` shell steps are POSIX sh by definition, and the runner never reads `$SHELL`. Windows runs the corpus with `MNML_E2E_ALLOW_SHELL=0` (refused, not run through `cmd`); a Git-for-Windows `sh.exe` named by `MNML_E2E_SHELL` is the way to run them |
+| `src/e2e/runner.zig` `shell` steps, `src/main.zig` `mnml test` (`MNML_E2E_SHELL` or `/bin/sh`) | documented | `<shell> -c`: `.test` shell steps are POSIX sh by definition, and the runner never reads `$SHELL`. Windows runs the corpus with `MNML_E2E_ALLOW_SHELL=0` (refused, not run through `cmd`); a Git-for-Windows `sh.exe` named by `MNML_E2E_SHELL` is the way to run them |
 | `integrations/jira/src/dispatch.zig` `termLine` / `firePrompt`, `integrations/bitbucket/main.zig` `dispatchSession` | documented | `sh -c 'claude <<'MNML_EOF' …'`: needs an `sh` on `PATH` (Git for Windows' `usr\bin`); without one the host's `:term` fails to spawn and says so. Closing it: pass the prompt as `claude`'s argv (no shell) or through a temp file |
 
 ## Processes and signals

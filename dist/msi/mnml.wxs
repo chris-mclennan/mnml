@@ -77,7 +77,7 @@
 
     <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize" />
     <Property Id="ARPHELPLINK" Value="https://mnml.sh" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/chris-mclennan/mnml-zig" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/chris-mclennan/mnml" />
     <Property Id="ARPNOMODIFY" Value="1" />
   </Package>
 </Wix>
