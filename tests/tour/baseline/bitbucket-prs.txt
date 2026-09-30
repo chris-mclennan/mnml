@@ -6,10 +6,10 @@
    │▌ 󰂨  [installed] Bitbucke…│▌ status: Open + Draft   author: all   target: any   show: all
  󰊢 │▌   Bitbucket: open + mer…│▌ 󰍉 / filter
    │                          │▌ REPO / #PR                   STATE      AUTHOR             BRANCH                 UPDATED      TITLE
-  │                          │▌  api                        2 PRs      Chris M            chris/fix-login        2026-09-29   #1234 · Fix the login redirect
-   │                          │▌    #1234                    OPEN       Chris M            chris/fix-login        2026-09-29   Fix the login redirect                                [󰏌 Open] [󰘭 Merge]
-▌2 │                          │▌  web                        1 PR       Chris M            chris/empty-state      2026-09-29   #820 · Redesign the empty state
-   │                          │▌    #820                     OPEN       Chris M            chris/empty-state      2026-09-29   Redesign the empty state                              [󰏌 Open] [󰘭 Merge]
+  │                          │▌  api                        2 PRs      Max Orr            bug/fix-login          2026-09-30   #1234 · Fix the login redirect
+   │                          │▌    #1234                    OPEN       Max Orr            bug/fix-login          2026-09-30   Fix the login redirect                                [󰏌 Open] [󰘭 Merge]
+▌󰐱 │                          │▌  web                        1 PR       Max Orr            feature/empty-state    2026-09-30   #820 · Redesign the empty state
+   │                          │▌    #820                     OPEN       Max Orr            feature/empty-state    2026-09-30   Redesign the empty state                              [󰏌 Open] [󰘭 Merge]
  󰎒 │                          │▌                                                                                                ⋯  Show more (1)
    │                          │▌
   │                          │▌
@@ -56,5 +56,5 @@
    │                          │▌
   │                          │▌
    │                          │ Open + Draft · 2 repos, 3 PRs                                             ↓ move · Enter expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                         󰂨 2(1)  󰌃 3   1  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  20:35  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                         󰂨 2(1)  󰌃 3   1  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  16:10  ws   —
                                                                                                    ⋯
