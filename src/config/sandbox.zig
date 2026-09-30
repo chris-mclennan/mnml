@@ -42,6 +42,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Map = std.process.Environ.Map;
 const os_path = @import("../core/os_path.zig");
+const demo = @import("demo.zig");
 
 pub const flag = "--sandbox";
 pub const keep_flag = "--sandbox-keep";
@@ -55,9 +56,10 @@ pub const dir_prefix = "mnml-sandbox-";
 
 pub const supported = builtin.os.tag != .windows;
 
-/// `--sandbox` or `--sandbox-keep` anywhere on the line.
+/// `--sandbox`, `--sandbox-keep` or `--demo` (a sandbox with a
+/// workspace in it, `demo.zig`) anywhere on the line.
 pub fn wanted(args: []const []const u8) bool {
-    for (args) |a| if (std.mem.eql(u8, a, flag) or std.mem.eql(u8, a, keep_flag)) return true;
+    for (args) |a| if (std.mem.eql(u8, a, flag) or std.mem.eql(u8, a, keep_flag) or std.mem.eql(u8, a, demo.flag)) return true;
     return false;
 }
 
@@ -133,6 +135,20 @@ pub const Plan = struct {
     /// `MNML_SANDBOX_PID`, in that order.
     set: [5][2][]const u8,
     workspace: []const u8,
+    /// `Extra.set`, after `set`.
+    extra: []const [2][]const u8 = &.{},
+    /// `Extra.unset`: removed from the environment first.
+    unset: []const []const u8 = &.{},
+};
+
+/// What a caller adds to the plain sandbox — `--demo`'s workspace name
+/// and variables (`demo.zig`).
+pub const Extra = struct {
+    /// The directory under the root that is opened without a workspace
+    /// argument.
+    workspace: []const u8 = "workspace",
+    set: []const [2][]const u8 = &.{},
+    unset: []const []const u8 = &.{},
 };
 
 /// `args` is the whole command line, `args[0]` the program. The flag is
@@ -141,22 +157,11 @@ pub const Plan = struct {
 /// positional argument names one. `takes_value` says which flags eat the
 /// next argument (`--input vim`: "vim" is not a workspace). Everything
 /// is allocated in `arena`.
-pub fn plan(arena: Allocator, exe: []const u8, args: []const []const u8, root: []const u8, pid: i64, takes_value: *const fn ([]const u8) bool) Allocator.Error!Plan {
-    const workspace = try std.fs.path.join(arena, &.{ root, "workspace" });
+pub fn plan(arena: Allocator, exe: []const u8, args: []const []const u8, root: []const u8, pid: i64, takes_value: *const fn ([]const u8) bool, extra: Extra) Allocator.Error!Plan {
+    const workspace = try std.fs.path.join(arena, &.{ root, extra.workspace });
     const xdg = try std.fs.path.join(arena, &.{ root, "xdg" });
     const data = try std.fs.path.join(arena, &.{ xdg, "mnml" });
-    var positional = false;
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (takes_value(a)) {
-            i += 1;
-            continue;
-        }
-        if (a.len > 0 and a[0] == '-') continue;
-        positional = true;
-        break;
-    }
+    const positional = hasPositional(args, takes_value);
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, exe);
     if (args.len > 1) try argv.appendSlice(arena, args[1..]);
@@ -171,12 +176,29 @@ pub fn plan(arena: Allocator, exe: []const u8, args: []const []const u8, root: [
             .{ owner_env, try std.fmt.allocPrint(arena, "{d}", .{pid}) },
         },
         .workspace = workspace,
+        .extra = extra.set,
+        .unset = extra.unset,
     };
 }
 
-/// Make `<tmp_root>/mnml-sandbox-XXXXXXXX` (0700) with `xdg/` and
-/// `workspace/` inside. Returns the root, in `arena`.
-pub fn create(arena: Allocator, io: Io, tmp_root: []const u8) ![]const u8 {
+/// A workspace (or file) argument after `args[0]`.
+fn hasPositional(args: []const []const u8, takes_value: *const fn ([]const u8) bool) bool {
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (takes_value(a)) {
+            i += 1;
+            continue;
+        }
+        if (a.len > 0 and a[0] == '-') continue;
+        return true;
+    }
+    return false;
+}
+
+/// Make `<tmp_root>/mnml-sandbox-XXXXXXXX` (0700) with `xdg/` and the
+/// workspace directory `ws_name` inside. Returns the root, in `arena`.
+pub fn create(arena: Allocator, io: Io, tmp_root: []const u8, ws_name: []const u8) ![]const u8 {
     if (comptime !supported) return error.Unsupported;
     const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
     var attempt: u8 = 0;
@@ -194,7 +216,7 @@ pub fn create(arena: Allocator, io: Io, tmp_root: []const u8) ![]const u8 {
         var dir = try Io.Dir.cwd().openDir(io, root, .{});
         defer dir.close(io);
         try dir.createDirPath(io, "xdg/mnml");
-        try dir.createDirPath(io, "workspace");
+        try dir.createDirPath(io, ws_name);
         return root;
     }
     return error.PathAlreadyExists;
@@ -216,7 +238,21 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
             "  set HOME, XDG_CONFIG_HOME and MNML_DATA_ROOT to a throwaway directory by hand instead\n");
         return 2;
     }
+    const is_demo = demo.wanted(args);
+    // The re-exec appends the demo's own workspace: only the first
+    // entry can have been handed one.
+    if (is_demo and demo.workspaceOf(env) == null and hasPositional(args, takes_value)) {
+        try err_w.writeAll("mnml-zig: --demo opens its own workspace; drop the path (or use --sandbox with it)\n");
+        return 2;
+    }
     if (alreadyInside(env)) {
+        // `--demo`'s own re-exec carries `MNML_DEMO`; a bare `--demo` in
+        // a home that already is throwaway has no workspace and no fakes
+        // set up, so it is not half-run.
+        if (is_demo and demo.workspaceOf(env) == null) {
+            try err_w.writeAll("mnml-zig: --demo cannot start inside a sandbox (HOME is already throwaway); run it from your own shell\n");
+            return 2;
+        }
         if (nonEmpty(env, env_var) == null) try env.put(env_var, env.get("HOME").?);
         return null;
     }
@@ -226,7 +262,7 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
         try err_w.writeAll("mnml-zig: --sandbox: the re-executed environment is still not a sandbox; refusing to loop\n");
         return 70;
     };
-    const root = create(arena, io, os_path.tempDir(env, .posix)) catch |err| {
+    const root = create(arena, io, os_path.tempDir(env, .posix), if (is_demo) demo.workspace_name else "workspace") catch |err| {
         try err_w.print("mnml-zig: --sandbox: cannot create the sandbox under {s}: {s}\n", .{ os_path.tempDir(env, .posix), @errorName(err) });
         return 70;
     };
@@ -234,10 +270,17 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
         try err_w.print("mnml-zig: --sandbox: cannot find this binary: {s}\n", .{@errorName(err)});
         return 70;
     };
-    const p = try plan(arena, exe, args, root, getpid(), takes_value);
+    const extra: Extra = if (is_demo) .{
+        .workspace = demo.workspace_name,
+        .set = try demo.extraSet(arena, root, env.get("PATH")),
+        .unset = &demo.unset,
+    } else .{};
+    const p = try plan(arena, exe, args, root, getpid(), takes_value, extra);
     var child_env = try env.clone(arena);
+    for (p.unset) |k| _ = child_env.swapRemove(k);
     for (p.set) |kv| try child_env.put(kv[0], kv[1]);
-    try err_w.print("mnml-zig: --sandbox: HOME={s} (removed on exit; --sandbox-keep keeps it)\n", .{root});
+    for (p.extra) |kv| try child_env.put(kv[0], kv[1]);
+    try err_w.print("mnml-zig: {s}: HOME={s} (removed on exit; --sandbox-keep keeps it)\n", .{ if (is_demo) demo.flag else flag, root });
     try err_w.flush();
     const err = std.process.replace(io, .{ .argv = p.argv, .environ_map = &child_env });
     try err_w.print("mnml-zig: --sandbox: exec failed: {s}\n", .{@errorName(err)});
@@ -320,7 +363,7 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
     const arena = arena_state.allocator();
     const root = "/tmp/mnml-sandbox-abcdefgh";
 
-    const bare = try plan(arena, "/opt/bin/mnml-zig", &.{ "mnml-zig", "--sandbox" }, root, 4242, testTakesValue);
+    const bare = try plan(arena, "/opt/bin/mnml-zig", &.{ "mnml-zig", "--sandbox" }, root, 4242, testTakesValue, .{});
     try t.expectEqual(@as(usize, 3), bare.argv.len);
     try sdk_testing.expectPath("/opt/bin/mnml-zig", bare.argv[0]);
     try t.expectEqualStrings("--sandbox", bare.argv[1]);
@@ -338,14 +381,14 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
 
     // A flag's value is not a workspace: the sandbox's is still added,
     // and every argument passes through in order.
-    const valued = try plan(arena, "/x", &.{ "mnml-zig", "--input", "vim", "--sandbox", "--profile", "dev" }, root, 1, testTakesValue);
+    const valued = try plan(arena, "/x", &.{ "mnml-zig", "--input", "vim", "--sandbox", "--profile", "dev" }, root, 1, testTakesValue, .{});
     try t.expectEqual(@as(usize, 7), valued.argv.len);
     try t.expectEqualStrings("vim", valued.argv[2]);
     try t.expectEqualStrings("--sandbox", valued.argv[3]);
     try sdk_testing.expectPath(root ++ "/workspace", valued.argv[6]);
 
     // A workspace of your own is honoured — no second one.
-    const own = try plan(arena, "/x", &.{ "mnml-zig", "/Users/dev/proj", "--sandbox-keep" }, root, 1, testTakesValue);
+    const own = try plan(arena, "/x", &.{ "mnml-zig", "/Users/dev/proj", "--sandbox-keep" }, root, 1, testTakesValue, .{});
     try t.expectEqual(@as(usize, 3), own.argv.len);
     try sdk_testing.expectPath("/Users/dev/proj", own.argv[1]);
     try t.expectEqualStrings("--sandbox-keep", own.argv[2]);
@@ -404,7 +447,7 @@ test "create: a private mnml-sandbox-* directory with xdg/mnml and workspace ins
     var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const root = try create(arena, t.io, buf[0..n]);
+    const root = try create(arena, t.io, buf[0..n], "workspace");
     try t.expect(std.mem.startsWith(u8, std.fs.path.basename(root), dir_prefix));
     try t.expect(isUnder(root, buf[0..n]));
     const st = try Io.Dir.cwd().statFile(t.io, root, .{});
@@ -414,7 +457,7 @@ test "create: a private mnml-sandbox-* directory with xdg/mnml and workspace ins
 
     // The environment the re-exec hands on: the data root is the
     // sandbox's, for both profiles, and the chip says so.
-    const p = try plan(arena, "/x", &.{"mnml-zig"}, root, 1, testTakesValue);
+    const p = try plan(arena, "/x", &.{"mnml-zig"}, root, 1, testTakesValue, .{});
     var env: Map = .init(t.allocator);
     defer env.deinit();
     try env.put("TMPDIR", buf[0..n]);

@@ -567,7 +567,10 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         .dev_profile => .{ .title = "dev profile", .detail = "this is the build being worked on, not the installed mnml · click says where its data root is" },
         .sandbox => switch (app.sandboxState()) {
             .unsafe => .{ .title = "sandbox — NOT isolated", .detail = "MNML_SANDBOX is set, but HOME or the data root is not a throwaway directory · click says which" },
-            else => .{ .title = "sandbox", .detail = "a --sandbox run: HOME, the config and the state are a throwaway directory · click says where" },
+            else => if (app.demoActive())
+                .{ .title = "demo", .detail = "a --demo run: a sample workspace, offline Jira and Bitbucket and a stand-in Claude (no model runs), in a throwaway home removed on exit · click says where" }
+            else
+                .{ .title = "sandbox", .detail = "a --sandbox run: HOME, the config and the state are a throwaway directory · click says where" },
         },
         .sessions => .{ .title = "Sessions", .detail = "the Claude Code / Codex panes open, and the focused one's place · click: the sessions section" },
         .session_prev => .{ .title = "Previous session", .detail = "click: the session before this one, on whichever page holds it" },

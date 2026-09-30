@@ -43,3 +43,36 @@ pub const bash_integration = .{
 pub const fish_integration = .{
     .init = @embedFile("shell-integration/fish/mnml.fish"),
 };
+
+/// `mnml --demo` (`src/config/demo.zig`). `tour/` is the fixture the
+/// real-screen tour and the site recordings build too
+/// (`tools/tour/workspace.py` reads these same files): a small Zig
+/// project with history, a dirty working tree, a note, a finding and
+/// the Jira / Bitbucket configs for the offline fakes. The rest is the
+/// demo's own: request files for the fakes, a second branch's file, the
+/// throwaway home's config and `init.lua` (the first screen), and the
+/// stand-in `claude` / `codex` put first on its `PATH`.
+pub const demo = struct {
+    pub const readme = @embedFile("demo/tour/README.md");
+    pub const gitignore = @embedFile("demo/tour/gitignore");
+    pub const main_v1 = @embedFile("demo/tour/main-v1.zig");
+    pub const main_v2 = @embedFile("demo/tour/main-v2.zig");
+    pub const util = @embedFile("demo/tour/util.zig");
+    pub const util_dirty = @embedFile("demo/tour/util-dirty.zig");
+    pub const docs_notes = @embedFile("demo/tour/docs-notes.md");
+    pub const changelog = @embedFile("demo/tour/CHANGELOG.md");
+    pub const workspace_config = @embedFile("demo/tour/config.zon");
+    pub const note_release = @embedFile("demo/tour/note-release.md");
+    pub const finding = @embedFile("demo/tour/finding-tour-clock.md");
+    pub const zshrc = @embedFile("demo/tour/zshrc");
+    pub const jira_config = @embedFile("demo/tour/jira-config.zon");
+    pub const bitbucket_config = @embedFile("demo/tour/bitbucket-config.zon");
+
+    pub const jira_http = @embedFile("demo/requests/jira.http");
+    pub const bitbucket_http = @embedFile("demo/requests/bitbucket.http");
+    pub const args_zig = @embedFile("demo/args.zig");
+    pub const home_config = @embedFile("demo/home-config.zon");
+    pub const init_lua = @embedFile("demo/init.lua");
+    pub const claude_shim = @embedFile("demo/bin/claude");
+    pub const codex_shim = @embedFile("demo/bin/codex");
+};

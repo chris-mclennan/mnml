@@ -133,7 +133,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     if (opts.note) |n| app.toast("{s}", .{n});
     switch (app.sandboxState()) {
         .off => {},
-        .on => app.toast("sandbox — HOME is {s}; your real config and state are untouched. Removed on exit (--sandbox-keep keeps it).", .{env.get(config.sandbox.env_var) orelse ""}),
+        // `--demo` says its own piece in `opts.note` (what it set up, and
+        // anything it had to skip).
+        .on => if (!app.demoActive()) app.toast("sandbox — HOME is {s}; your real config and state are untouched. Removed on exit (--sandbox-keep keeps it).", .{env.get(config.sandbox.env_var) orelse ""}),
         .unsafe => try app.toastPersistent("sandbox-unsafe", "MNML_SANDBOX is set, but HOME or the data root is NOT a throwaway directory — this session can touch your real setup.", .warn),
     }
     // Images: the probe (kitty graphics) and the environment decide the

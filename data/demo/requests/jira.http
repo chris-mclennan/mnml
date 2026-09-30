@@ -1,0 +1,21 @@
+# The offline Jira `mnml --demo` starts beside it. {{jira}} and
+# {{jira_basic}} come from .mnml/env/dev.env, written once it listens.
+
+### Who am I
+GET {{jira}}/rest/api/3/myself
+Authorization: Basic {{jira_basic}}
+Accept: application/json
+
+### My open issues
+POST {{jira}}/rest/api/3/search/jql
+Authorization: Basic {{jira_basic}}
+Content-Type: application/json
+
+{
+  "jql": "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+}
+
+### One issue, with its comments
+GET {{jira}}/rest/api/3/issue/ENG-2?fields=summary,status,comment
+Authorization: Basic {{jira_basic}}
+Accept: application/json
