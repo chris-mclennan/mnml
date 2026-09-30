@@ -50,3 +50,21 @@ if (process.env.SITE_OFFLINE === "1") {
     console.log(`prepare: could not read the latest release (${e.message}) — using ${fs.existsSync(out) ? "the last fetched one" : "src/data/release.json"}`);
   }
 }
+
+// 3. The link-preview image, og.png (1200x630), rendered from the hero
+//    recording's poster so it follows a re-recorded hero. Build output
+//    (gitignored); src/layouts/Site.astro names it only when it exists.
+{
+  const { ogImage } = await import("./og-image.mjs");
+  const pub = path.resolve("public");
+  const poster = path.join(pub, "media/hero.png");
+  const out = path.join(pub, "og.png");
+  try {
+    if (!fs.existsSync(poster)) throw new Error("no media/hero.png");
+    ogImage(poster, out);
+    console.log("prepare: og.png from media/hero.png");
+  } catch (e) {
+    fs.rmSync(out, { force: true });
+    console.warn(`prepare: no og.png (${e.message}) — the pages go without a preview image`);
+  }
+}
