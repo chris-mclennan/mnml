@@ -83,7 +83,15 @@ const toc = hideToc ? [] : headings.filter((h) => h.depth <= 3);
       let cur = heads[0];
       for (const h of heads) if (h.getBoundingClientRect().top < 140) cur = h;
       for (const li of byId.values()) li.classList.remove("active");
-      byId.get(cur?.id)?.classList.add("active");
+      const li = byId.get(cur?.id);
+      li?.classList.add("active");
+      // A long contents list (the option reference) keeps its current
+      // entry in view — it scrolls itself, never the page.
+      const box = li?.closest(".sidecar");
+      if (box && box.scrollHeight > box.clientHeight) {
+        const top = li.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+        if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 40) box.scrollTop = top - box.clientHeight / 3;
+      }
     };
     addEventListener("scroll", mark, { passive: true });
     mark();
