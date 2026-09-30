@@ -290,7 +290,7 @@ pub const Store = struct {
                 .priority = "Medium",
                 .updated = "2026-09-15T09:00:00.000+0000",
                 .created = "2026-08-01T09:00:00.000+0000",
-                .fix_version = "13.16.0",
+                .fix_version = "2.4.0",
                 .team = "Apollo",
                 .sprint = sprint_active,
             });
@@ -310,18 +310,18 @@ pub const Store = struct {
 
     fn seed(s: *Store) Allocator.Error!void {
         const rows = [_]Issue{
-            .{ .id = "10001", .key = "ENG-1", .summary = "Checkout rewrite", .kind = "Epic", .status = "In Progress", .category = "indeterminate", .assignee = account_me, .reporter = account_sam, .priority = "High", .updated = "2026-09-15T09:00:00.000+0000", .created = "2026-08-01T09:00:00.000+0000", .fix_version = "13.16.0", .description = "The umbrella for the checkout work.", .labels = &.{"checkout"}, .team = "Apollo", .sprint = sprint_active },
-            .{ .id = "10002", .key = "ENG-2", .summary = "Card form validates on blur", .kind = "Story", .status = "In PR Review", .category = "indeterminate", .assignee = account_me, .reporter = account_sam, .priority = "Medium", .updated = "2026-09-15T08:30:00.000+0000", .created = "2026-08-04T09:00:00.000+0000", .fix_version = "13.16.0", .parent = "ENG-1", .description = "Validate the card number when the field loses focus.", .labels = &.{ "checkout", "web" }, .components = &.{"web"}, .team = "Apollo", .sprint = sprint_active },
-            .{ .id = "10003", .key = "ENG-3", .summary = "Apple Pay button on the basket", .kind = "Story", .status = "To Do", .category = "new", .assignee = "", .reporter = account_me, .priority = "Low", .updated = "2026-09-12T11:00:00.000+0000", .created = "2026-08-06T09:00:00.000+0000", .fix_version = "13.16.0", .parent = "ENG-1", .team = "Apollo", .sprint = sprint_active },
-            .{ .id = "10004", .key = "ENG-4", .summary = "Wire the blur handler", .kind = "Sub-task", .status = "Done", .category = "done", .assignee = account_sam, .reporter = account_me, .priority = "Medium", .updated = "2026-09-14T16:00:00.000+0000", .created = "2026-08-09T09:00:00.000+0000", .resolved = "2026-09-14T16:00:00.000+0000", .fix_version = "13.16.0", .parent = "ENG-2", .sprint = sprint_active },
-            .{ .id = "10005", .key = "ENG-5", .summary = "Basket total wrong with a voucher", .kind = "Bug", .status = "To Do", .category = "new", .assignee = account_me, .reporter = account_sam, .priority = "Highest", .updated = "2026-09-15T07:15:00.000+0000", .created = "2026-09-15T07:00:00.000+0000", .fix_version = "13.15.0", .description = "Applying a percentage voucher double-counts the delivery line.", .labels = &.{"bug-bash"}, .sprint = sprint_active },
-            .{ .id = "10006", .key = "ENG-6", .summary = "Rotate the payment keys", .kind = "Task", .status = "Testing", .category = "indeterminate", .assignee = account_lin, .reporter = account_sam, .priority = "High", .updated = "2026-09-15T06:00:00.000+0000", .created = "2026-08-20T09:00:00.000+0000", .fix_version = "13.16.0", .components = &.{"ops"}, .team = "Atlas", .sprint = sprint_active },
-            .{ .id = "10007", .key = "ENG-7", .summary = "Receipt email has no total", .kind = "Bug", .status = "In Progress", .category = "indeterminate", .assignee = account_pat, .reporter = account_me, .priority = "Medium", .updated = "2026-09-14T12:00:00.000+0000", .created = "2026-09-01T09:00:00.000+0000", .fix_version = "13.16.0", .labels = &.{"email"}, .team = "Apollo", .sprint = sprint_active },
-            .{ .id = "10008", .key = "ENG-8", .summary = "Gift cards at checkout", .kind = "Story", .status = "To Do", .category = "new", .assignee = account_mo, .reporter = account_sam, .priority = "Low", .updated = "2026-09-13T12:00:00.000+0000", .created = "2026-09-02T09:00:00.000+0000", .fix_version = "13.17.0", .parent = "ENG-1", .team = "Apollo", .sprint = sprint_active },
-            .{ .id = "10009", .key = "ENG-9", .summary = "Upgrade the SDK", .kind = "Task", .status = "Done", .category = "done", .assignee = account_jo, .reporter = account_sam, .priority = "Low", .updated = "2026-09-13T09:00:00.000+0000", .created = "2026-08-25T09:00:00.000+0000", .resolved = "2026-09-13T09:00:00.000+0000", .fix_version = "13.16.0", .sprint = sprint_active },
+            .{ .id = "10001", .key = "ENG-1", .summary = "Checkout rewrite", .kind = "Epic", .status = "In Progress", .category = "indeterminate", .assignee = account_me, .reporter = account_sam, .priority = "High", .updated = "2026-09-15T09:00:00.000+0000", .created = "2026-08-01T09:00:00.000+0000", .fix_version = "2.4.0", .description = "The umbrella for the checkout work.", .labels = &.{"checkout"}, .team = "Apollo", .sprint = sprint_active },
+            .{ .id = "10002", .key = "ENG-2", .summary = "Card form validates on blur", .kind = "Story", .status = "In PR Review", .category = "indeterminate", .assignee = account_me, .reporter = account_sam, .priority = "Medium", .updated = "2026-09-15T08:30:00.000+0000", .created = "2026-08-04T09:00:00.000+0000", .fix_version = "2.4.0", .parent = "ENG-1", .description = "Validate the card number when the field loses focus.", .labels = &.{ "checkout", "web" }, .components = &.{"web"}, .team = "Apollo", .sprint = sprint_active },
+            .{ .id = "10003", .key = "ENG-3", .summary = "Apple Pay button on the basket", .kind = "Story", .status = "To Do", .category = "new", .assignee = "", .reporter = account_me, .priority = "Low", .updated = "2026-09-12T11:00:00.000+0000", .created = "2026-08-06T09:00:00.000+0000", .fix_version = "2.4.0", .parent = "ENG-1", .team = "Apollo", .sprint = sprint_active },
+            .{ .id = "10004", .key = "ENG-4", .summary = "Wire the blur handler", .kind = "Sub-task", .status = "Done", .category = "done", .assignee = account_sam, .reporter = account_me, .priority = "Medium", .updated = "2026-09-14T16:00:00.000+0000", .created = "2026-08-09T09:00:00.000+0000", .resolved = "2026-09-14T16:00:00.000+0000", .fix_version = "2.4.0", .parent = "ENG-2", .sprint = sprint_active },
+            .{ .id = "10005", .key = "ENG-5", .summary = "Basket total wrong with a voucher", .kind = "Bug", .status = "To Do", .category = "new", .assignee = account_me, .reporter = account_sam, .priority = "Highest", .updated = "2026-09-15T07:15:00.000+0000", .created = "2026-09-15T07:00:00.000+0000", .fix_version = "2.3.0", .description = "Applying a percentage voucher double-counts the delivery line.", .labels = &.{"bug-bash"}, .sprint = sprint_active },
+            .{ .id = "10006", .key = "ENG-6", .summary = "Rotate the payment keys", .kind = "Task", .status = "Testing", .category = "indeterminate", .assignee = account_lin, .reporter = account_sam, .priority = "High", .updated = "2026-09-15T06:00:00.000+0000", .created = "2026-08-20T09:00:00.000+0000", .fix_version = "2.4.0", .components = &.{"ops"}, .team = "Atlas", .sprint = sprint_active },
+            .{ .id = "10007", .key = "ENG-7", .summary = "Receipt email has no total", .kind = "Bug", .status = "In Progress", .category = "indeterminate", .assignee = account_pat, .reporter = account_me, .priority = "Medium", .updated = "2026-09-14T12:00:00.000+0000", .created = "2026-09-01T09:00:00.000+0000", .fix_version = "2.4.0", .labels = &.{"email"}, .team = "Apollo", .sprint = sprint_active },
+            .{ .id = "10008", .key = "ENG-8", .summary = "Gift cards at checkout", .kind = "Story", .status = "To Do", .category = "new", .assignee = account_mo, .reporter = account_sam, .priority = "Low", .updated = "2026-09-13T12:00:00.000+0000", .created = "2026-09-02T09:00:00.000+0000", .fix_version = "2.5.0", .parent = "ENG-1", .team = "Apollo", .sprint = sprint_active },
+            .{ .id = "10009", .key = "ENG-9", .summary = "Upgrade the SDK", .kind = "Task", .status = "Done", .category = "done", .assignee = account_jo, .reporter = account_sam, .priority = "Low", .updated = "2026-09-13T09:00:00.000+0000", .created = "2026-08-25T09:00:00.000+0000", .resolved = "2026-09-13T09:00:00.000+0000", .fix_version = "2.4.0", .sprint = sprint_active },
             .{ .id = "10010", .key = "ENG-10", .summary = "Dark mode for the dashboard", .kind = "Task", .status = "To Do", .category = "new", .assignee = "", .reporter = account_sam, .priority = "Low", .updated = "2026-09-10T09:00:00.000+0000", .created = "2026-09-10T09:00:00.000+0000", .fix_version = "" },
             .{ .id = "10011", .key = "ENG-11", .summary = "Crash on rotate", .kind = "Bug", .status = "Reopened", .category = "new", .assignee = account_sam, .reporter = account_me, .priority = "High", .updated = "2026-09-11T09:00:00.000+0000", .created = "2026-08-15T09:00:00.000+0000", .fix_version = "" },
-            .{ .id = "10012", .key = "ENG-12", .summary = "Voucher codes are case-sensitive", .kind = "Story", .status = "Done", .category = "done", .assignee = account_me, .reporter = account_sam, .priority = "Medium", .updated = "2026-09-14T10:00:00.000+0000", .created = "2026-08-28T09:00:00.000+0000", .resolved = "2026-09-14T10:00:00.000+0000", .fix_version = "13.16.0", .labels = &.{"checkout"}, .team = "Apollo" },
+            .{ .id = "10012", .key = "ENG-12", .summary = "Voucher codes are case-sensitive", .kind = "Story", .status = "Done", .category = "done", .assignee = account_me, .reporter = account_sam, .priority = "Medium", .updated = "2026-09-14T10:00:00.000+0000", .created = "2026-08-28T09:00:00.000+0000", .resolved = "2026-09-14T10:00:00.000+0000", .fix_version = "2.4.0", .labels = &.{"checkout"}, .team = "Apollo" },
         };
         for (rows) |r| try s.issues.append(s.gpa, r);
         try s.issues.items[1].comments.append(s.gpa, try s.keep("Sam Beckett\x002026-09-14T10:00:00.000+0000\x00Left a note on the PR."));
@@ -600,10 +600,10 @@ pub const Store = struct {
         _ = s;
         if (!std.mem.eql(u8, project, "ENG")) return err(arena, 404, "No project could be found with key 'PROJ'.");
         return .{ .status = 200, .body =
-        \\[{"id":"1","name":"13.14.0","released":true,"archived":false,"startDate":"2026-08-01"},
-        \\ {"id":"2","name":"13.15.0","released":false,"archived":false},
-        \\ {"id":"3","name":"13.16.0","released":false,"archived":false,"startDate":"2026-09-01"},
-        \\ {"id":"5","name":"13.17.0","released":false,"archived":false,"startDate":"2026-09-15"},
+        \\[{"id":"1","name":"2.2.0","released":true,"archived":false,"startDate":"2026-08-01"},
+        \\ {"id":"2","name":"2.3.0","released":false,"archived":false},
+        \\ {"id":"3","name":"2.4.0","released":false,"archived":false,"startDate":"2026-09-01"},
+        \\ {"id":"5","name":"2.5.0","released":false,"archived":false,"startDate":"2026-09-15"},
         \\ {"id":"4","name":"Mobile - 1.6.X","released":false,"archived":true}]
         };
     }
@@ -1512,8 +1512,8 @@ test "search: the whole fixture, and every clause the integration sends" {
     try testing.expectEqual(@as(usize, 3), countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"assignee = currentUser() AND resolution = Unresolved AND status not in (\\\"Done\\\") ORDER BY updated DESC\"}")).body));
     // Recently done by me: ENG-12.
     try testing.expectEqual(@as(usize, 1), countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"assignee = currentUser() AND status in (Done, Closed, Resolved) AND resolved >= -30d\"}")).body));
-    // The release: eight tickets on 13.16.0.
-    try testing.expectEqual(@as(usize, 8), countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"project = ENG AND fixVersion = \\\"13.16.0\\\" ORDER BY rank\"}")).body));
+    // The release: eight tickets on 2.4.0.
+    try testing.expectEqual(@as(usize, 8), countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"project = ENG AND fixVersion = \\\"2.4.0\\\" ORDER BY rank\"}")).body));
     // The sprint and the backlog.
     try testing.expectEqual(sprint_issue_count, countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"sprint in openSprints() ORDER BY rank ASC\"}")).body));
     try testing.expectEqual(@as(usize, 2), countOf((try call(&store, arena, .POST, "/rest/api/3/search/jql", "{\"jql\":\"sprint is EMPTY AND status != Done ORDER BY rank ASC\"}")).body));
@@ -1563,8 +1563,8 @@ test "an issue carries its detail, watchers toggle, transitions move it, a comme
     try testing.expectEqual(@as(u16, 204), (try call(&store, arena, .PUT, "/rest/api/3/issue/ENG-3", "{\"fields\":{\"assignee\":{\"accountId\":\"acct-lin\"}}}")).status);
     try testing.expectEqualStrings(account_lin, store.find("ENG-3").?.assignee);
     try testing.expectEqual(@as(u16, 400), (try call(&store, arena, .PUT, "/rest/api/3/issue/ENG-3", "{\"fields\":{\"assignee\":{\"accountId\":\"nope\"}}}")).status);
-    try testing.expectEqual(@as(u16, 204), (try call(&store, arena, .PUT, "/rest/api/3/issue/ENG-3", "{\"fields\":{\"fixVersions\":[{\"name\":\"13.15.0\"}]}}")).status);
-    try testing.expectEqualStrings("13.15.0", store.find("ENG-3").?.fix_version);
+    try testing.expectEqual(@as(u16, 204), (try call(&store, arena, .PUT, "/rest/api/3/issue/ENG-3", "{\"fields\":{\"fixVersions\":[{\"name\":\"2.3.0\"}]}}")).status);
+    try testing.expectEqualStrings("2.3.0", store.find("ENG-3").?.fix_version);
 }
 
 test "the Agile API: boards, board issues with a jql, sprints by state (paged), quick filters, and the kanban's refusals" {
@@ -1600,7 +1600,7 @@ test "versions, assignable users, dev-status PRs, the forge's PR and pipelines" 
     var store = try Store.init(testing.allocator);
     defer store.deinit();
     const v = try call(&store, arena, .GET, "/rest/api/3/project/ENG/versions", "");
-    try testing.expect(std.mem.indexOf(u8, v.body, "13.17.0") != null);
+    try testing.expect(std.mem.indexOf(u8, v.body, "2.5.0") != null);
     try testing.expectEqual(@as(u16, 404), (try call(&store, arena, .GET, "/rest/api/3/project/ZZZ/versions", "")).status);
     const u = try call(&store, arena, .GET, "/rest/api/3/user/assignable/search?project=ENG&query=&maxResults=50", "");
     try testing.expectEqual(user_count + 1, std.mem.count(u8, u.body, "displayName"));

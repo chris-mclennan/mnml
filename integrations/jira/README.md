@@ -125,7 +125,7 @@ config's site — is asked instead.
 count (`JIRA WORK (3)`, `(1 of 3)` under a filter), the tab strip with
 the marker on the active tab, the toolbar as mode chips (`basic`,
 `jql`, the search pill, `assignee: All` (a board tab opens on `Me`), `type: —`,
-`status: All`, and on a release tab `fixVersion: 13.16.0` with its `ⓧ`)
+`status: All`, and on a release tab `fixVersion: 2.4.0` with its `ⓧ`)
 that wrap to a second row instead of clipping, the column header, then
 one group per status in the tab's `status_order`, each ticket under it
 with its columns, unresolved tickets auto-expanded with their linked PRs

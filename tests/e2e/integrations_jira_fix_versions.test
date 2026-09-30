@@ -33,12 +33,12 @@ command integrations.open_as_tab
 command jira_fix_versions.open
 command view.toggle_tree
 command view.focus_pane
-# Only the family's tab is here; the release resolved to 13.16.0.
+# Only the family's tab is here; the release resolved to 2.4.0.
 expect screen contains "JIRA FIX VERSIONS (8)"
 expect screen contains "1 Current Release"
 expect screen lacks "Assigned"
 expect screen lacks " space: "
-expect screen contains " fixVersion: 13.16.0 "
+expect screen contains " fixVersion: 2.4.0 "
 expect screen contains " ⓧ "
 # status_order puts Testing first; ENG-2 is bumped into it by its
 # approved PR and carries the star with its real status beside it.
@@ -53,13 +53,13 @@ expect screen contains "f switch the release"
 # f: the tab-view picker; typing narrows it; Enter switches the release.
 key f
 expect screen contains "switch tab view to fixVersion"
-expect screen contains "13.17.0"
-expect screen contains "13.14.0 (released)"
-type 13.15
-expect screen lacks "13.17.0"
+expect screen contains "2.5.0"
+expect screen contains "2.2.0 (released)"
+type 2.3
+expect screen lacks "2.5.0"
 key enter
 expect screen contains "JIRA FIX VERSIONS (1)"
-expect screen contains " fixVersion: 13.15.0 "
+expect screen contains " fixVersion: 2.3.0 "
 expect screen contains "ENG-5"
 expect screen contains "Basket total wrong with a voucher"
 # F on the ticket: the per-ticket picker, with the clear row first.

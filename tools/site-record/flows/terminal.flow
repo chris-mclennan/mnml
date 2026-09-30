@@ -1,22 +1,24 @@
 title: The terminal pane
-flow: A shell in a split, rendered by libghostty: colour output, a git graph, and a full-screen program running inside the pane.
+flow: A shell in a split, rendered by libghostty: colour output, a git graph, a full-screen program running inside the pane, and a coloured diff.
 open src/main.zig
 until "fn main"
 record
-wait 900
+wait 500
 run term.shell
 until "tour %" 4000
+wait 400
+slowtype "ls -G src docs\n" 22
 wait 600
-slowtype "ls -G src docs\n" 50
-wait 1200
-slowtype "git log --graph --oneline --color\n" 40
-wait 2200
+slowtype "git log --graph --oneline --color\n" 16
+wait 900
 poster
-slowtype "vi src/util.zig\n" 50
-wait 2200
-keys @120 j j j j j j
-wait 800
-slowtype ":q\n" 120
+slowtype "vi src/util.zig\n" 22
+wait 900
+slowtype "Ggg" 220
+wait 400
+slowtype ":q\n" 60
+wait 500
+slowtype "git diff --color --stat\n" 18
+wait 700
+slowtype "git diff --color src/util.zig\n" 16
 wait 1200
-slowtype "echo done\n" 60
-wait 1500

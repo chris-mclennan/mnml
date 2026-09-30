@@ -32,7 +32,7 @@ say "  ${ok}✓${off} 2 tests passed" 0.8
 say ""
 say "max() returns null for an empty slice, so callers decide what" 0.1
 say "\"no numbers\" means. Both tests pass." 0.1
-printf '%s,"message":{"role":"assistant","content":[{"type":"text","text":"Added max() and a test; both tests pass."}]}}\n' \
+printf '%s,"message":{"id":"msg_live0001","role":"assistant","model":"claude-sonnet-5","usage":{"input_tokens":12600,"output_tokens":1840,"cache_read_input_tokens":96000},"content":[{"type":"text","text":"Added max() and a test; both tests pass."}]}}\n' \
   "{\"type\":\"assistant\",\"cwd\":\"$cwd\",\"gitBranch\":\"main\"" >> "$HOME/.claude/projects/$ENC/$sid.jsonl"
 printf '\n%s>%s ' "$bold" "$off"
 exec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done' --session-id "$sid"

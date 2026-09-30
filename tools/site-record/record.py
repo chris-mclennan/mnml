@@ -109,10 +109,10 @@ def parse_flow(path):
             line = raw.rstrip("\n")
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
-            m = re.match(r"^(title|flow|fps|width|session_cwd|relative_data_root):\s*(.*)$", line)
+            m = re.match(r"^(title|flow|fps|width|session_cwd|relative_data_root|tree_width):\s*(.*)$", line)
             if m:
                 k, v = m.group(1), m.group(2).strip()
-                meta[k] = int(v) if k in ("fps", "width") else v
+                meta[k] = int(v) if k in ("fps", "width", "tree_width") else v
                 continue
             try:
                 toks = shlex.split(line)
@@ -338,22 +338,53 @@ def plant_sessions(home, ws, cwd=None):
     enc = re.sub(r"[/.]", "-", ws)
     d = os.path.join(home, ".claude", "projects", enc)
     os.makedirs(d, exist_ok=True)
+    # (id, minutes ago, ask, reply, input, output, cache-read tokens):
+    # the usage makes the table's TOKENS and COST columns real numbers
+    # rather than a row of zeros that reads as empty.
     rows = [
-        ("3f9c1a02-5d1e-4c7a-9b20-6e81d4f0a113", 25, "add a max() helper to util.zig", "Added max() with a test for the empty slice."),
-        ("a71e0b44-2c93-4f5d-8e1a-0b7c3d9e2f48", 70, "write the 0.1.0 changelog entry", "Drafted CHANGELOG.md from the last five commits."),
-        ("c2d86e19-7a4b-4e02-a5f3-91d0c6b8e275", 180, "why does main print nothing for an empty list", "util.sum returns 0; main now prints a message."),
+        ("3f9c1a02-5d1e-4c7a-9b20-6e81d4f0a113", 25, "add a max() helper to util.zig", "Added max() with a test for the empty slice.", 18400, 2150, 142000),
+        ("a71e0b44-2c93-4f5d-8e1a-0b7c3d9e2f48", 70, "write the 0.1.0 changelog entry", "Drafted CHANGELOG.md from the last five commits.", 9600, 1320, 61000),
+        ("c2d86e19-7a4b-4e02-a5f3-91d0c6b8e275", 180, "why does main print nothing for an empty list", "util.sum returns 0; main now prints a message.", 31200, 4870, 288000),
     ]
     now = time.time()
     cwd = cwd or ws
-    for sid, age_min, user, reply in rows:
+    for sid, age_min, user, reply, tin, tout, tcache in rows:
         p = os.path.join(d, sid + ".jsonl")
         with open(p, "w", encoding="utf-8") as f:
             f.write(json.dumps({"type": "user", "cwd": cwd, "gitBranch": "main",
                                 "message": {"role": "user", "content": user}}) + "\n")
             f.write(json.dumps({"type": "assistant", "cwd": cwd, "gitBranch": "main",
-                                "message": {"role": "assistant", "content": [{"type": "text", "text": reply}]}}) + "\n")
+                                "message": {"id": "msg_" + sid[:8], "role": "assistant", "model": "claude-sonnet-5",
+                                            "usage": {"input_tokens": tin, "output_tokens": tout,
+                                                      "cache_read_input_tokens": tcache},
+                                            "content": [{"type": "text", "text": reply}]}}) + "\n")
         t = now - age_min * 60
         os.utime(p, (t, t))
+
+
+def site_config(ws, tree_width=None):
+    """The tour's workspace layer, trimmed for a visitor: no clock, no
+    LSP chip for servers the fixture machine lacks, the Claude usage
+    meter off (it reads a fixture's quota — stock mnml has the chip off),
+    and optionally a wider sidebar. The tour's own config (and its pixel
+    baselines) are untouched; only this run's copy changes."""
+    p = os.path.join(ws, ".mnml", "config.zon")
+    with open(p, encoding="utf-8") as f:
+        text = f.read()
+    ui_extra = "\n        .clock = false,"
+    if tree_width:
+        ui_extra += f"\n        .tree_width = {int(tree_width)},"
+    for old, new in (
+        (".editor = .{ .input_style = .standard },",
+         ".editor = .{ .input_style = .standard, .lsp_missing_defaults = .ignore },"),
+        (".ui = .{", ".ui = .{" + ui_extra),
+        ('.label = "Claude Code", .enabled = true,', '.label = "Claude Code", .enabled = false,'),
+    ):
+        if old not in text:
+            raise DriveError(f"site_config: the tour's config no longer has {old!r}")
+        text = text.replace(old, new, 1)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def encode(mov, webm, width, fps):
@@ -365,10 +396,43 @@ def encode(mov, webm, width, fps):
     subprocess.run(cmd, check=True)
 
 
+def encode_mp4(mov, mp4, width, fps):
+    """The H.264 fallback beside the WebM (Safari before 17.4, some
+    webviews): yuv420p, the same size, faststart so it plays while it
+    loads."""
+    vf = f"fps={fps},scale={width}:-2:flags=lanczos" if width else f"fps={fps}"
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", mov, "-an", "-vf", vf,
+           "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-profile:v", "high",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-g", str(fps * 4), mp4]
+    subprocess.run(cmd, check=True)
+
+
 def poster_png(src, dst, width):
     vf = f"scale={width}:-2:flags=lanczos" if width else "null"
     subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vf", vf,
                     "-frames:v", "1", "-compression_level", "9", dst], check=True)
+
+
+def longest_hold(video, seconds):
+    """The longest stretch the picture holds still, as a reviewer's
+    `freezedetect` (noise 0.001, the default) sees it: one typed
+    character is below that noise, so a slow-typed line counts as a
+    hold. Returns (seconds, start)."""
+    r = subprocess.run([FFMPEG, "-hide_banner", "-nostats", "-i", video, "-vf",
+                        "freezedetect=n=0.001:d=0.3", "-map", "0:v", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    best, at, start = 0.0, 0.0, None
+    for m in re.finditer(r"freeze_(start|end): ([0-9.]+)", r.stderr):
+        t = float(m.group(2))
+        if m.group(1) == "start":
+            start = t
+        elif start is not None:
+            if t - start > best:
+                best, at = t - start, start
+            start = None
+    if start is not None and seconds - start > best:
+        best, at = seconds - start, start
+    return round(best, 2), round(at, 2)
 
 
 def frame_times(mov):
@@ -411,6 +475,7 @@ def record(flow_path, args):
     # `session_cwd:` spells the transcripts' cwd — the sessions table
     # prints it verbatim, and the real one is under the machine's home.
     plant_sessions(home, ws, meta.get("session_cwd"))
+    site_config(ws, meta.get("tree_width"))
     # The one-time ghost-text tip is a persistent toast; it is not what
     # any recording is about.
     os.makedirs(os.path.join(home, ".config", "mnml"), exist_ok=True)
@@ -500,7 +565,9 @@ def record(flow_path, args):
     os.makedirs(MEDIA, exist_ok=True)
     webm = os.path.join(MEDIA, name + ".webm")
     png = os.path.join(MEDIA, name + ".png")
+    mp4 = os.path.join(MEDIA, name + ".mp4")
     encode(mov, webm, meta["width"], meta["fps"])
+    encode_mp4(mov, mp4, meta["width"], meta["fps"])
     poster_png(player.posters[0], png, meta["width"])
     mov_times = frame_times(mov)
     missing, max_gap = timing_check(mov_times, rec_meta, watcher.changes, rec_start, rec_stop)
@@ -513,8 +580,10 @@ def record(flow_path, args):
          "-of", "json", webm], capture_output=True, text=True, check=True).stdout)
     st = probe["streams"][0]
     seconds = round(float(probe["format"]["duration"]), 1)
+    hold, hold_at = longest_hold(webm, seconds)
     result.update({
         "title": meta["title"], "seconds": seconds, "flow": meta["flow"],
+        "longest_hold_s": hold, "longest_hold_at": hold_at, "mp4_bytes": os.path.getsize(mp4),
         "codec": st.get("codec_name"), "size": f"{st.get('width')}x{st.get('height')}",
         "fps": st.get("avg_frame_rate"), "bytes": int(probe["format"]["size"]),
         "captured": f"{rec_meta['width']}x{rec_meta['height']}", "capture_frames": rec_meta["frames"],
@@ -528,7 +597,8 @@ def record(flow_path, args):
         os.unlink(mov)
     log(f"site-record {name}: {seconds}s {result['size']} {result['codec']} {result['bytes'] // 1024} KB, "
         f"{rec_meta['frames']} captured frames, {len(watcher.changes)} screen changes, "
-        f"{len(missing)} without a frame, longest still {result['longest_still_s']}s")
+        f"{len(missing)} without a frame, longest still {result['longest_still_s']}s, "
+        f"longest hold {hold}s at {hold_at}s, mp4 {result['mp4_bytes'] // 1024} KB")
     if player.notes:
         log("  notes: " + "; ".join(player.notes))
     if watcher.hits:

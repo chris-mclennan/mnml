@@ -1,6 +1,8 @@
 title: mnml at a glance
-flow: The file tree opens a file, the palette puts an agent session beside the editor, a shell opens below it, the Jira pane is one tab away, and the editor takes the keys back.
-# Setup: the Jira integration installed off camera (the offline fake).
+flow: The editor, an agent session beside it and a shell below it; the shell runs git, the Jira pane is one tab away, and the palette finds a new session in a keystroke.
+# Setup, off camera: the Jira integration installed (the offline fake),
+# then the composite the clip opens on — util.zig in the editor, an
+# agent session on the right, a shell under it.
 run integrations.show_in_dev
 until INTEGRATIONS
 until "Jira Work" 4000
@@ -10,40 +12,37 @@ until "installed jira_work" 15000
 wait 4500
 run integrations.open_as_tab
 reset
-record
-wait 700
-# the tree: walk down to src/util.zig and open it
-keys @300 down down down down
+keys @150 down down down down
 key enter
 until "pub fn sum"
-wait 900
-# the palette: an agent session in the right half
-key ctrl+shift+p
-wait 250
-slowtype "claude right" 60
-wait 500
-key enter
-until "agent session" 4000
-wait 1500
-# a shell below the agent
-key ctrl+shift+p
-wait 250
-slowtype "shell bottom" 60
-wait 400
-key enter
+run ai.claude_code_new_right
+until "Both tests pass." 12000
+run term.shell_bottom
 until "tour %" 4000
-wait 300
-slowtype "git log --oneline\n" 30
+slowtype "git log --oneline\n" 10
 until "Start the tour project" 3000
-wait 2300
+wait 600
+record
+# The first frame is the finished composite, and it is the poster.
 poster
-# Jira, one tab away
+wait 700
+slowtype "git show --stat HEAD~1\n" 22
+wait 1100
+# Jira, one tab away in the same pane
 run jira_work.open
 until "JIRA WORK" 15000
 heal "fetch failed" r "JIRA WORK (3)"
-wait 2300
-# back to the editor
+wait 800
+keys @380 down down down
+wait 700
+# the palette, from the editor: a new session is one query away
 run view.focus_left
-wait 400
-keys @110 down down down down down down down down
-wait 1200
+wait 300
+key ctrl+shift+p
+wait 200
+slowtype "new session" 45
+wait 900
+key esc
+wait 300
+keys @90 down down down down down down down down down down down down
+wait 700

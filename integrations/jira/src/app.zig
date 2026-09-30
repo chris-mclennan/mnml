@@ -4343,7 +4343,7 @@ const auth = @import("auth.zig");
 test "stripFixVersion drops the clause and its connector" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    try testing.expectEqualStrings("project = ENG ORDER BY rank", try stripFixVersion(a.allocator(), "project = ENG AND fixVersion = \"13.19.0\" ORDER BY rank"));
+    try testing.expectEqualStrings("project = ENG ORDER BY rank", try stripFixVersion(a.allocator(), "project = ENG AND fixVersion = \"2.7.0\" ORDER BY rank"));
     try testing.expectEqualStrings("ORDER BY rank", try stripFixVersion(a.allocator(), "fixVersion = \"1\" AND ORDER BY rank"));
     try testing.expectEqualStrings("a = 1", try stripFixVersion(a.allocator(), "a = 1"));
 }
@@ -4491,7 +4491,7 @@ pub const editable_tabs = [_]config.Tab{
         .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
         .vars = &.{
             .{ .name = "project", .value = "ENG" },
-            .{ .name = "versions", .values = &.{ "13.16.0", "13.15.0" } },
+            .{ .name = "versions", .values = &.{ "2.4.0", "2.3.0" } },
         },
     },
 };
@@ -4914,9 +4914,9 @@ test "Work: the assignee picker assigns, the fixVersion picker sets, watching to
     try testing.expectEqualStrings("ENG-1", (try a.focusedKey(arena.allocator())).?);
     _ = try a.onKey("f");
     try testing.expectEqual(pickers.Kind.fix_version, a.picker.?.kind);
-    a.picker.?.selectId("13.17.0");
+    a.picker.?.selectId("2.5.0");
     _ = try a.onKey("enter");
-    try testing.expectEqualStrings("13.17.0", h.store.find("ENG-1").?.fix_version);
+    try testing.expectEqualStrings("2.5.0", h.store.find("ENG-1").?.fix_version);
     try testing.expectEqualStrings("ENG-1", (try a.focusedKey(arena.allocator())).?);
     // Watching toggles against the site's list.
     const before = h.store.find("ENG-1").?.watchers.items.len;
@@ -5405,7 +5405,7 @@ test "the Work family's three kinds: open work counts for the chip, reported is 
     // The editable tab's JQL is the user's, with the holes filled.
     try a.switchTab(2);
     try testing.expectEqualStrings(
-        "project = ENG AND fixVersion in (\"13.16.0\", \"13.15.0\") ORDER BY updated DESC",
+        "project = ENG AND fixVersion in (\"2.4.0\", \"2.3.0\") ORDER BY updated DESC",
         a.tab().jql,
     );
 }
@@ -5433,7 +5433,7 @@ test "J on an editable tab edits the vars, saves them into the config file's own
         \\            .jql = "project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC",
         \\            .vars = .{
         \\                .{ .name = "project", .value = "ENG" },
-        \\                .{ .name = "versions", .values = .{ "13.16.0", "13.15.0" } },
+        \\                .{ .name = "versions", .values = .{ "2.4.0", "2.3.0" } },
         \\            },
         \\        },
         \\    },
@@ -5453,14 +5453,14 @@ test "J on an editable tab edits the vars, saves them into the config file's own
     try testing.expect(a.vars != null);
     try testing.expect(a.jql == null);
     const e = &(a.vars.?);
-    // project, ENG, versions, 13.16.0, 13.15.0, + add
+    // project, ENG, versions, 2.4.0, 2.3.0, + add
     try testing.expectEqual(@as(usize, 6), e.rows.items.len);
 
     // Add a version: `a` lands on the add line and types into it.
     e.cursor = 3;
     _ = try a.onKey("a");
     try testing.expect(a.vars.?.edit != null);
-    for ("14.0.0") |c| _ = try a.onKey(if (c == '.') "." else &[_]u8{c});
+    for ("3.0.0") |c| _ = try a.onKey(if (c == '.') "." else &[_]u8{c});
     _ = try a.onKey("enter");
     try testing.expectEqual(@as(usize, 3), a.vars.?.boxes.items[1].values.items.len);
 
@@ -5474,8 +5474,8 @@ test "J on an editable tab edits the vars, saves them into the config file's own
     try testing.expect(a.vars == null);
     const after = try tmp.dir.readFileAlloc(testing.io, "config.zon", testing.allocator, .unlimited);
     defer testing.allocator.free(after);
-    try testing.expect(std.mem.indexOf(u8, after, ".values = .{ \"13.15.0\", \"14.0.0\" }") != null);
-    try testing.expect(std.mem.indexOf(u8, after, "13.16.0") == null);
+    try testing.expect(std.mem.indexOf(u8, after, ".values = .{ \"2.3.0\", \"3.0.0\" }") != null);
+    try testing.expect(std.mem.indexOf(u8, after, "2.4.0") == null);
     // Both comments survived, and so did everything the edit did not name.
     try testing.expect(std.mem.indexOf(u8, after, "// my jira config — keep my comments") != null);
     try testing.expect(std.mem.indexOf(u8, after, "// the one that changes every release") != null);
@@ -5484,7 +5484,7 @@ test "J on an editable tab edits the vars, saves them into the config file's own
 
     // And the live tab is already running the new query.
     try testing.expectEqualStrings(
-        "project = ENG AND fixVersion in (\"13.15.0\", \"14.0.0\") ORDER BY updated DESC",
+        "project = ENG AND fixVersion in (\"2.3.0\", \"3.0.0\") ORDER BY updated DESC",
         a.tab().jql,
     );
     try testing.expect(std.mem.indexOf(u8, a.status.items, "var(s) saved") != null);
@@ -5501,12 +5501,12 @@ test "J on an editable tab edits the vars, saves them into the config file's own
     _ = try a.onKey("esc");
 }
 
-test "Fix Versions: the release resolves to 13.16.0, status_order and bumps group the tree, f switches the release, F assigns" {
+test "Fix Versions: the release resolves to 2.4.0, status_order and bumps group the tree, f switches the release, F assigns" {
     const h = try Harness.start(.{ .tabs = &fixv_tabs }, .fix_versions);
     defer h.stop();
     const a = &h.app;
     try a.ensureLoaded();
-    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank", a.tab().jql);
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"2.4.0\" ORDER BY rank", a.tab().jql);
     try testing.expectEqual(@as(usize, 8), a.tab().issues.len);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -5519,9 +5519,9 @@ test "Fix Versions: the release resolves to 13.16.0, status_order and bumps grou
     try testing.expectEqual(@as(usize, 0), a.tab().active_assignees.count());
     _ = try a.onKey("f");
     try testing.expectEqual(pickers.Kind.tab_fix_version, a.picker.?.kind);
-    a.picker.?.selectId("13.15.0");
+    a.picker.?.selectId("2.3.0");
     _ = try a.onKey("enter");
-    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.15.0\" ORDER BY rank", a.tab().jql);
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"2.3.0\" ORDER BY rank", a.tab().jql);
     try testing.expectEqual(@as(usize, 1), a.tab().issues.len);
     _ = try a.onKey("j");
     _ = try a.onKey("shift+f");
@@ -5533,7 +5533,7 @@ test "Fix Versions: the release resolves to 13.16.0, status_order and bumps grou
     // The release-cut flag bumps Done to the top.
     a.cfg.release_cut = true;
     a.picker = null;
-    a.tab().jql = "project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank";
+    a.tab().jql = "project = ENG AND fixVersion = \"2.4.0\" ORDER BY rank";
     try a.refreshActive();
     const cut = (try a.treeRows(arena.allocator())).?;
     try testing.expectEqualStrings(tree.top_sentinel, cut.rows[0].group.status);
