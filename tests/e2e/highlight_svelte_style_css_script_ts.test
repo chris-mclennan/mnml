@@ -8,7 +8,7 @@ open Counter.svelte
 wait 400
 expect screen contains "export let start: number = 0;"
 # <style> button { color: blue; } — css: tag selector (#e5c07b) and property (#e06c75)
-expect color 38 20 fg #e5c07b
-expect color 47 20 fg #e06c75
+expect color 40 20 fg #e5c07b
+expect color 49 20 fg #e06c75
 # <script lang="ts"> export let start: number — `number` is a TS predefined type (#e5c07b)
-expect color 56 3 fg #e5c07b
+expect color 58 3 fg #e5c07b

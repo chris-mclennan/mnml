@@ -8,6 +8,6 @@ write q.sql "SELECT 42, 2.5, 'x';\n"
 open q.sql
 wait 300
 expect screen contains "SELECT 42, 2.5, 'x';"
-expect color 43 2 fg #d19a66
-expect color 47 2 fg #d19a66
-expect color 52 2 fg #98c379
+expect color 45 2 fg #d19a66
+expect color 49 2 fg #d19a66
+expect color 54 2 fg #98c379
