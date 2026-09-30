@@ -304,7 +304,16 @@ pub const DockEdge = enum { bottom, left, right };
 /// revealed strip paints over the `:` line's row (so an open `:` line
 /// refuses the reveal). A dock on a side edge ignores the key — it is
 /// a column, and neither of those rows is its business.
-pub const DockPlacement = enum { inner, outer };
+/// // changed (dock-shared): `.shared` puts the strip ON the `:` line's
+/// row, right of the typed command — the user's "commands aren't long
+/// enough to reach it". It carves no row and has no reveal: there is
+/// nothing to summon, so `mode = .auto_hide` reads as `.always` there
+/// and no grip is drawn (`.hidden` still hides it). The items never
+/// move while typing: while a `:` line is open and its text plus a
+/// cell of air would reach the first item, the strip steps aside for
+/// that keystroke and comes back when the line closes or shortens
+/// (under `align = .start`, the moment a line opens).
+pub const DockPlacement = enum { inner, outer, shared };
 /// How much of an item a BOTTOM launcher dock paints. `icon_label` is
 /// ` <glyph> <label> `, the strip's own form; `icon` paints the glyph
 /// alone in the same three cells a side dock uses — padding, glyph,
@@ -346,6 +355,8 @@ pub const Dock = struct {
     /// // changed (dock-placement): where a bottom strip goes — above
     /// the statusline (the default) or under the `:` line. Side edges
     /// ignore it (`:dock inner|outer`, also `above` / `below`).
+    /// // changed (dock-shared): or `.shared`, on the `:` line's own
+    /// row, right of the command text (`:dock shared`).
     placement: DockPlacement = .inner,
     labels: DockLabels = .icon_label,
     /// Where the items sit along the strip (`:dock center|start|end`).

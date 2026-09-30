@@ -133,7 +133,10 @@ fn registerGeometric(app: *App, full: Rect) void {
     // cannot be the pointer's guest, so the dwell clock is down for as
     // long as the line is, and closing the line asks for a fresh
     // `reveal_ms` instead of popping the strip up the same frame.
-    const dock_band: ?Rect = if (@import("launcher_dock.zig").cmdlineBlocks(app)) null else dockBand(app, full);
+    // // changed (dock-shared): a strip that lives on the `:` line's
+    // row has nothing to reveal, so its band is never watched.
+    const ld = @import("launcher_dock.zig");
+    const dock_band: ?Rect = if (ld.cmdlineBlocks(app) or ld.sharesCmdline(app)) null else dockBand(app, full);
     if (dock_band) |band| add(app, .{ .rect = band, .id = .launcher_dock, .dwell_ms = cfg.dock.reveal_ms, .priority = prio_dock });
 
     // The configured mode as the terminal's width reads it: a docked

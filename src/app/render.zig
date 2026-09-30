@@ -707,7 +707,16 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // covers (`HitMap.at` scans back to front).
     if (!app.zen) try drawSidebarOverlay(app, ui, fr);
     if (!app.zen) try drawStatusline(app, ui, fr.status);
-    try drawCmdline(app, ui, fr.cmdline);
+    // // changed (dock-shared): a `.shared` launcher dock lives on the
+    // `:` line's row. Where it lands depends on how much of the row an
+    // open line paints, so it is laid out first and the row's own echo
+    // and in-flight chip are kept left of its run.
+    const cmd_line = try cmdlineText(app, ui);
+    const shared_dock: launcher_dock.Shared = if (app.zen or fr.cmdline.isEmpty())
+        .{ .area = .empty, .run_x = fr.cmdline.right() }
+    else
+        try launcher_dock.sharedStrip(app, ui, fr.cmdline, if (cmd_line) |l| ui.width(l) else null);
+    try drawCmdline(app, ui, fr.cmdline, cmd_line, if (shared_dock.area.isEmpty()) null else shared_dock.run_x);
     // ── the launcher dock ──
     // Over the panes, the dock widgets AND the revealed side column:
     // the strip owns the frame's outermost band, so nothing paints on
@@ -723,7 +732,18 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // band with the strip down is left as the frame's own ground, with
     // nothing in it but the grip: inert, which is exactly what the
     // grip's contract needs.
-    if (!app.zen) {
+    // // changed (dock-shared): and a `.shared` strip paints into the
+    // part of the `:` row `sharedStrip` left it — nothing at all while
+    // a typed command would reach its run, so no hit either.
+    if (!app.zen and launcher_dock.sharesCmdline(app)) {
+        if (!shared_dock.area.isEmpty()) {
+            try launcher_dock.draw(app, ui, shared_dock.area);
+        } else {
+            app.launcher_dock.rect = .empty;
+            // The keys never stay in a strip that is not on screen.
+            if (app.launcher_dock.kb) launcher_dock.leaveKeyboard(app);
+        }
+    } else if (!app.zen) {
         const band = if (!fr.launcher_dock.isEmpty()) fr.launcher_dock else if (launcher_dock.revealed(app)) launcher_dock.overlayRect(app, screenRect(screen)) else Rect.empty;
         const strip = if (launcher_dock.shown(app)) band else Rect.empty;
         if (!strip.isEmpty()) try launcher_dock.draw(app, ui, strip) else app.launcher_dock.rect = .empty;
@@ -2488,18 +2508,35 @@ fn drawStatusline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
 /// The row under the statusline: an open `:` line, else the newest
 /// toast echoed beside whatever async work is in flight, else a click
 /// target that opens the `:` line (`ui/cmdline_bar.zig`).
-fn drawCmdline(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
-    if (area.isEmpty()) return;
-    // The app's own `:` line wins over a buffer's, whatever the focus:
-    // `Ctrl+;` opens it from the tree and from a terminal pane too, and
-    // an editor's pending state must not paint over it.
-    var line: ?[]const u8 = try cmdline_mod.display(app, ui.arena, ui.ascii);
-    if (line == null) if (app.activeEditor()) |e| {
-        if (e.buf.input.cmdlineGet()) |l| {
-            const caret = @min(e.buf.input.cmdlineCaret() orelse l.len, l.len);
-            line = ui.fmt(":{s}{s}{s}", .{ l[0..caret], if (ui.ascii) "|" else "▏", l[caret..] });
-        }
+/// The open `:` line as the row paints it — prompt, typed text and the
+/// caret mark — or null when none is open. The app's own `:` line wins
+/// over a buffer's, whatever the focus: `Ctrl+;` opens it from the tree
+/// and from a terminal pane too, and an editor's pending state must not
+/// paint over it.
+fn cmdlineText(app: *App, ui: Ui) Allocator.Error!?[]const u8 {
+    if (try cmdline_mod.display(app, ui.arena, ui.ascii)) |l| return l;
+    const e = app.activeEditor() orelse return null;
+    const l = e.buf.input.cmdlineGet() orelse return null;
+    const caret = @min(e.buf.input.cmdlineCaret() orelse l.len, l.len);
+    return ui.fmt(":{s}{s}{s}", .{ l[0..caret], if (ui.ascii) "|" else "▏", l[caret..] });
+}
+
+/// // changed (dock-shared): `dock_x` is where a `.shared` launcher
+/// dock's run starts on this row, or null when none is painted here.
+/// An open line is not narrowed — the dock steps aside for it instead
+/// (`launcher_dock.sharedStrip`) — but the toast echo and the in-flight
+/// chip are laid out left of the run, one cell of air short of it, so
+/// neither is painted under an item. The whole row stays the click
+/// target it always was; the dock's hits land on top of it.
+fn drawCmdline(app: *App, ui: Ui, row: Rect, line: ?[]const u8, dock_x: ?u16) Allocator.Error!void {
+    if (row.isEmpty()) return;
+    var area = row;
+    if (line == null) if (dock_x) |x| {
+        ui.fill(row, ui.theme.bg);
+        ui.hit(row, .{ .button = cmdline_bar_hits.bar });
+        area.w = (x -| 1) -| row.x;
     };
+    if (area.isEmpty()) return;
     const model: cmdline_bar.Model = .{
         .line = line,
         // No echo under an open overlay: the toast paints beneath the

@@ -1673,7 +1673,7 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// // changed (bottom-dock): `bottom` names the dock. It runs
 /// `side.move` rather than a command id: the dock's two command ids
 /// are Rust's `toggle` and `host_active`, and there is no third.
-/// `:dock bottom|left|right|inner|outer|always|auto|hidden|icons|labels|text|start|center|end|plus|pin|focus|toggle`
+/// `:dock bottom|left|right|inner|outer|shared|always|auto|hidden|icons|labels|text|start|center|end|plus|pin|focus|toggle`
 /// — the launcher dock (`app/launcher_dock.zig`), not the bottom panel
 /// (`:sidebar bottom`) and not the widgets. `icons` / `labels` /
 /// `text` is `ui.dock.labels`, the bottom strip's three forms, and
@@ -1688,6 +1688,8 @@ pub fn completeSet(gpa: Allocator, partial: []const u8) Allocator.Error![][]u8 {
 /// the `:` line. `above` and `below` say the same thing in the words
 /// the Settings row uses; `below` is spelled out, so `b` is still
 /// `bottom`.
+/// // changed (dock-shared): `shared` (or `cmdline`) puts the strip on
+/// the `:` line's own row.
 fn launcherDock(app: *App, args: []const u8) CommandError!void {
     const a = std.mem.trim(u8, args, " \t");
     if (eqAny(a, &.{ "b", "bot", "bottom" })) return launcher_dock.setEdge(app, .bottom);
@@ -1695,6 +1697,7 @@ fn launcherDock(app: *App, args: []const u8) CommandError!void {
     if (eqAny(a, &.{ "r", "right" })) return launcher_dock.setEdge(app, .right);
     if (eqAny(a, &.{ "inner", "above" })) return launcher_dock.setPlacement(app, .inner);
     if (eqAny(a, &.{ "outer", "below" })) return launcher_dock.setPlacement(app, .outer);
+    if (eqAny(a, &.{ "shared", "cmdline" })) return launcher_dock.setPlacement(app, .shared);
     if (eqAny(a, &.{"always"})) return launcher_dock.setMode(app, .always);
     if (eqAny(a, &.{ "auto", "auto_hide", "autohide" })) return launcher_dock.setMode(app, .auto_hide);
     if (eqAny(a, &.{ "hidden", "hide", "off" })) return launcher_dock.setMode(app, .hidden);
@@ -1715,7 +1718,7 @@ fn launcherDock(app: *App, args: []const u8) CommandError!void {
     if (eqAny(a, &.{"pin"})) return command.run(app, .{ .static = .@"view.dock_pin" });
     if (eqAny(a, &.{ "focus", "f" })) return command.run(app, .{ .static = .@"view.focus_dock" });
     if (a.len == 0 or eqAny(a, &.{"toggle"})) return command.run(app, .{ .static = .@"view.dock_toggle" });
-    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|inner|outer|always|auto|hidden|icons|labels|text|start|center|end|plus [left|right]|mark bright|dot|none|pin|focus|toggle", .{});
+    return app.diag.fail(app.frame.allocator(), ":dock bottom|left|right|inner|outer|shared|always|auto|hidden|icons|labels|text|start|center|end|plus [left|right]|mark bright|dot|none|pin|focus|toggle", .{});
 }
 
 fn sidebar(app: *App, args: []const u8) CommandError!void {
