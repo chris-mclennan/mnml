@@ -1,0 +1,30 @@
+# width: 120
+# height: 40
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# Jira Cloud gzips every answer a client offers to take compressed, and
+# the std client always offers. The fake does the same under `--gzip`:
+# the pane's rows are the plain run's rows, never "the search answer was
+# not JSON".
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --gzip --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+# The fake really compresses: an answer to a client offering gzip says so.
+shell curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip' -u fake@acme.com:fake-token "$(cat jira.url)/rest/api/3/myself" | grep -qi '^content-encoding: gzip'
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"My open work items\", .kind = .work_open } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+key i
+expect within 10000 screen contains "installed jira_work from"
+expect within 10000 screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command view.toggle_tree
+command jira_work.open
+expect within 30000 screen contains "JIRA WORK (3)"
+expect screen contains "Checkout rewrite"
+expect screen lacks "not JSON"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
