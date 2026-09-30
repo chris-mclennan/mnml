@@ -34,7 +34,8 @@ FFPROBE = shutil.which("ffprobe", path="/opt/homebrew/bin:/usr/local/bin:/usr/bi
 COLS, ROWS = 200, 60
 MEDIA = os.path.join(REPO, "site", "public", "media")
 MEDIA_JSON = os.path.join(REPO, "site", "src", "media.json")
-SHIMS = os.path.join(HERE, "shims")
+# The stand-in `claude` — the one `mnml --demo` puts on PATH too.
+SHIMS = os.path.join(REPO, "data", "demo", "bin")
 WINREC_SRC = os.path.join(HERE, "winrec.swift")
 
 # Nothing on screen may name the machine's owner or their work. Checked

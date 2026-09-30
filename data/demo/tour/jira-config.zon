@@ -1,0 +1,1 @@
+.{ .jira_url = "https://jira.invalid", .email = "fake@acme.com", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = "Assigned", .kind = .work_assigned }, .{ .name = "Recently Done", .kind = .work_recently_done } } }

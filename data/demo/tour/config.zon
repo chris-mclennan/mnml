@@ -1,0 +1,13 @@
+.{
+    .editor = .{ .input_style = .standard },
+    .ui = .{
+        .line_numbers = true,
+        .pty_cursor = .{ .blink = false },
+        .integration_icons = .{
+            .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
+            .{ .id = "claude_code", .glyph = "\u{F1E00}", .fallback = "\u{2733}", .command = "ai.claude_code", .color = "#D97757", .label = "Claude Code", .enabled = true, .in_palette_bar = false },
+            .{ .id = "codex", .glyph = "\u{F1E01}", .fallback = "\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
+            .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
+        },
+    },
+}

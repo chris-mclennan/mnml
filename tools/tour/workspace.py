@@ -21,72 +21,32 @@ GIT_ENV = {
     "GIT_CONFIG_NOSYSTEM": "1",
 }
 
-MAIN_ZIG_V1 = """const std = @import("std");
-const util = @import("util.zig");
+# The fixture's files live in `data/demo/tour/`, which `mnml --demo`
+# embeds (`data/root.zig`) — one fixture for the tour, the site
+# recordings and the demo. `config.zon` is the tour's own layer: the
+# standard profile, line numbers, a pty cursor that does not blink (a
+# blinking cell is noise in a pixel diff), and the Claude Code chip on
+# so the usage meter paints in the statusline.
+FIXTURE = os.path.join(REPO, "data", "demo", "tour")
 
-pub fn main() !void {
-    const total = util.sum(&.{ 1, 2, 3, 4 });
-    std.debug.print("total: {d}\\n", .{total});
-}
-"""
 
-MAIN_ZIG_V2 = """const std = @import("std");
-const util = @import("util.zig");
+def fixture(name):
+    with open(os.path.join(FIXTURE, name), encoding="utf-8") as f:
+        return f.read()
 
-/// The entry point: add a few numbers and print the total.
-pub fn main() !void {
-    // TODO: read the numbers from the command line.
-    const numbers = [_]i64{ 1, 2, 3, 4, 5 };
-    const total = util.sum(&numbers);
-    std.debug.print("total: {d}\\n", .{total});
-    // FIXME: an empty list should print a friendlier message.
-    if (total == 0) std.debug.print("nothing to add\\n", .{});
-}
-"""
 
-UTIL_ZIG = """const std = @import("std");
-
-/// Sum a slice of integers.
-pub fn sum(xs: []const i64) i64 {
-    var total: i64 = 0;
-    for (xs) |x| total += x;
-    return total;
-}
-
-test "sum adds" {
-    try std.testing.expectEqual(@as(i64, 6), sum(&.{ 1, 2, 3 }));
-}
-"""
-
-UTIL_ZIG_DIRTY = UTIL_ZIG + """
-/// The largest element, or null for an empty slice.
-pub fn max(xs: []const i64) ?i64 {
-    if (xs.len == 0) return null;
-    var best = xs[0];
-    for (xs[1..]) |x| best = @max(best, x);
-    return best;
-}
-"""
-
-README = """# tour
-
-A small workspace for mnml's real-screen tour: a few commits, a dirty
-working tree, TODO markers and a note.
-"""
-
-GITIGNORE = """# The tour's scaffolding for the integration panes, not the project.
-sdk/
-integrations/
-market/
-*.url
-*.pid
-*-bucket.json
-*.jsonl
-*.lock
-*.sock
-bitbucket.zon
-.mnml/
-"""
+MAIN_ZIG_V1 = fixture("main-v1.zig")
+MAIN_ZIG_V2 = fixture("main-v2.zig")
+UTIL_ZIG = fixture("util.zig")
+UTIL_ZIG_DIRTY = fixture("util-dirty.zig")
+README = fixture("README.md")
+GITIGNORE = fixture("gitignore")
+JIRA_CONFIG = fixture("jira-config.zon")
+BB_CONFIG = fixture("bitbucket-config.zon")
+WS_CONFIG = fixture("config.zon")
+NOTE = fixture("note-release.md")
+FINDING = fixture("finding-tour-clock.md")
+ZSHRC = fixture("zshrc")
 
 JIRA_MANIFEST = (
     '.{ .id = "jira_work", .label = "Jira Work", .version = "0.2.0", .binary = "%s", '
@@ -94,52 +54,12 @@ JIRA_MANIFEST = (
     '.args = .{ "--only", "work" } } }, .statusline = .{ .{ .id = "assigned", .text = "\\u{f0303}", '
     '.color = "#1B5DCF", .click_command = "jira_work.open" } } }'
 )
-JIRA_CONFIG = (
-    '.{ .jira_url = "https://jira.invalid", .email = "fake@acme.com", .refresh_interval_secs = 0, '
-    '.rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = "Assigned", .kind = .work_assigned }, '
-    '.{ .name = "Recently Done", .kind = .work_recently_done } } }'
-)
-BB_CONFIG = (
-    '.{ .email = "me@example.com", .workspace = "acme", .repos = .{ "api", "web" }, .refresh_interval_secs = 0, '
-    '.rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = "Open + Draft", .kind = .workspace_open_prs }, '
-    '.{ .name = "Merged", .kind = .workspace_merged_prs }, .{ .name = "Pipelines", .kind = .workspace_pipelines } } }'
-)
 BB_MARKET = (
     '.{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.0", .binary = "%s", '
     '.args = .{ "--only", "prs" }, .description = "Bitbucket: open + merged pull requests across the workspace", '
     '.chip = .{ .glyph = "\\u{f00a8}", .fallback = "BP", .color = "blue", .in_palette_bar = false }, '
     '.commands = .{ .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open" } } }'
 )
-
-# The tour's own layer: the standard profile, line numbers, a pty cursor
-# that does not blink (a blinking cell is noise in a pixel diff), and the
-# Claude Code chip on so the usage meter paints in the statusline. The
-# four first-party icons are spelled out because a list is whole-replace
-# in a layer; the glyphs are `ui/bufferline.zig`'s.
-WS_CONFIG = """.{
-    .editor = .{ .input_style = .standard },
-    .ui = .{
-        .line_numbers = true,
-        .pty_cursor = .{ .blink = false },
-        .integration_icons = .{
-            .{ .id = "browser", .glyph = "\\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
-            .{ .id = "claude_code", .glyph = "\\u{F1E00}", .fallback = "\\u{2733}", .command = "ai.claude_code", .color = "#D97757", .label = "Claude Code", .enabled = true, .in_palette_bar = false },
-            .{ .id = "codex", .glyph = "\\u{F1E01}", .fallback = "\\u{276F}_", .command = "ai.codex", .color = "cyan", .label = "Codex", .enabled = false, .in_palette_bar = false },
-            .{ .id = "http", .glyph = "\\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = false, .in_palette_bar = false },
-        },
-    },
-}
-"""
-
-NOTE = "# release checklist\n\n- tag the build\n- write the notes\n"
-FINDING = """# Tour finding: the statusline clock
-
-Severity: low
-
-A sample finding so the FINDINGS section has a row.
-"""
-
-ZSHRC = "PROMPT='tour %# '\nRPROMPT=''\nunsetopt PROMPT_SP\n"
 
 
 def write(path, text):
@@ -182,12 +102,12 @@ def build(ws, home):
     git(ws, "commit", "-q", "-m", "Sum five numbers and mark the follow-ups", date="2026-09-03T14:15:00+0000")
     git(ws, "checkout", "-q", "main")
     git(ws, "merge", "-q", "--no-ff", "feature/numbers", "-m", "Merge feature/numbers", date="2026-09-04T08:45:00+0000")
-    write(os.path.join(ws, "docs", "notes.md"), "# notes\n\nThe tour's docs folder.\n")
+    write(os.path.join(ws, "docs", "notes.md"), fixture("docs-notes.md"))
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "-m", "Add a docs folder", date="2026-09-05T16:00:00+0000")
     # The working tree: one modified file, one untracked.
     write(os.path.join(ws, "src", "util.zig"), UTIL_ZIG_DIRTY)
-    write(os.path.join(ws, "CHANGELOG.md"), "# Changelog\n\n## 0.1.0\n\n- first cut\n")
+    write(os.path.join(ws, "CHANGELOG.md"), fixture("CHANGELOG.md"))
 
     # mnml's own workspace state.
     write(os.path.join(ws, ".mnml", "config.zon"), WS_CONFIG)

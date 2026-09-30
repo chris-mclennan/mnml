@@ -1,0 +1,1 @@
+.{ .email = "me@example.com", .workspace = "acme", .repos = .{ "api", "web" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = "Open + Draft", .kind = .workspace_open_prs }, .{ .name = "Merged", .kind = .workspace_merged_prs }, .{ .name = "Pipelines", .kind = .workspace_pipelines } } }
