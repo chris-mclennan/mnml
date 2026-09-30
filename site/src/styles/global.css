@@ -326,7 +326,6 @@ button { font: inherit; }
 .clip { margin: 32px 0; }
 .clip .window { width: 100%; margin: 0; }
 .clip .window-body { aspect-ratio: var(--ar, 1600/1020); }
-.clip .window-bar .title { font-size: 13px; }
 .prose .clip .lights { margin: 0; padding: 0; }
 .prose .clip .lights li { margin: 0; padding: 0; list-style: none; }
 .clip figcaption { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--gray-4); }
@@ -338,18 +337,35 @@ button { font: inherit; }
   min-height: 100vh; min-height: 100dvh; padding: 32px 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
+/* The frame is a real macOS Ghostty window, measured off a screenshot of
+   one: a 28pt title bar in #24272d (grey, not black), 12pt traffic lights
+   on a 20pt pitch, the folder proxy icon and the title left-aligned after
+   them in #a2a5ab. Sizes are in cqw of the window's width, so the bar
+   keeps the proportion the real one has to its window (22px of 1928px
+   in the reference capture) at any width the frame is drawn. */
 .window {
   --w: min(1024px, calc(100vw - 48px), calc((100dvh - 250px) * var(--arw) / var(--arh)));
-  width: var(--w); margin: 0 auto 20px;
-  border: 1px solid var(--gray-3); border-radius: 10px; overflow: hidden; background: var(--gray-0);
+  width: var(--w); margin: 0 auto 20px; container-type: inline-size;
+  border: 1px solid #3f4146; border-radius: 9px; overflow: hidden; background: #24272d;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
-.window-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 8px 11px; }
-.window-bar .lights { display: flex; gap: 8px; list-style: none; }
-.window-bar .lights li { width: 12px; height: 12px; border-radius: 50%; }
-.window-bar .lights li:nth-child(1) { background: #ff605c; }
-.window-bar .lights li:nth-child(2) { background: #ffbd44; }
-.window-bar .lights li:nth-child(3) { background: #00ca4e; }
-.window-bar .title { font-size: 14px; color: var(--gray-6); text-align: center; }
+.window-bar {
+  display: flex; align-items: center; box-sizing: border-box;
+  height: 1.141cqw; padding: 0 0 0 0.311cqw;
+  background: #24272d; color: #a2a5ab;
+}
+.window-bar .lights { display: flex; gap: 0.285cqw; list-style: none; margin: 0; padding: 0; }
+.window-bar .lights li { width: 0.493cqw; height: 0.493cqw; border-radius: 50%; }
+.window-bar .lights li:nth-child(1) { background: #fb5558; }
+.window-bar .lights li:nth-child(2) { background: #f8c135; }
+.window-bar .lights li:nth-child(3) { background: #39bf5a; }
+.window-bar .proxy { width: 0.467cqw; height: auto; margin-left: 0.467cqw; flex: none; }
+.window-bar .title {
+  margin-left: 0.2cqw;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: max(0.53cqw, 5px); font-weight: 700; line-height: 1; color: #a2a5ab;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .window-body { aspect-ratio: var(--ar); background: #1e222a; position: relative; }
 .window-body video, .window-body img { width: 100%; height: 100%; object-fit: contain; }
 .window-body .placeholder {
