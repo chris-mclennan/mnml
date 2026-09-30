@@ -4,6 +4,9 @@
 //   - GitHub alert blockquotes (> [!NOTE] …) as callouts;
 //   - a list right after <!-- cards --> as card links, after
 //     <!-- buttons --> as a button row;
+//   - a paragraph that is only <!-- video: NAME --> as that recording
+//     (src/media.json) in the window frame the home page draws, with the
+//     clip's one-sentence flow as its caption;
 //   - fenced code highlighted by shiki in One Dark / One Light;
 //   - tables wrapped so they scroll sideways on a phone;
 //   - relative links in a repo doc sent to that doc's page here when it
@@ -16,6 +19,7 @@ import { createHighlighter } from "shiki";
 import { blobUrl } from "../repo.mjs";
 import { SITE_PATH_FOR } from "./nav.mjs";
 import { REPO_ROOT } from "./paths.mjs";
+import { media } from "./media.mjs";
 
 const LANGS = ["zig", "sh", "powershell", "lua", "json", "toml", "diff", "python", "rust", "yaml", "javascript", "http", "ini", "markdown"];
 const ALIAS = { zon: "zig", bash: "sh", shell: "sh", console: "sh", zsh: "sh", ps1: "powershell", pwsh: "powershell", jsonl: "json", py: "python", js: "javascript", md: "markdown", yml: "yaml" };
@@ -57,6 +61,20 @@ export const ICON = {
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
 };
 export { svg };
+
+// <!-- video: NAME --> → the clip in a window frame. The page's script
+// (layouts/Docs.astro) plays it once it scrolls into view, unless the
+// visitor prefers reduced motion; until then only the poster loads.
+// MP4 comes first: Safari before 17.4 cannot play the WebM.
+export function videoHtml(name) {
+  const m = media(name);
+  const title = escapeHtml(m?.title || name);
+  const frame = (body) => `<div class="window"><div class="window-bar"><ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul><span class="title">${title}</span><span></span></div><div class="window-body">${body}</div></div>`;
+  if (!m) return `<figure class="clip">${frame('<div class="placeholder">recording pending</div>')}</figure>\n`;
+  const sources = [m.mp4 && `<source src="${m.mp4}" type="video/mp4">`, `<source src="${m.video}" type="video/webm">`].filter(Boolean).join("");
+  const poster = m.poster ? ` poster="${m.poster}"` : "";
+  return `<figure class="clip" style="--ar:${m.width}/${m.height}">${frame(`<video class="clip-video"${poster} width="${m.width}" height="${m.height}" muted loop playsinline preload="none" aria-label="${title}">${sources}</video>`)}${m.flow ? `<figcaption>${escapeHtml(m.flow)}</figcaption>` : ""}</figure>\n`;
+}
 
 // "[Title](/docs/x) — one sentence" → { href, title, desc }.
 function cardItem(item, parser) {
@@ -100,6 +118,12 @@ export function renderMarkdown(text, { sourcePath = null, dropH1 = true } = {}) 
       processAllTokens(tokens) {
         for (let i = 0; i < tokens.length; i++) {
           const t = tokens[i];
+          const clip = t.type === "html" && t.text.trim().match(/^<!--\s*video:\s*([\w-]+)\s*-->$/)?.[1];
+          if (clip) {
+            t.text = t.raw = videoHtml(clip);
+            t.block = true;
+            continue;
+          }
           const kind = t.type === "html" && t.text.trim().match(/^<!--\s*(cards|buttons)\s*-->$/)?.[1];
           if (!kind) continue;
           t.type = "space";

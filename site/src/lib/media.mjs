@@ -1,4 +1,5 @@
-// The recordings site-recorder commits: public/media/<name>.webm with a
+// The recordings site-recorder commits: public/media/<name>.webm, an
+// optional <name>.mp4 (H.264, for browsers that cannot play VP9) and a
 // <name>.png poster, listed in src/media.json. Nothing here assumes which
 // clips exist — a page asks for one by name and gets null when it is not
 // there yet.
@@ -27,5 +28,12 @@ export function media(name) {
   if (!has("webm")) return null;
   const meta = list.find((m) => m.name === name) || {};
   const size = has("png") ? pngSize(path.join(dir, `${name}.png`)) : null;
-  return { video: `/media/${name}.webm`, poster: size ? `/media/${name}.png` : null, title: meta.title || name, ...(size || CELLS) };
+  return {
+    video: `/media/${name}.webm`,
+    mp4: has("mp4") ? `/media/${name}.mp4` : null,
+    poster: size ? `/media/${name}.png` : null,
+    title: meta.title || name,
+    flow: meta.flow || "",
+    ...(size || CELLS),
+  };
 }

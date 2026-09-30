@@ -54,6 +54,26 @@ const toc = hideToc ? [] : headings.filter((h) => h.depth <= 3);
       setTimeout(() => { b.textContent = "Copy"; b.classList.remove("done"); }, 1500);
     });
   }
+  // Recordings (<!-- video: NAME -->) load nothing but their poster until
+  // they scroll into view, then play muted on a loop and pause again when
+  // they leave it. A visitor who prefers reduced motion gets the poster
+  // and the player's own controls instead.
+  const clips = document.querySelectorAll("video.clip-video");
+  if (clips.length) {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still || !("IntersectionObserver" in window)) {
+      for (const v of clips) v.controls = true;
+    } else {
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          const v = e.target;
+          if (e.isIntersecting) { v.preload = "auto"; v.play().catch(() => { v.controls = true; }); }
+          else v.pause();
+        }
+      }, { rootMargin: "200px 0px" });
+      for (const v of clips) io.observe(v);
+    }
+  }
   // The sidecar marks the heading the reader is in.
   const links = [...document.querySelectorAll(".sidecar a")];
   if (links.length) {

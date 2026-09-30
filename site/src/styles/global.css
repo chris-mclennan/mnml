@@ -301,6 +301,14 @@ button { font: inherit; }
   .card-links li, .button-links li { --cols: 1; }
 }
 
+/* a recording inside a docs page: the home page's window frame at the
+   column's width, the clip's flow sentence under it */
+.clip { margin: 32px 0; }
+.clip .window { width: 100%; margin: 0; }
+.clip .window-body { aspect-ratio: var(--ar, 1600/1020); }
+.clip .window-bar .title { font-size: 13px; }
+.clip figcaption { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--gray-4); }
+
 .pending { border: 1px dashed var(--gray-3); border-radius: 10px; padding: 20px; margin: 32px 0; color: var(--gray-5); }
 
 /* ── home ─────────────────────────────────────────────── */

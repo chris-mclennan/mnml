@@ -65,6 +65,8 @@ Splits nest in any direction, and tab pages hold a layout each.
 layout for later; `view.toggle_zoom` gives one split the whole screen
 for a moment; `view.fullscreen` (`space t f`) hides the chrome.
 
+<!-- video: splits -->
+
 ## Editing
 
 - **Multiple cursors.** Every cursor types, deletes, selects and pastes.

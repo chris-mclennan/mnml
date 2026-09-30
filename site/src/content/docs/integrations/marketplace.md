@@ -50,6 +50,8 @@ For a published integration, mnml:
 
 The integration's commands are in the palette as soon as it finishes.
 
+<!-- video: marketplace -->
+
 > [!NOTE]
 > The data root is `~/.config/mnml` unless you have moved it with
 > `MNML_DATA_ROOT`. A portable install keeps it in a `mnml-data` folder
