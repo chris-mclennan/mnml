@@ -1282,7 +1282,7 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
         });
     } else {
         try rows.appendSlice(app.gpa, &.{
-            .{ .label = "Switch to this workspace", .action = .{ .command = .@"view.switch_workspace" } },
+            .{ .label = "Switch to this workspace", .action = .{ .switch_workspace = root } },
             .{ .label = "Open in file browser", .action = .{ .open_path = try arena.dupe(u8, path) } },
             .{ .label = "Remove workspace…", .action = .{ .command = .@"view.remove_workspace" }, .separator_before = true },
         });
@@ -2447,4 +2447,23 @@ test "an integration chip's menu offers the requests behind its number, filtered
     // The row is there, and it names the service rather than opening
     // the whole machine's log.
     try t.expectEqualStrings("jira", found orelse return error.TestExpectedEqual);
+}
+
+test "right-click: an extra root's *Switch to this workspace* switches to that root at once — no picker" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
+    defer app.deinit();
+    const extra = try std.fs.path.join(t.allocator, &.{ app.workspace, "extra" });
+    defer t.allocator.free(extra);
+    try std.Io.Dir.cwd().createDirPath(t.io, extra);
+    _ = try app.tree.addRoot(&app, extra, "sibling");
+    try app.tree.refresh(&app);
+    try openWorkspaceHeaderMenu(&app, 1, 3, 3);
+    const row = app.overlay.menu.items[0];
+    try t.expectEqualStrings("Switch to this workspace", row.label);
+    try t.expectEqual(@as(u8, 1), row.action.switch_workspace);
+    try @import("dispatch.zig").runMenuActionForTest(&app, row.action);
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(@as(u8, 1), app.tree.active_root);
+    try t.expect(app.tree.roots.items[0].expanded);
+    try t.expect(!app.tree.primary_expanded);
 }

@@ -148,6 +148,9 @@ pub const Section = struct {
     italic: bool = false,
     /// Every directory closed: the toggle chip shows expand-all.
     fully_collapsed: bool = false,
+    /// The active workspace (`Tree.active_root`): its dot is the green
+    /// `●`, every other section's the grey `○`.
+    active: bool = false,
 };
 
 /// A file or directory row.
@@ -280,9 +283,13 @@ fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool
     // The leading cell keeps the rail's ground, as an entry's does.
     var x = r.x + 1;
     x += ui.putStr(x, r.y, r.right() -| x, expander.slot(ui, s.expanded), expander.style(ui, Theme.onBg(t.fg, bg)));
+    // The dot marks the active workspace and is its own target: a
+    // press there makes this section the active one.
     if (p.show_dots) {
-        const dot: []const u8 = if (primary) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
-        x += ui.putStr(x, r.y, r.right() -| x, dot, Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.comment), bg));
+        const dot: []const u8 = if (s.active) (if (ui.ascii) "* " else "● ") else (if (ui.ascii) "o " else "○ ");
+        const dot_w = ui.putStr(x, r.y, r.right() -| x, dot, Theme.onBg(Theme.withFg(t.fg, if (s.active) pal.green else pal.comment), bg));
+        ui.hit(Rect.init(x, r.y, dot_w, 1), .{ .tree_root_dot = s.root });
+        x += dot_w;
     }
     // The label's room: the primary keeps the cluster's, an extra four
     // cells — and a cell of air before the bar.
@@ -446,7 +453,7 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
 const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 fn section(root: u8, label: []const u8, expanded: bool) Item {
-    return .{ .section = .{ .root = root, .label = label, .expanded = expanded } };
+    return .{ .section = .{ .root = root, .label = label, .expanded = expanded, .active = root == 0 } };
 }
 
 fn entry(idx: u32, name: []const u8, depth: u8, is_dir: bool, expanded: bool) Item {
@@ -705,6 +712,32 @@ test "sections: the cursor bar on a focused header, the triangle indicator, the 
     try testing.expectEqualStrings("expand all", Chip.collapse.label(true));
     try testing.expectEqualStrings(expand_all_glyph, Chip.collapse.glyph(true, false));
     _ = draw(f.ui(), Rect.empty, .{ .items = &items });
+}
+
+test "sections: the `●` follows the active workspace, not the primary; the dot's two cells are their own target over the header's" {
+    const items = [_]Item{
+        .{ .section = .{ .root = 0, .label = "/w/", .expanded = false } },
+        .{ .section = .{ .root = 1, .label = "mixr", .expanded = true, .active = true } },
+    };
+    var f = try Fixture.init(30, 2);
+    defer f.deinit();
+    f.triangle = true;
+    _ = draw(f.ui(), f.full(), .{ .items = &items, .show_dots = true });
+    try f.expectRow(0, " " ++ expander.closed_triangle ++ " ○ /w/       \u{EA80}  \u{EA7F}  \u{EB40}  \u{EAC5}  \u{EB37}");
+    try f.expectRow(1, " " ++ expander.open_triangle ++ " ● mixr");
+    try testing.expect(vaxis.Color.eql(f.style(3, 1).fg, f.theme.palette.green));
+    try testing.expect(vaxis.Color.eql(f.style(3, 0).fg, f.theme.palette.comment));
+    // The dot and the space after it press the dot; the chevron and the label fold.
+    try testing.expectEqual(@as(u8, 1), f.hits.at(3, 1).?.tree_root_dot);
+    try testing.expectEqual(@as(u8, 1), f.hits.at(4, 1).?.tree_root_dot);
+    try testing.expectEqual(@as(u8, 0), f.hits.at(3, 0).?.tree_root_dot);
+    try testing.expectEqual(@as(u8, 1), f.hits.at(1, 1).?.tree_root);
+    try testing.expectEqual(@as(u8, 1), f.hits.at(5, 1).?.tree_root);
+    // Dots off: no dot target at all.
+    var g = try Fixture.init(30, 2);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .items = &items });
+    for (g.hits.items.items) |h| try testing.expect(h.target != .tree_root_dot);
 }
 
 test "the cursor row's marker: the list panels' bar in the leading cell, the accent when focused and muted when not, on an entry and on a section header alike, nowhere else" {

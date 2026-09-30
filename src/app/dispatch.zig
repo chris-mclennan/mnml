@@ -1481,6 +1481,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         },
         .script_list_refresh => |id| if (script_list.find(app, id)) |l| try script_list.refresh(app, l),
         .script_section_show => |i| script_section.show(app, i, true),
+        .switch_workspace => |root| try app.tree.switchTo(app, root),
         .none => {},
     }
 }
@@ -2283,6 +2284,16 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
             try app.tree.toggleRoot(app, root, m.mods.alt);
+        },
+        // A section's dot: a press makes that root the active workspace;
+        // right-click is its header's menu.
+        .tree_root_dot => |root| {
+            if (wheel) return treeWheel(app, m, count);
+            if (m.kind != .press) return;
+            if (app.overlay != .none) closeOverlay(app);
+            if (m.button == .right) return context_menus.openWorkspaceHeaderMenu(app, root, m.x, m.y);
+            if (m.button != .left) return;
+            try app.tree.switchTo(app, root);
         },
         // right-click: the empty rows under the last section — a press
         // focuses the tree, a right press opens that root's workspace
@@ -5288,6 +5299,7 @@ pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .tip_row = .{ .none = "left runs the row" },
     .tree_node = .here,
     .tree_root = .here,
+    .tree_root_dot = .here,
     .tree_empty = .here,
     .tree_chip = .{ .none = "one-verb" },
     .info_view = .{ .delegated = "info_view_app.mouse" },

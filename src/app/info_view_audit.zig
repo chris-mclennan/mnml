@@ -335,6 +335,8 @@ fn walkPanels(w: *Walk) Allocator.Error!void {
 fn walkTree(w: *Walk) Allocator.Error!void {
     try w.probe("tree_root:0", .{ .tree_root = 0 });
     if (w.app.tree.roots.items.len > 0) try w.probe("tree_root:extra", .{ .tree_root = 1 });
+    try w.probe("tree_root_dot:0", .{ .tree_root_dot = 0 });
+    if (w.app.tree.roots.items.len > 0) try w.probe("tree_root_dot:extra", .{ .tree_root_dot = 1 });
     try w.probe("tree_empty", .{ .tree_empty = 0 });
     inline for (comptime std.enums.values(tree_view.Chip)) |c| try w.probe("tree_chip:" ++ @tagName(c), .{ .tree_chip = c });
     for (w.app.tree.rows.items, 0..) |row, i| {

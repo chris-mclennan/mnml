@@ -140,6 +140,7 @@ pub fn lookup(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?E
         .link => |l| try panels.link(arena, l.url),
         .info_view => |part| panels.infoView(part),
         .tree_root => |r| try tree.root(app, arena, r),
+        .tree_root_dot => |r| try tree.dot(app, arena, r),
         .tree_empty => tree.empty(),
         .tree_chip => |c| tree.chip(c),
         .tree_node => |idx| try tree.node(app, arena, idx),

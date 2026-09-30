@@ -191,6 +191,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .git_palette => if (ascii) "g" else "\u{e702}", // dev-git: a palette row's action
         // The chip menu's *Requests…* row: what this number cost.
         .requests_for => if (ascii) "<>" else "\u{f0aee}", // nf-md-swap_horizontal_bold
+        // The workspace menu's *Switch to this workspace*: the switcher's own glyph.
+        .switch_workspace => forCommand(.@"view.switch_workspace", ascii),
         // // changed (bottom-dock): a third arrow — down, to the dock.
         .move_section => |ms| switch (ms.side) {
             .right => if (ascii) ">" else "\u{f061}", // fa-arrow_right

@@ -197,6 +197,17 @@ pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
     return null;
 }
 
+/// The `●` / `○` on a section header (`ui.show_workspace_dots`).
+pub fn dot(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
+    const name = if (r == 0) std.fs.path.basename(app.workspace) else if (r - 1 < app.tree.roots.items.len) app.tree.roots.items[r - 1].name else return null;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "{s} workspace: {s}", .{ if (app.tree.active_root == r) "Active" else "Inactive", name }),
+        .body = "The green `●` marks the active workspace — the section the tree keeps open; a grey `○` is another root. Click a `○` to make that root the active one: its section opens, the others fold, and the cursor lands on its header. Files open and git follows the repo they are in, as anywhere in the tree. `ui.show_workspace_dots` turns the dots off.",
+        .keys = &.{ .{ .chord = "Right-click", .label = "The workspace menu" }, .{ .command = .@"view.switch_workspace", .label = "Pick the active workspace" } },
+        .links = &.{ .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch workspace" } }, .{ .command = .{ .id = .@"view.toggle_workspace_dots", .label = "Hide the dots" } } },
+    };
+}
+
 pub fn empty() Entry {
     return .{
         .title = "Workspace — the empty rows",
