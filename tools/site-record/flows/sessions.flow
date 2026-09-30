@@ -1,21 +1,25 @@
 title: Agent sessions beside the editor
 session_cwd: ~/tour
-flow: Agent sessions live in panes next to your code: the SESSIONS rail lists them, a new one opens in a split, and the sessions table shows every session with its state (the session is a recording stand-in; no model runs).
+flow: Agent sessions live in panes next to your code: the SESSIONS rail lists them, a new one opens in a split, and the sessions table shows every session with its state, tokens and cost (the session is a recording stand-in; no model runs).
 open src/main.zig
 until "fn main"
 record
-wait 900
+wait 600
 run view.activity_sessions
-wait 1600
+wait 900
 run ai.claude_code_new_right
 until "agent session" 4000
-wait 5200
+wait 1300
 run sessions.table
-wait 2400
+wait 1000
+keys @400 down down down
+wait 400
 poster
-keys @450 down down down
-wait 1600
 key esc
+wait 500
+until "Both tests pass." 8000
 wait 400
 run view.focus_left
-wait 1500
+wait 300
+keys @80 down down down down down down down down down down
+wait 700

@@ -3,26 +3,26 @@ flow: The staging view lists what changed, Enter opens the diff, s stages the fi
 open src/util.zig
 until "pub fn sum"
 record
-wait 1000
+wait 600
 run git.status_pane
 until "Unstaged changes" 4000
-wait 1600
+wait 1000
 key enter
-wait 2200
+wait 1300
 run git.diff_toggle_view
-wait 1600
+wait 1300
 poster
 run git.diff_toggle_view
-wait 1400
-run git.status_pane
 wait 1000
+run git.status_pane
+wait 800
 key s
-wait 1200
-key c
 wait 900
-slowtype "Add util.max for the largest element" 45
-wait 600
+key c
+wait 700
+slowtype "Add util.max for the largest element" 25
+wait 500
 key enter
-wait 1500
+wait 1000
 run view.activity_git
-wait 2600
+wait 1300

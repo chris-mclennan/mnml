@@ -1,5 +1,6 @@
 title: The Marketplace
 relative_data_root: yes
+tree_width: 46
 flow: Integrations install from the Marketplace in the sidebar: browse, press i, and the new pane opens against its (here offline, fake) service.
 # The offline catalogue: the fixture's Bitbucket PRs manifest plus the
 # repo's own launcher manifests, all local files.
@@ -11,22 +12,26 @@ shell "mkdir -p launchers"
 open src/main.zig
 until "fn main"
 record
-wait 900
-run integrations.show_marketplace
-wait 1800
-keys @550 down down down down
 wait 500
-keys @350 up up up up
+run integrations.show_marketplace
 wait 900
+keys @300 down down
+wait 300
+keys @300 up up
+wait 300
 poster
 key i
 until "installed bitbucket_prs" 15000
-wait 1500
+wait 500
 run integrations.open_as_tab
 run bitbucket_prs.open
 until "BITBUCKET PRS" 15000
 until "3 PRs" 15000
 heal "fetch failed" r "3 PRs"
-wait 1500
-keys @450 down down
-wait 2000
+wait 700
+keys @400 down down
+wait 500
+key 2
+wait 900
+key 1
+wait 800

@@ -3,33 +3,33 @@ flow: Split the editor right and down, open a file in each split, then start a s
 open src/main.zig
 until "fn main"
 record
-wait 1000
+wait 600
 key "ctrl+\\"
-wait 700
+wait 600
 key ctrl+p
 wait 250
-slowtype "util" 80
+slowtype "util" 70
 key enter
 until "pub fn sum"
-wait 1000
+wait 800
 run view.split_down
-wait 700
+wait 600
 key ctrl+p
 wait 250
-slowtype "readme" 80
+slowtype "readme" 70
 key enter
-wait 1400
+wait 1000
 poster
 run view.focus_left
-wait 500
+wait 400
 keys @90 down down down down down
-wait 700
+wait 500
 run tab.new
-wait 900
+wait 700
 key ctrl+p
 wait 250
-slowtype "changelog" 70
+slowtype "changelog" 60
 key enter
-wait 1500
+wait 1000
 key alt+1
-wait 2000
+wait 1200

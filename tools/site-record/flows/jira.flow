@@ -12,25 +12,25 @@ reset
 open src/main.zig
 until "fn main"
 record
-wait 900
+wait 500
 run jira_work.open
 until "JIRA WORK" 15000
 heal "fetch failed" r "JIRA WORK (3)"
-wait 2000
-keys @450 down down down
-wait 600
+wait 900
+keys @350 down down down
+wait 300
 key d
-wait 2600
+wait 1300
 poster
 key esc
-wait 700
+wait 600
 key 2
-wait 2000
+wait 1100
 key 1
-wait 900
+wait 700
 key /
-wait 300
-slowtype "card" 110
-wait 2000
+wait 250
+slowtype "card" 90
+wait 1000
 key esc
-wait 1500
+wait 700
