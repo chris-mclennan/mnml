@@ -4,7 +4,7 @@ copy assets/todos.lua todos.lua
 open todos.lua
 until "mnml.command"
 record
-wait 1200
+wait 300
 key ctrl+a
 wait 500
 # script.run_selection: the selected lines run in the script state

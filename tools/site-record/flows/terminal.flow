@@ -3,22 +3,21 @@ flow: A shell in a split, rendered by libghostty: colour output, a git graph, a 
 open src/main.zig
 until "fn main"
 record
-wait 500
+wait 200
 run term.shell
 until "tour %" 4000
-wait 400
-slowtype "ls -G src docs\n" 22
-wait 600
-slowtype "git log --graph --oneline --color\n" 16
-wait 900
-poster
-slowtype "vi src/util.zig\n" 22
-wait 900
-slowtype "Ggg" 220
-wait 400
-slowtype ":q\n" 60
-wait 500
-slowtype "git diff --color --stat\n" 18
+slowtype "ls -G src docs\n" 12
+wait 300
+slowtype "git log --graph --oneline --color\n" 10
 wait 700
-slowtype "git diff --color src/util.zig\n" 16
-wait 1200
+poster
+slowtype "vi src/util.zig\n" 12
+wait 700
+slowtype ":set number\n" 30
+wait 700
+slowtype ":q\n" 30
+wait 100
+slowtype "git diff --color --stat\n" 8
+wait 250
+slowtype "git diff --color src/util.zig\n" 10
+wait 1000

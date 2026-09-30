@@ -12,12 +12,8 @@ shell "mkdir -p launchers"
 open src/main.zig
 until "fn main"
 record
-wait 500
+wait 100
 run integrations.show_marketplace
-wait 900
-keys @300 down down
-wait 300
-keys @300 up up
 wait 300
 poster
 key i
@@ -28,9 +24,9 @@ run bitbucket_prs.open
 until "BITBUCKET PRS" 15000
 until "3 PRs" 15000
 heal "fetch failed" r "3 PRs"
-wait 700
-keys @400 down down
 wait 500
+keys @300 down down
+wait 200
 key 2
 wait 900
 key 1
