@@ -22,6 +22,16 @@ for (const p of gen) {
 if (bad) process.exit(1);
 console.log(`prepare: ${gen.length} generated-page sources found`);
 
+// The option reference walks docs/CONFIG.md's complete file key by key
+// (scripts/config-options.mjs). A line it cannot place is still on the
+// page, in the whole file at the end, but has no heading of its own.
+{
+  const { loadConfigOptions } = await import("./config-options.mjs");
+  const { entries, unparsed } = loadConfigOptions(repoRoot);
+  console.log(`prepare: option reference — ${entries.length} keys from docs/CONFIG.md`);
+  for (const l of unparsed) console.warn(`prepare: option reference could not place this line (it stays in the whole file): ${l.trim()}`);
+}
+
 const out = path.resolve("src/data/release.latest.json");
 if (process.env.SITE_OFFLINE === "1") {
   fs.rmSync(out, { force: true });

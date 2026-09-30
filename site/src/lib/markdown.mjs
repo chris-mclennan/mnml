@@ -60,7 +60,7 @@ export const ICON = {
   arrow: '<path d="M5 12h14M12 5l7 7-7 7"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
 };
-export { svg };
+export { svg, escapeHtml, plain };
 
 // <!-- video: NAME --> → the clip in a window frame. The page's script
 // (layouts/Docs.astro) plays it once it scrolls into view, unless the
@@ -108,8 +108,7 @@ export function parseFrontmatter(raw) {
 }
 
 // markdown → { html, headings: [{depth, id, text}], title (first h1) }.
-export function renderMarkdown(text, { sourcePath = null, dropH1 = true } = {}) {
-  const slugger = new GithubSlugger();
+export function renderMarkdown(text, { sourcePath = null, dropH1 = true, slugger = new GithubSlugger() } = {}) {
   const headings = [];
   let title = null;
   const marked = new Marked({ gfm: true });
