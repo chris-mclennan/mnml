@@ -7,6 +7,7 @@
   --header-height: 72px;
   --accent: #61afef;
   --accent-ink: #0f0f11;           /* text on a solid accent fill */
+  --accent-fill: var(--accent);    /* the solid fill (the active nav pill): 8.1:1 with the ink */
   --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
   --gray-0: #0f0f11;  /* ground */
   --gray-1: #16161a;  /* blocks */
@@ -32,6 +33,7 @@
 :root[data-theme="light"] {
   --accent: #4078f2;               /* one_light's blue, the same role */
   --accent-ink: #ffffff;
+  --accent-fill: #3a6fe0;          /* one shade deeper than the accent: white on it is 4.6:1 (WCAG AA); on #4078f2 it was 4.05:1 */
   --gray-0: #ffffff;
   --gray-1: #f6f6f8;
   --gray-2: #e4e4e9;
@@ -171,7 +173,7 @@ button { font: inherit; }
 .nav-tree summary { list-style: none; font-weight: 500; color: var(--gray-6); }
 .nav-tree summary::-webkit-details-marker { display: none; }
 .nav-tree a.node:hover, .nav-tree summary:hover { background: var(--gray-2); color: var(--gray-9); }
-.nav-tree a.node.active { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.nav-tree a.node.active { background: var(--accent-fill); color: var(--accent-ink); font-weight: 500; }
 .nav-tree .chevron { transition: transform .2s; flex: none; }
 .nav-tree details[open] > summary .chevron { transform: rotate(-180deg); }
 @media (prefers-reduced-motion) { .nav-tree .chevron { transition: none; } }
