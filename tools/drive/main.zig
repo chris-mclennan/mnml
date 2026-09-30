@@ -435,6 +435,10 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             .{ "MNML_DATA_ROOT", data_root },
             .{ "MNML_PROFILE", "dev" },
             .{ "MNML_IPC_DIR", ipc_dir },
+            // A driven window never asks GitHub for releases: the day
+            // v0.3.0 existed, every tour shot grew a notification chip
+            // and the statusline asserts moved three cells.
+            .{ "MNML_NO_UPDATE_CHECK", "1" },
         });
         defer child_env.deinit();
         const cfg_flag = try std.fmt.allocPrint(gpa, "--config-file={s}", .{conf_path});
