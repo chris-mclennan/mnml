@@ -1,0 +1,28 @@
+{
+  "comment": "The release the download page names when GitHub cannot be reached at build time. scripts/prepare.mjs writes release.latest.json (ignored) from the API; src/lib/release.mjs prefers it.",
+  "tag": "v0.3.0",
+  "version": "0.3.0",
+  "assets": [
+    "dist-manifest.json",
+    "integrations.json",
+    "mnml-aarch64-apple-darwin.tar.xz",
+    "mnml-aarch64-apple-darwin.tar.xz.sha256",
+    "mnml-aarch64-unknown-linux-gnu.deb",
+    "mnml-aarch64-unknown-linux-gnu.rpm",
+    "mnml-aarch64-unknown-linux-gnu.tar.xz",
+    "mnml-aarch64-unknown-linux-gnu.tar.xz.sha256",
+    "mnml-installer.ps1",
+    "mnml-installer.sh",
+    "mnml-x86_64-apple-darwin.tar.xz",
+    "mnml-x86_64-apple-darwin.tar.xz.sha256",
+    "mnml-x86_64-pc-windows-gnu.msi",
+    "mnml-x86_64-pc-windows-gnu.msi.sha256",
+    "mnml-x86_64-pc-windows-gnu.zip",
+    "mnml-x86_64-pc-windows-gnu.zip.sha256",
+    "mnml-x86_64-unknown-linux-gnu.deb",
+    "mnml-x86_64-unknown-linux-gnu.rpm",
+    "mnml-x86_64-unknown-linux-gnu.tar.xz",
+    "mnml-x86_64-unknown-linux-gnu.tar.xz.sha256",
+    "sha256.sum"
+  ]
+}
