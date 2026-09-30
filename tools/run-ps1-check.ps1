@@ -236,7 +236,7 @@ exit /b 0
     $InstalledMnml = Join-Path (Join-Path $PrefixOk 'bin') ('mnml' + $ExeExt)
     Check 'install: the host landed as PREFIX\bin\mnml' (Test-Path -LiteralPath $InstalledMnml) ''
     $v = (& $InstalledMnml --version 2>&1 | Out-String)
-    Check 'install: PREFIX\bin\mnml --version says what it is' ($v -match '(?m)^mnml-zig ') $v
+    Check 'install: PREFIX\bin\mnml --version says what it is' ($v -match '(?m)^mnml(-zig)? .*\((stable|dev) profile\)') $v
     Check 'install: the integration landed too' (Test-Path -LiteralPath (Join-Path (Join-Path $PrefixOk 'bin') ('mnml-jira' + $ExeExt))) ''
     Check 'install: the font came with it' (Test-Path -LiteralPath (Join-Path $PrefixOk 'share\mnml\fonts\MnmlSymbols.ttf')) ''
     Check 'install: the integration catalogue came with it' (Test-Path -LiteralPath (Join-Path $PrefixOk 'share\mnml\marketplace.zon')) ''

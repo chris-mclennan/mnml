@@ -253,7 +253,7 @@ def main() -> int:
         ("-AllowDirty", "the dirty-tree / Debug escape hatch is named"),
         ("MNML_OPTIMIZE", "a non-ReleaseSafe build is refused by name"),
         ("-Force", "a foreign mnml.exe is refused unless -Force"),
-        ("mnml-zig ", "the --version probe looks for the mnml-zig banner"),
+        ("(stable|dev) profile", "the --version probe looks for the profile suffix only mnml prints"),
         ("stable profile", "the install verifies the -Dinstall-names banner"),
         ("-Dinstall-names=true", "the build uses the shipped names"),
         ("jira-integration", "the Jira integration is built by name"),

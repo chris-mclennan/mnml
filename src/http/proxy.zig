@@ -55,7 +55,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, opts: Op
     defer gpa.free(ws_url);
     var session = cdp.Session.connect(gpa, io, ws_url) catch return error.ConnectFailed;
     defer session.deinit();
-    if (err_w) |w| if (opts.verbose) w.print("mnml-zig proxy: attached to {s}\n", .{ws_url}) catch {};
+    if (err_w) |w| if (opts.verbose) w.print("mnml proxy: attached to {s}\n", .{ws_url}) catch {};
     session.enableAll() catch return error.ConnectFailed;
     const target = try cdp.normalizeUrl(a, opts.url);
     if (!std.mem.eql(u8, target, "about:blank")) {

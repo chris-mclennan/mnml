@@ -182,7 +182,7 @@ function Invoke-Zig {
 function Test-IsOurs($Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     $r = Invoke-Capture -Exe $Path -Arguments @('--version')
-    return ($r.Text -match '(?m)^mnml-zig ')
+    return ($r.Text -match '(?m)^mnml(-zig)? .*\((stable|dev) profile\)')
 }
 
 # Set an environment variable, or REMOVE it when the value is $null —
@@ -290,7 +290,7 @@ function Invoke-Install {
         # 4. Verified: it runs, it says what it is, and it says it
         #    defaults to the stable profile — the point of -Dinstall-names.
         $ver = (Invoke-Capture -Exe $built -Arguments @('--version')).Text
-        if ($ver -notmatch '(?m)^mnml-zig .*\(stable profile\)') {
+        if ($ver -notmatch '(?m)^mnml(-zig)? .*\(stable profile\)') {
             Log "${say}: $built --version said ""$ver"" — refusing to install an unverified build"
             return 1
         }

@@ -52,25 +52,25 @@ fn parseFileArgs(argv: []const []const u8, std_: Std, verb: []const u8) !?FileAr
         if (std.mem.eql(u8, a, "--env") or std.mem.eql(u8, a, "-e")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig {s}: --env needs a value\n", .{verb});
+                try std_.err.print("mnml {s}: --env needs a value\n", .{verb});
                 return null;
             }
             out.env = argv[i];
         } else if (std.mem.eql(u8, a, "--workspace") or std.mem.eql(u8, a, "-w")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig {s}: --workspace needs a path\n", .{verb});
+                try std_.err.print("mnml {s}: --workspace needs a path\n", .{verb});
                 return null;
             }
             out.workspace = argv[i];
         } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             out.help = true;
         } else if (a.len > 0 and a[0] == '-') {
-            try std_.err.print("mnml-zig {s}: unknown flag: {s}\n", .{ verb, a });
+            try std_.err.print("mnml {s}: unknown flag: {s}\n", .{ verb, a });
             return null;
         } else {
             if (out.file != null) {
-                try std_.err.print("mnml-zig {s}: unexpected extra argument: {s}\n", .{ verb, a });
+                try std_.err.print("mnml {s}: unexpected extra argument: {s}\n", .{ verb, a });
                 return null;
             }
             out.file = a;
@@ -96,7 +96,7 @@ fn httpConfig(arena: Allocator, io: Io, env: *const std.process.Environ.Map, ws:
 // ─── run ────────────────────────────────────────────────────────────────
 
 pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []const []const u8, std_: Std) !u8 {
-    const usage = "usage: mnml-zig run FILE [--env NAME] [--workspace DIR]";
+    const usage = "usage: mnml run FILE [--env NAME] [--workspace DIR]";
     const args = (try parseFileArgs(argv, std_, "run")) orelse return 1;
     if (args.help) {
         try std_.out.print("{s}\n", .{usage});
@@ -111,7 +111,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     const a = arena_state.allocator();
     const file = try absolute(a, io, file_rel);
     const raw = Io.Dir.cwd().readFileAlloc(io, file, a, .limited(16 << 20)) catch |err| {
-        try std_.err.print("mnml-zig run: cannot read {s}: {s}\n", .{ file_rel, @errorName(err) });
+        try std_.err.print("mnml run: cannot read {s}: {s}\n", .{ file_rel, @errorName(err) });
         return 1;
     };
     const ws = args.workspace orelse try findWorkspace(a, io, std.fs.path.dirname(file) orelse ".");
@@ -122,11 +122,11 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     try std_.err.print("env: {s}\n", .{sel.name});
     const blocks = try parse.blocks(a, raw);
     if (blocks.len == 0) {
-        try std_.err.print("mnml-zig run: {s} has no request\n", .{file_rel});
+        try std_.err.print("mnml run: {s} has no request\n", .{file_rel});
         return 1;
     }
     var req = parse.parse(a, blocks[0].text) catch |err| {
-        try std_.err.print("mnml-zig run: {s}: {s}\n", .{ file_rel, @errorName(err) });
+        try std_.err.print("mnml run: {s}: {s}\n", .{ file_rel, @errorName(err) });
         return 1;
     };
     var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
@@ -143,7 +143,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     body.encode(a, io, &req, .{ .format_json = cfg.format_json, .base_dir = std.fs.path.dirname(file) orelse ws }, &missing) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => {
-            try std_.err.print("mnml-zig run: multipart: no file at {s} (relative to {s})\n", .{ missing orelse "?", std.fs.path.dirname(file) orelse ws });
+            try std_.err.print("mnml run: multipart: no file at {s} (relative to {s})\n", .{ missing orelse "?", std.fs.path.dirname(file) orelse ws });
             return 1;
         },
     };
@@ -152,7 +152,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     var outcome = try client.send(a, io, &req, .{});
     switch (outcome) {
         .err => |e| {
-            try std_.err.print("mnml-zig run: {s}\n", .{e});
+            try std_.err.print("mnml run: {s}\n", .{e});
             try std_.err.flush();
             return 1;
         },
@@ -170,7 +170,7 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
 // ─── chain run ──────────────────────────────────────────────────────────
 
 pub fn chainRun(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []const []const u8, std_: Std) !u8 {
-    const usage = "usage: mnml-zig chain run FILE [--env NAME] [--workspace DIR]";
+    const usage = "usage: mnml chain run FILE [--env NAME] [--workspace DIR]";
     if (argv.len == 0 or !std.mem.eql(u8, argv[0], "run")) {
         try std_.err.print("{s}\n", .{usage});
         return 1;
@@ -192,7 +192,7 @@ pub fn chainRun(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
     const cfg = try httpConfig(a, io, env, ws);
     const sel = try env_mod.select(a, io, ws, args.env, env.get("MNML_ENV"), cfg.default_env);
     var result = chain.run(gpa, io, file, ws, sel.name) catch |err| {
-        try std_.err.print("mnml-zig chain: {s}\n", .{@errorName(err)});
+        try std_.err.print("mnml chain: {s}\n", .{@errorName(err)});
         return 1;
     };
     defer result.deinit(gpa);
@@ -203,7 +203,7 @@ pub fn chainRun(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
         return 0;
     }
     try std_.out.flush();
-    try std_.err.print("mnml-zig chain: {s}\n", .{result.err orelse "failed"});
+    try std_.err.print("mnml chain: {s}\n", .{result.err orelse "failed"});
     try std_.err.flush();
     return 1;
 }
@@ -211,7 +211,7 @@ pub fn chainRun(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
 // ─── discover ───────────────────────────────────────────────────────────
 
 pub fn discoverCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std) !u8 {
-    const usage = "usage: mnml-zig discover SPEC [--out DIR] [--base-url URL] [--normalize] [--force]\n  SPEC is an OpenAPI / Swagger file (JSON or YAML) or an http(s) URL";
+    const usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL] [--normalize] [--force]\n  SPEC is an OpenAPI / Swagger file (JSON or YAML) or an http(s) URL";
     var spec: ?[]const u8 = null;
     var out: []const u8 = "requests";
     var base_url: ?[]const u8 = null;
@@ -223,14 +223,14 @@ pub fn discoverCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std) 
         if (std.mem.eql(u8, a, "--out") or std.mem.eql(u8, a, "-o")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig discover: --out needs a path\n", .{});
+                try std_.err.print("mnml discover: --out needs a path\n", .{});
                 return 1;
             }
             out = argv[i];
         } else if (std.mem.eql(u8, a, "--base-url")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig discover: --base-url needs a value\n", .{});
+                try std_.err.print("mnml discover: --base-url needs a value\n", .{});
                 return 1;
             }
             base_url = argv[i];
@@ -242,7 +242,7 @@ pub fn discoverCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std) 
             try std_.out.print("{s}\n", .{usage});
             return 0;
         } else if (a.len > 0 and a[0] == '-') {
-            try std_.err.print("mnml-zig discover: unknown flag: {s}\n", .{a});
+            try std_.err.print("mnml discover: unknown flag: {s}\n", .{a});
             return 1;
         } else spec = a;
     }
@@ -251,7 +251,7 @@ pub fn discoverCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std) 
         return 1;
     };
     const r = discover.run(gpa, io, .{ .spec = s, .out = out, .base_url = base_url, .normalize = normalize, .force = force }) catch |err| {
-        try std_.err.print("mnml-zig discover: {s}\n", .{switch (err) {
+        try std_.err.print("mnml discover: {s}\n", .{switch (err) {
             error.SpecUnreadable => "cannot read the spec",
             error.SpecNotJsonOrYaml => "the spec is neither valid JSON nor the YAML subset",
             error.NoPaths => "the spec has no `paths`",
@@ -279,17 +279,17 @@ pub fn syncCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std, chec
         if (std.mem.eql(u8, a, "--workspace") or std.mem.eql(u8, a, "-w")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig {s}: --workspace needs a path\n", .{verb});
+                try std_.err.print("mnml {s}: --workspace needs a path\n", .{verb});
                 return 1;
             }
             workspace = argv[i];
         } else if (std.mem.eql(u8, a, "--normalize") or std.mem.eql(u8, a, "-n")) {
             normalize = true;
         } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
-            try std_.out.print("usage: mnml-zig {s} [--workspace DIR] [--normalize]\n  reads <workspace>/.mnml/sources.json (or .rqst/sources.json) and {s} .curl stubs per swagger source\n", .{ verb, if (check_only) "reports drift against the" else "regenerates" });
+            try std_.out.print("usage: mnml {s} [--workspace DIR] [--normalize]\n  reads <workspace>/.mnml/sources.json (or .rqst/sources.json) and {s} .curl stubs per swagger source\n", .{ verb, if (check_only) "reports drift against the" else "regenerates" });
             return 0;
         } else {
-            try std_.err.print("mnml-zig {s}: unexpected arg: {s}\n", .{ verb, a });
+            try std_.err.print("mnml {s}: unexpected arg: {s}\n", .{ verb, a });
             return 1;
         }
     }
@@ -297,7 +297,7 @@ pub fn syncCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std, chec
     defer arena_state.deinit();
     const ws = try absolute(arena_state.allocator(), io, workspace orelse ".");
     const trace = (if (check_only) sources.check(gpa, io, ws, normalize) else sources.sync(gpa, io, ws, normalize)) catch |err| {
-        try std_.err.print("mnml-zig {s}: {s}\n", .{ verb, switch (err) {
+        try std_.err.print("mnml {s}: {s}\n", .{ verb, switch (err) {
             error.NoSourcesFile => "no sources.json at .mnml/ or .rqst/",
             error.NoSources => "sources.json is empty",
             else => @errorName(err),
@@ -313,7 +313,7 @@ pub fn syncCmd(gpa: Allocator, io: Io, argv: []const []const u8, std_: Std, chec
 // ─── proxy ──────────────────────────────────────────────────────────────
 
 pub fn proxyCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []const []const u8, std_: Std) !u8 {
-    const usage = "usage: mnml-zig proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N] [--quiet]";
+    const usage = "usage: mnml proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N] [--quiet]";
     var url: ?[]const u8 = null;
     var workspace: ?[]const u8 = null;
     var seconds: ?u64 = null;
@@ -325,14 +325,14 @@ pub fn proxyCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
         if (std.mem.eql(u8, a, "--url")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig proxy: --url needs a value\n", .{});
+                try std_.err.print("mnml proxy: --url needs a value\n", .{});
                 return 1;
             }
             url = argv[i];
         } else if (std.mem.eql(u8, a, "--workspace") or std.mem.eql(u8, a, "-w")) {
             i += 1;
             if (i >= argv.len) {
-                try std_.err.print("mnml-zig proxy: --workspace needs a path\n", .{});
+                try std_.err.print("mnml proxy: --workspace needs a path\n", .{});
                 return 1;
             }
             workspace = argv[i];
@@ -340,14 +340,14 @@ pub fn proxyCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
             i += 1;
             seconds = if (i < argv.len) std.fmt.parseInt(u64, argv[i], 10) catch null else null;
             if (seconds == null) {
-                try std_.err.print("mnml-zig proxy: --seconds needs a positive integer\n", .{});
+                try std_.err.print("mnml proxy: --seconds needs a positive integer\n", .{});
                 return 1;
             }
         } else if (std.mem.eql(u8, a, "--idle-ms")) {
             i += 1;
             idle_ms = if (i < argv.len) std.fmt.parseInt(u64, argv[i], 10) catch 0 else 0;
             if (idle_ms == 0) {
-                try std_.err.print("mnml-zig proxy: --idle-ms needs a positive integer\n", .{});
+                try std_.err.print("mnml proxy: --idle-ms needs a positive integer\n", .{});
                 return 1;
             }
         } else if (std.mem.eql(u8, a, "--quiet")) {
@@ -356,7 +356,7 @@ pub fn proxyCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
             try std_.out.print("{s}\n", .{usage});
             return 0;
         } else {
-            try std_.err.print("mnml-zig proxy: unexpected arg: {s}\n", .{a});
+            try std_.err.print("mnml proxy: unexpected arg: {s}\n", .{a});
             return 1;
         }
     }
@@ -368,7 +368,7 @@ pub fn proxyCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arg
     defer arena_state.deinit();
     const ws = try absolute(arena_state.allocator(), io, workspace orelse ".");
     const n = proxy.run(gpa, io, env, .{ .workspace = ws, .url = u, .max_seconds = seconds, .idle_ms = idle_ms, .verbose = verbose }, std_.err) catch |err| {
-        try std_.err.print("mnml-zig proxy: {s}\n", .{switch (err) {
+        try std_.err.print("mnml proxy: {s}\n", .{switch (err) {
             error.ChromeNotFound => "Chrome not found (npx @puppeteer/browsers install chrome@stable)",
             error.NoDevToolsPort => "couldn't find Chrome's DevTools port — did it start?",
             error.NoPageTarget => "couldn't reach Chrome's /json endpoint",
@@ -418,7 +418,7 @@ test "run: env resolution, the request line on stderr, the response on stdout; a
     var err2: Io.Writer.Allocating = .init(testing.allocator);
     defer err2.deinit();
     try testing.expectEqual(@as(u8, 1), try run(testing.allocator, testing.io, &env, &.{"/nope.curl"}, .{ .out = &out.writer, .err = &err2.writer }));
-    try testing.expect(std.mem.startsWith(u8, err2.written(), "mnml-zig run: cannot read /nope.curl"));
+    try testing.expect(std.mem.startsWith(u8, err2.written(), "mnml run: cannot read /nope.curl"));
     try testing.expectEqual(@as(u8, 1), try run(testing.allocator, testing.io, &env, &.{ "a", "b" }, .{ .out = &out.writer, .err = &err2.writer }));
 }
 

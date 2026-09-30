@@ -52,7 +52,7 @@ regression, not a discovery.
    *Pass:* `install` ends with ``installed. `~/.local/bin/mnml` is the
    stable profile; `./run.sh` here is the dev one.``, and
    `~/.local/bin/mnml --version` prints
-   `mnml-zig <version> (stable profile)`. If it says `note: ~/.local/bin
+   `mnml <version> (stable profile)`. If it says `note: ~/.local/bin
    is not on your PATH`, add it and open a new shell.
 
 4. **The symbols font.** `./run.sh install-font`, then **fully quit and
@@ -241,7 +241,7 @@ not.
    line — both spelled out in `README.md` → *Install*.
    *Pass:* `install` ends with `installed.` and
    `%LOCALAPPDATA%\Programs\mnml\bin\mnml.exe --version` prints
-   `mnml-zig <version> (stable profile)`. It prints the exact line to
+   `mnml <version> (stable profile)`. It prints the exact line to
    add the directory to your user PATH if it is not there — run it, then
    **open a new terminal**.
    *Things to record:* did the dirty-tree / Debug / foreign-binary

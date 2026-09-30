@@ -1605,7 +1605,7 @@ pub fn runPath(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts:
 fn runPathAt(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: Options, out: *Io.Writer, position: *usize) !Stats {
     const files = collectFiles(gpa, io, root) catch |err| switch (err) {
         error.PathNotFound => {
-            try out.print("mnml-zig test: no such path: {s}\n", .{root});
+            try out.print("mnml test: no such path: {s}\n", .{root});
             try out.flush();
             return err;
         },
@@ -1616,7 +1616,7 @@ fn runPathAt(gpa: Allocator, io: Io, factory: Factory, root: []const u8, opts: O
         gpa.free(files);
     }
     if (files.len == 0) {
-        try out.print("mnml-zig test: no .test files under {s}\n", .{root});
+        try out.print("mnml test: no .test files under {s}\n", .{root});
         try out.flush();
     }
     var stats: Stats = .{};
@@ -2699,7 +2699,7 @@ test "runPath on a single file and on an empty directory" {
     defer out2.deinit();
     const s2 = try runPath(t.allocator, t.io, sf.factory(), empty, env.opts(), &out2.writer);
     try t.expectEqual(@as(usize, 0), s2.total);
-    try t.expect(std.mem.startsWith(u8, out2.written(), "mnml-zig test: no .test files under "));
+    try t.expect(std.mem.startsWith(u8, out2.written(), "mnml test: no .test files under "));
 }
 
 test "runPath: a verdict lands right after its own start line, not after the whole root" {
