@@ -1,0 +1,76 @@
+{
+  "items": [
+    { "type": "link", "path": "/about", "title": "About mnml" },
+    {
+      "type": "folder",
+      "path": "/install",
+      "title": "Install",
+      "children": [
+        { "type": "link", "path": "/", "title": "Overview" },
+        { "type": "link", "path": "/build", "title": "Build from Source" },
+        {
+          "type": "folder",
+          "path": "/release-notes",
+          "title": "Release Notes",
+          "children": [
+            { "type": "link", "path": "/", "title": "Overview" },
+            { "type": "link", "path": "/0-3-0", "title": "0.3.0" }
+          ]
+        }
+      ]
+    },
+    { "type": "link", "path": "/getting-started", "title": "Getting Started" },
+    {
+      "type": "folder",
+      "path": "/config",
+      "title": "Configuration",
+      "children": [
+        { "type": "link", "path": "/", "title": "Overview" },
+        { "type": "link", "path": "/reference", "title": "Option Reference", "generated": "docs/CONFIG.md" },
+        { "type": "link", "path": "/keymaps", "title": "Keymap Profiles", "generated": "docs/KEYMAP_PROFILES.md" }
+      ]
+    },
+    {
+      "type": "folder",
+      "path": "/features",
+      "title": "Features",
+      "children": [
+        { "type": "link", "path": "/", "title": "Overview" },
+        { "type": "link", "path": "/editor", "title": "Editor" },
+        { "type": "link", "path": "/git", "title": "Git" },
+        { "type": "link", "path": "/terminal", "title": "Terminal" },
+        { "type": "link", "path": "/http", "title": "HTTP" },
+        { "type": "link", "path": "/ai", "title": "AI sessions" }
+      ]
+    },
+    {
+      "type": "folder",
+      "path": "/integrations",
+      "title": "Integrations",
+      "children": [
+        { "type": "link", "path": "/", "title": "Overview" },
+        { "type": "link", "path": "/marketplace", "title": "Marketplace" },
+        { "type": "link", "path": "/private-sources", "title": "Private Sources" },
+        { "type": "link", "path": "/sdk", "title": "SDK", "generated": "docs/SDK.md" }
+      ]
+    },
+    {
+      "type": "folder",
+      "path": "/lua",
+      "title": "Lua",
+      "children": [
+        { "type": "link", "path": "/", "title": "Overview" },
+        { "type": "link", "path": "/reference", "title": "Reference", "generated": "docs/LUA.md" }
+      ]
+    },
+    {
+      "type": "folder",
+      "path": "/reference",
+      "title": "Reference",
+      "children": [
+        { "type": "link", "path": "/commands", "title": "Commands", "generated": "docs/commands.md" }
+      ]
+    },
+    { "type": "link", "path": "/help", "title": "Help" }
+  ]
+}
