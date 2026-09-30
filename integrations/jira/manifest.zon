@@ -8,7 +8,7 @@
     .id = "jira_work",
     .label = "Jira Work",
     .description = "Jira: tickets assigned to me + recently done",
-    .version = "0.2.0",
+    .version = "0.2.1",
     .binary = "mnml-jira",
     .category = "tracker",
     .chip = .{ .glyph = "\u{f0303}", .fallback = "JW", .color = "blue", .tooltip = "Jira Work", .in_palette_bar = false }, // nf-md-jira
