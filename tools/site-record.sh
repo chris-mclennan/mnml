@@ -13,7 +13,7 @@
 # window over it is never in the file), encoded to VP9 WebM without
 # audio, and written with a PNG poster:
 #
-#   site/public/media/<name>.webm   <name>.png      (1600 px wide)
+#   site/public/media/<name>.webm   <name>.mp4 (H.264)   <name>.png   (1600 px wide)
 #   site/src/media.json             [{name, title, seconds, flow}]
 #
 # Every screen the app writes while recording is scanned for the home
@@ -25,6 +25,7 @@
 #   fps: 30                     width: 1600           (optional)
 #   session_cwd: ~/tour         the planted agent transcripts' cwd (the
 #                               sessions table prints it verbatim)
+#   tree_width: 46              a wider sidebar for this clip
 #   relative_data_root: yes     spell the data root relative (an install
 #                               toast names a file under it); no shell panes
 #   …setup steps…               run before recording starts
@@ -53,7 +54,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 case "${1:-}" in
-  ""|-h|--help|help) sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|-h|--help|help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 [ -x "$ROOT/zig-out/bin/mnml-drive" ] || { echo "site-record.sh: build the driver first: zig build -Ddrive" >&2; exit 64; }
 MNML_STAMP_WHO=site-record.sh python3 "$ROOT/tools/tour/stamp.py" drive || exit $?
