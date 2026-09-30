@@ -1,0 +1,58 @@
+---
+import Wordmark from "./Wordmark.astro";
+import Icon from "./Icon.astro";
+import NavTree from "./NavTree.astro";
+import { GITHUB } from "../repo.mjs";
+const { current = "" } = Astro.props;
+const inDocs = current.startsWith("/docs");
+---
+<header class="navbar">
+  <div class="grid wide">
+    <Wordmark />
+    <nav class="nav-right" aria-label="Main">
+      <ul class="nav-links">
+        <li><a href="/docs" class:list={{ active: inDocs }}>Docs</a></li>
+        <li><a href={GITHUB} rel="noopener">GitHub<Icon name="external" size={15} /></a></li>
+        <li>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch between dark and light">
+            <Icon name="moon" /><Icon name="sun" />
+          </button>
+        </li>
+      </ul>
+      <a class="button brand nav-cta" href="/download">Download</a>
+    </nav>
+    <div class="mobile-actions">
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch between dark and light">
+        <Icon name="moon" /><Icon name="sun" />
+      </button>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Menu">
+        <span class="hamburger"><span></span><span></span><span></span></span>
+      </button>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobile-menu" data-open="false">
+    <ul class="nav-links">
+      <li><a href="/docs" class:list={{ active: inDocs }}>Docs</a></li>
+      <li><a href={GITHUB} rel="noopener">GitHub<Icon name="external" size={15} /></a></li>
+      <li><a href="/download">Download</a></li>
+    </ul>
+    <nav class="nav-tree" aria-label="Documentation"><NavTree current={current} /></nav>
+  </div>
+</header>
+<script>
+  const btn = document.querySelector(".menu-toggle");
+  const menu = document.getElementById("mobile-menu");
+  btn?.addEventListener("click", () => {
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    btn.setAttribute("aria-expanded", String(open));
+    menu.dataset.open = String(open);
+    document.body.classList.toggle("no-scroll", open);
+  });
+  for (const t of document.querySelectorAll("[data-theme-toggle]")) {
+    t.addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem("theme", next); } catch {}
+    });
+  }
+</script>

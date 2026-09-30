@@ -1,0 +1,16 @@
+---
+import Icon from "./Icon.astro";
+import { GITHUB } from "../repo.mjs";
+const year = new Date().getFullYear();
+---
+<footer class="footer">
+  <div class="grid wide">
+    <ul>
+      <li><a href="/docs">Docs</a></li>
+      <li><a href={GITHUB} rel="noopener">GitHub<Icon name="external" size={15} /></a></li>
+      <li><a href={`${GITHUB}/issues`} rel="noopener">Issues<Icon name="external" size={15} /></a></li>
+      <li><a href="/download">Download</a></li>
+    </ul>
+    <p class="copyright">© {year} mnml</p>
+  </div>
+</footer>

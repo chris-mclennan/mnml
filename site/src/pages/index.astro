@@ -1,0 +1,32 @@
+---
+// The home page is one screen, as ghostty.org's is: a window playing a
+// real recording of mnml, one sentence, two buttons.
+import Site from "../layouts/Site.astro";
+import { media, CELLS } from "../lib/media.mjs";
+const TAGLINE = "Everything you'd open a second terminal for, in one NvChad-style window: editor, git, agents, HTTP — written in Zig, on libghostty, scripted in Lua.";
+const hero = media("hero");
+const { width, height } = hero || CELLS;
+---
+<Site title="mnml" description={TAGLINE} chrome={false}>
+  <main class="home">
+    <section class="window" style={`--ar:${width}/${height};--arw:${width};--arh:${height}`} aria-label="A recording of mnml">
+      <div class="window-bar">
+        <ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul>
+        <span class="title">mnml</span>
+        <span></span>
+      </div>
+      <div class="window-body">
+        {hero ? (
+          <video src={hero.video} poster={hero.poster} width={width} height={height} autoplay muted loop playsinline preload="auto" aria-label={hero.title}></video>
+        ) : (
+          <div class="placeholder">recording pending</div>
+        )}
+      </div>
+    </section>
+    <p class="tagline">{TAGLINE}</p>
+    <div class="home-buttons">
+      <a class="button brand xl" href="/download">Download</a>
+      <a class="button neutral xl" href="/docs">Documentation</a>
+    </div>
+  </main>
+</Site>

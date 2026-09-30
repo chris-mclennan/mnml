@@ -1,28 +1,32 @@
-# The docs site: build + the smoke test (dead internal links, HEAD probes on
-# the releases/latest/download/… URLs) on every push touching site/**.
+# The website (site/, plain Astro): build it and run the smoke test —
+# dead internal links and #fragments, and a HEAD on every release
+# download URL the built pages carry — on every push touching site/**.
 #
-# Carried over from the Rust repo unchanged in what it does — the site is a
-# Starlight/Astro project with no knowledge of the language behind the
-# binary — with two adaptations: the manifest that wakes it is
-# build.zig.zon, not Cargo.toml, and there is no release-plz here, so the
-# "skip the download probes on a release commit" branch is gone (the tag
-# push does not touch site/**, so nothing wakes this on a release anyway).
-#
-# The site itself moves into this repo at E8 (DESIGN.md). Until it does,
-# every step after the first is skipped — the workflow is here so the move
-# is a `git mv` and not a workflow rewrite.
+# The build reads docs/*.md (the generated reference pages) and
+# README.md (the winget line), so those wake it too. No deploy step:
+# where the site is hosted is decided outside this workflow.
 name: site
 on:
   push:
     branches: [main]
     paths:
       - "site/**"
-      - "build.zig.zon"
+      - "docs/CONFIG.md"
+      - "docs/KEYMAP_PROFILES.md"
+      - "docs/commands.md"
+      - "docs/LUA.md"
+      - "docs/SDK.md"
+      - "README.md"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "site/**"
-      - "build.zig.zon"
+      - "docs/CONFIG.md"
+      - "docs/KEYMAP_PROFILES.md"
+      - "docs/commands.md"
+      - "docs/LUA.md"
+      - "docs/SDK.md"
+      - "README.md"
       - ".github/workflows/site.yml"
   # Daily: the download probes catch a release that was deleted or
   # re-tagged without a site edit.
@@ -38,31 +42,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Is the site here yet?
-        id: site
-        run: |
-          if [ -f site/package.json ]; then
-            echo "present=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=0" >> "$GITHUB_OUTPUT"
-            echo "::notice::no site/ in this repo yet (E8) — nothing to build"
-          fi
       - uses: actions/setup-node@v7
-        if: steps.site.outputs.present == '1'
         with:
+          # npm 10 ships with Node 22 and wrote site/package-lock.json;
+          # npm 11's lock leaves out astro's optional sharp packages and
+          # `npm ci` then refuses it.
           node-version: "22"
           cache: "npm"
           cache-dependency-path: site/package-lock.json
       - name: Install site deps
-        if: steps.site.outputs.present == '1'
         working-directory: site
         run: npm ci --no-audit --no-fund
       - name: Build site
-        if: steps.site.outputs.present == '1'
         working-directory: site
         run: npm run build
       - name: Smoke — internal links + download HEAD
-        if: steps.site.outputs.present == '1'
         working-directory: site
         # PR builds skip the download probes (rate-limit noise on branches);
         # main and the schedule hit the real URLs.

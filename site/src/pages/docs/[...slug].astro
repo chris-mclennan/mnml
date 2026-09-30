@@ -1,0 +1,48 @@
+---
+// Every page under /docs: written, generated or pending (src/lib/docs.mjs).
+import Docs from "../../layouts/Docs.astro";
+import { docsPages, loadPage } from "../../lib/docs.mjs";
+import { VERSION } from "../../lib/release.mjs";
+
+export function getStaticPaths() {
+  return docsPages().map((p) => ({
+    params: { slug: p.url === "/docs" ? undefined : p.url.replace(/^\/docs\//, "") },
+    props: { page: p },
+  }));
+}
+const { page } = Astro.props;
+const d = loadPage(page);
+// Breadcrumbs: the folders above the page, then the page itself — but a
+// folder's overview page ends at its folder, as on ghostty.org.
+const crumbs = page.landing
+  ? []
+  : page.overview
+    ? page.crumbs.map((c, i, a) => (i === a.length - 1 ? { ...c, current: true } : c))
+    : [...page.crumbs, { title: d.title, current: true }];
+const big = page.generated === "docs/commands.md";
+---
+<Docs title={d.title} description={d.description} crumbs={crumbs} headings={d.headings} hideToc={d.hideToc} source={d.source} current={page.url} big={big}>
+  {d.state === "pending" && page.landing && (
+    <Fragment>
+      <h2 id="get-started" class="jump"><a class="jump-link" href="#get-started">Get Started</a></h2>
+      <p>mnml {VERSION} runs on macOS, Linux and Windows.</p>
+      <div class="button-links"><ul>
+        <li><a class="button large brand" href="/download">Download</a></li>
+        <li><a class="button large neutral" href="/docs/install/build">Build from Source</a></li>
+      </ul></div>
+      <hr />
+      <h2 id="featured-documentation" class="jump"><a class="jump-link" href="#featured-documentation">Featured Documentation</a></h2>
+      <div class="card-links"><ul>
+        <li><a class="card-link" href="/docs/features/ai"><span class="card-title">AI sessions</span><span class="card-desc">Claude Code and Codex sessions in terminal splits.</span></a></li>
+        <li><a class="card-link" href="/docs/config/keymaps"><span class="card-title">Keymap Profiles</span><span class="card-desc">The vim and standard keymaps, chord by chord.</span></a></li>
+        <li><a class="card-link" href="/docs/lua"><span class="card-title">Lua</span><span class="card-desc">Scripting mnml with Lua.</span></a></li>
+        <li><a class="card-link" href="/docs/features/terminal"><span class="card-title">Terminal</span><span class="card-desc">Terminal panes built on libghostty.</span></a></li>
+      </ul></div>
+      <p class="pending">This landing page is a placeholder until its written version lands (page pending).</p>
+    </Fragment>
+  )}
+  {d.state === "pending" && !page.landing && (
+    <p class="pending">This page is pending — it is listed in the docs navigation, and its text has not landed yet.</p>
+  )}
+  {d.state !== "pending" && <Fragment set:html={d.html} />}
+</Docs>

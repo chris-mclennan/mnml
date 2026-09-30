@@ -1,0 +1,99 @@
+---
+// /download: the release, per platform. Every file link is built from
+// the release's own asset list (src/lib/release.mjs), so a button only
+// exists for a file that exists; npm run smoke HEAD-probes each one.
+import Site from "../layouts/Site.astro";
+import Icon from "../components/Icon.astro";
+import Cmd from "../components/Cmd.astro";
+import { VERSION, TAG, RELEASE_URL, asset, versionSlug } from "../lib/release.mjs";
+import { PAGES } from "../lib/nav.mjs";
+import { BREW_INSTALL, CURL_INSTALL, IRM_INSTALL, RELEASES } from "../repo.mjs";
+import { WINGET_INSTALL } from "../lib/readme.mjs";
+
+const notesPage = `/docs/install/release-notes/${versionSlug(VERSION)}`;
+const notesHref = PAGES.some((p) => p.url === notesPage) ? notesPage : RELEASE_URL;
+
+const mac = [
+  { label: "Apple Silicon", a: asset(/^mnml-aarch64-apple-darwin\.tar\.xz$/) },
+  { label: "Intel", a: asset(/^mnml-x86_64-apple-darwin\.tar\.xz$/) },
+  { label: "App (.zip)", a: asset(/^mnml.*apple-darwin.*\.app\.zip$|^mnml.*macos.*\.zip$/i) },
+].filter((x) => x.a);
+const linux = ["x86_64", "aarch64"].map((arch) => ({
+  arch,
+  files: [
+    { label: ".deb", a: asset(new RegExp(`^mnml-${arch}-unknown-linux-gnu\\.deb$`)) },
+    { label: ".rpm", a: asset(new RegExp(`^mnml-${arch}-unknown-linux-gnu\\.rpm$`)) },
+    { label: ".tar.xz", a: asset(new RegExp(`^mnml-${arch}-unknown-linux-gnu\\.tar\\.xz$`)) },
+  ].filter((x) => x.a),
+})).filter((g) => g.files.length);
+const win = [
+  { label: "Installer (.msi)", a: asset(/^mnml-x86_64-pc-windows-[a-z]+\.msi$/) },
+  { label: "Archive (.zip)", a: asset(/^mnml-x86_64-pc-windows-[a-z]+\.zip$/) },
+].filter((x) => x.a);
+const sums = asset(/^sha256\.sum$/);
+---
+<Site title="Download" description={`Download mnml ${VERSION} for macOS, Linux and Windows.`}>
+  <main class="download-page">
+    <div class="grid">
+      <div class="download-head">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7" fill="none" stroke="var(--accent)" stroke-width="2"/><rect x="18" y="8" width="7" height="16" rx="1" fill="var(--accent)"/><path d="M7 24V12m0 3c0-2 1.5-3 3-3s3 1 3 3v9" stroke="var(--gray-9)" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>
+        <h1>Download mnml</h1>
+        <p class="version">Version {VERSION} – <a href={notesHref}>Release Notes</a></p>
+      </div>
+      <div class="download-cards">
+        <section class="dl-card">
+          <h2>macOS</h2>
+          <p>One binary per architecture, as a .tar.xz archive; or install it with Homebrew.</p>
+          <div class="row">
+            {mac.map((m) => <a class="button brand large" href={m.a.url}><Icon name="download" size={17} />{m.label}</a>)}
+          </div>
+          <div class="row-label">Homebrew</div>
+          <Cmd cmd={BREW_INSTALL} />
+        </section>
+        <section class="dl-card">
+          <h2>Linux</h2>
+          <p>Packages for Debian / Ubuntu (.deb) and Fedora / RHEL (.rpm), or the raw archive.</p>
+          {linux.map((g) => (
+            <Fragment>
+              <div class="row-label">{g.arch}</div>
+              <div class="row">{g.files.map((f) => <a class="button brand large" href={f.a.url}><Icon name={f.label === ".tar.xz" ? "download" : "package"} size={17} />{f.label}</a>)}</div>
+            </Fragment>
+          ))}
+          <div class="row-label">Installer script (macOS and Linux, into ~/.local/bin)</div>
+          <Cmd cmd={CURL_INSTALL} />
+        </section>
+        <section class="dl-card">
+          <h2>Windows</h2>
+          <p>x86_64, as an MSI or a zip. Windows builds are compiled and packaged on every release but have not yet been run on a Windows machine.</p>
+          <div class="row">
+            {win.map((w) => <a class="button brand large" href={w.a.url}><Icon name={w.label.startsWith("Installer") ? "package" : "download"} size={17} />{w.label}</a>)}
+          </div>
+          <div class="row-label">winget</div>
+          <Cmd cmd={WINGET_INSTALL} prompt=">" />
+          <div class="row-label">Installer script (into %LOCALAPPDATA%\mnml\bin)</div>
+          <Cmd cmd={IRM_INSTALL} prompt=">" />
+        </section>
+        <section class="dl-card">
+          <h2>Source</h2>
+          <p>Build mnml yourself with Zig, or check every file against the release's checksums.</p>
+          <div class="row">
+            <a class="button brand large" href="/docs/install/build"><Icon name="code" size={17} />Build from Source</a>
+            {sums && <a class="button neutral large" href={sums.url}><Icon name="file" size={17} />sha256.sum</a>}
+          </div>
+          <div class="row">
+            <a class="button neutral large" href={RELEASE_URL} rel="noopener">All {TAG} files<Icon name="external" size={15} /></a>
+            <a class="button neutral large" href={RELEASES} rel="noopener">Every release<Icon name="external" size={15} /></a>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</Site>
+<script>
+  for (const b of document.querySelectorAll(".cmd .copy")) {
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; b.classList.add("done"); } catch { b.textContent = "Select + copy"; }
+      setTimeout(() => { b.textContent = "Copy"; b.classList.remove("done"); }, 1500);
+    });
+  }
+</script>
