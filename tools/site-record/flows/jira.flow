@@ -1,0 +1,36 @@
+title: Jira in a pane
+flow: The Jira integration as a tab: issues grouped by status, a row's detail, the second tab, and a filter — here against an offline fake server.
+run integrations.show_in_dev
+until INTEGRATIONS
+until "Jira Work" 4000
+find-click "Jira Work"
+key i
+until "installed jira_work" 15000
+wait 4500
+run integrations.open_as_tab
+reset
+open src/main.zig
+until "fn main"
+record
+wait 900
+run jira_work.open
+until "JIRA WORK" 15000
+heal "fetch failed" r "JIRA WORK (3)"
+wait 2000
+keys @450 down down down
+wait 600
+key d
+wait 2600
+poster
+key esc
+wait 700
+key 2
+wait 2000
+key 1
+wait 900
+key /
+wait 300
+slowtype "card" 110
+wait 2000
+key esc
+wait 1500

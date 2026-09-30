@@ -11,12 +11,12 @@ wait 4500
 run integrations.open_as_tab
 reset
 record
-wait 1000
+wait 700
 # the tree: walk down to src/util.zig and open it
 keys @300 down down down down
 key enter
 until "pub fn sum"
-wait 1200
+wait 900
 # the palette: an agent session in the right half
 key ctrl+shift+p
 wait 250
@@ -24,7 +24,7 @@ slowtype "claude right" 60
 wait 500
 key enter
 until "agent session" 4000
-wait 2200
+wait 1500
 # a shell below the agent
 key ctrl+shift+p
 wait 250
@@ -33,17 +33,17 @@ wait 400
 key enter
 until "tour %" 4000
 wait 300
-slowtype "git log --oneline\n" 45
+slowtype "git log --oneline\n" 30
 until "Start the tour project" 3000
-wait 1800
+wait 2300
 poster
 # Jira, one tab away
 run jira_work.open
 until "JIRA WORK" 15000
 heal "fetch failed" r "JIRA WORK (3)"
-wait 2500
+wait 2300
 # back to the editor
 run view.focus_left
 wait 400
-keys @120 down down down down down down down down
-wait 1500
+keys @110 down down down down down down down down
+wait 1200

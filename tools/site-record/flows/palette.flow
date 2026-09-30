@@ -1,0 +1,34 @@
+title: The command palette
+flow: Every command has a palette row: the palette filters as you type, Ctrl+P finds a file, and the theme picker previews NvChad's themes live.
+open src/main.zig
+until "fn main"
+record
+wait 1200
+key ctrl+shift+p
+wait 400
+slowtype "git" 90
+wait 900
+keys @220 down down down down down
+wait 900
+key esc
+wait 500
+key ctrl+p
+wait 400
+slowtype "util" 90
+wait 800
+key enter
+until "pub fn sum"
+wait 1200
+key ctrl+shift+p
+wait 300
+slowtype "pick theme" 70
+wait 500
+key enter
+wait 900
+slowtype "catpp" 110
+wait 900
+poster
+keys @1000 down up
+wait 600
+key enter
+wait 2200

@@ -12,8 +12,9 @@ done
 ask=${SITE_RECORD_ASK:-add a max() helper to src/util.zig, with a test}
 ENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')
 mkdir -p "$HOME/.claude/projects/$ENC"
+cwd=${SITE_RECORD_CWD:-$PWD}
 printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"%s"}}\n' \
-  "$PWD" "$ask" > "$HOME/.claude/projects/$ENC/$sid.jsonl"
+  "$cwd" "$ask" > "$HOME/.claude/projects/$ENC/$sid.jsonl"
 printf '\033]0;%s\007' "$ask"
 dim=$'\033[2m' bold=$'\033[1m' acc=$'\033[38;5;173m' ok=$'\033[32m' off=$'\033[0m'
 say() { printf '%s\n' "$1"; sleep "${2:-0.35}"; }
@@ -32,6 +33,6 @@ say ""
 say "max() returns null for an empty slice, so callers decide what" 0.1
 say "\"no numbers\" means. Both tests pass." 0.1
 printf '%s,"message":{"role":"assistant","content":[{"type":"text","text":"Added max() and a test; both tests pass."}]}}\n' \
-  "{\"type\":\"assistant\",\"cwd\":\"$PWD\",\"gitBranch\":\"main\"" >> "$HOME/.claude/projects/$ENC/$sid.jsonl"
+  "{\"type\":\"assistant\",\"cwd\":\"$cwd\",\"gitBranch\":\"main\"" >> "$HOME/.claude/projects/$ENC/$sid.jsonl"
 printf '\n%s>%s ' "$bold" "$off"
 exec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done' --session-id "$sid"

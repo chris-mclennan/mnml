@@ -23,6 +23,10 @@
 # FLOW format, one step a line (`#` comments; shell quoting):
 #   title: Hero                 flow: one sentence    (both required)
 #   fps: 30                     width: 1600           (optional)
+#   session_cwd: ~/tour         the planted agent transcripts' cwd (the
+#                               sessions table prints it verbatim)
+#   relative_data_root: yes     spell the data root relative (an install
+#                               toast names a file under it); no shell panes
 #   …setup steps…               run before recording starts
 #   record                      the recording starts here
 #   reset                       Esc twice, close every pane, the explorer

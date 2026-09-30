@@ -1,0 +1,32 @@
+title: The Marketplace
+relative_data_root: yes
+flow: Integrations install from the Marketplace in the sidebar: browse, press i, and the new pane opens against its (here offline, fake) service.
+# The offline catalogue: the fixture's Bitbucket PRs manifest plus the
+# repo's own launcher manifests, all local files.
+copy ../../../launchers/btop.zon market/btop.zon
+copy ../../../launchers/htop.zon market/htop.zon
+copy ../../../launchers/iftop.zon market/iftop.zon
+copy ../../../launchers/vscode.zon market/vscode.zon
+shell "mkdir -p launchers"
+open src/main.zig
+until "fn main"
+record
+wait 900
+run integrations.show_marketplace
+wait 1800
+keys @550 down down down down
+wait 500
+keys @350 up up up up
+wait 900
+poster
+key i
+until "installed bitbucket_prs" 15000
+wait 1500
+run integrations.open_as_tab
+run bitbucket_prs.open
+until "BITBUCKET PRS" 15000
+until "3 PRs" 15000
+heal "fetch failed" r "3 PRs"
+wait 1500
+keys @450 down down
+wait 2000

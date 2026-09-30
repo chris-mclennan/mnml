@@ -75,8 +75,22 @@ class SiteWindow(Window):
             head, body = f.read().split("\n", 1)
         with open(path, "w", encoding="utf-8") as f:
             f.write(head + "\n" + 'if [ "$1" = --profile ]; then shift 2; fi\n'
-                    + "MNML_PROFILE=stable; export MNML_PROFILE\n" + body)
+                    + "MNML_PROFILE=stable; export MNML_PROFILE\n"
+                    + self.relative_root_lines() + body)
         return path
+
+    relative_root = False
+
+    def relative_root_lines(self):
+        """`relative_data_root: yes` — the data root spelled relative to
+        the run, so a toast that names a file under it (an install's
+        "wrote …") never paints the machine's absolute path. Only for a
+        flow with no shell pane (the shell's rc directory hangs off the
+        data root and resolves against the shell's cwd)."""
+        if not self.relative_root:
+            return ""
+        return (f"cd {shlex.quote(self.run_dir)} || exit 70\n"
+                "MNML_DATA_ROOT=data; export MNML_DATA_ROOT\n")
 
 
 def log(msg):
@@ -95,7 +109,7 @@ def parse_flow(path):
             line = raw.rstrip("\n")
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
-            m = re.match(r"^(title|flow|fps|width):\s*(.*)$", line)
+            m = re.match(r"^(title|flow|fps|width|session_cwd|relative_data_root):\s*(.*)$", line)
             if m:
                 k, v = m.group(1), m.group(2).strip()
                 meta[k] = int(v) if k in ("fps", "width") else v
@@ -187,13 +201,19 @@ class Player:
             # lands a whole string in one frame. `\n` is Enter.
             text = a[0].encode("utf-8").decode("unicode_escape")
             per = ms(a[1]) if len(a) > 1 else 55
+            # Appended without waiting for each ack (an ack round trip
+            # is ~100 ms, slower than anyone types); the acks are counted
+            # once at the end.
+            base = self.win._count_acks()
             for ch in text:
-                if ch == "\n":
-                    self.win.send({"cmd": "key", "key": "enter"}, settle=False)
-                else:
-                    self.win.send({"cmd": "type", "text": ch}, settle=False)
+                c = {"cmd": "key", "key": "enter"} if ch == "\n" else {"cmd": "type", "text": ch}
+                self.win._append([c])
                 time.sleep(per / 1000.0)
-            self.win.settle(quiet_ms=150, cap_ms=800)
+            deadline = now_ms() + 5000
+            while self.win._count_acks() < base + len(text) and now_ms() < deadline:
+                time.sleep(0.03)
+            if not self.recording:
+                self.win.settle(quiet_ms=150, cap_ms=800)
         elif op == "keys":
             # Several chords with a pause between them (a menu walk).
             per = 350
@@ -246,8 +266,12 @@ class Watcher(threading.Thread):
                 for p in self.pats:
                     m = p.search(s)
                     if m:
-                        line = next((ln for ln in s.split("\n") if p.search(ln)), "")
-                        self.hits.append((p.pattern, line.strip()[:160]))
+                        a = max(0, s.rfind("\n", 0, m.start()) + 1, m.start() - 70)
+                        self.hits.append((p.pattern, s[a:m.end() + 50].replace("\n", " ⏎ ")))
+                        dump = os.path.join(self.win.run_dir, f"privacy-hit-{len(self.hits)}.txt")
+                        if len(self.hits) <= 3:
+                            with open(dump, "w", encoding="utf-8") as f:
+                                f.write(s)
                 last = s
             time.sleep(0.02)
 
@@ -307,7 +331,7 @@ def window_id(win):
     raise DriveError(f"drive.json has no window id: {sorted(d)}")
 
 
-def plant_sessions(home, ws):
+def plant_sessions(home, ws, cwd=None):
     """Three earlier agent sessions of this workspace, as transcripts on
     disk — the only thing the sessions views read besides the live
     panes. Stand-in text; no AI runs."""
@@ -315,17 +339,18 @@ def plant_sessions(home, ws):
     d = os.path.join(home, ".claude", "projects", enc)
     os.makedirs(d, exist_ok=True)
     rows = [
-        ("5e551001-0000-4000-8000-000000000001", 25, "add a max() helper to util.zig", "Added max() with a test for the empty slice."),
-        ("5e551001-0000-4000-8000-000000000002", 70, "write the 0.1.0 changelog entry", "Drafted CHANGELOG.md from the last five commits."),
-        ("5e551001-0000-4000-8000-000000000003", 180, "why does main print nothing for an empty list", "util.sum returns 0; main now prints a message."),
+        ("3f9c1a02-5d1e-4c7a-9b20-6e81d4f0a113", 25, "add a max() helper to util.zig", "Added max() with a test for the empty slice."),
+        ("a71e0b44-2c93-4f5d-8e1a-0b7c3d9e2f48", 70, "write the 0.1.0 changelog entry", "Drafted CHANGELOG.md from the last five commits."),
+        ("c2d86e19-7a4b-4e02-a5f3-91d0c6b8e275", 180, "why does main print nothing for an empty list", "util.sum returns 0; main now prints a message."),
     ]
     now = time.time()
+    cwd = cwd or ws
     for sid, age_min, user, reply in rows:
         p = os.path.join(d, sid + ".jsonl")
         with open(p, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"type": "user", "cwd": ws, "gitBranch": "main",
+            f.write(json.dumps({"type": "user", "cwd": cwd, "gitBranch": "main",
                                 "message": {"role": "user", "content": user}}) + "\n")
-            f.write(json.dumps({"type": "assistant", "cwd": ws, "gitBranch": "main",
+            f.write(json.dumps({"type": "assistant", "cwd": cwd, "gitBranch": "main",
                                 "message": {"role": "assistant", "content": [{"type": "text", "text": reply}]}}) + "\n")
         t = now - age_min * 60
         os.utime(p, (t, t))
@@ -383,7 +408,13 @@ def record(flow_path, args):
     home = os.path.join(run, "home")
     ws = os.path.join(home, "tour")
     workspace.build(ws, home)
-    plant_sessions(home, ws)
+    # `session_cwd:` spells the transcripts' cwd — the sessions table
+    # prints it verbatim, and the real one is under the machine's home.
+    plant_sessions(home, ws, meta.get("session_cwd"))
+    # The one-time ghost-text tip is a persistent toast; it is not what
+    # any recording is about.
+    os.makedirs(os.path.join(home, ".config", "mnml"), exist_ok=True)
+    open(os.path.join(home, ".config", "mnml", "ghost-text-hint-shown"), "w").close()
     usage = os.path.join(run, "usage-fixture")
     shutil.copytree(os.path.join(REPO, "docs", "ui-spec", "usage-fixture"), usage)
     fakes = workspace.start_fakes(ws)
@@ -392,7 +423,10 @@ def record(flow_path, args):
     # The agents scan sees this app's own children and nothing else on
     # the machine (a process group nobody is in).
     env["MNML_AGENTS_PGID"] = "2147483000"
+    if meta.get("session_cwd"):
+        env["SITE_RECORD_CWD"] = meta["session_cwd"]
     win = SiteWindow(run, ws, exe=args.exe, cols=COLS, rows=ROWS, app_env=env, app_args=[])
+    win.relative_root = meta.get("relative_data_root", "").lower() in ("yes", "true", "1")
     player = Player(win, run, os.path.dirname(flow_path))
     rec_proc = None
     watcher = None
@@ -413,6 +447,7 @@ def record(flow_path, args):
             player.step(n, op, a)
         win.settle(quiet_ms=400, cap_ms=3000)
         tour.wait_toasts_gone(win, player.notes)
+        win.run("toast.dismiss_all")
         mov = os.path.join(run, "capture.mov")
         rec_proc = subprocess.Popen([winrec_bin(), "--window", str(window_id(win)), "--out", mov,
                                      "--fps", str(meta["fps"])],
