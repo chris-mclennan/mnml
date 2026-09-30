@@ -10,6 +10,29 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
+## v0.3.2 (unreleased)
+
+### The frame
+
+- The sidebar is a fifth of the window by default — 30 cells up to 150
+  columns, 40 at 200, never more than 48 — and follows a resize; a number in
+  `ui.tree_width` still pins it. Right-click its divider to reset or set the
+  width (cells or `25%`), hide or auto-hide it, or move it to the other side.
+
+### Sandbox and demo
+
+- `mnml --demo` opens a sample Zig workspace with history in a throwaway
+  home, beside offline Jira and Bitbucket servers and a stand-in Claude Code
+  session (no model runs, no network); a ` demo ` chip says so, and exit
+  stops the servers and removes it all.
+
+
+- `mnml --sandbox` and `mnml --demo` clean up when the process is sent
+  SIGTERM, SIGHUP or SIGINT — a closed window or a stopped container —
+  as they do on a quit: the terminal is given back, the demo's servers
+  stop, the throwaway home is removed, and the exit status is 128 + the
+  signal (143 for SIGTERM).
+
 ## v0.3.1
 
 mnml 0.3.1 is a fix release for the Jira and Bitbucket integrations, with
@@ -67,14 +90,6 @@ what landed on the editor since 0.3.0 alongside it.
   what you chose. Browser keeps its chip.
 - An integration's rebuild chip is no longer hidden by the host rewriting
   its manifest.
-
-### Sandbox
-
-- `mnml --sandbox` and `mnml --demo` clean up when the process is sent
-  SIGTERM, SIGHUP or SIGINT — a closed window or a stopped container —
-  as they do on a quit: the terminal is given back, the demo's servers
-  stop, the throwaway home is removed, and the exit status is 128 + the
-  signal (143 for SIGTERM).
 
 ### Testing
 
@@ -136,10 +151,6 @@ architecture behind it is in `docs/DESIGN.md`.
   proportions. Integrations, terminals and session panes all follow the one
   rule now. `integrations.arrange = .fixed` — a row under Integrations in the
   settings overlay — puts back the old half-the-active-pane sizing.
-- The sidebar is a fifth of the window by default — 30 cells up to 150
-  columns, 40 at 200, never more than 48 — and follows a resize; a number in
-  `ui.tree_width` still pins it. Right-click its divider to reset or set the
-  width (cells or `25%`), hide or auto-hide it, or move it to the other side.
 
 ### Config — ZON, not TOML
 
@@ -242,10 +253,6 @@ architecture behind it is in `docs/DESIGN.md`.
 
 ### Fixes and polish since 2026-09-20
 
-- `mnml --demo` opens a sample Zig workspace with history in a throwaway
-  home, beside offline Jira and Bitbucket servers and a stand-in Claude Code
-  session (no model runs, no network); a ` demo ` chip says so, and exit
-  stops the servers and removes it all.
 - `--headless --ascii` paints the ASCII screen, as the terminal does.
 - The update check and the Nerd Fonts release fetch run only from the
   terminal loop — never under `--headless`, a `.test` run or a unit test.
