@@ -37,7 +37,7 @@ done
 [ $# -ge 3 ] || { echo "usage: ui-diff.sh [--no-copy] WS RS_DATA ZIG_DATA [STEPS_FILE] [COLSxROWS]" >&2; exit 64; }
 WS=$1; RS=$2; ZG=$3; STEPS=${4:-}; SIZE=${5:-120x40}
 COLS=${SIZE%x*}; ROWS=${SIZE#*x}
-RUST=${MNML_RUST_BIN:-/Users/chrismclennan/Projects/mnml/target/debug/mnml}
+RUST=${MNML_RUST_BIN:-$HOME/Projects/mnml/target/debug/mnml}
 ZIG=${MNML_ZIG_BIN:-$(cd "$(dirname "$0")/.." && pwd)/zig-out/bin/mnml-zig}
 OUT=${OUT:-$(mktemp -d)}; mkdir -p "$OUT"
 [ -d "$WS" ] && [ -d "$RS" ] && [ -d "$ZG" ] || { echo "ui-diff: WS / RS_DATA / ZIG_DATA must be directories" >&2; exit 64; }

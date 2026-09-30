@@ -2,8 +2,8 @@
 
 | side | binary | start event | first frame | peak RSS | rss samples | exit |
 |------|--------|------------:|------------:|---------:|------------:|------|
-| rust | `/Users/chrismclennan/Projects/mnml/target/release/mnml` | 3950.9 ms | 4083.5 ms | 93.9 MB | 739 | 0 |
-| zig | `/Users/chrismclennan/Projects/mnml-zig-worktrees/compare/zig-out/bin/mnml-zig` | 302.2 ms | 332.2 ms | 68.2 MB | 721 | 0 |
+| rust | `~/Projects/mnml/target/release/mnml` | 3950.9 ms | 4083.5 ms | 93.9 MB | 739 | 0 |
+| zig | `~/Projects/mnml-zig-worktrees/compare/zig-out/bin/mnml-zig` | 302.2 ms | 332.2 ms | 68.2 MB | 721 | 0 |
 
 Per step, ms from the command's append: `ack` = the ack line in events.jsonl (applied), `dump` = the next screen.txt write after the ack (painted). A `wait_ms` step's ack includes its own sleep.
 

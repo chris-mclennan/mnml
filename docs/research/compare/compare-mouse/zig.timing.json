@@ -1,6 +1,6 @@
 {
  "side": "zig",
- "bin": "/Users/chrismclennan/Projects/mnml-zig-worktrees/mouse-fixes/zig-out/bin/mnml-zig",
+ "bin": "~/Projects/mnml-zig-worktrees/mouse-fixes/zig-out/bin/mnml-zig",
  "pid": 16993,
  "steps": [
   {

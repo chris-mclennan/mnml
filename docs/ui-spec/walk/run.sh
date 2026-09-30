@@ -10,8 +10,8 @@ STEPS=$ROOT/steps/steps-$NAME.jsonl
 [ -f "$STEPS" ] || { echo "no steps: $STEPS"; exit 64; }
 OUT=$ROOT/out/$NAME; [ "$SIZE" = 120x40 ] || OUT=$OUT-$SIZE; [ "$INPUT" = standard ] || OUT=$OUT-$INPUT; [ "${FRESH:-0}" = 1 ] && OUT=$OUT-fresh
 rm -rf "$OUT"; mkdir -p "$OUT"
-RUST=${MNML_RUST_BIN:-/Users/chrismclennan/Projects/mnml/target/release/mnml}
-ZIG=${MNML_ZIG_BIN:-/Users/chrismclennan/Projects/mnml-zig/zig-out/bin/mnml-zig}
+RUST=${MNML_RUST_BIN:-$HOME/Projects/mnml/target/release/mnml}
+ZIG=${MNML_ZIG_BIN:-$HOME/Projects/mnml-zig/zig-out/bin/mnml-zig}
 S=$ROOT/slot$SLOT
 export HOME=$ROOT/home
 export PATH=$ROOT/home/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin
