@@ -280,6 +280,14 @@ pub fn pathUnder(gpa: Allocator, root: []const u8, id: []const u8) PathError![]u
 pub fn render(gpa: Allocator, m_in: Manifest) Allocator.Error![]u8 {
     var m = m_in;
     if (!m.isLauncher() and m.sdk.len == 0) m.sdk = sdk_root.version;
+    return renderUnstamped(gpa, m);
+}
+
+/// `render` without the stamp: the manifest exactly as given, `.sdk`
+/// included. For a host that rewrites an installed manifest (a user's
+/// chip choice) — the stamp says which SDK the binary was built on,
+/// and only the binary's own `--install` knows that.
+pub fn renderUnstamped(gpa: Allocator, m: Manifest) Allocator.Error![]u8 {
     var out: Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     if (m.isLauncher()) {

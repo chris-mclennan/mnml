@@ -651,6 +651,7 @@ pub fn refresh(app: *App) Allocator.Error!void {
     st.list = try found.toOwnedSlice(arena);
     st.problems = try problems.toOwnedSlice(arena);
     st.scanned = true;
+    try settleTopBar(app);
 
     // Register the commands now that the list is final.
     for (st.list) |*inst| try registerCommands(app, arena, inst);
@@ -665,40 +666,111 @@ pub fn refresh(app: *App) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// An install just finished: rescan, and settle each manifest's
-/// top-bar chip. A newly installed integration starts OFF the top bar,
-/// whatever its manifest says — `<binary> --install` writes the SDK's
-/// default, and an integration earns its place there when the user puts
-/// it there (*Show on top bar*). One that was already installed — a
-/// reinstall, an update, a rebuild — keeps what the user last chose,
-/// since `--install` rewrote the file from scratch. The first-party
-/// chips are not manifests and keep their own defaults (`first_party`).
+/// An install just finished: rescan. The scan settles each chip's
+/// place on the top bar (`settleTopBar`) — the in-app installs and a
+/// `<binary> --install` from a shell alike.
 pub fn refreshAfterInstall(app: *App) Allocator.Error!void {
+    return refresh(app);
+}
+
+// ─── the top bar's record ───────────────────────────────────────────────
+
+/// `<data root>/integrations-top-bar.txt`: every manifest id this data
+/// root has seen, and whether its chip is on the top bar — a line
+/// `on <id>` or `off <id>`. The manifest cannot hold the choice alone:
+/// `<binary> --install` rewrites it from scratch with the SDK's default
+/// (on), so the record is what a reinstall is measured against.
+pub const top_bar_record = "integrations-top-bar.txt";
+
+fn topBarRecordPath(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    return std.fs.path.join(arena, &.{ app.data_root, top_bar_record });
+}
+
+/// The record, or null when this data root has none yet.
+const TopBar = std.StringArrayHashMapUnmanaged(bool);
+
+fn loadTopBar(app: *App, arena: Allocator) Allocator.Error!?TopBar {
+    const path = try topBarRecordPath(app, arena);
+    const text = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(1 << 20)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    var map: TopBar = .empty;
+    var lines = std.mem.tokenizeAny(u8, text, "\r\n");
+    while (lines.next()) |line| {
+        const sp = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
+        const word = line[0..sp];
+        const id = std.mem.trim(u8, line[sp + 1 ..], " \t");
+        if (id.len == 0) continue;
+        if (std.mem.eql(u8, word, "on")) try map.put(arena, id, true) else if (std.mem.eql(u8, word, "off")) try map.put(arena, id, false);
+    }
+    return map;
+}
+
+fn saveTopBar(app: *App, arena: Allocator, map: *const TopBar) Allocator.Error!void {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (map.keys(), map.values()) |id, on| try out.print(arena, "{s} {s}\n", .{ if (on) "on" else "off", id });
+    const path = try topBarRecordPath(app, arena);
+    Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = out.items }) catch |err| {
+        try app.toastLevel(.warn, "integrations: cannot write {s}: {s}", .{ path, @errorName(err) });
+    };
+}
+
+/// The user put `id`'s chip on the top bar or took it off: the record
+/// keeps the choice, so the next `--install` cannot undo it.
+fn recordTopBar(app: *App, id: []const u8, on: bool) Allocator.Error!void {
+    if (app.data_root.len == 0) return;
+    const arena = app.frame.allocator();
+    var map: TopBar = (try loadTopBar(app, arena)) orelse .empty;
+    try map.put(arena, id, on);
+    try saveTopBar(app, arena, &map);
+}
+
+/// After a scan: each manifest's chip goes where the record says. An id
+/// the record has not seen is a new install — from the Marketplace, a
+/// dev folder, a launcher file or `<binary> --install` in a shell — and
+/// starts OFF the top bar, whatever its manifest says; it earns its
+/// place when the user puts it there (*Show on top bar*). A seen one —
+/// a reinstall, an update, a rebuild — gets the choice the record kept,
+/// and the manifest is rewritten to match. The first-party chips are
+/// not manifests and keep their own defaults (`first_party`).
+///
+/// A data root with no record yet but a home config is one that mnml
+/// ran in before the record existed: its manifests keep the place they
+/// have, and the record starts from them.
+fn settleTopBar(app: *App) Allocator.Error!void {
+    if (app.data_root.len == 0) return;
     const st = &app.integrations;
     const arena = app.frame.allocator();
-    var before: std.StringHashMapUnmanaged(bool) = .empty;
+    const loaded = try loadTopBar(app, arena);
+    var map: TopBar = loaded orelse .empty;
+    const adopt = loaded == null and hasHomeConfig(app, arena);
+    var changed = loaded == null and st.list.len > 0;
     for (st.list) |*inst| {
-        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
-        try before.put(arena, try arena.dupe(u8, inst.id()), on_bar);
-    }
-    try refresh(app);
-    var rewrote = false;
-    for (st.list) |*inst| {
-        var chip = inst.manifest.chip orelse continue;
-        const want = before.get(inst.id()) orelse false;
+        const chip = if (inst.manifest.chip) |*c| c else continue;
+        const want = map.get(inst.id()) orelse blk: {
+            const w = if (adopt) chip.in_palette_bar else false;
+            try map.put(arena, try arena.dupe(u8, inst.id()), w);
+            changed = true;
+            break :blk w;
+        };
         if (chip.in_palette_bar == want) continue;
         chip.in_palette_bar = want;
-        var m = inst.manifest;
-        m.chip = chip;
-        const text = try manifest_mod.render(app.gpa, m);
+        // The rewrite is the user's choice only: an unstamped manifest
+        // stays unstamped, so a binary that wants rebuilding still says so.
+        const text = try manifest_mod.renderUnstamped(app.gpa, inst.manifest);
         defer app.gpa.free(text);
         Io.Dir.cwd().writeFile(app.io, .{ .sub_path = inst.path, .data = text }) catch |err| {
             try app.toastLevel(.warn, "integrations: cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
-            continue;
         };
-        rewrote = true;
     }
-    if (rewrote) try refresh(app);
+    if (changed) try saveTopBar(app, arena, &map);
+}
+
+fn hasHomeConfig(app: *App, arena: Allocator) bool {
+    const path = std.fs.path.join(arena, &.{ app.data_root, @import("../config/data_root.zig").config_file }) catch return false;
+    Io.Dir.cwd().access(app.io, path, .{}) catch return false;
+    return true;
 }
 
 /// The id of the 0.2-manifests notice toast: its right-click menu
@@ -2825,12 +2897,13 @@ fn toggleChipField(app: *App, i: usize, flag: ChipFlag) CommandError!void {
         .in_palette_bar => chip.in_palette_bar = !chip.in_palette_bar,
     }
     m.chip = chip;
-    const text = try manifest_mod.render(app.gpa, m);
+    const text = try manifest_mod.renderUnstamped(app.gpa, m);
     defer app.gpa.free(text);
     Io.Dir.cwd().writeFile(app.io, .{ .sub_path = inst.path, .data = text }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
     };
     const id = try app.frame.allocator().dupe(u8, inst.id());
+    if (flag == .in_palette_bar) try recordTopBar(app, id, chip.in_palette_bar);
     const now = switch (flag) {
         .enabled => chip.enabled,
         .in_palette_bar => chip.in_palette_bar,
@@ -3489,6 +3562,57 @@ fn testApp(tmp: *testing.TmpDir) !App {
 fn screenText(app: *App) ![]u8 {
     try app.render();
     return screen_mod.toTestText(testing.allocator, &app.screen);
+}
+
+test "a manifest the scan has not seen starts off the top bar, however it was installed; a hide survives a shell reinstall; the rewrite leaves an unstamped manifest unstamped" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var app = try testApp(&tmp);
+    defer app.deinit();
+    const st = &app.integrations;
+    // A `--install` from a shell wrote the manifest (chip on, the SDK's
+    // default); the scan is the first to see it.
+    try refresh(&app);
+    try testing.expect(!st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    for (try chips(&app, app.frame.allocator())) |ch| try testing.expect(!std.mem.eql(u8, ch.id, "hello"));
+    var text = try tmp.dir.readFileAlloc(testing.io, "integrations/hello.zon", testing.allocator, .unlimited);
+    try testing.expect(std.mem.indexOf(u8, text, ".in_palette_bar = false") != null);
+    try testing.expect(std.mem.indexOf(u8, text, ".sdk") == null);
+    testing.allocator.free(text);
+    // Shown, then hidden again from the menu.
+    try st.setMenuChip(testing.allocator, "hello");
+    try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
+    try testing.expect(st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    try st.setMenuChip(testing.allocator, "hello");
+    try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
+    try testing.expect(!st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    // A reinstall from the shell writes the default again; the rescan
+    // (a restart or `integrations.refresh`) keeps the hide.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/hello.zon", .data = fixture_manifest });
+    try refresh(&app);
+    try testing.expect(!st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    // Shown, then reinstalled: it stays on.
+    try st.setMenuChip(testing.allocator, "hello");
+    try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/hello.zon", .data = fixture_manifest });
+    try refresh(&app);
+    try testing.expect(st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    text = try tmp.dir.readFileAlloc(testing.io, top_bar_record, testing.allocator, .unlimited);
+    defer testing.allocator.free(text);
+    try testing.expectEqualStrings("on hello\n", text);
+}
+
+test "a data root mnml ran in before the top bar's record existed keeps its chips where they are" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "config.zon", .data = ".{}\n" });
+    var app = try testApp(&tmp);
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expect(app.integrations.list[app.integrations.find("hello").?].manifest.chip.?.in_palette_bar);
+    const text = try tmp.dir.readFileAlloc(testing.io, top_bar_record, testing.allocator, .unlimited);
+    defer testing.allocator.free(text);
+    try testing.expectEqualStrings("on hello\n", text);
 }
 
 test "a typo'd manifest field still loads the integration and is named in a warning" {

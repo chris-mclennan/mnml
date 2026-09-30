@@ -18,6 +18,7 @@ pub const validateId = manifest.validateId;
 pub const validate = manifest.validate;
 pub const parseCodepoint = manifest.parseCodepoint;
 pub const render = manifest.render;
+pub const renderUnstamped = manifest.renderUnstamped;
 pub const writeUnder = manifest.writeUnder;
 
 pub const ParseError = error{ BadManifest, OutOfMemory };
