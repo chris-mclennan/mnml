@@ -68,6 +68,14 @@ what landed on the editor since 0.3.0 alongside it.
 - An integration's rebuild chip is no longer hidden by the host rewriting
   its manifest.
 
+### Sandbox
+
+- `mnml --sandbox` and `mnml --demo` clean up when the process is sent
+  SIGTERM, SIGHUP or SIGINT — a closed window or a stopped container —
+  as they do on a quit: the terminal is given back, the demo's servers
+  stop, the throwaway home is removed, and the exit status is 128 + the
+  signal (143 for SIGTERM).
+
 ### Testing
 
 - The Jira and Bitbucket tests, and the corpus files for both panes, run
