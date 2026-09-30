@@ -308,10 +308,11 @@ pub const DockEdge = enum { bottom, left, right };
 /// row, right of the typed command — the user's "commands aren't long
 /// enough to reach it". It carves no row and has no reveal: there is
 /// nothing to summon, so `mode = .auto_hide` reads as `.always` there
-/// and no grip is drawn (`.hidden` still hides it). While a `:` line
-/// is open and its text would reach the first item, the strip steps
-/// aside for that keystroke and comes back when the line closes or
-/// shortens.
+/// and no grip is drawn (`.hidden` still hides it). The items never
+/// move while typing: while a `:` line is open and its text plus a
+/// cell of air would reach the first item, the strip steps aside for
+/// that keystroke and comes back when the line closes or shortens
+/// (under `align = .start`, the moment a line opens).
 pub const DockPlacement = enum { inner, outer, shared };
 /// How much of an item a BOTTOM launcher dock paints. `icon_label` is
 /// ` <glyph> <label> `, the strip's own form; `icon` paints the glyph

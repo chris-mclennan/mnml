@@ -310,10 +310,10 @@ pub fn innerRow(full: Rect) ?Rect {
 /// // changed (dock-shared): where a `.shared` strip paints on the `:`
 /// line's row this frame, and where its run starts.
 pub const Shared = struct {
-    /// The strip's area — the row, less the cells an open `:` line
-    /// paints. Empty when the strip steps aside.
+    /// The strip's area — the whole row. Empty when the strip steps
+    /// aside.
     area: Rect,
-    /// The first item's column (the area's end when the run is empty).
+    /// The first item's column (the pin chip's when the run is empty).
     run_x: u16,
 };
 
@@ -322,30 +322,25 @@ pub const Shared = struct {
 /// prompt, the typed text and the caret cell — or null when none is
 /// open.
 ///
-/// With no line open the strip has the whole row, and the run and the
-/// pin chip sit in it per `ui.dock.align` exactly as the bottom strip's
-/// do. With a line open the strip's area starts where the line's paint
-/// ends, and the view keeps its one leading cell of air, so the run is
-/// aligned within the space RIGHT of the command. **The step-aside
-/// rule:** the line never pushes an item off the strip — when that
-/// space can no longer hold every item the whole row holds (with no
-/// items dropped, that is `line_w + 1 + run + 3 > row.w`: the line,
-/// its cell of air, the run, the pin chip), the strip is not painted
-/// at all this frame, registers no hit, and comes back the frame the
-/// line closes or shortens.
+/// The run and the pin chip are laid out on the WHOLE row per
+/// `ui.dock.align`, exactly as the bottom strip's are, and an open line
+/// never moves them: the items stay where they were while the user
+/// types. **The step-aside rule:** once the line plus its one cell of
+/// air would reach the first painted item (`line_w + 1 > run_x`), the
+/// strip — run and pin chip — is not painted at all this frame,
+/// registers no hit, and comes back the frame the line closes or
+/// shortens. Under `.start` the run begins at the row's second cell, so
+/// any open line steps it aside at once.
 pub fn sharedStrip(app: *App, ui: Ui, row: Rect, line_w: ?u16) Allocator.Error!Shared {
     const hidden: Shared = .{ .area = .empty, .run_x = row.right() };
     if (row.isEmpty() or !sharesCmdline(app) or !shown(app)) return hidden;
+    const pin = view.pinRect(row, .bottom);
+    if (pin.isEmpty()) return hidden;
     const list = try items(app, ui.arena);
-    const props = try viewProps(app, ui, list);
-    const whole = view.rowLayout(ui, row, props);
-    const lw = line_w orelse 0;
-    if (lw >= row.w) return hidden;
-    const area = Rect.init(row.x + lw, row.y, row.w - lw, row.h);
-    if (view.pinRect(area, .bottom).isEmpty()) return hidden;
-    const here = view.rowLayout(ui, area, props);
-    if (here.fits < whole.fits) return hidden;
-    return .{ .area = area, .run_x = if (here.fits == 0) view.pinRect(area, .bottom).x else here.start };
+    const lay = view.rowLayout(ui, row, try viewProps(app, ui, list));
+    const run_x = if (lay.fits == 0) pin.x else lay.start;
+    if (line_w) |lw| if (row.x + lw + 1 > run_x) return hidden;
+    return .{ .area = row, .run_x = run_x };
 }
 
 // ─── the dwell ──────────────────────────────────────────────────────────
@@ -2584,7 +2579,7 @@ test "`.shared`: the strip lives ON the `:` line's row — no row carved, no gri
     try t.expect(app.launcher_dock.rect.isEmpty());
 }
 
-test "`.shared` with a `:` line open: the run is aligned in the space RIGHT of the typed command — centre, start and end — and the pin chip keeps the row's far end" {
+test "`.shared` with a `:` line open: the items do not move while typing — centre and end keep the no-line layout, and `.start`, whose run begins where the line does, steps aside the moment one opens" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -2596,33 +2591,42 @@ test "`.shared` with a `:` line open: the run is aligned in the space RIGHT of t
         const s = itemSpan(&app, 39).?;
         break :blk s.end - s.start;
     };
-    // `:abc▏` paints five cells; the area starts at 5 and the view keeps
-    // one cell of air, so nothing can start before column 6.
-    try typeLine(&app, "abc");
-    const lw: u16 = 5;
-    const cases = [_]struct { a: Align, line: u16, bare: u16 }{
-        .{ .a = .center, .line = @max(lw + 1, lw + (117 - lw - run_w) / 2), .bare = @max(@as(u16, 1), (117 - run_w) / 2) },
-        .{ .a = .start, .line = lw + 1, .bare = 1 },
-        .{ .a = .end, .line = 117 - run_w, .bare = 117 - run_w },
+    const cases = [_]struct { a: Align, bare: u16 }{
+        .{ .a = .center, .bare = @max(@as(u16, 1), (117 - run_w) / 2) },
+        .{ .a = .end, .bare = 117 - run_w },
     };
     for (cases) |c| {
         app.cfg.ui.dock.@"align" = c.a;
-        try typeLine(&app, "abc");
         try app.render();
-        const s = itemSpan(&app, 39).?;
-        try t.expectEqual(c.line, s.start);
-        try t.expectEqual(run_w, s.end - s.start);
-        try t.expect(s.start >= lw + 1);
-        try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
-        // The line's own cells are the line's.
-        try t.expect(app.hits.at(2, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
+        try t.expectEqual(c.bare, itemSpan(&app, 39).?.start);
+        // Keystroke after keystroke, the run stays put.
+        for ([_][]const u8{ "a", "ab", "abc", "abcdefgh" }) |typed| {
+            try typeLine(&app, typed);
+            try app.render();
+            const s = itemSpan(&app, 39).?;
+            try t.expectEqual(c.bare, s.start);
+            try t.expectEqual(run_w, s.end - s.start);
+            try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
+            // The line's own cells are the line's.
+            try t.expect(app.hits.at(2, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
+        }
         @import("cmdline.zig").close(&app);
         try app.render();
         try t.expectEqual(c.bare, itemSpan(&app, 39).?.start);
     }
+    // `.start`: the run sits at column 1, so even a bare `:▏` reaches it.
+    app.cfg.ui.dock.@"align" = .start;
+    try app.render();
+    try t.expectEqual(@as(u16, 1), itemSpan(&app, 39).?.start);
+    try typeLine(&app, "");
+    try app.render();
+    try t.expect(!anyDockHit(&app));
+    @import("cmdline.zig").close(&app);
+    try app.render();
+    try t.expectEqual(@as(u16, 1), itemSpan(&app, 39).?.start);
 }
 
-test "`.shared` steps aside at the exact width: the line, a cell of air, the run and the pin chip fill the row — one more typed cell and the strip is gone, hits and all, until the line shortens or closes" {
+test "`.shared` steps aside at the first item's column: while the line and its cell of air end before the first painted item the run holds still — one more typed cell and the strip is gone, hits and all, until the line shortens or closes" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -2630,23 +2634,20 @@ test "`.shared` steps aside at the exact width: the line, a cell of air, the run
     defer app.deinit();
     try setPlacement(&app, .shared);
     try app.render();
-    const run_w = blk: {
-        const s = itemSpan(&app, 39).?;
-        break :blk s.end - s.start;
-    };
-    // `:` + n typed cells + the caret cell = n + 2 painted cells; the
-    // strip fits while (n + 2) + 1 + run + 3 <= 120.
-    const n_fit: usize = 120 - 3 - 1 - run_w - 2;
+    const first = itemSpan(&app, 39).?.start;
+    // `:` + n typed cells + the caret cell = n + 2 painted cells, then
+    // the air cell: the strip stays while (n + 2) + 1 <= first.
+    const n_fit: usize = first - 3;
     var text: [120]u8 = undefined;
     @memset(&text, 'x');
     try typeLine(&app, text[0..n_fit]);
     try app.render();
-    const s = itemSpan(&app, 39).?;
-    try t.expectEqual(run_w, s.end - s.start);
-    try t.expectEqual(@as(u16, @intCast(n_fit + 2 + 1)), s.start); // pressed against the line's air cell
+    try t.expectEqual(first, itemSpan(&app, 39).?.start);
     try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
+    // The air cell is the one just before the first item — the line's.
+    try t.expect(app.hits.at(first - 1, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
 
-    // One more cell and the text would reach the first item: the strip
+    // One more cell and the air would land on the first item: the strip
     // steps aside whole — no item, no pin chip, no hit anywhere.
     try typeLine(&app, text[0 .. n_fit + 1]);
     try app.render();
@@ -2655,16 +2656,16 @@ test "`.shared` steps aside at the exact width: the line, a cell of air, the run
     // The row is the line's again, all of it.
     try t.expect(app.hits.at(118, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
 
-    // Shortened, it comes back; closed, it is back on the whole row.
+    // Shortened, it comes back where it was; closed, the same place.
     try typeLine(&app, text[0..n_fit]);
     try app.render();
-    try t.expect(itemSpan(&app, 39) != null);
+    try t.expectEqual(first, itemSpan(&app, 39).?.start);
     try typeLine(&app, text[0 .. n_fit + 1]);
     try app.render();
     try t.expect(!anyDockHit(&app));
     @import("cmdline.zig").close(&app);
     try app.render();
-    try t.expectEqual(@max(@as(u16, 1), (117 - run_w) / 2), itemSpan(&app, 39).?.start);
+    try t.expectEqual(first, itemSpan(&app, 39).?.start);
 }
 
 test "`.shared` is a bottom strip's word: a side dock ignores it (auto-hide, grip and all), and no mode ever shows the bottom grip under it" {

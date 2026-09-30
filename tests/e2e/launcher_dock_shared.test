@@ -11,11 +11,12 @@
 #
 # The run is the shipped one, 66 cells (`launcher_dock_always.test` has
 # the arithmetic): centred in 1..117 it starts at 25, Browser's glyph on
-# 26. With `:abc▏` open (five cells) the space right of the command is
-# 5..117, the view keeps one cell of air, and the run centres at 28 —
-# Browser's glyph on 29. The run needs line + 1 + 66 + 3 <= 120, so a
-# line may paint 50 cells: `:` + 48 typed + the caret. One more typed
-# cell and the strip steps aside whole, until the line shortens.
+# 26 — and it STAYS there while a `:` line is open; typing never moves
+# it. The strip steps aside only when the line plus one cell of air
+# would reach that first item: a line may paint 24 cells (`:` + 22
+# typed + the caret), the air on 24. One more typed cell and the strip
+# is gone whole, until the line shortens. Under `:dock start` the run
+# begins at column 1, so any open line steps it aside at once.
 #
 # The `\n` in each assertion anchors it to the start of a row — the
 # only way a `contains` script can pin a column.
@@ -38,18 +39,19 @@ expect status contains "\"cmdline\":false"
 click 10 39
 expect status contains "\"cmdline\":true"
 
-# ── a line open: the run moves into the space right of it ──
+# ── a line open: the items do not move while typing ──
 type "abc"
-expect screen contains "\n:abc▏                         Browser "
+expect screen contains "\n:abc▏                      Browser "
+type "defg"
+expect screen contains "\n:abcdefg▏                  Browser "
 expect screen contains "New terminal"
 
 # ── the step-aside rule, at the exact width ──
 key esc
 expect status contains "\"cmdline\":false"
 click 10 39
-type "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-expect screen contains "New terminal"
-expect screen contains ":xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx▏ "
+type "xxxxxxxxxxxxxxxxxxxxxx"
+expect screen contains "\n:xxxxxxxxxxxxxxxxxxxxxx▏   Browser "
 # One more cell would reach the first item: the strip is gone, pin and all.
 type "y"
 expect screen lacks "New terminal"
@@ -57,10 +59,22 @@ expect screen lacks "Browser"
 # Shorter again, it is back.
 key backspace
 expect screen contains "New terminal"
-# Closed, it has the whole row again.
+# Closed, it is where it always was.
 key esc
 expect status contains "\"cmdline\":false"
 expect screen contains "\n                           Browser "
+
+# ── `.start`: the run begins where a line does, so any line reaches it ──
+ex dock start
+wait 4000
+expect screen contains "\n   Browser "
+click 110 39
+expect status contains "\"cmdline\":true"
+expect screen lacks "New terminal"
+key esc
+expect screen contains "New terminal"
+ex dock center
+wait 4000
 
 # ── the strip's hits: a click on New terminal's word opens a shell ──
 click 78 39

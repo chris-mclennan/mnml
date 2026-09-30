@@ -1451,13 +1451,15 @@ the row. It carves no row of its own and has nothing to summon, so
 no dwell band is watched (`.hidden` still hides it). With no line open
 the run and the pin chip sit on the whole row per `ui.dock.align`,
 labels, `+` and running mark as on any bottom strip; the toast echo and
-the `⟳ … running…` chip keep to the cells left of the run. With a line
-open the run is aligned within the space right of the line's paint —
-the `:`, the typed text and the caret cell — keeping one cell of air.
-**It steps aside rather than shrink:** once the line, its cell of air,
-the run and the pin chip no longer fit the row, the strip is not
-painted at all for that keystroke and registers no hit, and it comes
-back the moment the line closes or shortens.
+the `⟳ … running…` chip keep to the cells left of the run. An open
+line never moves the items: they stay exactly where they were while you
+type. **It steps aside rather than move:** once the line's paint — the
+`:`, the typed text and the caret cell — plus one cell of air would
+reach the first item, the strip (run and pin chip) is not painted at
+all for that keystroke and registers no hit, and it comes back the
+moment the line closes or shortens. Under `.@"align" = .start` the run
+begins at the row's second cell, so it steps aside the moment any line
+opens — pick `.center` or `.end` to keep it up while you type.
 
 ## Split zoom
 
