@@ -2,55 +2,55 @@
   {
     "name": "hero",
     "title": "mnml at a glance",
-    "seconds": 20.4,
-    "flow": "The file tree opens a file, the palette puts an agent session beside the editor, a shell opens below it, the Jira pane is one tab away, and the editor takes the keys back."
+    "seconds": 8.8,
+    "flow": "The editor, an agent session beside it and a shell below it; the shell runs git, the Jira pane is one tab away, and the palette finds a new session in a keystroke."
   },
   {
     "name": "palette",
     "title": "The command palette",
-    "seconds": 19.8,
+    "seconds": 12.9,
     "flow": "Every command has a palette row: the palette filters as you type, Ctrl+P finds a file, and the theme picker previews NvChad's themes live."
   },
   {
     "name": "splits",
     "title": "Splits and tabs",
-    "seconds": 16.6,
+    "seconds": 11.7,
     "flow": "Split the editor right and down, open a file in each split, then start a second tab page and jump back to the first."
   },
   {
     "name": "git",
     "title": "Git status and diff",
-    "seconds": 19.4,
+    "seconds": 10.5,
     "flow": "The staging view lists what changed, Enter opens the diff, s stages the file, and a commit is written without leaving the editor."
   },
   {
     "name": "terminal",
     "title": "The terminal pane",
-    "seconds": 17.9,
-    "flow": "A shell in a split, rendered by libghostty: colour output, a git graph, and a full-screen program running inside the pane."
+    "seconds": 7.9,
+    "flow": "A shell in a split, rendered by libghostty: colour output, a git graph, a full-screen program running inside the pane, and a coloured diff."
   },
   {
     "name": "sessions",
     "title": "Agent sessions beside the editor",
-    "seconds": 18.2,
-    "flow": "Agent sessions live in panes next to your code: the SESSIONS rail lists them, a new one opens in a split, and the sessions table shows every session with its state (the session is a recording stand-in; no model runs)."
+    "seconds": 7.3,
+    "flow": "Agent sessions live in panes next to your code: the SESSIONS rail lists them, a new one opens in a split, and the sessions table shows every session with its state, tokens and cost (the session is a recording stand-in; no model runs)."
   },
   {
     "name": "lua",
     "title": "Scripting in Lua",
-    "seconds": 18.0,
+    "seconds": 10.6,
     "flow": "A dozen lines of Lua add a palette command and a statusline chip; run the file from the palette and both appear at once."
   },
   {
     "name": "jira",
     "title": "Jira in a pane",
-    "seconds": 18.5,
+    "seconds": 10.4,
     "flow": "The Jira integration as a tab: issues grouped by status, a row's detail, the second tab, and a filter — here against an offline fake server."
   },
   {
     "name": "marketplace",
     "title": "The Marketplace",
-    "seconds": 17.3,
+    "seconds": 7.0,
     "flow": "Integrations install from the Marketplace in the sidebar: browse, press i, and the new pane opens against its (here offline, fake) service."
   }
 ]

@@ -4,22 +4,18 @@ flow: Agent sessions live in panes next to your code: the SESSIONS rail lists th
 open src/main.zig
 until "fn main"
 record
-wait 600
+wait 200
 run view.activity_sessions
-wait 900
+wait 600
 run ai.claude_code_new_right
 until "agent session" 4000
-wait 1300
+wait 700
 run sessions.table
-wait 1000
-keys @400 down down down
-wait 400
+wait 600
+keys @350 down down
 poster
 key esc
-wait 500
-until "Both tests pass." 8000
 wait 400
 run view.focus_left
-wait 300
-keys @80 down down down down down down down down down down
-wait 700
+until "Both tests pass." 8000
+wait 500

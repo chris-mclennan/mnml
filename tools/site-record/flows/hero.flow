@@ -22,27 +22,28 @@ until "tour %" 4000
 slowtype "git log --oneline\n" 10
 until "Start the tour project" 3000
 wait 600
-record
-# The first frame is the finished composite, and it is the poster.
+# The poster is the finished composite, shot just before the take, and
+# the take opens on that same frame.
 poster
-wait 700
-slowtype "git show --stat HEAD~1\n" 22
-wait 1100
+record
+slowtype "git show --stat HEAD~1\n" 14
+wait 900
 # Jira, one tab away in the same pane
 run jira_work.open
 until "JIRA WORK" 15000
 heal "fetch failed" r "JIRA WORK (3)"
-wait 800
-keys @380 down down down
-wait 700
+wait 500
+keys @300 down down
+key d
+wait 1000
+key esc
+wait 500
 # the palette, from the editor: a new session is one query away
 run view.focus_left
-wait 300
-key ctrl+shift+p
 wait 200
-slowtype "new session" 45
+key ctrl+shift+p
+wait 150
+slowtype "new session" 35
 wait 900
 key esc
-wait 300
-keys @90 down down down down down down down down down down down down
-wait 700
+wait 500

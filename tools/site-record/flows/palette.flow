@@ -3,15 +3,15 @@ flow: Every command has a palette row: the palette filters as you type, Ctrl+P f
 open src/main.zig
 until "fn main"
 record
-wait 600
+wait 150
 key ctrl+shift+p
+wait 250
+slowtype "git" 60
 wait 300
-slowtype "git" 90
-wait 600
-keys @220 down down down down down
-wait 500
+keys @150 down down
+wait 150
 key esc
-wait 400
+wait 300
 key ctrl+p
 wait 300
 slowtype "util" 80

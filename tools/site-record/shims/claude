@@ -17,18 +17,18 @@ printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","c
   "$cwd" "$ask" > "$HOME/.claude/projects/$ENC/$sid.jsonl"
 printf '\033]0;%s\007' "$ask"
 dim=$'\033[2m' bold=$'\033[1m' acc=$'\033[38;5;173m' ok=$'\033[32m' off=$'\033[0m'
-say() { printf '%s\n' "$1"; sleep "${2:-0.35}"; }
-sleep 0.6
+say() { printf '%s\n' "$1"; sleep "${2:-0.2}"; }
+sleep 0.3
 say "${acc}●${off} ${bold}agent session${off} ${dim}(recording stand-in — no model runs)${off}" 0.2
-say "${dim}  cwd ~/tour · branch main${off}" 0.8
+say "${dim}  cwd ~/tour · branch main${off}" 0.4
 say ""
-say "${bold}> ${ask}${off}" 1.0
+say "${bold}> ${ask}${off}" 0.5
 say ""
-say "${acc}●${off} Read ${bold}src/util.zig${off} ${dim}(12 lines)${off}" 0.9
-say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— add pub fn max(xs: []const i64) ?i64${off}" 1.0
-say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— test \"max picks the largest\"${off}" 1.0
-say "${acc}●${off} Run  ${bold}zig build test${off}" 1.2
-say "  ${ok}✓${off} 2 tests passed" 0.8
+say "${acc}●${off} Read ${bold}src/util.zig${off} ${dim}(12 lines)${off}" 0.45
+say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— add pub fn max(xs: []const i64) ?i64${off}" 0.5
+say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— test \"max picks the largest\"${off}" 0.5
+say "${acc}●${off} Run  ${bold}zig build test${off}" 0.6
+say "  ${ok}✓${off} 2 tests passed" 0.4
 say ""
 say "max() returns null for an empty slice, so callers decide what" 0.1
 say "\"no numbers\" means. Both tests pass." 0.1

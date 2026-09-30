@@ -3,7 +3,7 @@ flow: Split the editor right and down, open a file in each split, then start a s
 open src/main.zig
 until "fn main"
 record
-wait 600
+wait 150
 key "ctrl+\\"
 wait 600
 key ctrl+p
@@ -21,8 +21,6 @@ key enter
 wait 1000
 poster
 run view.focus_left
-wait 400
-keys @90 down down down down down
 wait 500
 run tab.new
 wait 700
