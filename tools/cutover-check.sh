@@ -37,7 +37,8 @@
 #                 --gh-repo (GITHUB_TOKEN aside)            needs gh
 #   readme        README's install lines download from --final-repo
 #   old-repo      nothing that ships (src/, dist/, data/, the installers,
-#                 README, workflows, …) still names --old-repo
+#                 README, the site's repo constant in site/, workflows,
+#                 …) still names --old-repo
 #   targets       `zig build gate-targets` builds           needs --build
 #   version-build a fresh ReleaseSafe build's --version prints the tag
 #                                                           needs --tag --build
@@ -349,9 +350,10 @@ else
     fi
 fi
 # Everything that ships or runs: a URL baked into the binary, an
-# installer's default repo, the marketplace index URL, a workflow. docs/
+# installer's default repo, the marketplace index URL, a workflow, the
+# website's download links (site/src/repo.mjs holds its one slug). docs/
 # and tools/ are history and tooling, not shipped.
-SHIPPED="README.md CHANGELOG.md dist nfpm data src scripts sdk integrations lua themes .github"
+SHIPPED="README.md CHANGELOG.md dist nfpm data src scripts sdk integrations lua themes site .github"
 old_hits=$(cd "$REPO" && git grep -nF "$OLD_REPO" -- $SHIPPED 2>/dev/null | grep -vF "$OLD_REPO-" | cut -c1-150)
 if [ -n "$old_hits" ]; then
     record old-repo FAIL "$(printf '%s\n' "$old_hits" | wc -l | tr -d ' ') shipped line(s) still name $OLD_REPO (installers, links and index URLs would point at the old repo):

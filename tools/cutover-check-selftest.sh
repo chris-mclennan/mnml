@@ -262,6 +262,8 @@ fresh; printf 'repo=${MNML_REPO:-chris-mclennan/mnml-zig}\n' > "$R/dist/install.
 expect "old-repo: an installer defaulting to the old repo → FAIL" old-repo FAIL 1
 fresh; mkdir -p "$R/src"; printf 'const url = "https://github.com/chris-mclennan/mnml-zig/issues";\n' > "$R/src/a.zig"; (cd "$R" && git add src/a.zig); commit r3; run
 expect "old-repo: a URL baked into src/ → FAIL" old-repo FAIL 1
+fresh; mkdir -p "$R/site/src"; printf 'export const REPO = "chris-mclennan/mnml-zig";\n' > "$R/site/src/repo.mjs"; (cd "$R" && git add site/src/repo.mjs); commit r5; run
+expect "old-repo: the site's repo constant still naming it → FAIL" old-repo FAIL 1
 fresh; mkdir -p "$R/docs"; printf 'history: chris-mclennan/mnml-zig\n' > "$R/docs/h.md"; (cd "$R" && git add docs/h.md); commit r4; run
 expect "old-repo: docs/ history naming it is not shipped → ok" old-repo ok 0
 fresh; printf '# mnml\n\nNo install line.\n' > "$R/README.md"; commit r2; run
