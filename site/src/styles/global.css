@@ -266,6 +266,17 @@ button { font: inherit; }
 @media (hover: none) { .codeblock .copy { opacity: 1; } }
 
 .table-wrap { margin: 32px 0; overflow-x: auto; }
+/* A table wider than the column scrolls sideways; while there is more to
+   its right, the right edge fades (the page's script sets the classes). */
+.table-wrap.scrolls:not(.at-end) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+}
+/* On a phone, a prose column keeps a readable width and the table
+   scrolls, rather than squeezing it to a word per line. */
+@media (max-width: 600px) {
+  .prose td:last-child { min-width: 13em; }
+}
 .prose table { border-collapse: collapse; font-size: 15px; min-width: 100%; }
 .prose th, .prose td { text-align: start; padding: 10px 16px 10px 2px; vertical-align: top; color: var(--gray-5); }
 .prose th { color: var(--gray-7); font-weight: 600; vertical-align: bottom; }

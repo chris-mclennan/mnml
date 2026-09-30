@@ -74,6 +74,17 @@ const toc = hideToc ? [] : headings.filter((h) => h.depth <= 3);
       for (const v of clips) io.observe(v);
     }
   }
+  // Wide tables: a fading right edge while there is more to scroll to.
+  for (const w of document.querySelectorAll(".table-wrap")) {
+    const update = () => {
+      const more = w.scrollWidth - w.clientWidth > 1;
+      w.classList.toggle("scrolls", more);
+      w.classList.toggle("at-end", !more || w.scrollLeft + w.clientWidth >= w.scrollWidth - 2);
+    };
+    w.addEventListener("scroll", update, { passive: true });
+    addEventListener("resize", update);
+    update();
+  }
   // The sidecar marks the heading the reader is in.
   const links = [...document.querySelectorAll(".sidecar a")];
   if (links.length) {
