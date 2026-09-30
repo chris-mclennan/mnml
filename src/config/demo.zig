@@ -478,6 +478,9 @@ pub fn setup(gpa: Allocator, io: Io, env: *const Map, exe_dir: ?[]const u8) !?Se
 const t = std.testing;
 
 test "demo: the re-exec's variables: the workspace, the shims first on PATH, the fakes' URL files and tokens, no update check, no browser, a private agents group" {
+    // `--demo` rides on `--sandbox`, which Windows has not got; the paths
+    // this test spells with `/` would not match a Windows re-exec anyway.
+    if (comptime !supported) return error.SkipZigTest;
     var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
