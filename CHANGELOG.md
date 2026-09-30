@@ -180,6 +180,11 @@ architecture behind it is in `docs/DESIGN.md`.
 - The statusline measures its chips in cells and never ends a lane on a
   dangling powerline arrow; chips of equal priority lay out by id.
 - Restart outside `run.sh` relaunches mnml instead of quitting.
+- The launcher dock can live on the command line's own row:
+  `ui.dock.placement = .shared` (`:dock shared`, or *on command line* in
+  Settings) puts its items right of whatever is typed there, always up with
+  no grip and no extra row, and steps aside while a long command would reach
+  them.
 
 ### Testing
 

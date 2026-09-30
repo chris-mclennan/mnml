@@ -185,7 +185,7 @@ otherwise. Copy what you need; leave the rest out.
         .dock = .{ // the LAUNCHER dock (`app/launcher_dock.zig`) — integrations, terminals, launchers and pinned commands along one edge of the editor area. Not the bottom panel (`ui.bottom_panel_*`) and not the dock widgets
             .mode = .auto_hide, // .always (the strip is carved out of the frame) | .auto_hide (nothing until the pointer rests at the edge, then it is painted OVER the editor) | .hidden (never on hover; `view.dock_toggle` still gives a one-shot reveal)
             .edge = .bottom, // .bottom (one row, icon + label) | .left | .right (three cells, icon only — the label moves into the tooltip). There is no .top: that row is the menu bar's
-            .placement = .inner, // where a BOTTOM strip goes: .inner (the default — the editor area's last row, ABOVE the statusline, so neither it nor the `:` line moves) | .outer (the SCREEN's last row, UNDER the `:` line; everything else moves up one and a revealed strip covers that row). A side edge ignores it
+            .placement = .inner, // where a BOTTOM strip goes: .inner (the default — the editor area's last row, ABOVE the statusline, so neither it nor the `:` line moves) | .outer (the SCREEN's last row, UNDER the `:` line; everything else moves up one and a revealed strip covers that row) | .shared (the `:` line's row, right of the typed command — no row of its own, no grip, `.auto_hide` reads as `.always`; it steps aside while a typed command would reach it). A side edge ignores it
             .labels = .icon_label, // how much of an item a BOTTOM strip paints: .icon_label (` glyph label `, today's row) | .icon (the glyph alone in the side form's three cells — padding, glyph, padding — with the name in the tooltip) | .label (the word alone, no glyph; the running dot sits in the one padding cell before it). A side edge is icon-only by geometry and ignores this
             .@"align" = .center, // where the run sits along the strip: .center (macOS's Dock) | .start | .end. The pin chip keeps the far end whatever it says
             .plus = true, // the tab bar's own `+` is on the strip, opening the same Create… menu; false takes it off
@@ -1397,7 +1397,7 @@ outermost row and the panel sits inside it, as the editor does.
 | keep it up | `view.dock_pin`, or the 󰐃 chip at the strip's end. The pin lasts the session and rides in `session.zon`; it never edits the config |
 | change the mode | `view.dock_cycle_mode`, `:dock always\|auto\|hidden`, or the *Launcher dock* row in Settings |
 | move it | `view.dock_move`, `:dock bottom\|left\|right`, or the *Launcher dock edge* row in Settings |
-| put a bottom strip above the statusline, or under the `:` line | `:dock inner` / `:dock outer` (`:dock above` / `:dock below` say the same thing), the *Launcher dock placement* row in Settings — worded *above statusline* / *below command line* — or the *Place:* rows on the strip's right-click menu. `ui.dock.placement` is the file form, `.inner` the default. A side edge ignores it: it is a column, and neither of those rows is its business |
+| put a bottom strip above the statusline, under the `:` line, or on it | `:dock inner` / `:dock outer` / `:dock shared` (`:dock above` / `:dock below` / `:dock cmdline` say the same thing), the *Launcher dock placement* row in Settings — worded *above statusline* / *below command line* / *on command line* — or the *Place:* rows on the strip's right-click menu. `ui.dock.placement` is the file form, `.inner` the default. A side edge ignores it: it is a column, and neither of those rows is its business |
 | icons, labels, or both | `:dock icons` / `:dock labels` / `:dock text`, the *Launcher dock labels* row in Settings, or the *Show:* rows on the strip's right-click menu. `ui.dock.labels` is the file form — `.icon` is the glyph alone in three cells, `.icon_label` (the default) is ` glyph label `, `.label` is the word with no glyph anywhere. It is the BOTTOM strip's question — a side dock is three cells wide and paints the glyph alone whatever the key says, `.label` included |
 | centre the run, or push it to an end | `:dock center` / `:dock start` / `:dock end`, the *Launcher dock alignment* row in Settings, or the *Align:* rows on the strip's right-click menu. `ui.dock.align` is the file form (`.@"align"` in the file — `align` is a Zig keyword), and `.center` is the default. The pin chip keeps the far end whatever it says, and a run with no room to move is laid from the start rather than clipped on the left. On a side edge it centres the items down the column |
 | take the `+` off | `:dock plus`, the *Launcher dock + button* row in Settings, or the *Show the + button* row on the strip's right-click menu. `ui.dock.plus` is the file form |
@@ -1443,6 +1443,21 @@ it is up. There the `:` line owns the row outright: while one is open
 the band is not watched at all, so the strip neither reveals nor
 stays, and its grip goes with it. Closing the line asks for a fresh
 `reveal_ms` rather than popping the strip up the same frame.
+
+Under `.shared` the strip is **on the `:` line's row** — the free part
+of it, right of the typed command, which rarely reaches the middle of
+the row. It carves no row of its own and has nothing to summon, so
+`mode = .auto_hide` reads as `.always` there, no `⋯` grip is drawn and
+no dwell band is watched (`.hidden` still hides it). With no line open
+the run and the pin chip sit on the whole row per `ui.dock.align`,
+labels, `+` and running mark as on any bottom strip; the toast echo and
+the `⟳ … running…` chip keep to the cells left of the run. With a line
+open the run is aligned within the space right of the line's paint —
+the `:`, the typed text and the caret cell — keeping one cell of air.
+**It steps aside rather than shrink:** once the line, its cell of air,
+the run and the pin chip no longer fit the row, the strip is not
+painted at all for that keystroke and registers no hit, and it comes
+back the moment the line closes or shortens.
 
 ## Split zoom
 
