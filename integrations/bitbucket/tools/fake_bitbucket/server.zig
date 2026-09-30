@@ -7,7 +7,7 @@
 //! The workspace is `acme`, with `api` and `web`. Four pull requests,
 //! one of them merged, one with a reviewer who asked for changes, one
 //! that quotes a Jira key in its description. The account the token
-//! belongs to is `acct-chris` (Chris M) — so "PRs I opened" returns
+//! belongs to is `acct-max` (Max Orr) — so "PRs I opened" returns
 //! two and "PRs to review" returns one.
 //!
 //! Every pull request carries its source commit, and there is at least
@@ -57,8 +57,8 @@ pub fn methodOf(s: []const u8) Method {
     return std.meta.stringToEnum(Method, s) orelse .other;
 }
 
-pub const me_account_id = "acct-chris";
-pub const me_display_name = "Chris M";
+pub const me_account_id = "acct-max";
+pub const me_display_name = "Max Orr";
 pub const workspace = "acme";
 
 /// When the fake's answers go out gzipped (`--gzip`, `--gzip-always`).
@@ -255,7 +255,7 @@ pub const fixtures = [_]Fixture{
         .state = "OPEN",
         .author_id = me_account_id,
         .author_name = me_display_name,
-        .source_branch = "chris/fix-login",
+        .source_branch = "bug/fix-login",
         .source_sha = "abc1234def5678",
         .open_tasks = 1,
         .description = "Fixes ENG-4210. The redirect dropped the query string when the session had expired.",
@@ -296,7 +296,7 @@ pub const fixtures = [_]Fixture{
         .activity = &.{
             .{ .id = 9001, .author = "Dana R", .date = "2026-09-01T10:00:00+00:00", .text = "Nice catch — this has bitten us twice." },
             .{ .id = 9002, .author = "Sam K", .date = "2026-09-01T11:00:00+00:00", .text = "withQuery needs to escape the value here.", .path = "src/auth/session.zig", .line = 44 },
-            .{ .id = 9003, .author = "Chris M", .date = "2026-09-01T11:30:00+00:00", .text = "Good point, pushed an escape.", .parent = 9002, .path = "src/auth/session.zig", .line = 44 },
+            .{ .id = 9003, .author = "Max Orr", .date = "2026-09-01T11:30:00+00:00", .text = "Good point, pushed an escape.", .parent = 9002, .path = "src/auth/session.zig", .line = 44 },
         },
     },
     .{
@@ -330,7 +330,7 @@ pub const fixtures = [_]Fixture{
         .state = "OPEN",
         .author_id = me_account_id,
         .author_name = me_display_name,
-        .source_branch = "chris/empty-state",
+        .source_branch = "feature/empty-state",
         .source_sha = "ddd4444eee5555",
         .conflicts = true,
         .description = "Part of ENG-4300.",
@@ -390,7 +390,7 @@ pub const PipelineFixture = struct {
     ref_name: []const u8,
     commit: []const u8,
     trigger: []const u8 = "push",
-    creator: []const u8 = "Chris M",
+    creator: []const u8 = "Max Orr",
     /// `target.selector.type`: which section of the pipelines file.
     selector: []const u8 = "branches",
     /// `target.type`: a ref, a pull request, a commit.
@@ -401,14 +401,14 @@ pub const PipelineFixture = struct {
 
 /// Newest first, the order Bitbucket's `sort=-created_on` returns.
 pub const pipelines = [_]PipelineFixture{
-    .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "chris/fix-login", .commit = "abc1234def5678", .selector = "pull-requests", .target_type = "pipeline_pullrequest_target", .age_hours = 1 },
+    .{ .repo = "api", .build_number = 413, .state = "IN_PROGRESS", .ref_name = "bug/fix-login", .commit = "abc1234def5678", .selector = "pull-requests", .target_type = "pipeline_pullrequest_target", .age_hours = 1 },
     .{ .repo = "api", .build_number = 412, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "9999mergecommit", .duration_secs = 312, .age_hours = 4 },
     .{ .repo = "api", .build_number = 411, .state = "COMPLETED", .result = "FAILED", .ref_name = "develop", .commit = "1212121212", .trigger = "schedule", .duration_secs = 95, .age_hours = 20 },
     // On the OPEN pull request #1198's branch head, so an open row has
     // builds to fold out — what a reviewer wants before merging.
     .{ .repo = "api", .build_number = 410, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "dana/timeout", .commit = "bbb2222ccc3333", .duration_secs = 120, .age_hours = 29 },
     .{ .repo = "api", .build_number = 405, .state = "COMPLETED", .result = "STOPPED", .ref_name = "release/1.2", .commit = "3434343434", .selector = "custom", .duration_secs = 40, .age_hours = 24 * 10 },
-    .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "chris/empty-state", .commit = "ddd4444eee5555", .trigger = "manual", .creator = "Dana R", .age_hours = 1 },
+    .{ .repo = "web", .build_number = 77, .state = "PENDING", .ref_name = "feature/empty-state", .commit = "ddd4444eee5555", .trigger = "manual", .creator = "Dana R", .age_hours = 1 },
     .{ .repo = "web", .build_number = 70, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "8888mergecommit", .duration_secs = 200, .age_hours = 24 * 3 },
 };
 
@@ -418,19 +418,19 @@ pub const BranchFixture = struct {
     name: []const u8,
     hash: []const u8,
     message: []const u8,
-    author: []const u8 = "Chris M <chris@example.com>",
+    author: []const u8 = "Max Orr <max@example.com>",
     age_hours: u32,
 };
 
 /// Most recently committed first, the order `sort=-target.date` returns.
 pub const branches = [_]BranchFixture{
-    .{ .repo = "api", .name = "chris/fix-login", .hash = "abc1234def5678", .message = "Keep the query string on the login redirect", .age_hours = 1 },
+    .{ .repo = "api", .name = "bug/fix-login", .hash = "abc1234def5678", .message = "Keep the query string on the login redirect", .age_hours = 1 },
     .{ .repo = "api", .name = "main", .hash = "9999mergecommit", .message = "Merged in sam/drop-exporter (pull request #1100)", .author = "Sam K <sam@example.com>", .age_hours = 4 },
     .{ .repo = "api", .name = "develop", .hash = "1212121212", .message = "Bump the client timeout", .author = "Dana R <dana@example.com>", .age_hours = 20 },
     .{ .repo = "api", .name = "dana/timeout", .hash = "bbb2222ccc3333", .message = "Bump the client timeout to 30s", .author = "Dana R <dana@example.com>", .age_hours = 30 },
     .{ .repo = "api", .name = "release/1.2", .hash = "3434343434", .message = "Release 1.2", .age_hours = 24 * 10 },
     .{ .repo = "api", .name = "old/experiment", .hash = "5656565656", .message = "An experiment nobody finished", .age_hours = 24 * 40 },
-    .{ .repo = "web", .name = "chris/empty-state", .hash = "ddd4444eee5555", .message = "Redesign the empty state", .age_hours = 1 },
+    .{ .repo = "web", .name = "feature/empty-state", .hash = "ddd4444eee5555", .message = "Redesign the empty state", .age_hours = 1 },
     .{ .repo = "web", .name = "staging", .hash = "7878787878", .message = "Deploy 2.3 to staging", .age_hours = 24 * 2 },
     .{ .repo = "web", .name = "main", .hash = "8888mergecommit", .message = "Merged in dana/footer (pull request #801)", .author = "Dana R <dana@example.com>", .age_hours = 24 * 3 },
 };
@@ -533,7 +533,7 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
         if (cred == .bearer_access_token) return .{ .status = 401, .body = "{\"type\":\"error\",\"error\":{\"message\":\"This API is not accessible for this authentication method\"}}" };
         if (st.deny_user) return .{ .status = 403, .body = "{\"type\":\"error\",\"error\":{\"message\":\"This token is not authorized to access the account\"}}" };
         return json(arena,
-            \\{"display_name":"Chris M","account_id":"acct-chris","nickname":"chrism","type":"user"}
+            \\{"display_name":"Max Orr","account_id":"acct-max","nickname":"maxorr","type":"user"}
         );
     }
 
@@ -622,7 +622,7 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
             .POST => {
                 st.voteSlot(id).* = .approved;
                 return json(arena,
-                    \\{"role":"REVIEWER","approved":true,"state":"approved","user":{"display_name":"Chris M","account_id":"acct-chris"}}
+                    \\{"role":"REVIEWER","approved":true,"state":"approved","user":{"display_name":"Max Orr","account_id":"acct-max"}}
                 );
             },
             .DELETE => {
@@ -638,7 +638,7 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
             .POST => {
                 st.voteSlot(id).* = .changes_requested;
                 return json(arena,
-                    \\{"role":"REVIEWER","approved":false,"state":"changes_requested","user":{"display_name":"Chris M","account_id":"acct-chris"}}
+                    \\{"role":"REVIEWER","approved":false,"state":"changes_requested","user":{"display_name":"Max Orr","account_id":"acct-max"}}
                 );
             },
             .DELETE => {
@@ -663,7 +663,7 @@ fn route(arena: Allocator, st: *State, req: Request) Allocator.Error!Reply {
         }
         var out: std.Io.Writer.Allocating = .init(arena);
         const w = &out.writer;
-        w.writeAll("{\"id\":9999,\"user\":{\"display_name\":\"Chris M\",\"account_id\":\"acct-chris\"},\"content\":{\"raw\":") catch return error.OutOfMemory;
+        w.writeAll("{\"id\":9999,\"user\":{\"display_name\":\"Max Orr\",\"account_id\":\"acct-max\"},\"content\":{\"raw\":") catch return error.OutOfMemory;
         try writeJsonString(w, text);
         w.writeAll("},\"created_on\":\"2026-09-02T09:00:00+00:00\"}") catch return error.OutOfMemory;
         return .{ .status = 201, .body = out.toOwnedSlice() catch return error.OutOfMemory };
@@ -867,7 +867,7 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
 /// thing, which is what a measurement needs.
 fn syntheticPr(arena: Allocator, n: u32) Allocator.Error!Fixture {
     const authors = [_]struct { id: []const u8, name: []const u8 }{
-        .{ .id = "acct-chris", .name = "Chris M" },
+        .{ .id = "acct-max", .name = "Max Orr" },
         .{ .id = "acct-dev", .name = "Robin Vale" },
         .{ .id = "acct-kim", .name = "Kim Okonjo" },
     };
@@ -891,7 +891,7 @@ fn syntheticPr(arena: Allocator, n: u32) Allocator.Error!Fixture {
     };
 }
 
-/// `author.account_id = "acct-chris"` → `acct-chris`.
+/// `author.account_id = "acct-max"` → `acct-max`.
 fn predicateValue(bbql: []const u8, field: []const u8) ?[]const u8 {
     const at = std.mem.indexOf(u8, bbql, field) orelse return null;
     const rest = bbql[at + field.len ..];
@@ -1018,7 +1018,7 @@ fn activity(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
     var buf: [16]State.Posted = undefined;
     for (st.commentsFor(f.id, &buf)) |c| {
         if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
-        w.writeAll("{\"comment\":{\"id\":9999,\"user\":{\"display_name\":\"Chris M\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
+        w.writeAll("{\"comment\":{\"id\":9999,\"user\":{\"display_name\":\"Max Orr\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
         try writeJsonString(w, c.text);
         w.writeAll("}}}") catch return error.OutOfMemory;
         n += 1;
@@ -1052,7 +1052,7 @@ fn comments(arena: Allocator, st: *State, f: *const Fixture) Allocator.Error!Rep
     var buf: [16]State.Posted = undefined;
     for (st.commentsFor(f.id, &buf)) |c| {
         if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
-        w.writeAll("{\"id\":9999,\"user\":{\"display_name\":\"Chris M\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
+        w.writeAll("{\"id\":9999,\"user\":{\"display_name\":\"Max Orr\"},\"created_on\":\"2026-09-02T09:00:00+00:00\",\"content\":{\"raw\":") catch return error.OutOfMemory;
         try writeJsonString(w, c.text);
         w.writeAll("}}") catch return error.OutOfMemory;
         n += 1;
@@ -1337,11 +1337,11 @@ test "the PR list honours the state filter and the two BBQL predicates" {
     const merged = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=MERGED", "");
     try t.expect(std.mem.indexOf(u8, merged.body, "Drop the legacy exporter") != null);
     // author.account_id → the PRs I opened. Percent-encoded quotes.
-    const mine = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN&q=author.account_id%20%3D%20%22acct-chris%22", "");
+    const mine = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN&q=author.account_id%20%3D%20%22acct-max%22", "");
     try t.expect(std.mem.indexOf(u8, mine.body, "Fix the login redirect") != null);
     try t.expect(std.mem.indexOf(u8, mine.body, "Bump the client timeout") == null);
     // reviewers.account_id → the PRs I am a reviewer on.
-    const review = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN&q=reviewers.account_id%3D%22acct-chris%22", "");
+    const review = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN&q=reviewers.account_id%3D%22acct-max%22", "");
     try t.expect(std.mem.indexOf(u8, review.body, "Bump the client timeout") != null);
     try t.expect(std.mem.indexOf(u8, review.body, "Fix the login redirect") == null);
     // A repo nobody asked for is a 404, not an empty list.
@@ -1492,7 +1492,7 @@ test "the repo list and whoami are the two endpoints a mine tab needs before it 
     const a = arena.allocator();
     var st: State = .{};
     const who = try call(a, &st, .GET, "/2.0/user", "");
-    try t.expect(std.mem.indexOf(u8, who.body, "acct-chris") != null);
+    try t.expect(std.mem.indexOf(u8, who.body, "acct-max") != null);
     const repos = try call(a, &st, .GET, "/2.0/repositories/acme?role=member", "");
     try t.expect(std.mem.indexOf(u8, repos.body, "\"slug\":\"api\"") != null);
     try t.expect(std.mem.indexOf(u8, repos.body, "\"slug\":\"web\"") != null);
@@ -1505,7 +1505,7 @@ test "branches and pipelines answer per repo, newest first, dated against the st
     var st: State = .{ .now_secs = 1_789_500_000 };
     const br = try call(a, &st, .GET, "/2.0/repositories/acme/api/refs/branches?pagelen=100&sort=-target.date", "");
     try t.expectEqual(@as(u16, 200), br.status);
-    try t.expect(std.mem.indexOf(u8, br.body, "\"name\":\"chris/fix-login\"") != null);
+    try t.expect(std.mem.indexOf(u8, br.body, "\"name\":\"bug/fix-login\"") != null);
     try t.expect(std.mem.indexOf(u8, br.body, "\"name\":\"old/experiment\"") != null);
     try t.expect(std.mem.indexOf(u8, br.body, "dana/footer") == null);
     const pl = try call(a, &st, .GET, "/2.0/repositories/acme/api/pipelines/?pagelen=100&sort=-created_on", "");

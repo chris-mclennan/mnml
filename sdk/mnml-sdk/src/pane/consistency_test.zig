@@ -156,7 +156,7 @@ const build_now: i64 = 1_789_500_000;
 
 const demo_run: build_mod.Run = .{
     .state = "SUCCESSFUL",
-    .branch = "chris/fix-login",
+    .branch = "bug/fix-login",
     .created_on = "2026-09-15T15:20:00+00:00",
     .number = 412,
 };
@@ -196,7 +196,7 @@ fn paintMergeRow(comptime Target: type, p: *chrome.Painter(Target), y: u16, read
 
 const demo_confirm: merge_mod.Confirm = .{
     .title = "Fix the login redirect",
-    .source = "chris/fix-login",
+    .source = "bug/fix-login",
     .target = "main",
     .strategy = .squash,
     .url = "https://bitbucket.org/acme/api/pull-requests/1234",
@@ -520,7 +520,7 @@ test "the elements the panes share are actually on the screen, so the comparison
     try testing.expect(std.mem.indexOf(u8, scr, chrome.gutter_glyph) != null);
     try testing.expect(std.mem.indexOf(u8, scr, "q quit") != null);
     // The build line: state, branch, age, number, in that order.
-    try testing.expect(std.mem.indexOf(u8, scr, "\u{2713} SUCCESSFUL \u{b7} chris/fix-login \u{b7} 4h \u{b7} #412") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "\u{2713} SUCCESSFUL \u{b7} bug/fix-login \u{b7} 4h \u{b7} #412") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "no build ran on abc1234") != null);
     // Every action state, including the two the host's word supplies.
     try testing.expect(std.mem.indexOf(u8, scr, "[ Merge ]") != null);
@@ -534,7 +534,7 @@ test "the elements the panes share are actually on the screen, so the comparison
     // The confirm names the pull request rather than asking "are you
     // sure?" about nothing in particular.
     try testing.expect(std.mem.indexOf(u8, scr, "Merge acme/api/pull-requests/1234") != null);
-    try testing.expect(std.mem.indexOf(u8, scr, "chris/fix-login \u{2192} main") != null);
+    try testing.expect(std.mem.indexOf(u8, scr, "bug/fix-login \u{2192} main") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "strategy: squash") != null);
     try testing.expect(std.mem.indexOf(u8, scr, "Cancel") != null);
     // And every one of them answers a click.

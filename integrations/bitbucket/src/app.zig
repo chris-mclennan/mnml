@@ -3371,7 +3371,7 @@ test "startup prefetches every tab, opens the trees, and the keys walk the rows 
     defer r.deinit();
     try t.expectEqual(@as(usize, 3), r.app.tabs.len);
     for (r.app.tabs) |ts| try t.expect(ts.fetched);
-    try t.expectEqualStrings("acct-chris", r.app.me_account_id);
+    try t.expectEqualStrings("acct-max", r.app.me_account_id);
     try t.expectEqualStrings("Open + Draft · 2 repos, 3 PRs", r.app.tabs[0].status);
     // Both repos open on the first fetch: api, #1234 (fresh), web, #820, and a footer for #1198 (30 h old).
     var rows = try r.rows();
@@ -3602,11 +3602,11 @@ test "the detail follows the cursor, and `a` approves then withdraws on the fake
     try t.expectEqual(@as(i64, 1234), d.pr.id);
     try t.expectEqual(@as(usize, 3), d.comments.len);
     // #1234 is mine and Dana approved it; I have not.
-    try t.expect(!d.pr.approvedBy("acct-chris"));
+    try t.expect(!d.pr.approvedBy("acct-max"));
     _ = try r.key("a");
     try t.expectEqual(server.State.Vote.approved, r.srv.snapshot().voteFor(1234));
     rows = try r.rows();
-    try t.expect(r.app.focusedDetail(rows).?.pr.approvedBy("acct-chris"));
+    try t.expect(r.app.focusedDetail(rows).?.pr.approvedBy("acct-max"));
     try t.expect(std.mem.startsWith(u8, r.app.status.items, "approved acme/api#1234"));
     _ = try r.key("a");
     try t.expectEqual(server.State.Vote.none, r.srv.snapshot().voteFor(1234));
@@ -3778,7 +3778,7 @@ test "a ready PR opens a named confirm, and confirming dispatches a Claude Code 
     const c = r.app.merge_confirm.?;
     // Named: the title, the branches, the strategy.
     try t.expectEqualStrings("Fix the login redirect", c.confirm.title);
-    try t.expectEqualStrings("chris/fix-login", c.confirm.source);
+    try t.expectEqualStrings("bug/fix-login", c.confirm.source);
     try t.expectEqualStrings("main", c.confirm.target);
     try t.expectEqual(sdk.pane.merge.Strategy.merge_commit, c.confirm.strategy);
     // The strategy cycles through what the workspace allows.
@@ -3975,7 +3975,7 @@ test "a click selects the row it lands on, a right-click opens its menu, the aut
     try t.expectEqual(FilterKind.author, pk.kind);
     try t.expectEqualStrings("all", pk.items[0].label);
     try t.expect(pk.items[0].checked);
-    try t.expectEqualStrings("me (Chris M)", pk.items[1].label);
+    try t.expectEqualStrings("me (Max Orr)", pk.items[1].label);
     try t.expectEqualStrings("Dana R", pk.items[2].label);
     try t.expectEqualStrings("Sam K", pk.items[3].label);
     try t.expectEqual(@as(u32, 0), r.srv.state.served - served);
@@ -3992,7 +3992,7 @@ test "a click selects the row it lands on, a right-click opens its menu, the aut
     // `me` is the mine-only fetch: the one author value that costs a
     // request, and says so.
     try r.app.setAuthor(.me);
-    try t.expectEqualStrings("Merged: author → Chris M (fetching)", r.app.status.items);
+    try t.expectEqualStrings("Merged: author → Max Orr (fetching)", r.app.status.items);
     try r.drain();
     try t.expect(r.app.tabs[1].spec.mine_only);
     try t.expect(r.srv.state.served > served);
@@ -4004,7 +4004,7 @@ test "a click selects the row it lands on, a right-click opens its menu, the aut
 const server = @import("../tools/fake_bitbucket/server.zig");
 
 test "the pane opens on the tab somebody is looking at; the rest are warmed behind the paint" {
-    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-chris", .tabs = &.{
+    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-max", .tabs = &.{
         .{ .name = "Open + Draft", .kind = .workspace_open_prs },
         .{ .name = "Merged", .kind = .workspace_merged_prs },
         .{ .name = "Pipelines", .kind = .workspace_pipelines },
@@ -4033,7 +4033,7 @@ test "the pane opens on the tab somebody is looking at; the rest are warmed behi
 }
 
 test "a pane that does not hold the machine's warm lock fetches only its own tab" {
-    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-chris", .tabs = &.{
+    var app = try App.init(t.allocator, t.io, .{ .workspace = "acme", .account_id = "acct-max", .tabs = &.{
         .{ .name = "Open + Draft", .kind = .workspace_open_prs },
         .{ .name = "Merged", .kind = .workspace_merged_prs },
         .{ .name = "Pipelines", .kind = .workspace_pipelines },

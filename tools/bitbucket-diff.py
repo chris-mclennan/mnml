@@ -103,7 +103,7 @@ def facts(text):
         for key in ("not approved", "you approved", "comments (", "(no description)"):
             if key in s:
                 out.add(f"detail:{key}")
-        # `[ Author ▾ ]` / `[ Author: Chris M ▾ ]` (the chevron is `v`
+        # `[ Author ▾ ]` / `[ Author: Max Orr ▾ ]` (the chevron is `v`
         # after the normalisation above) and the Zig `author: all`.
         if re.search(r"\[ Author(: [^\]]+?)? v \]", s) or re.search(r"\bauthor: \S", s):
             out.add("chip:author")

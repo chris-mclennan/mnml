@@ -973,7 +973,7 @@ test "the pane paints the header, the strip, the pill, the reference's columns, 
     try t.expect(!has(scr, "1 PRs"));
     try t.expect(has(scr, "#1234"));
     try t.expect(has(scr, "Fix the login redir"));
-    try t.expect(has(scr, "chris/fix-login"));
+    try t.expect(has(scr, "bug/fix-login"));
     try t.expect(has(scr, "Show more (1)"));
     // The web bar, as a toolbar row under the strip: Status, Author,
     // Target branch, the Reviewing / All selector — every one a chip
@@ -1061,7 +1061,7 @@ test "a click on a row selects that row and toggles a header; the strip switches
     const s = try Screen.init(120, 40, acme, .{});
     defer s.deinit();
     _ = try s.draw();
-    const y_1234 = try s.rowOf("OPEN       Chris M");
+    const y_1234 = try s.rowOf("OPEN       Max Orr");
     try s.click(10, y_1234, .left);
     try t.expectEqual(@as(usize, 1), s.rig.app.tabs[0].selected);
     var scr = try s.draw();
@@ -1210,7 +1210,7 @@ test "every PR row carries its buttons, the Merge is dim, and hovering it says w
     scr = try s.draw();
     try t.expect(has(scr, "Merge acme/api/pull-requests/1234"));
     try t.expect(has(scr, "Fix the login redir"));
-    try t.expect(has(scr, "chris/fix-login \u{2192} main"));
+    try t.expect(has(scr, "bug/fix-login \u{2192} main"));
     try t.expect(has(scr, "strategy: merge commit"));
     try t.expect(has(scr, "merged by a Claude Code session, not by this pane"));
     try t.expect(has(scr, " Merge "));
@@ -1290,8 +1290,8 @@ test "an OPEN PR folds out to the builds on its branch head; a second open costs
     try s.rig.drain();
     scr = try s.draw();
     try t.expect(has(scr, open_ch ++ " #1234"));
-    // One run on `chris/fix-login`'s head, in the toolkit's words.
-    try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} chris/fix-login \u{b7} "));
+    // One run on `bug/fix-login`'s head, in the toolkit's words.
+    try t.expect(has(scr, "\u{23f5} IN_PROGRESS \u{b7} bug/fix-login \u{b7} "));
     try t.expect(has(scr, "\u{b7} #413"));
     // One request paid for it: the repo's pipelines list.
     try t.expectEqual(@as(u32, 1), s.rig.srv.state.served - served);
@@ -1433,7 +1433,7 @@ test "the key sheet, the row menu and the filter paint as overlays that take the
     try s.click(sheet.x + 1, sheet.y, .left);
     try t.expectEqual(app_mod.Mode.list, s.rig.app.mode);
     _ = try s.draw();
-    const y_1234 = try s.rowOf("OPEN       Chris M");
+    const y_1234 = try s.rowOf("OPEN       Max Orr");
     try s.click(10, y_1234, .right);
     scr = try s.draw();
     try t.expect(has(scr, "the pull request's detail"));

@@ -16,7 +16,7 @@
 shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
 # Empty, and never refilling: rate 0.
 write shared.json "{\"rate_per_sec\":0,\"burst\":50,\"tokens\":0,\"updated_at\":0,\"cooldown_until\":null,\"last_429_at\":null,\"owner\":\"fleet\"}"
-write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .budget = .{ .shared_bucket = \"shared.json\" }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .budget = .{ .shared_bucket = \"shared.json\" }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
 write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
 command integrations.show_marketplace
 expect screen contains "Mkt (1)"

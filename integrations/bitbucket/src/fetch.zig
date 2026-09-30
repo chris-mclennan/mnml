@@ -1183,8 +1183,8 @@ test "the open tree: one row per repo, a 24-hour-old PR still in the data, the m
     defer r.deinit();
     var who = try r.run(.whoami);
     defer who.deinit();
-    try t.expectEqualStrings("acct-chris", who.payload.whoami.account_id);
-    try t.expectEqualStrings("acct-chris", r.worker.accountId());
+    try t.expectEqualStrings("acct-max", who.payload.whoami.account_id);
+    try t.expectEqualStrings("acct-max", r.worker.accountId());
 
     var open = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Open + Draft", .workspace = "acme" }, .scope = acme_scope } });
     defer open.deinit();
@@ -1212,7 +1212,7 @@ test "the open tree off a server that gzips every answer: the same rows as plain
     r.srv.gzipAnswers(.always);
     var who = try r.run(.whoami);
     defer who.deinit();
-    try t.expectEqualStrings("acct-chris", who.payload.whoami.account_id);
+    try t.expectEqualStrings("acct-max", who.payload.whoami.account_id);
 
     var open = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Open + Draft", .workspace = "acme" }, .scope = acme_scope } });
     defer open.deinit();
@@ -1244,7 +1244,7 @@ test "an unknown repo keeps its row with a label, and a mine-only tree drops the
     const mrows = mine.payload.refresh.data.?.repo_pr_tree;
     // api: #1234 open (mine) + #1100 merged (not mine) → only #1234; web: #820 (mine, draft) + #801 merged by Dana → #820.
     try t.expectEqual(@as(usize, 2), mrows.len);
-    for (mrows) |row| for (row.prs) |pr| try t.expectEqualStrings("acct-chris", pr.author_id);
+    for (mrows) |row| for (row.prs) |pr| try t.expectEqualStrings("acct-max", pr.author_id);
 }
 
 test "the scope: recent filters on updated_on, hidden subtracts, repo_order leads, explicit needs no enumeration" {
@@ -1278,17 +1278,17 @@ test "the pipelines tree pairs branches with their newest run and curates them" 
     try t.expectEqualStrings("Pipelines · 2 repos", res.payload.refresh.status);
     // api has the newer pipeline (1 h) so it sorts first.
     try t.expectEqualStrings("api", rows[0].slug);
-    // main, develop, release/1.2 (10 days: kept), and the newest feature (chris/fix-login); dana/timeout (30 h) loses to it; old/experiment (40 days) is stale.
+    // main, develop, release/1.2 (10 days: kept), and the newest feature (bug/fix-login); dana/timeout (30 h) loses to it; old/experiment (40 days) is stale.
     const names = rows[0].branches;
     try t.expectEqual(@as(usize, 4), names.len);
     try t.expectEqualStrings("main", names[0].name);
     try t.expectEqualStrings("develop", names[1].name);
     try t.expectEqualStrings("release/1.2", names[2].name);
-    try t.expectEqualStrings("chris/fix-login", names[3].name);
+    try t.expectEqualStrings("bug/fix-login", names[3].name);
     try t.expectEqual(@as(i64, 412), names[0].latest.?.build_number);
     try t.expectEqualStrings("FAILED", names[1].latest.?.result_name);
     try t.expectEqual(@as(i64, 413), names[3].latest.?.build_number);
-    // web: main, staging, chris/empty-state.
+    // web: main, staging, feature/empty-state.
     try t.expectEqual(@as(usize, 3), rows[1].branches.len);
 }
 
@@ -1352,8 +1352,8 @@ test "the detail, the merged PR's pipeline, approve and withdraw, and the status
     try t.expectEqualStrings("", vals.payload.values.error_text);
     try t.expectEqual(@as(usize, 2), vals.payload.values.open_mine);
     try t.expectEqual(@as(usize, 1), vals.payload.values.unapproved_mine);
-    // Excluding chris/* branches counts nothing.
-    var none = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 0, .excluded_branch_patterns = &.{"^chris/"} } });
+    // Excluding bug/* and feature/* branches counts nothing.
+    var none = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 0, .excluded_branch_patterns = &.{ "^bug/", "^feature/" } } });
     defer none.deinit();
     try t.expectEqual(@as(usize, 0), none.payload.values.open_mine);
 }
@@ -1378,7 +1378,7 @@ test "the review figure: threads waiting on someone, counted once and then answe
     defer rc.deinit();
     r.worker.review_cache = &rc;
     // My two open PRs: #1234 has three comments — one unreplied
-    // (Dana's), one that Chris answered, and that answer — so one
+    // (Dana's), one that Max answered, and that answer — so one
     // thread is waiting. #820 has none.
     var first = try r.run(.{ .values = .{ .scope = acme_scope, .stale_after_days = 90, .excluded_branch_patterns = &.{} } });
     defer first.deinit();

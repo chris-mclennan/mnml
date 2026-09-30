@@ -13,10 +13,10 @@ is the inventory), painted in mnml-zig's own chrome.
 ▌ status: Open + Draft   author: all   target: any   show: all
 ▌󰍉 / filter
 ▌ REPO / #PR                   STATE      AUTHOR         BRANCH             UPDATED      TITLE
-▌  api                        2 PRs      Chris M        chris/fix-login    2026-09-01   #1234 · Fix the login redirect
-▌      #1234                   OPEN       Chris M        chris/fix-login    2026-09-01   Fix the login redirect
+▌  api                        2 PRs      Max Orr        bug/fix-login      2026-09-01   #1234 · Fix the login redirect
+▌      #1234                   OPEN       Max Orr        bug/fix-login      2026-09-01   Fix the login redirect
 ▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
-▌  web                        1 PR       Chris M        chris/empty-state  2026-09-01   #820 · Redesign the empty state
+▌  web                        1 PR       Max Orr        feature/empty-sta  2026-09-01   #820 · Redesign the empty state
 ▌                                                                                        ⋯  Show more (1)
  Open + Draft · 2 repos, 5 PRs   ↓ move · Enter expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
@@ -198,9 +198,9 @@ the runs on its **source head**, which are the builds you actually want
 before you merge it. One row per run:
 
 ```
-▾ #1234    OPEN    Chris M   chris/fix-login   2026-09-18   Fix the login redirect
-      ⏵ IN_PROGRESS · chris/fix-login · 1h · #413
-      ✓ SUCCESSFUL · chris/fix-login · 5h · #412
+▾ #1234    OPEN    Max Orr   bug/fix-login     2026-09-18   Fix the login redirect
+      ⏵ IN_PROGRESS · bug/fix-login · 1h · #413
+      ✓ SUCCESSFUL · bug/fix-login · 5h · #412
 ```
 
 State first, then the branch it ran on, then how long ago, then the

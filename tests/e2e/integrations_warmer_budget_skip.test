@@ -17,7 +17,7 @@ shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 120 --quiet --p
 shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 120 --log-file bb-wire.jsonl >/dev/null 2>&1 &
 wait 1000
 write jira.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned } } }"
-write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\" }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\" }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
 
 # A bucket with a tenth of its capacity left. The six keys are the ones
 # the Rust crate and the Python script write, so this is the same file
