@@ -1,0 +1,80 @@
+# width: 120
+# height: 40
+# `ui.dock.placement = .shared` (src/app/launcher_dock.zig `sharedStrip`,
+# src/app/render.zig): the launcher dock's items live ON the `:` line's
+# row, right of the typed command, rather than on a row of their own.
+#
+# At 120x40 that row is 39. Nothing is carved, so the editor keeps row
+# 37 and the statusline row 38. There is nothing to summon — the mode
+# ships `auto_hide` and reads `always` here — so the strip is up at once
+# and no `⋯` grip is drawn.
+#
+# The run is the shipped one, 66 cells (`launcher_dock_always.test` has
+# the arithmetic): centred in 1..117 it starts at 25, Browser's glyph on
+# 26. With `:abc▏` open (five cells) the space right of the command is
+# 5..117, the view keeps one cell of air, and the run centres at 28 —
+# Browser's glyph on 29. The run needs line + 1 + 66 + 3 <= 120, so a
+# line may paint 50 cells: `:` + 48 typed + the caret. One more typed
+# cell and the strip steps aside whole, until the line shortens.
+#
+# The `\n` in each assertion anchors it to the start of a row — the
+# only way a `contains` script can pin a column.
+write a.txt "alpha\n"
+open a.txt
+ex dock shared
+expect screen contains "dock: on the command line"
+expect screen contains "New terminal"
+expect screen lacks "⋯"
+# Wait out the toast so its echo leaves the row's left end blank.
+wait 4000
+expect screen contains "\n                           Browser "
+expect screen contains "󰐕 New "
+expect screen contains "󰐃"
+
+# ── no row is carved: 37 is still the editor's, 38 the statusline's ──
+click 110 37
+expect status contains "\"cmdline\":false"
+# The row left of the run is still the `:` line's click target.
+click 10 39
+expect status contains "\"cmdline\":true"
+
+# ── a line open: the run moves into the space right of it ──
+type "abc"
+expect screen contains "\n:abc▏                         Browser "
+expect screen contains "New terminal"
+
+# ── the step-aside rule, at the exact width ──
+key esc
+expect status contains "\"cmdline\":false"
+click 10 39
+type "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+expect screen contains "New terminal"
+expect screen contains ":xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx▏ "
+# One more cell would reach the first item: the strip is gone, pin and all.
+type "y"
+expect screen lacks "New terminal"
+expect screen lacks "Browser"
+# Shorter again, it is back.
+key backspace
+expect screen contains "New terminal"
+# Closed, it has the whole row again.
+key esc
+expect status contains "\"cmdline\":false"
+expect screen contains "\n                           Browser "
+
+# ── the strip's hits: a click on New terminal's word opens a shell ──
+click 78 39
+wait 900
+expect pane Terminal
+
+# ── the menu offers the three placements, this one ticked ──
+rightclick 118 39
+expect screen contains "Place: above the statusline"
+expect screen contains "Place: below the command line"
+expect screen contains "Place: on the command line"
+key esc
+
+# ── and `:dock above` takes it back off the row ──
+ex dock above
+expect screen contains "dock: above the statusline"
+expect screen contains "⋯"
