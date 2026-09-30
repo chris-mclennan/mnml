@@ -116,6 +116,9 @@ pub const AppCommand = union(enum) {
     /// `{count}n` / `{count}N`: `count` find matches on from the current
     /// one (`find.next` / `find.prev` `count` times, one jump).
     find_step: struct { count: u32, forward: bool },
+    /// `{count}]a` / `{count}[a`: `count` steps round the session ring
+    /// (`ai.focus_next_session` / `_prev_session`, `app/session_cycle.zig`).
+    session_step: struct { count: u32, forward: bool },
     /// `d'a` / `` y`a `` / `c'a`: `op` is `d`, `y` or `c`; `exact` is the
     /// backtick form (charwise, exclusive), else linewise to the mark's
     /// line. The buffer owns the mark, so it builds the range.
@@ -140,7 +143,7 @@ pub const AppCommand = union(enum) {
     script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 30);
+        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 31);
     }
 };
 

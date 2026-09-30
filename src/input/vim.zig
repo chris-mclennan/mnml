@@ -1264,7 +1264,7 @@ pub const Vim = struct {
                     'b' => runCmd(.@"buffer.prev"),
                     // The session ring backwards (`app/session_cycle.zig`).
                     // Neovim's `[a` is the argument list, which mnml has none of.
-                    'a' => runCmd(.@"ai.focus_prev_session"),
+                    'a' => .{ .app = .{ .session_step = .{ .count = n, .forward = false } } },
                     // `[p` / `[P` / `]P` all put BEFORE with the indent
                     // adjusted (`:help [p`); a count repeats the put.
                     'p', 'P' => repeated(arena, .paste_before_indent, n),
@@ -1292,7 +1292,7 @@ pub const Vim = struct {
                     'b' => runCmd(.@"buffer.next"),
                     // The session ring (`app/session_cycle.zig`); Neovim's
                     // `]a` is the argument list, which mnml has none of.
-                    'a' => runCmd(.@"ai.focus_next_session"),
+                    'a' => .{ .app = .{ .session_step = .{ .count = n, .forward = true } } },
                     // `]p` puts AFTER with the indent adjusted; `]P` is
                     // vim's synonym for `[P` (`:help ]p`).
                     'p' => repeated(arena, .paste_after_indent, n),
@@ -2961,6 +2961,23 @@ test "[b / ]b are Neovim's :bprevious / :bnext" {
     r = try v.handleKey(Key.char('b'), .{}, a);
     try testing.expect(r == .app);
     try testing.expectEqual(CommandId.@"buffer.next", r.app.run_command);
+}
+
+test "]a / [a step the session ring, a count that many times" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var v = Vim.init(testing.allocator, .{});
+    defer v.deinit();
+    _ = try v.handleKey(Key.char(']'), .{}, a);
+    var r = try v.handleKey(Key.char('a'), .{}, a);
+    try testing.expectEqual(@as(u32, 1), r.app.session_step.count);
+    try testing.expect(r.app.session_step.forward);
+    _ = try v.handleKey(Key.char('2'), .{}, a);
+    _ = try v.handleKey(Key.char('['), .{}, a);
+    r = try v.handleKey(Key.char('a'), .{}, a);
+    try testing.expectEqual(@as(u32, 2), r.app.session_step.count);
+    try testing.expect(!r.app.session_step.forward);
 }
 
 test "visual `:` opens the line on '<,'>, leaves Visual at once, and widens a linewise range before remembering it" {

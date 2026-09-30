@@ -4004,6 +4004,14 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             const d: i32 = @intCast(@min(fs.count, std.math.maxInt(i32)));
             try cmd_find.stepFind(app, if (fs.forward) d else -d);
         },
+        .session_step => |ss| {
+            const session_cycle = @import("session_cycle.zig");
+            var i: u32 = 0;
+            while (i < @max(ss.count, 1)) : (i += 1) session_cycle.step(app, if (ss.forward) .next else .prev) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => break,
+            };
+        },
         .split_resize => |r| cmd_view.resizeByCells(app, r.width, r.cells) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
