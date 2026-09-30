@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /Use…            │ 󰐕                                                                                                                                                            󱸀  󲀀    
 ▌ │▌    docs               │
-   │     󱼅  notes.md         │
+   │   󱼅    notes.md         │
  󰍉 │     src                │
-   │     󱼄  main.zig         │
- 󰊢 │     󱼅  util.zig       M │
+   │   󱼄    main.zig         │
+ 󰊢 │   󱼅    util.zig       M │
    │      .gitignore         │
   │      CHANGELOG.md     ? │
    │     󰂺 README.md          │
@@ -40,7 +40,7 @@
    │                          │                                                                                        Ctrl+N         new file
    │                          │                                                                                        Ctrl+Q         quit
    │                          │
-   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
+   │                          │                                                                        mnml 0.3.0-dev+gf5ed9e39
    │                          │
    │                          │
    │                          │
@@ -56,5 +56,5 @@
    │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                       󱸀 95% 52%  󱼀 󰐎    20:33  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                       󱸀 95% 52%  󱼀 󰐎    07:37  ws   —
                                                                                                    ⋯

@@ -166,6 +166,10 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .title = if (root == 0) try f.fmt(arena, "Workspace: {s}", .{app.workspace}) else if (root - 1 < app.tree.roots.items.len) try f.fmt(arena, "Workspace: {s}", .{app.tree.roots.items[root - 1].path}) else "Workspace",
             .detail = if (root == 0) "click folds the tree · alt-click folds or opens every directory" else "click opens or folds this workspace's tree",
         },
+        .tree_root_dot => |root| .{
+            .title = if (app.tree.active_root == root) "Active workspace" else "Workspace",
+            .detail = "click makes this the active workspace · right-click: the workspace menu",
+        },
         .tree_empty => .{ .title = "Workspace", .detail = "click focuses the tree · right-click: the workspace menu" },
         .tree_chip => |c| .{
             .title = c.label(app.tree.isFullyCollapsed()),

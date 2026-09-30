@@ -78,6 +78,10 @@ def base_env(home, tmp):
         "HTTP_PROXY": "http://127.0.0.1:9",
         "ALL_PROXY": "http://127.0.0.1:9",
         "NO_PROXY": "127.0.0.1,localhost",
+        # The launch's update check reaches GitHub past the proxy, and
+        # once a release newer than the build is out its warning lights
+        # the statusline bell in every shot (`app/update.zig`).
+        "MNML_NO_UPDATE_CHECK": "1",
         "GIT_CONFIG_NOSYSTEM": "1",
         # No URL the app or an integration opens reaches the developer's
         # browser: it is appended to a file beside the run instead

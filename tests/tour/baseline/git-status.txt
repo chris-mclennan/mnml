@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /Use…            │  git status 󰅖   󰐕                                                                                                                                        󱸀  󲀀      
 ▌ │▌    docs               │▌  on main   2 unstaged · 0 staged                                                                                                                                      █
-   │     󱼅  notes.md         │▌  s/u stage·unstage  space toggle  a/A all  ⏎ diff  c commit  C ai-commit  r refresh                                                                                   █
+   │   󱼅    notes.md         │▌  s/u stage·unstage  space toggle  a/A all  ⏎ diff  c commit  C ai-commit  r refresh                                                                                   █
  󰍉 │     src                │▌  Unstaged changes (2)                                                                                                                                                 █
-   │     󱼄  main.zig         │▌  ▶ M src/util.zig                                                                                                                                                     █
- 󰊢 │     󱼅  util.zig       M │▌    ? CHANGELOG.md                                                                                                                                                     █
+   │   󱼄    main.zig         │▌  ▶ M src/util.zig                                                                                                                                                     █
+ 󰊢 │   󱼅    util.zig       M │▌    ? CHANGELOG.md                                                                                                                                                     █
    │      .gitignore         │▌                                                                                                                                                                       █
   │      CHANGELOG.md     ? │▌  Staged changes (0)                                                                                                                                                   █
    │     󰂺 README.md          │▌    (none)                                                                                                                                                             █
@@ -56,5 +56,5 @@
    │                          │▌                                                                                                                                                                       █
   │                          │▌                                                                                                                                                                       █
    │                          │▌                                                                                                                                                                       █
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    20:33  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    07:37  ws   —
                                                                                                    ⋯

@@ -164,6 +164,11 @@ pub const HitTarget = union(enum) {
     /// A workspace section's header row (`ui/tree_view.zig`): 0 the
     /// primary, i + 1 the i-th extra root. A press folds the section.
     tree_root: u8,
+    /// The `●` / `○` after a section header's chevron
+    /// (`ui.show_workspace_dots`), registered over the header's
+    /// `.tree_root` so it wins its two cells: a press makes that root
+    /// the active workspace (`Tree.switchTo`).
+    tree_root_dot: u8,
     /// right-click: the tree's empty rows below the last item
     /// (`ui/tree_view.zig`), by the root they belong to. A press focuses
     /// the tree; a right press opens that root's workspace menu (Rust:
@@ -224,7 +229,7 @@ pub const HitTarget = union(enum) {
         try w.writeAll(@tagName(t));
         switch (t) {
             .pane, .divider, .button, .statusline_seg, .tree_node, .overlay_item => |n| try w.print(":{d}", .{n}),
-            .tree_root, .tree_empty => |n| try w.print(":{d}", .{n}),
+            .tree_root, .tree_root_dot, .tree_empty => |n| try w.print(":{d}", .{n}),
             .hover_popup => {},
             .font_update, .ai_placeholder => |n| try w.print(":{d}", .{n}),
             .session_changes => |n| try w.print(":{d}", .{n}),
@@ -439,6 +444,7 @@ test "labels are the tag plus the payload" {
     try expectLabel("http:link:paste_curl", .{ .http = .{ .link = .paste_curl } });
     try expectLabel("http:folder_new:2", .{ .http = .{ .folder_new = 2 } });
     try expectLabel("tree_root:0", .{ .tree_root = 0 });
+    try expectLabel("tree_root_dot:2", .{ .tree_root_dot = 2 });
     try expectLabel("tree_chip:new_file", .{ .tree_chip = .new_file });
     try expectLabel("info_view:kebab", .{ .info_view = .kebab });
     try expectLabel("info_view:try_it:2", .{ .info_view = .{ .try_it = 2 } });

@@ -753,6 +753,9 @@ pub const MenuAction = union(enum) {
     /// REQUESTS view filtered to that chip's service. The menu's `mem`
     /// arena owns the bytes (`app/requests.zig`).
     requests_for: []const u8,
+    /// A workspace header menu's *Switch to this workspace*: that root
+    /// (0 the primary, i + 1 the i-th extra) becomes the active one.
+    switch_workspace: u8,
     none,
 };
 

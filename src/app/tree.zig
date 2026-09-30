@@ -165,6 +165,10 @@ pub const Tree = struct {
     roots_synced: bool = false,
     /// The primary section's fold, once there are headers.
     primary_expanded: bool = true,
+    /// The active workspace — the section `switchTo` last made the one
+    /// open (0 the primary, i + 1 the i-th extra root). Its header
+    /// carries the `●` (`ui.show_workspace_dots`); the others `○`.
+    active_root: u8 = 0,
     cursor: usize = 0,
     scroll: usize = 0,
     loaded: bool = false,
@@ -257,9 +261,12 @@ pub const Tree = struct {
         return null;
     }
 
-    /// `view.switch_workspace`'s pick: `idx` opens, every other root
-    /// folds, the cursor lands on its header.
+    /// `view.switch_workspace`'s pick: `idx` becomes the active
+    /// workspace — it opens, every other root folds, the cursor lands on
+    /// its header and its header takes the `●`.
     pub fn switchTo(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
+        if (idx > self.roots.items.len) return;
+        self.active_root = @intCast(idx);
         self.primary_expanded = idx == 0;
         for (self.roots.items, 0..) |*r, i| r.expanded = i + 1 == idx;
         try self.refresh(app);
@@ -276,6 +283,9 @@ pub const Tree = struct {
     pub fn removeRoot(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
         if (idx >= self.roots.items.len) return;
         const gone = self.roots.orderedRemove(idx);
+        // The active root's index follows the roots after it down;
+        // removing the active one hands the dot back to the primary.
+        if (self.active_root == idx + 1) self.active_root = 0 else if (self.active_root > idx + 1) self.active_root -= 1;
         defer {
             self.gpa.free(gone.name);
             self.gpa.free(gone.path);
@@ -906,6 +916,7 @@ pub const Tree = struct {
             .expanded = self.primary_expanded,
             .italic = self.show_hidden,
             .fully_collapsed = self.isFullyCollapsed(),
+            .active = self.active_root == 0,
         };
         if (!multi) try items.append(arena, .{ .section = primary });
         for (self.rows.items, 0..) |row, i| {
@@ -916,6 +927,7 @@ pub const Tree = struct {
                     .root = row.root,
                     .label = self.roots.items[row.root - 1].name,
                     .expanded = self.roots.items[row.root - 1].expanded,
+                    .active = self.active_root == row.root,
                 };
                 try items.append(arena, .{ .section = section });
                 continue;
@@ -2644,4 +2656,49 @@ test "view.manage_workspaces opens the home config on its .workspaces line and s
     try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, "config.zon"));
     try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     try t.expectEqualStrings("workspaces are the `.workspaces` list in config.zon", app.lastToast().?);
+}
+
+test "the workspace dot: a press on a root's `○` makes it the active workspace — it opens, the others fold, the `●` moves to it; removing it hands the dot back" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.show_workspace_dots = true;
+    const extra = try std.fs.path.join(t.allocator, &.{ app.workspace, "extra" });
+    defer t.allocator.free(extra);
+    try std.Io.Dir.cwd().createDirPath(t.io, extra);
+    _ = try app.tree.addRoot(&app, extra, "sibling");
+    try app.tree.refresh(&app);
+    try app.render();
+    const Hit = struct {
+        fn of(a: *App, want: @import("../ui/hit.zig").HitTarget) ?Rect {
+            for (a.hits.items.items) |e| if (std.meta.eql(e.target, want)) return e.rect;
+            return null;
+        }
+    };
+    // Both headers carry a dot, the primary's green `●`, the extra's `○`.
+    try t.expectEqual(@as(u8, 0), app.tree.active_root);
+    const dot = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
+    try t.expectEqual(@as(u16, 2), dot.w);
+    try t.expectEqualStrings("○", app.screen.readCell(dot.x, dot.y).?.char.grapheme);
+    try t.expectEqualStrings("●", app.screen.readCell(Hit.of(&app, .{ .tree_root_dot = 0 }).?.x, Hit.of(&app, .{ .tree_root_dot = 0 }).?.y).?.char.grapheme);
+    // A press on the extra's dot: it is the active workspace now.
+    try app.handle(.{ .mouse = .{ .x = dot.x, .y = dot.y, .kind = .press, .button = .left } });
+    try t.expectEqual(@as(u8, 1), app.tree.active_root);
+    try t.expect(app.tree.roots.items[0].expanded);
+    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqual(app.tree.headerRow(1).?, app.tree.cursor);
+    try t.expectEqual(app_mod.FocusId.tree, app.focus);
+    try app.render();
+    const moved = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
+    try t.expectEqualStrings("●", app.screen.readCell(moved.x, moved.y).?.char.grapheme);
+    try t.expect(@import("vaxis").Color.eql(app.screen.readCell(moved.x, moved.y).?.style.fg, app.theme.palette.green));
+    const primary = Hit.of(&app, .{ .tree_root_dot = 0 }).?;
+    try t.expectEqualStrings("○", app.screen.readCell(primary.x, primary.y).?.char.grapheme);
+    // A press elsewhere on the header still folds, without moving the dot.
+    const header = Hit.of(&app, .{ .tree_root = 1 }).?;
+    try app.handle(.{ .mouse = .{ .x = header.x + 8, .y = header.y, .kind = .press, .button = .left } });
+    try t.expect(!app.tree.roots.items[0].expanded);
+    try t.expectEqual(@as(u8, 1), app.tree.active_root);
+    // Removing the active root hands the dot back to the primary.
+    try app.tree.removeRoot(&app, 0);
+    try t.expectEqual(@as(u8, 0), app.tree.active_root);
 }
