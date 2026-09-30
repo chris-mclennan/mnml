@@ -237,6 +237,12 @@ pub const Saved = struct {
     active: ?u32 = null,
     tree_visible: bool = true,
     tree_width: u16 = 30,
+    /// The width was set by hand (a drag, *Set width…*) and comes back
+    /// as it is; false re-resolves it from the config on restore (the
+    /// window share, by default). Absent — a session written before it
+    /// existed — reads a width other than the old fixed default 30 as
+    /// a drag.
+    tree_width_pinned: ?bool = null,
     /// The tree lists dotfiles unless the person turned them off (`H`):
     /// its default is on, and a session written before this field
     /// existed — or by hand, without it — must not turn them off on
@@ -542,6 +548,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     // Chrome.
     saved.tree_visible = app.tree.visible;
     saved.tree_width = @import("git_palette.zig").restingSize(app, .left);
+    saved.tree_width_pinned = app.side.tree_pinned;
     saved.tree_show_hidden = app.tree.show_hidden;
     var expanded: std.ArrayListUnmanaged([]const u8) = .empty;
     var kit = app.tree.expanded.keyIterator();
@@ -792,7 +799,9 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
 
     // Chrome.
     app.tree.visible = saved.tree_visible;
-    app.tree.width = std.math.clamp(saved.tree_width, Config.tree_width_min, Config.tree_width_max);
+    if (saved.tree_width_pinned orelse (saved.tree_width != 30)) {
+        side_mod.pinTreeWidth(app, std.math.clamp(saved.tree_width, Config.tree_width_min, Config.tree_width_max));
+    } else side_mod.resetTreeWidth(app);
     app.tree.show_hidden = saved.tree_show_hidden;
     // The saved set replaces what is open (Rust's `set_expanded_dirs`),
     // and the top-level directories it leaves shut stay shut — a
@@ -1428,7 +1437,7 @@ test "session: save → restore brings back the panes, the split, the tab pages,
         try app.noteCmdLine("set wrap");
         try command.run(&app, .{ .static = .noop });
         try command.run(&app, .{ .static = .@"view.toggle_line_numbers" });
-        app.tree.width = 44;
+        side_mod.pinTreeWidth(&app, 44);
         app.tree.visible = false;
         try app.toastLevel(.warn, "remember me", .{});
         app.zen = true;

@@ -137,7 +137,7 @@ test "scalars replace, unmentioned fields keep the default" {
     try std.testing.expectEqual(@as(u8, 2), cfg.editor.tab_width);
     try std.testing.expectEqual(Config.InputStyle.vim, cfg.editor.input_style);
     try std.testing.expect(cfg.editor.breadcrumb); // untouched default
-    try std.testing.expectEqual(@as(u16, 30), cfg.ui.tree_width);
+    try std.testing.expectEqual(@as(u16, 0), cfg.ui.tree_width);
 }
 
 test "keys and snippets extend by key; lsp replaces per name; arrays replace whole" {

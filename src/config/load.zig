@@ -285,7 +285,7 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ai.suggest_idle_ms = std.math.clamp(cfg.ai.suggest_idle_ms, Config.suggest_idle_ms_min, Config.suggest_idle_ms_max);
     cfg.ai.suggest_timeout_ms = std.math.clamp(cfg.ai.suggest_timeout_ms, Config.suggest_timeout_ms_min, Config.suggest_timeout_ms_max);
     cfg.ai.cli_timeout_ms = std.math.clamp(cfg.ai.cli_timeout_ms, Config.cli_timeout_ms_min, Config.cli_timeout_ms_max);
-    cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
+    if (cfg.ui.tree_width != 0) cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.focus_follows_mouse_delay_ms = @min(cfg.ui.focus_follows_mouse_delay_ms, Config.focus_follows_mouse_delay_ms_max);
     cfg.ui.hover_help_grace_ms = @min(cfg.ui.hover_help_grace_ms, Config.hover_help_grace_ms_max);
     cfg.ui.hover_help_height = std.math.clamp(cfg.ui.hover_help_height, Config.hover_help_height_min, Config.hover_help_height_max);
@@ -512,6 +512,14 @@ test "normalize clamps, expands ~, and drops broken layout entries" {
     };
     try normalize(f.arena(), &cfg, &f.diags, "/home/u");
     try t.expectEqual(@as(u16, 80), cfg.ui.tree_width);
+    // 0 is the window share, not a width below the floor: it stays 0.
+    // A pinned width under the floor comes up to it.
+    cfg.ui.tree_width = 0;
+    try normalize(f.arena(), &cfg, &f.diags, "/home/u");
+    try t.expectEqual(@as(u16, 0), cfg.ui.tree_width);
+    cfg.ui.tree_width = 3;
+    try normalize(f.arena(), &cfg, &f.diags, "/home/u");
+    try t.expectEqual(Config.tree_width_min, cfg.ui.tree_width);
     try t.expectEqual(@as(u16, 4), cfg.ui.hover_help_height);
     try t.expectEqual(@as(u16, 100), cfg.editor.chord_timeout_ms);
     // Ghost text's clocks: a typo of `1` would spin a request per

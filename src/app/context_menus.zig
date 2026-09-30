@@ -35,6 +35,8 @@ pub const table = .{
     .@"toast.dismiss_clicked" = &toastDismissClicked,
     .@"toast.copy_clicked" = &toastCopyClicked,
     .@"editor.set_tab_width" = &setTabWidth,
+    .@"view.set_tree_width" = &setTreeWidth,
+    .@"view.flip_sidebar_side" = &flipSidebarSide,
     .@"view.context_menu_at_focus" = &contextMenuAtFocus,
     .@"menu.pin_row" = &pinRow,
     .@"menu.unpin_row" = &unpinRow,
@@ -1461,6 +1463,83 @@ fn openSidebarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Sidebar", rows, x, y);
 }
 
+/// A right-click on the left column's divider — the drag handle
+/// between the sidebar and the editor: its width by the config or by
+/// hand, the column's two ways out of sight, and the side it lives on.
+pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const rows = try items(app, &.{
+        .{ .label = "Reset width", .action = .{ .command = .@"view.reset_tree_width" } },
+        .{ .label = "Set width…", .action = .{ .command = .@"view.set_tree_width" } },
+        .{ .label = "Hide sidebar", .action = .{ .command = .@"view.toggle_tree" }, .separator_before = true },
+        .{ .label = "Auto-hide sidebar", .action = .{ .command = .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto },
+        .{ .label = if (app.cfg.ui.sidebar_side == .left) "Move sidebar to the right" else "Move sidebar to the left", .action = .{ .command = .@"view.flip_sidebar_side" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu("Sidebar divider", rows, x, y);
+}
+
+/// `view.set_tree_width`: the prompt *Set width…* opens, seeded with
+/// the column's width now.
+fn setTreeWidth(app: *App) CommandError!void {
+    app.overlay.deinit(app.gpa);
+    var state = app_mod.Prompt.init(app.gpa, "Sidebar width (cells, or a share like 25%)");
+    errdefer app_mod.Prompt.deinit(&state, app.gpa);
+    const cur = try std.fmt.allocPrint(app.frame.allocator(), "{d}", .{app.tree.width});
+    try state.buf.appendSlice(app.gpa, cur);
+    state.caret = state.buf.items.len;
+    // The seed is a selection: typing a width replaces it.
+    state.select_all = true;
+    app.overlay = .{ .prompt = .{ .state = state, .purpose = .tree_width } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// What *Set width…* reads: a width in cells, or a share of `cols`
+/// written `25%`, both landing in `tree_width_min..max`.
+pub const TreeWidthAnswer = union(enum) {
+    cells: u16,
+    /// A number, but a width outside `tree_width_min..max` (the cells
+    /// it came to, for the toast).
+    out_of_range: u32,
+    junk,
+};
+
+pub fn parseTreeWidth(text: []const u8, cols: u16) TreeWidthAnswer {
+    const s = std.mem.trim(u8, text, " \t");
+    const pct = std.mem.endsWith(u8, s, "%");
+    const digits = std.mem.trim(u8, if (pct) s[0 .. s.len - 1] else s, " \t");
+    const n = std.fmt.parseInt(u32, digits, 10) catch return .junk;
+    if (pct and n > 100) return .junk;
+    const cells: u32 = if (pct) @as(u32, cols) * n / 100 else n;
+    if (cells < Config.tree_width_min or cells > Config.tree_width_max) return .{ .out_of_range = cells };
+    return .{ .cells = @intCast(cells) };
+}
+
+/// The prompt's answer: the live column takes it and keeps it, as a
+/// divider drag does — for the session, remembered with it.
+pub fn acceptTreeWidth(app: *App, text: []const u8) Allocator.Error!void {
+    switch (parseTreeWidth(text, app.screen.width)) {
+        .cells => |n| {
+            side.pinTreeWidth(app, n);
+            app.toast("sidebar width: {d}", .{n});
+        },
+        .out_of_range => |n| app.toast("sidebar width: {d}…{d} cells, not {d}", .{ Config.tree_width_min, Config.tree_width_max, n }),
+        .junk => app.toast("sidebar width: a number of cells or a share like 25%, not \"{s}\"", .{text}),
+    }
+}
+
+/// `view.flip_sidebar_side`: `ui.sidebar_side` to the other column,
+/// written to the home config as its Settings row writes it. The
+/// sections that follow the default change columns; one moved by hand
+/// stays where it was put.
+fn flipSidebarSide(app: *App) CommandError!void {
+    const before = app.cfg.ui.sidebar_side;
+    app.cfg.ui.sidebar_side = if (before == .left) .right else .left;
+    side.reseedFrom(app, before);
+    _ = try @import("settings.zig").persist(app, .home, &.{ "ui", "sidebar_side" }, app.cfg.ui.sidebar_side);
+    app.toast("sidebar: {s} side", .{@tagName(app.cfg.ui.sidebar_side)});
+}
+
 /// The right-column toggle (Rust `palette_right_panel_button`).
 fn openRightPanelMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const visible = side.shown(app, .right) != null;
@@ -2470,4 +2549,144 @@ test "right-click: an extra root's *Switch to this workspace* switches to that r
     try t.expectEqual(@as(u8, 1), app.tree.active_root);
     try t.expect(app.tree.roots.items[0].expanded);
     try t.expect(!app.tree.primary_expanded);
+}
+
+test "the sidebar divider: a right-click opens its menu — reset, set, hide, auto-hide, move — and each row does what it says" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 200, .rows = 40 });
+    defer app.deinit();
+    try app.render();
+    // The divider sits right of the column: a fifth of 200.
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    const hit = app.hits.at(40, 10).?;
+    try t.expect(hit == .divider and hit.divider == @import("render.zig").tree_divider_id);
+    try app.handle(.{ .mouse = .{ .x = 40, .y = 10, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Sidebar divider", app.overlay.menu.title);
+    const want = [_]struct { []const u8, command.CommandId }{
+        .{ "Reset width", .@"view.reset_tree_width" },
+        .{ "Set width…", .@"view.set_tree_width" },
+        .{ "Hide sidebar", .@"view.toggle_tree" },
+        .{ "Auto-hide sidebar", .@"view.sidebar_mode_auto" },
+        .{ "Move sidebar to the right", .@"view.flip_sidebar_side" },
+    };
+    try t.expectEqual(want.len, app.overlay.menu.items.len);
+    for (want, app.overlay.menu.items) |w, it| {
+        try t.expectEqualStrings(w[0], it.label);
+        try t.expectEqual(w[1], it.action.command);
+    }
+    try t.expect(!app.overlay.menu.items[3].checked);
+    // A drag still starts from a left press; the menu is the right's.
+    closeMenu(&app);
+    try app.handle(.{ .mouse = .{ .x = 40, .y = 10, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = 52, .y = 10, .kind = .drag, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = 52, .y = 10, .kind = .release, .button = .left } });
+    try t.expectEqual(@as(u16, 52), app.tree.width);
+    try t.expect(app.side.tree_pinned);
+
+    // Set width…: the prompt, seeded with the width now; a share.
+    try command.run(&app, .{ .static = .@"view.set_tree_width" });
+    try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .tree_width);
+    try t.expectEqualStrings("52", app.overlay.prompt.state.text());
+    app.overlay.prompt.state.buf.clearRetainingCapacity();
+    app.overlay.prompt.state.caret = 0;
+    for ("25%") |c| try app.handle(.{ .key = app_mod.Key.char(c) });
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expectEqual(@as(u16, 50), app.tree.width);
+    try t.expect(app.side.tree_pinned);
+    // Junk leaves the width where it was.
+    try acceptTreeWidth(&app, "wide");
+    try t.expectEqual(@as(u16, 50), app.tree.width);
+
+    // Reset width: back to the share, which follows a resize again.
+    try command.run(&app, .{ .static = .@"view.reset_tree_width" });
+    try t.expect(!app.side.tree_pinned);
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    try app.resize(160, 40);
+    try t.expectEqual(@as(u16, 32), app.tree.width);
+
+    // Hide sidebar: the column goes.
+    try command.run(&app, .{ .static = .@"view.toggle_tree" });
+    try t.expect(side.shown(&app, .left) == null);
+    try command.run(&app, .{ .static = .@"view.toggle_tree" });
+    try t.expect(side.shown(&app, .left) != null);
+
+    // Auto-hide: the mode, and the row wears the tick.
+    try command.run(&app, .{ .static = .@"view.sidebar_mode_auto" });
+    try t.expectEqual(Config.Sidebar.auto, app.cfg.ui.sidebar);
+    try openTreeDividerMenu(&app, 5, 5);
+    try t.expect(app.overlay.menu.items[3].checked);
+    closeMenu(&app);
+    try command.run(&app, .{ .static = .@"view.sidebar_mode_always" });
+}
+
+test "the sidebar divider's move row: the default sections swap columns, a section moved by hand keeps its own, and the row reads the way back" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 160, .rows = 40 });
+    defer app.deinit();
+    try t.expectEqual(side.Side.left, side.sideOf(&app, .explorer));
+    try t.expectEqual(side.Side.right, side.sideOf(&app, .outline));
+    // TODOS moved by hand to the right: it is not the default's to move.
+    // NOTES moved by hand into the dock stays in the dock — a flip that
+    // re-read every section would send it to the right column.
+    try side.move(&app, .todos, .right);
+    try side.move(&app, .notes, .bottom);
+    try command.run(&app, .{ .static = .@"view.flip_sidebar_side" });
+    try t.expectEqual(Config.ColumnSide.right, app.cfg.ui.sidebar_side);
+    try t.expectEqual(side.Side.right, side.sideOf(&app, .explorer));
+    try t.expectEqual(side.Side.bottom, side.sideOf(&app, .notes));
+    try t.expectEqual(side.Side.right, side.sideOf(&app, .findings));
+    try t.expectEqual(side.Side.left, side.sideOf(&app, .outline));
+    try t.expectEqual(side.Side.right, side.sideOf(&app, .todos));
+    // The dock keeps the diagnostics whichever way the columns face.
+    try t.expectEqual(side.Side.bottom, side.sideOf(&app, .diagnostics));
+    // The explorer that was shown on the left shows on the right now.
+    try t.expectEqual(side.Section.explorer, side.shown(&app, .right).?);
+    try openTreeDividerMenu(&app, 5, 5);
+    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[4].label);
+    closeMenu(&app);
+    // A section moved by hand to the LEFT (against the new default)
+    // stays there when the default flips back.
+    try side.move(&app, .findings, .left);
+    try command.run(&app, .{ .static = .@"view.flip_sidebar_side" });
+    try t.expectEqual(Config.ColumnSide.left, app.cfg.ui.sidebar_side);
+    try t.expectEqual(side.Side.left, side.sideOf(&app, .explorer));
+    try t.expectEqual(side.Side.right, side.sideOf(&app, .outline));
+    try t.expectEqual(side.Side.left, side.sideOf(&app, .findings));
+    // TODOS sat where the right-hand default put it, so it follows the
+    // default back: a section is "moved by hand" only while it is
+    // somewhere the default would not put it.
+    try t.expectEqual(side.Side.left, side.sideOf(&app, .todos));
+    // Written to the home config, as the Settings row writes it.
+    const home = (try @import("settings.zig").configPath(&app, .home)).?;
+    const text = try std.Io.Dir.cwd().readFileAlloc(t.io, home, t.allocator, .unlimited);
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, ".sidebar_side = .left") != null);
+}
+
+test "Set width… reads cells or a share, inside 10..80, and nothing else" {
+    try t.expectEqual(TreeWidthAnswer{ .cells = 36 }, parseTreeWidth("36", 200));
+    try t.expectEqual(TreeWidthAnswer{ .cells = 36 }, parseTreeWidth("  36 ", 200));
+    try t.expectEqual(TreeWidthAnswer{ .cells = 50 }, parseTreeWidth("25%", 200));
+    try t.expectEqual(TreeWidthAnswer{ .cells = 30 }, parseTreeWidth("25 %", 120));
+    try t.expectEqual(TreeWidthAnswer{ .cells = Config.tree_width_min }, parseTreeWidth("10", 80));
+    try t.expectEqual(TreeWidthAnswer{ .cells = Config.tree_width_max }, parseTreeWidth("80", 80));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 9 }, parseTreeWidth("9", 80));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 81 }, parseTreeWidth("81", 80));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 8 }, parseTreeWidth("10%", 80));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 180 }, parseTreeWidth("90%", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("wide", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("%", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("-5", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("150%", 200));
+    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("3.5", 200));
 }

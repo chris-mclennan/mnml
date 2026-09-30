@@ -224,6 +224,8 @@ pub const PromptPurpose = union(enum) {
     ex_line,
     /// The statusline indent chip: a new `editor.tab_width`.
     tab_width,
+    /// The sidebar divider's *Set width…*: cells or a share (`25%`).
+    tree_width,
     /// `view.image_open`: a path to open as `Pane.image`.
     image_open,
     replace,
@@ -1692,7 +1694,7 @@ pub const App = struct {
         app.now_ms = nowMs(io);
         app.http.auto_format_body = app.cfg.http.auto_format_body;
         app.http.sync_normalize = app.cfg.http.sync_normalize;
-        app.tree.width = app.cfg.ui.tree_width;
+        app.tree.width = side_mod.defaultTreeWidth(&app);
         // The sides come from the config; the explorer opens in its
         // column; `ui.right_panel_visible` opens the right column on
         // the first section that lives there. A restored session (the
@@ -1791,6 +1793,7 @@ pub const App = struct {
         errdefer km.deinit();
         const was_trusted = self.workspace_trusted;
         self.workspace_trusted = fresh.workspace_trusted;
+        const old_tree_width = self.cfg.ui.tree_width;
         self.cfg = fresh.config;
         old.deinit();
         self.loaded = fresh;
@@ -1801,7 +1804,9 @@ pub const App = struct {
         const style = styleOf(self.cfg.editor.input_style);
         if (style != self.input_style) try self.setInputStyle(style);
         try self.syncBufferPrefs();
-        self.tree.width = self.cfg.ui.tree_width;
+        // A width the file changed wins over a dragged one; otherwise a
+        // drag survives the reload and an unpinned column re-resolves.
+        if (self.cfg.ui.tree_width != old_tree_width) side_mod.resetTreeWidth(self) else side_mod.syncTreeWidth(self);
         try self.seedPlusMenu();
         auto_refresh.seed(self);
         clock.seed(self);
@@ -3449,6 +3454,8 @@ pub const App = struct {
         fresh.width_method = .unicode;
         self.screen.deinit(self.gpa);
         self.screen = fresh;
+        // The left column's window share follows the new width.
+        side_mod.syncTreeWidth(self);
         self.needs_render = true;
     }
 
@@ -3975,7 +3982,7 @@ test "config → App: every behaviour-changing field flipped once" {
     try t.expect(std.mem.indexOf(u8, txt, "|") != null);
     try t.expect(std.mem.indexOf(u8, txt, "│") == null);
     try t.expect(std.mem.indexOf(u8, txt, " 1 0123") == null);
-    try t.expectEqual(@as(usize, 0), app.cfg.ui.tree_width - app.tree.width);
+    try t.expectEqual(app.cfg.ui.tree_width, app.tree.width);
     try t.expect(std.mem.count(u8, txt, "0123456789") >= 2);
 
     // switching the style keeps cfg and the input layer level, and the

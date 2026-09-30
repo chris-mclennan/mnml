@@ -77,7 +77,19 @@ pub const Row = struct {
     /// minimal step form.
     number: ?Number = null,
 
-    pub const Number = struct { min: usize, max: usize, step: usize };
+    pub const Number = struct {
+        min: usize,
+        max: usize,
+        step: usize,
+        /// 0 is a word rather than a number (`ui.tree_width`'s `auto`):
+        /// it reads as this, and sits one step below `min`.
+        zero: ?[]const u8 = null,
+
+        /// The value's own lowest step: 0 when it is a word.
+        pub fn floor(n: Number) usize {
+            return if (n.zero != null) 0 else n.min;
+        }
+    };
 };
 
 pub const Action = struct {
@@ -409,7 +421,10 @@ fn has(haystack: []const u8, needle: []const u8) bool {
 /// The word a row's current value reads as — the bracketed option, or
 /// the number itself on a step row.
 pub fn valueWord(r: Row, buf: []u8) []const u8 {
-    if (r.number != null) return std.fmt.bufPrint(buf, "{d}", .{r.current}) catch "";
+    if (r.number) |num| {
+        if (num.zero) |z| if (r.current == 0) return z;
+        return std.fmt.bufPrint(buf, "{d}", .{r.current}) catch "";
+    }
     if (r.options.len == 0) return "";
     return r.options[@min(r.current, r.options.len - 1)];
 }
@@ -850,10 +865,10 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item, subtitle: ?[]con
                 if (row.number) |num| {
                     // `‹ [32] ›` — the arrows step; the value is the row.
                     const prev_x = x;
-                    x += ui.putStr(x, y, r.right() -| x, if (ui.ascii) "<" else "‹", Theme.onBg(if (row.current > num.min) t.accent else t.muted, row_style.bg));
+                    x += ui.putStr(x, y, r.right() -| x, if (ui.ascii) "<" else "‹", Theme.onBg(if (row.current > num.floor()) t.accent else t.muted, row_style.bg));
                     ui.hit(Rect.init(prev_x, y, 1, 1), .{ .overlay_item = optionHit(row.id, 0) });
                     x += 1;
-                    const cur = ui.fmt("[{d}]", .{row.current});
+                    const cur = if (num.zero != null and row.current == 0) ui.fmt("[{s}]", .{num.zero.?}) else ui.fmt("[{d}]", .{row.current});
                     const cw = ui.width(cur);
                     _ = ui.putStr(x, y, r.right() -| x, cur, t.chip_active);
                     ui.hit(Rect.init(x, y, cw, 1), .{ .overlay_item = row.id });

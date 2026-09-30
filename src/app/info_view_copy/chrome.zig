@@ -413,6 +413,12 @@ pub fn divider(id: u32) Entry {
         .keys = &.{ .{ .chord = "Drag", .label = "Resize" }, .{ .chord = "Double-click", .label = "Default height" } },
         .links = &.{.{ .settings = .{ .row = comptime copy.settingsRow("ui.hover_help_height"), .label = "Hover help rows" } }},
     };
+    if (id == @import("../render.zig").tree_divider_id) return .{
+        .title = "Sidebar divider",
+        .body = "The edge between the left column and the editor. Drag it to resize; the dragged width holds through a window resize and comes back with the session. Out of the box the column is a fifth of the window — 30 cells up to 150 columns wide, growing to 48 — unless `ui.tree_width` names a number. Right-click for the width, hiding the column, and the side it lives on.",
+        .keys = &.{ .{ .chord = "Drag", .label = "Resize" }, .{ .chord = "Right-click", .label = "Width, hide, side" } },
+        .links = &.{ .{ .command = .{ .id = .@"view.reset_tree_width", .label = "Reset the width" } }, .{ .command = .{ .id = .@"view.set_tree_width", .label = "Set a width" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.tree_width"), .label = "Tree width" } } },
+    };
     return .{
         .title = "Divider",
         .body = "The line between two panes, or between a column and the editor area. Drag it to resize; the column widths are per workspace (`ui.tree_width`, `ui.right_panel_width`) and the split ratios live in the session. The keyboard resizes too: the Window menu grows a split's width or height, and equalizes every split at once.",

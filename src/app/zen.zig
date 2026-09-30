@@ -151,7 +151,7 @@ fn resetLayout(app: *App) CommandError!void {
     app.dismissToast(esc_toast_id);
     app.layouts.current().zoomed = null;
     side.place(app, .explorer, false);
-    app.tree.width = app.cfg.ui.tree_width;
+    side.resetTreeWidth(app);
     if (app.cfg.ui.menu_bar == .hidden) {
         app.cfg.ui.menu_bar = .always;
         _ = try settings.persist(app, .home, &.{ "ui", "menu_bar" }, app.cfg.ui.menu_bar);
@@ -542,7 +542,7 @@ test "reset_layout: leaves full screen and the zoom, shows the tree at the confi
     try t.expect(app.zoomedPane() == null);
     try t.expect(app.tree.visible);
     try t.expect(side.shown(&app, .left) == .explorer);
-    try t.expectEqual(app.cfg.ui.tree_width, app.tree.width);
+    try t.expectEqual(side.defaultTreeWidth(&app), app.tree.width);
     try t.expectEqual(app_mod.Config.MenuBar.always, app.cfg.ui.menu_bar);
     try t.expectEqual(app_mod.Config.ActivityBar.always, app.cfg.ui.activity_bar);
     try t.expect(app.focus == .pane);
