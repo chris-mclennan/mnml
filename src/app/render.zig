@@ -1097,7 +1097,9 @@ fn drawBottomDock(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         if (rect.h >= 2) {
             const s = rect.splitTop(1);
             const tabs = try tabsOfList(app, ui, app.bottom.panes.items, id);
-            _ = bufferline.draw(ui, s.top, tabs, .{ .leaf = bottom_mod.strip_leaf, .focused = paneFocused(app, id) });
+            // A docked session reads its place in the ring, as on a
+            // split's strip.
+            _ = bufferline.draw(ui, s.top, tabs, .{ .leaf = bottom_mod.strip_leaf, .focused = paneFocused(app, id), .session_nav = try sessionNav(app, id) });
             rect = s.rest;
         }
         try drawPaneContent(app, ui, id, rect);

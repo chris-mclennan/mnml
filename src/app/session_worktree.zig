@@ -35,6 +35,8 @@ const git = @import("git.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const pty_pane = @import("pty_pane.zig");
 const Config = @import("../config/Config.zig");
+pub const Where = app_mod.PromptPurpose.SessionWorktreeName.Where;
+pub const EmptyPage = app_mod.PromptPurpose.SessionWorktreeName.EmptyPage;
 
 /// The registry's row: a tree mnml made for a session.
 pub const Entry = struct {
@@ -493,6 +495,12 @@ pub const prompt_title = "New session in a worktree — the branch name";
 /// one) — the first such directory that does not exist. Refused when
 /// the workspace is in no repository.
 pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8) CommandError!void {
+    return openNamePromptAt(app, product, profile, .{});
+}
+
+/// `openNamePrompt` for a session that is to open at `where` — the
+/// placement the command asked for survives the prompt.
+pub fn openNamePromptAt(app: *App, product: Config.AiProduct, profile: []const u8, where: Where) CommandError!void {
     const arena = app.frame.allocator();
     const repo = (try repoRoot(app, arena, app.workspace)) orelse return app.diag.fail(arena, "worktree: {s} is not in a git repository", .{app.workspace});
     const root = try rootOf(app, arena, repo);
@@ -501,7 +509,7 @@ pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8)
     const owned = try app.gpa.dupe(u8, profile);
     errdefer app.gpa.free(owned);
     app.overlay.deinit(app.gpa);
-    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, prompt_title), .purpose = .{ .session_worktree_name = .{ .product = product, .profile = owned } } } };
+    app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, prompt_title), .purpose = .{ .session_worktree_name = .{ .product = product, .profile = owned, .where = where } } } };
     app.overlay.prompt.state.setText(app.gpa, seed) catch return error.OutOfMemory;
     app.focus = .overlay;
     app.needs_render = true;
@@ -512,6 +520,20 @@ pub fn openNamePrompt(app: *App, product: Config.AiProduct, profile: []const u8)
 /// its cwd the tree, `MNML_WORKSPACE` pointing at it, the tab labelled
 /// `<product> @ <name>` — and the registry row. The pane id.
 pub fn acceptName(app: *App, product: Config.AiProduct, profile: []const u8, text: []const u8) CommandError!app_mod.PaneId {
+    return acceptNameAt(app, product, profile, .{}, text);
+}
+
+/// `acceptName` opening the session at `where`: a split on that side,
+/// a tab right after `where.after_tab`, or alone on the empty page the
+/// command opened. A launch that fails takes that page back.
+pub fn acceptNameAt(app: *App, product: Config.AiProduct, profile: []const u8, where: Where, text: []const u8) CommandError!app_mod.PaneId {
+    errdefer if (where.empty_page) |e| dropEmptyPage(app, e);
+    const id = try launchNamed(app, product, profile, where.placement, text);
+    if (where.after_tab) |b| placeAfter(app, id, b);
+    return id;
+}
+
+fn launchNamed(app: *App, product: Config.AiProduct, profile: []const u8, placement: pty_pane.Placement, text: []const u8) CommandError!app_mod.PaneId {
     const arena = app.frame.allocator();
     const name = std.mem.trim(u8, text, " \t\r\n");
     if (name.len == 0) return app.diag.fail(arena, "worktree: a name is needed", .{});
@@ -522,7 +544,7 @@ pub fn acceptName(app: *App, product: Config.AiProduct, profile: []const u8, tex
         .argv = l.argv,
         .cwd = path,
         .label = try std.fmt.allocPrint(arena, "{s} @ {s}", .{ l.label, name }),
-        .placement = .right,
+        .placement = placement,
         .kind = .command,
         .env_extra = &.{try std.fmt.allocPrint(arena, "MNML_WORKSPACE={s}", .{path})},
     }) catch |err| {
@@ -535,9 +557,47 @@ pub fn acceptName(app: *App, product: Config.AiProduct, profile: []const u8, tex
     return id;
 }
 
-/// `acceptName` for the prompt's dispatch (no id to keep).
-pub fn acceptNameCmd(app: *App, product: Config.AiProduct, profile: []const u8, text: []const u8) CommandError!void {
-    _ = try acceptName(app, product, profile, text);
+/// `acceptNameAt` for the prompt's dispatch (no id to keep).
+pub fn acceptNameCmd(app: *App, w: app_mod.PromptPurpose.SessionWorktreeName, text: []const u8) CommandError!void {
+    _ = try acceptNameAt(app, w.product, w.profile, w.where, text);
+}
+
+/// The prompt went without an answer (Esc, a click away): the empty
+/// page a `*_new_page` command opened for the session goes with it.
+pub fn promptCancelled(app: *App, w: app_mod.PromptPurpose.SessionWorktreeName) void {
+    if (w.where.empty_page) |e| dropEmptyPage(app, e);
+}
+
+/// The name prompt that is up, if one is: the command that opened it
+/// says where the session goes (`ai.*_new_tab`, `ai.*_new_page`).
+pub fn pendingWhere(app: *App) ?*Where {
+    if (app.overlay != .prompt) return null;
+    return switch (app.overlay.prompt.purpose) {
+        .session_worktree_name => |*w| &w.where,
+        else => null,
+    };
+}
+
+/// A tab opened on `b`'s strip moves right after `b`.
+pub fn placeAfter(app: *App, id: app_mod.PaneId, b: app_mod.PaneId) void {
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(b) orelse return;
+    if (layout.leafOf(id) != lid) return;
+    const leaf = layout.leaf(lid).?;
+    const at = std.mem.indexOfScalar(app_mod.PaneId, leaf.tabs.items, b) orelse return;
+    layout.reorderTab(id, at + 1);
+}
+
+/// Undo `tabNewEmpty` when nothing landed on the page: the page goes if
+/// it is still empty, and the page and pane that were on screen return.
+pub fn dropEmptyPage(app: *App, e: EmptyPage) void {
+    const ls = &app.layouts;
+    if (e.page >= ls.layouts.items.len or !ls.layouts.items[e.page].isEmpty()) return;
+    var gone = ls.layouts.orderedRemove(e.page);
+    gone.deinit();
+    ls.active = @min(e.from_page, ls.layouts.items.len - 1);
+    app.setActive(e.from_pane);
+    app.needs_render = true;
 }
 
 // ─── merge / remove, behind a named confirm ─────────────────────────────
@@ -954,6 +1014,52 @@ test "a profile with .worktree opens the name prompt from openSessionWith; the c
     defer bare.deinit();
     try t.expectError(error.Failed, openNamePrompt(&bare, .claude, launch_profiles.builtin_name));
     try t.expect(std.mem.indexOf(u8, bare.diag.msg.?, "not in a git repository") != null);
+}
+
+test "a worktree default profile: *_new_page puts the named session alone on a new page (Esc takes the page back); *_new_tab stacks it after the tab" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const dispatch = @import("dispatch.zig");
+    const profiles = [_]Config.LaunchProfile{.{ .name = "trees", .binary = "/bin/sh", .args = &.{ "-c", "sleep 30" }, .worktree = true }};
+    app.cfg.ai.launch_profiles = &profiles;
+    app.cfg.ai.default_profile.claude = "trees";
+    const file = try app.openScratch();
+    const pages = &app.layouts.layouts;
+    // New page: the prompt opens over the empty page; Enter lands the
+    // session there, alone.
+    try command.runNamed(app, "ai.claude_code_new_page");
+    try t.expect(app.overlay == .prompt);
+    try t.expectEqual(@as(usize, 2), pages.items.len);
+    try dispatch.key(app, .{ .code = .enter });
+    try t.expectEqual(@as(usize, 2), pages.items.len);
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    const on_page = app.active.?;
+    try t.expect(app.panes.pty(on_page) != null);
+    try t.expectEqual(@as(usize, 1), (try app.layouts.current().allPanes(app.frame.allocator())).len);
+    try t.expect(pages.items[0].leafOf(file) != null);
+    // Esc on a second one takes its empty page back, to the page and
+    // pane it came from.
+    app.layouts.active = 0;
+    app.setActive(file);
+    try command.runNamed(app, "ai.claude_code_new_page");
+    try t.expectEqual(@as(usize, 3), pages.items.len);
+    try dispatch.key(app, .{ .code = .esc });
+    try t.expect(app.overlay != .prompt);
+    try t.expectEqual(@as(usize, 2), pages.items.len);
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    try t.expectEqual(file, app.active.?);
+    // New tab: no split — the session stacks on the file's strip, right
+    // after it.
+    try command.runNamed(app, "ai.claude_code_new_tab");
+    try dispatch.key(app, .{ .code = .enter });
+    const tab = app.active.?;
+    try t.expect(app.panes.pty(tab) != null);
+    const layout = app.layouts.current();
+    try t.expectEqual(layout.leafOf(file).?, layout.leafOf(tab).?);
+    const tabs = layout.leaf(layout.leafOf(file).?).?.tabs.items;
+    try t.expectEqual(tab, tabs[std.mem.indexOfScalar(app_mod.PaneId, tabs, file).? + 1]);
 }
 
 test "merge / remove go through a named confirm; an unmerged branch asks a second time with Force" {

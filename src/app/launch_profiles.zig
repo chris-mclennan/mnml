@@ -229,7 +229,7 @@ pub fn isProductArgv(app: *const App, argv0: []const u8, product: Product) bool 
 /// (`session_worktree.acceptName`).
 pub fn openSessionWith(app: *App, product: Product, name: []const u8, placement: pty_pane.Placement) CommandError!?PaneId {
     if (find(app, product, name)) |p| if (p.worktree) {
-        try session_worktree.openNamePrompt(app, product, name);
+        try session_worktree.openNamePromptAt(app, product, name, .{ .placement = placement });
         return null;
     };
     const l = try launch(app, app.frame.allocator(), product, name);

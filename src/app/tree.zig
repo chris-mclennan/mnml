@@ -284,8 +284,12 @@ pub const Tree = struct {
         if (idx >= self.roots.items.len) return;
         const gone = self.roots.orderedRemove(idx);
         // The active root's index follows the roots after it down;
-        // removing the active one hands the dot back to the primary.
-        if (self.active_root == idx + 1) self.active_root = 0 else if (self.active_root > idx + 1) self.active_root -= 1;
+        // removing the active one hands the dot back to the primary, and
+        // the primary opens: the `●` does not land on a folded section.
+        if (self.active_root == idx + 1) {
+            self.active_root = 0;
+            self.primary_expanded = true;
+        } else if (self.active_root > idx + 1) self.active_root -= 1;
         defer {
             self.gpa.free(gone.name);
             self.gpa.free(gone.path);
@@ -2597,6 +2601,13 @@ test "view.remove_workspace lists the extra roots, the pick drops that one with 
     try t.expect(app.tree.rowOf(sub) == null);
     try t.expect(app.tree.cursor < app.tree.rows.items.len);
     try t.expect(std.mem.startsWith(u8, app.lastToast().?, "workspace removed: one"));
+    // The active root goes: the `●` is the primary's again, and the
+    // primary opens rather than staying folded under it.
+    try app.tree.switchTo(&app, 1);
+    try t.expect(!app.tree.primary_expanded);
+    try app.tree.removeRoot(&app, 0);
+    try t.expectEqual(@as(@TypeOf(app.tree.active_root), 0), app.tree.active_root);
+    try t.expect(app.tree.primary_expanded);
 }
 
 test "view.open_default_workspace adds and opens the configured folder, switches to it when it is open already, and names the missing key" {
