@@ -1206,6 +1206,26 @@ test "the open tree: one row per repo, a 24-hour-old PR still in the data, the m
     try t.expectEqual(@as(?u32, 1), r.worker.scope_gen);
 }
 
+test "the open tree off a server that gzips every answer: the same rows as plain" {
+    const r = try Rig.init();
+    defer r.deinit();
+    r.srv.gzipAnswers(.always);
+    var who = try r.run(.whoami);
+    defer who.deinit();
+    try t.expectEqualStrings("acct-chris", who.payload.whoami.account_id);
+
+    var open = try r.run(.{ .refresh = .{ .tab = 0, .spec = .{ .kind = .workspace_open_prs, .name = "Open + Draft", .workspace = "acme" }, .scope = acme_scope } });
+    defer open.deinit();
+    const o = open.payload.refresh;
+    try t.expectEqualStrings("Open + Draft · 2 repos, 3 PRs", o.status);
+    try t.expectEqual(@as(usize, 2), o.data.?.repo_pr_tree.len);
+    try t.expectEqualStrings("api", o.data.?.repo_pr_tree[0].slug);
+    try t.expectEqual(@as(usize, 2), o.data.?.repo_pr_tree[0].prs.len);
+    try t.expectEqual(@as(i64, 1234), o.data.?.repo_pr_tree[0].prs[0].id);
+    // The answers really went out compressed.
+    try t.expect(r.srv.snapshot().gzipped >= 3);
+}
+
 test "an unknown repo keeps its row with a label, and a mine-only tree drops the repos with nothing" {
     const r = try Rig.init();
     defer r.deinit();

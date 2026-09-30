@@ -61,6 +61,19 @@ pub const me_account_id = "acct-chris";
 pub const me_display_name = "Chris M";
 pub const workspace = "acme";
 
+/// When the fake's answers go out gzipped (`--gzip`, `--gzip-always`).
+pub const Gzip = enum {
+    /// Plain bytes, whatever the client offered: every test's default.
+    off,
+    /// Gzipped when the request's `Accept-Encoding` offers gzip, the
+    /// way Bitbucket Cloud answers a client that asks.
+    when_asked,
+    /// Gzipped whatever the client asked for — a proxy that
+    /// compresses on its own. The client reads `Content-Encoding`,
+    /// not what it offered.
+    always,
+};
+
 /// What a request changed. Everything the pane can write lands here so
 /// a test can assert the effect rather than the request.
 pub const State = struct {
@@ -103,6 +116,11 @@ pub const State = struct {
     /// runs against a workspace the size of a real one rather than the
     /// three the fixture needs to make its points.
     extra_prs: u32 = 0,
+    /// `--gzip` / `--gzip-always`: when an answer goes out gzipped.
+    gzip: Gzip = .off,
+    /// Answers that went out gzipped — how a test knows the client was
+    /// really sent compressed bytes, not plain ones.
+    gzipped: u32 = 0,
     /// Requests that arrived with no (or a bad) Authorization header.
     unauthorized: u32 = 0,
     /// Set when a write arrived; the corpus proves the write token

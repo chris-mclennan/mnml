@@ -26,7 +26,12 @@
 //!                  [--extra-issues N] [--log-file P] [--version]
 //!                  [--rate-limit-first N] [--retry-after N]
 //!                  [--rate-limit-limit N] [--rate-limit-remaining N]
-//!                  [--rate-limit-reset ISO]
+//!                  [--rate-limit-reset ISO] [--gzip]
+//!
+//! `--gzip` answers the way Jira Cloud does when the client offers
+//! compression: a body with `Content-Encoding: gzip` whenever the
+//! request's `Accept-Encoding` names gzip. Off by default, so every
+//! other test sees the same plain bytes it always has.
 //!
 //! The rate-limit flags are the budget dial. `--rate-limit-first N`
 //! answers the next N Jira requests `429` with `Retry-After:
@@ -95,6 +100,8 @@ pub const Response = struct {
     content_type: []const u8 = "application/json",
     /// Sent as `Retry-After: <n>` when set — a 429's hint.
     retry_after_secs: ?u32 = null,
+    /// The body is gzipped: sent as `Content-Encoding: gzip`.
+    gzipped: bool = false,
     /// `X-RateLimit-*`, when the budget dial is on (`Store.budget_limit`).
     budget: ?Budget = null,
 
@@ -109,7 +116,7 @@ pub const Response = struct {
     };
 
     pub const HeaderBuf = struct {
-        list: [6]std.http.Header = undefined,
+        list: [7]std.http.Header = undefined,
         num: [3][16]u8 = undefined,
     };
 
@@ -119,6 +126,10 @@ pub const Response = struct {
         var n: usize = 0;
         hb.list[n] = .{ .name = "content-type", .value = r.content_type };
         n += 1;
+        if (r.gzipped) {
+            hb.list[n] = .{ .name = "content-encoding", .value = "gzip" };
+            n += 1;
+        }
         if (r.retry_after_secs) |ra| {
             hb.list[n] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&hb.num[0], "{d}", .{ra}) catch "1" };
             n += 1;
@@ -218,6 +229,12 @@ pub const Store = struct {
     budget_limit: u32 = 0,
     budget_remaining: u32 = 0,
     budget_reset: []const u8 = "",
+    /// `--gzip`: gzip every answer whose request's `Accept-Encoding`
+    /// names gzip, the way Jira Cloud does.
+    gzip: bool = false,
+    /// Answers that went out gzipped — how a test knows the client
+    /// really was sent compressed bytes, not plain ones.
+    gzipped: std.atomic.Value(u32) = .init(0),
     requests: usize = 0,
     /// Where `--log-file` appends its JSON line per request; null is no
     /// log. The socket loop writes it, not `handle`, so a unit test
@@ -1084,6 +1101,7 @@ pub fn main(init: std.process.Init) !u8 {
     var parent_pid: i32 = 0;
     var require_auth = true;
     var quiet = false;
+    var gzip = false;
     var log_file: ?[]const u8 = null;
     var extra_issues: usize = 0;
     var rate_limit_first: u32 = 0;
@@ -1107,6 +1125,8 @@ pub fn main(init: std.process.Init) !u8 {
             require_auth = false;
         } else if (std.mem.eql(u8, a, "--quiet")) {
             quiet = true;
+        } else if (std.mem.eql(u8, a, "--gzip")) {
+            gzip = true;
         } else if (std.mem.eql(u8, a, "--port") and i + 1 < args.len) {
             i += 1;
             port = std.fmt.parseInt(u16, args[i], 10) catch 0;
@@ -1155,6 +1175,7 @@ pub fn main(init: std.process.Init) !u8 {
     var store = try Store.init(gpa);
     defer store.deinit();
     store.require_auth = require_auth;
+    store.gzip = gzip;
     if (extra_issues > 0) try store.addExtraIssues(extra_issues);
     store.rate_limit_next = rate_limit_first;
     if (retry_after) |ra| store.rate_limit_retry_after = ra;
@@ -1330,9 +1351,11 @@ pub fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream, op
         // the day the fixture was written.
         if (opts.stamp_clock) store.now_secs = Io.Timestamp.now(io, .real).toSeconds();
         var authorization: ?[]const u8 = null;
+        var wants_gzip = false;
         var it = request.iterateHeaders();
         while (it.next()) |h| {
             if (std.ascii.eqlIgnoreCase(h.name, "authorization")) authorization = arena.dupe(u8, h.value) catch null;
+            if (std.ascii.eqlIgnoreCase(h.name, "accept-encoding")) wants_gzip = acceptsGzip(h.value);
         }
         const target = arena.dupe(u8, request.head.target) catch break :lost .dropped;
         var body_buf: [8192]u8 = undefined;
@@ -1348,9 +1371,18 @@ pub fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream, op
         else
             0;
         const stop = std.mem.startsWith(u8, pathOf(target), opts.stop_path);
-        const res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
+        var res = store.handle(arena, request.head.method, target, authorization, body_store[0..n]) catch
             Response{ .status = 500, .body = "{\"errorMessages\":[\"out of memory\"],\"errors\":{}}" };
         logRequest(io, store, arena, request.head.method, target, res.status, res.body.len, body_store[0..n]);
+        // The log keeps the plain size; the wire gets what Jira Cloud
+        // sends a client that offered gzip.
+        if (store.gzip and wants_gzip and res.body.len > 0) {
+            if (gzipBody(arena, res.body)) |z| {
+                res.body = z;
+                res.gzipped = true;
+                _ = store.gzipped.fetchAdd(1, .monotonic);
+            } else |_| {}
+        }
         var hbuf: Response.HeaderBuf = .{};
         request.respond(res.body, .{
             .status = @enumFromInt(res.status),
@@ -1364,6 +1396,38 @@ pub fn serveOne(gpa: Allocator, io: Io, store: *Store, stream: Io.net.Stream, op
     const write_canceled = if (writer.err) |e| e == error.Canceled else false;
     if (read_canceled or write_canceled) return .canceled;
     return lost;
+}
+
+/// True when an `Accept-Encoding` value offers gzip: `gzip` (or
+/// `x-gzip`, or `*`) in the list, and not refused with `q=0`.
+pub fn acceptsGzip(value: []const u8) bool {
+    var items = std.mem.tokenizeScalar(u8, value, ',');
+    while (items.next()) |item| {
+        var parts = std.mem.tokenizeScalar(u8, item, ';');
+        const name = std.mem.trim(u8, parts.next() orelse continue, " \t");
+        if (!std.ascii.eqlIgnoreCase(name, "gzip") and !std.ascii.eqlIgnoreCase(name, "x-gzip") and !std.mem.eql(u8, name, "*")) continue;
+        var refused = false;
+        while (parts.next()) |param| {
+            const p = std.mem.trim(u8, param, " \t");
+            if (std.mem.startsWith(u8, p, "q=") and (std.fmt.parseFloat(f32, p[2..]) catch 1) == 0) refused = true;
+        }
+        if (!refused) return true;
+    }
+    return false;
+}
+
+/// `body` as a gzip stream, on `arena`.
+pub fn gzipBody(arena: Allocator, body: []const u8) (Allocator.Error || Io.Writer.Error)![]const u8 {
+    const flate = std.compress.flate;
+    var out: Io.Writer.Allocating = try .initCapacity(arena, body.len + 64);
+    const window = try arena.alloc(u8, flate.max_window_len);
+    // The compressor's match tables run past a hundred kilobytes: on
+    // the arena, not on a serving task's stack.
+    const z = try arena.create(flate.Compress);
+    z.* = try flate.Compress.init(&out.writer, window, .gzip, .default);
+    try z.writer.writeAll(body);
+    try z.finish();
+    return out.written();
 }
 
 /// The `jql` a search body carries, verbatim; empty for anything else.
@@ -1596,6 +1660,31 @@ test "--fail-with turns every Jira route into that status; target parsing; /__sh
     try testing.expectEqualStrings("project = ENG", try urlDecode(a.allocator(), "project%20%3D%20ENG"));
     try testing.expectEqual(@as(u16, 404), (try call(&store, a.allocator(), .GET, "/rest/api/3/nope", "")).status);
     try testing.expectEqual(@as(u16, 200), (try call(&store, a.allocator(), .GET, "/__shutdown", "")).status);
+}
+
+test "--gzip: an Accept-Encoding that offers gzip is read as one, and the body round-trips through the std decompressor" {
+    try testing.expect(acceptsGzip("gzip, deflate"));
+    try testing.expect(acceptsGzip("deflate, GZIP;q=0.5"));
+    try testing.expect(acceptsGzip("*"));
+    try testing.expect(!acceptsGzip("identity"));
+    try testing.expect(!acceptsGzip("deflate, zstd"));
+    try testing.expect(!acceptsGzip("gzip;q=0"));
+
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    var store = try Store.init(testing.allocator);
+    defer store.deinit();
+    const plain = (try call(&store, a.allocator(), .POST, "/rest/api/3/search/jql", "{\"jql\":\"project = ENG ORDER BY rank\"}")).body;
+    const z = try gzipBody(a.allocator(), plain);
+    // The gzip magic, and fewer bytes than the JSON it carries.
+    try testing.expectEqualSlices(u8, &.{ 0x1f, 0x8b }, z[0..2]);
+    try testing.expect(z.len < plain.len);
+    var in: Io.Reader = .fixed(z);
+    const window = try a.allocator().alloc(u8, std.compress.flate.max_window_len);
+    var d: std.compress.flate.Decompress = .init(&in, .gzip, window);
+    var back: Io.Writer.Allocating = .init(a.allocator());
+    _ = try d.reader.streamRemaining(&back.writer);
+    try testing.expectEqualStrings(plain, back.written());
 }
 
 /// `serveUntil` on a thread of its own, so a test can put a bound on it:

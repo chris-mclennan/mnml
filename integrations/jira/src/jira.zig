@@ -1353,6 +1353,74 @@ test "the client against a real socket: search, detail, the full issue, transiti
     try group.await(io);
 }
 
+test "the client against a site that gzips its answers: search, the detail and a board read the same as plain" {
+    // Jira Cloud gzips an answer whenever the client offers it, and the
+    // std client always offers it. A body read raw handed the JSON
+    // parser compressed bytes, and every pane said "not JSON".
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var store = try fake.Store.init(testing.allocator);
+    defer store.deinit();
+    store.gzip = true;
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var lb: Loopback = .{ .store = &store, .server = &server };
+    var group: Io.Group = .init;
+    try group.concurrent(io, Loopback.serve, .{ io, &lb });
+    defer group.cancel(io);
+    const base = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{server.socket.address.getPort()});
+    const authorization = try @import("auth.zig").basicHeader(arena, "fake@acme.com", "fake-token");
+    var c = Client.init(testing.allocator, io, base, authorization, .v3);
+
+    const all = try okOr([]const model.Issue, try searchIssues(&c, arena, "project = ENG ORDER BY rank", &.{"customfield_10056"}, "customfield_10056", .pane_open));
+    try testing.expectEqual(@as(usize, fake.issue_count), all.len);
+    try testing.expectEqualStrings("ENG-1", all[0].key);
+    try testing.expectEqualStrings("Checkout rewrite", all[0].summary);
+    try testing.expectEqualStrings("Apollo", all[0].team);
+    try testing.expectEqualStrings("Sprint 4", all[1].sprint);
+    const mine = try okOr([]const model.Issue, try searchIssues(&c, arena, TabKindJql(.work_assigned), &.{}, "", .pane_open));
+    try testing.expectEqual(@as(usize, 3), mine.len);
+
+    const d = try okOr(model.IssueDetail, try issueDetail(&c, arena, "ENG-2"));
+    try testing.expect(std.mem.indexOf(u8, d.description, "loses focus") != null);
+    try testing.expectEqual(@as(usize, 2), d.comments.len);
+    const sprint_issues = try okOr([]const Value, try boardIssues(&c, arena, fake.board_scrum, null, &.{}, .pane_open));
+    try testing.expectEqual(@as(usize, fake.sprint_issue_count), sprint_issues.len);
+
+    // The answers really went out compressed: a client that stopped
+    // offering gzip would pass everything above without testing a thing.
+    try testing.expect(store.gzipped.load(.monotonic) >= 4);
+
+    try lb.finish(&c, arena);
+    try group.await(io);
+}
+
+test "notJson names what came back: the read error for a body cut short, else the content-type, the size and the first bytes" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cut = "{\"issues\":[".*;
+    try testing.expectEqualStrings(
+        "the search answer was cut short after 11 bytes (ReadFailed)",
+        notJson(arena, "search", .{ .status = 200, .body = &cut, .retry_after_secs = null, .read_error = "ReadFailed", .content_type = "application/json" }),
+    );
+    // Compressed bytes handed over as-is: the gzip magic, unprintables
+    // shown as dots.
+    var gz = [_]u8{ 0x1f, 0x8b, 0x08, 0x00, 'a', 'b' };
+    try testing.expectEqualStrings(
+        "the search answer was not JSON (application/json;charset=UTF-8, 6 bytes: ....ab)",
+        notJson(arena, "search", .{ .status = 200, .body = &gz, .retry_after_secs = null, .content_type = "application/json;charset=UTF-8" }),
+    );
+    var html = "<html>Service Unavailable</html>".*;
+    try testing.expectEqualStrings(
+        "the answer was not JSON (no content-type, 32 bytes: <html>Service Unavailable</html>)",
+        notJson(arena, "", .{ .status = 200, .body = &html, .retry_after_secs = null }),
+    );
+}
+
 fn TabKindJql(k: config.TabKind) []const u8 {
     return k.defaultJql().?;
 }

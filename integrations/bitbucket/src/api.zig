@@ -753,6 +753,33 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     try t.expectEqualStrings("no such repo", missing.failed.shortLabel(&buf));
 }
 
+test "against a server that gzips: the client asks for identity, and a body compressed anyway reads the same" {
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
+    defer client.deinit();
+
+    // Asked for `identity`, a server that honours Accept-Encoding sends
+    // plain bytes.
+    srv.gzipAnswers(.when_asked);
+    var asked = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
+    defer asked.deinit(t.allocator);
+    try t.expect(asked == .ok);
+    try t.expectEqual(@as(u32, 0), srv.snapshot().gzipped);
+
+    // A proxy that compresses whatever was asked: the body is read
+    // through its Content-Encoding, not handed to the parser as gzip.
+    srv.gzipAnswers(.always);
+    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
+    defer prs.deinit(t.allocator);
+    try t.expect(prs == .ok);
+    try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Fix the login redirect") != null);
+    try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Bump the client timeout") == null);
+    try t.expectEqual(@as(u32, 1), srv.snapshot().gzipped);
+}
+
 test "against the fake server: an access token goes out as a Bearer and an account credential as Basic — the user's 401 reproduced" {
     const srv = try listener.Server.start(t.allocator, t.io, 0);
     defer srv.stop();
