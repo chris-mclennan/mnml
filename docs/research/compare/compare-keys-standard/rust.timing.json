@@ -1,6 +1,6 @@
 {
  "side": "rust",
- "bin": "/Users/chrismclennan/Projects/mnml/target/release/mnml",
+ "bin": "~/Projects/mnml/target/release/mnml",
  "pid": 99398,
  "steps": [
   {

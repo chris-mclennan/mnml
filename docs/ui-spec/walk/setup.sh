@@ -141,24 +141,24 @@ nested:
   a: true
   b: ~
 T
-cp /Users/chrismclennan/Projects/mnml-zig-worktrees/chrome-fixture/ws/requests/demo.http "$ROOT/pristine/ws/requests/demo.http"
+cp $HOME/Projects/mnml-zig-worktrees/chrome-fixture/ws/requests/demo.http "$ROOT/pristine/ws/requests/demo.http"
 [ -n "$WALK_PNG" ] && cp "$WALK_PNG" "$S/sample.png"
 # 2. data roots: private copies of the REAL ~/.config/mnml (both apps read it; Rust config.toml, Zig config.zon)
-cp -R /Users/chrismclennan/.config/mnml "$ROOT/pristine/rs-data"
-cp -R /Users/chrismclennan/.config/mnml "$ROOT/pristine/zig-data"
+cp -R $HOME/.config/mnml "$ROOT/pristine/rs-data"
+cp -R $HOME/.config/mnml "$ROOT/pristine/zig-data"
 rm -rf "$ROOT/pristine/rs-data/backups" "$ROOT/pristine/zig-data/backups"
 # 3. HOME: a private dir whose .claude mirrors the real one read-only-by-intent
-for e in /Users/chrismclennan/.claude/* /Users/chrismclennan/.claude/.[!.]*; do
+for e in $HOME/.claude/* $HOME/.claude/.[!.]*; do
   b=$(basename "$e"); [ "$b" = projects ] && continue; ln -s "$e" "$ROOT/home/.claude/$b"
 done
-P=/Users/chrismclennan/.claude/projects
+P=$HOME/.claude/projects
 ln -s "$P/-Users-chrismclennan-Projects-mnml-zig" "$ROOT/home/.claude/projects/-Users-chrismclennan-Projects-mnml-zig"
 for n in 1 2 3 4; do
   mkdir -p "$ROOT/slot$n"
   ln -s "$P/-Users-chrismclennan-Projects-acmeco-claude-workspace" "$ROOT/home/.claude/projects/-private-tmp-walk-slot$n-ws"
 done
 # the user's git identity / gh etc: symlink a few dotfiles so git works as the user
-for f in .gitconfig .gitignore_global .config; do [ -e "/Users/chrismclennan/$f" ] && ln -s "/Users/chrismclennan/$f" "$ROOT/home/$f"; done
+for f in .gitconfig .gitignore_global .config; do [ -e "$HOME/$f" ] && ln -s "$HOME/$f" "$ROOT/home/$f"; done
 # 4. shims — never the real CLI
 cat >"$ROOT/home/bin/claude" <<'T'
 #!/bin/bash

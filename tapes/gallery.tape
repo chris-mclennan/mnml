@@ -8,7 +8,7 @@ Set Width 1180
 Set Height 640
 Set Padding 8
 Set TypingSpeed 40ms
-Type "cd /Users/chrismclennan/Projects/mnml-zig-worktrees/ui && ./zig-out/bin/canvas-demo"
+Type "cd $HOME/Projects/mnml-zig-worktrees/ui && ./zig-out/bin/canvas-demo"
 Enter
 Sleep 2s
 Sleep 700ms

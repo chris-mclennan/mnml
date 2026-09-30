@@ -1,6 +1,6 @@
 {
  "side": "zig",
- "bin": "/Users/chrismclennan/Projects/mnml-zig-worktrees/compare/zig-out/bin/mnml-zig",
+ "bin": "~/Projects/mnml-zig-worktrees/compare/zig-out/bin/mnml-zig",
  "pid": 5033,
  "steps": [
   {

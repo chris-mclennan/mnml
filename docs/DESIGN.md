@@ -6,7 +6,7 @@
 
 ## Context
 
-mnml (`/Users/chrismclennan/Projects/mnml`) is a ~289k-LOC Rust/ratatui terminal IDE at v0.2.21 with a small existing user base (~70–140 asset downloads/release, 12 stars, 33 sibling integration crates depending on `mnml-bridge` 0.8.0). The user wants to port it to Zig 0.16.0 — not as a permanent parallel product, but as a **replacement**: full feature parity with the Rust version, then cut over on a version bump and let users pin 0.2.x if they need something that hasn't landed.
+mnml (`~/Projects/mnml`) is a ~289k-LOC Rust/ratatui terminal IDE at v0.2.21 with a small existing user base (~70–140 asset downloads/release, 12 stars, 33 sibling integration crates depending on `mnml-bridge` 0.8.0). The user wants to port it to Zig 0.16.0 — not as a permanent parallel product, but as a **replacement**: full feature parity with the Rust version, then cut over on a version bump and let users pin 0.2.x if they need something that hasn't landed.
 
 Decisions already made (by the user):
 - **Full parity of capability is the target.** No feature floor. "If it's replacing the Rust mnml then it needs to have what it has."
@@ -33,7 +33,7 @@ Strategy: **keep what's free to keep; redesign the rest.** External surfaces tha
 
 ### Phase 0 — Viability spike (2–3 weeks, hard stop)
 
-Answers one question: *is Zig 0.16 + this dependency set a credible host for this IDE?* Attacks the things that could each kill the project alone, riskiest first, so a "stop" verdict arrives in week 1 not week 3. Repo: `/Users/chrismclennan/Projects/mnml-zig`, binary `mnml-zig`.
+Answers one question: *is Zig 0.16 + this dependency set a credible host for this IDE?* Attacks the things that could each kill the project alone, riskiest first, so a "stop" verdict arrives in week 1 not week 3. Repo: `~/Projects/mnml-zig`, binary `mnml-zig`.
 
 **Week 1 — three foreign-code risks, in parallel (three agents, independent `build.zig` subtrees):**
 
