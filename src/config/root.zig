@@ -44,6 +44,7 @@ test {
     _ = @import("profile.zig");
     _ = @import("seed.zig");
     _ = @import("sandbox.zig");
+    _ = @import("sandbox_signal_test.zig");
     _ = @import("persist.zig");
     _ = @import("zon_tree.zig");
     _ = @import("zon_schema.zig");
