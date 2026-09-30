@@ -1,0 +1,35 @@
+---
+// The docs sidebar tree from src/nav.json. Folders are <details>, open
+// when they hold the current page; the current page is a solid accent
+// pill. Recursive: a folder renders its children with Astro.self.
+import Icon from "./Icon.astro";
+import { NAV_ITEMS, join } from "../lib/nav.mjs";
+const { items = NAV_ITEMS, base = "/docs", current, root = true } = Astro.props;
+const norm = (u) => u.replace(/\/$/, "") || "/";
+const cur = norm(current || "");
+const contains = (n, url) =>
+  n.type === "folder" ? (n.children || []).some((c) => contains(c, join(url, c.path))) : norm(url) === cur;
+---
+<ul class={root ? "nav-tree-root" : "children"}>
+  {root && (
+    <li><a class:list={["node", { active: cur === "/docs" }]} href="/docs" aria-current={cur === "/docs" ? "page" : undefined}>mnml Docs</a></li>
+  )}
+  {items.map((n) => {
+    const url = join(base, n.path);
+    if (n.type === "folder") {
+      const open = contains(n, url);
+      return (
+        <li>
+          <details open={open}>
+            <summary>{n.title}<Icon name="chevronDown" class="chevron" size={16} /></summary>
+            <Astro.self items={n.children} base={url} current={current} root={false} />
+          </details>
+        </li>
+      );
+    }
+    const active = norm(url) === cur;
+    return (
+      <li><a class:list={["node", { active }]} href={url} aria-current={active ? "page" : undefined}>{n.title}</a></li>
+    );
+  })}
+</ul>

@@ -1,0 +1,71 @@
+---
+// A docs page: sidebar tree │ breadcrumbs, h1 + lede, body, "Edit on
+// GitHub" │ the sidecar table of contents (hidden per page with hideToc,
+// and below 1276px). Mirrors ghostty.org/docs's layout.
+import Site from "./Site.astro";
+import NavTree from "../components/NavTree.astro";
+import Icon from "../components/Icon.astro";
+import { editUrl } from "../repo.mjs";
+const { title, description = "", crumbs = [], headings = [], hideToc = false, source = null, current, big = false } = Astro.props;
+const toc = hideToc ? [] : headings.filter((h) => h.depth <= 3);
+---
+<Site title={title} description={description} current={current}>
+  <div class="docs-page">
+    <aside class="docs-sidebar">
+      <nav class="nav-tree" aria-label="Documentation"><NavTree current={current} /></nav>
+    </aside>
+    <main class="docs-main">
+      <article class="docs-content">
+        <ol class="breadcrumbs" aria-label="Breadcrumbs">
+          {[{ title: "mnml Docs", url: "/docs" }, ...crumbs].map((c, i, all) => (
+            <li>
+              {i > 0 && <Icon name="chevronRight" size={16} class="sep" />}
+              {c.current ? <span aria-current="page">{c.title}</span> : c.url ? <a href={c.url}>{c.title}</a> : <span>{c.title}</span>}
+            </li>
+          ))}
+        </ol>
+        <header class="doc-heading">
+          <h1>{title}</h1>
+          {description && <p class="lede">{description}</p>}
+        </header>
+        <div class:list={["prose", { big }]}>
+          <slot />
+        </div>
+        {source && (
+          <a class="edit-link" href={editUrl(source)} rel="noopener">Edit on GitHub<Icon name="pencil" size={16} /></a>
+        )}
+      </article>
+      {toc.length > 0 && (
+        <nav class="sidecar" aria-label="On this page">
+          <ul>
+            {toc.map((h) => (<li style={`--d:${h.depth}`}><a href={`#${h.id}`}>{h.text}</a></li>))}
+          </ul>
+        </nav>
+      )}
+    </main>
+  </div>
+</Site>
+<script>
+  // Copy buttons on code blocks.
+  for (const b of document.querySelectorAll(".codeblock .copy")) {
+    b.addEventListener("click", async () => {
+      const code = b.parentElement.querySelector("pre")?.innerText ?? "";
+      try { await navigator.clipboard.writeText(code); b.textContent = "Copied"; b.classList.add("done"); } catch { b.textContent = "Select + copy"; }
+      setTimeout(() => { b.textContent = "Copy"; b.classList.remove("done"); }, 1500);
+    });
+  }
+  // The sidecar marks the heading the reader is in.
+  const links = [...document.querySelectorAll(".sidecar a")];
+  if (links.length) {
+    const byId = new Map(links.map((a) => [decodeURIComponent(a.hash.slice(1)), a.parentElement]));
+    const heads = [...byId.keys()].map((id) => document.getElementById(id)).filter(Boolean);
+    const mark = () => {
+      let cur = heads[0];
+      for (const h of heads) if (h.getBoundingClientRect().top < 140) cur = h;
+      for (const li of byId.values()) li.classList.remove("active");
+      byId.get(cur?.id)?.classList.add("active");
+    };
+    addEventListener("scroll", mark, { passive: true });
+    mark();
+  }
+</script>
