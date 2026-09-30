@@ -284,6 +284,7 @@ fn walkPanes(w: *Walk) Allocator.Error!void {
     inline for (comptime std.enums.values(std.meta.Tag(app_mod.Pane))) |k| try w.probeEntry("pane:" ++ @tagName(k), copy.chrome.paneKind(k));
     try w.probe("divider", .{ .divider = 0 });
     try w.probe("divider:info_view", .{ .divider = render.info_divider_id });
+    try w.probe("divider:sidebar", .{ .divider = render.tree_divider_id });
     try w.probe("scrollbar:pane", .{ .scrollbar = .{ .owner = .{ .pane = 0 }, .axis = .v } });
     try w.probe("scrollbar:panel", .{ .scrollbar = .{ .owner = .{ .panel = .todos }, .axis = .v } });
     try w.probe("scrollbar:tree", .{ .scrollbar = .{ .owner = .tree, .axis = .v } });
@@ -595,6 +596,17 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         fn sessionChanges(a: *App) Allocator.Error!void {
             return @import("session_changes.zig").openRowMenu(a, 5, 5);
         }
+        fn treeDivider(a: *App) Allocator.Error!void {
+            return cm.openTreeDividerMenu(a, 5, 5);
+        }
+        // The same menu with the sidebar on the right: its move row
+        // reads "…to the left".
+        fn treeDividerRight(a: *App) Allocator.Error!void {
+            const was = a.cfg.ui.sidebar_side;
+            a.cfg.ui.sidebar_side = .right;
+            defer a.cfg.ui.sidebar_side = was;
+            return cm.openTreeDividerMenu(a, 5, 5);
+        }
     };
     const openers = [_]Opener{
         .{ .name = "editor", .open = &Fns.editor },
@@ -641,6 +653,8 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         .{ .name = "usage_pane", .open = &Fns.usagePane },
         .{ .name = "usage_account", .open = &Fns.usageAccount },
         .{ .name = "session_changes", .open = &Fns.sessionChanges },
+        .{ .name = "tree_divider", .open = &Fns.treeDivider },
+        .{ .name = "tree_divider_right", .open = &Fns.treeDividerRight },
     };
     for (openers) |o| {
         w.closeOverlay();

@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │ 󰐕                                                                                                                                                            󱸀  󲀀    
-▌ │▌    docs               │
-   │     󱼅  notes.md         │
- 󰍉 │     src                │
-   │     󱼄  main.zig         │
- 󰊢 │     󱼅  util.zig       M │
-   │      .gitignore         │
-  │      CHANGELOG.md     ? │
-   │     󰂺 README.md          │
- 󰐱 │                          │
-   │         󰐙 Add workspace  │
- 󰎒 │                          │
-   │                          │
-  │                          │
-   │                          │
-  │                          │                                                                                                    _
-   │                          │                                                                    _ __ ___    _ __    _ __ ___   | |
-  │                          │                                                                   | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │                          │                        ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
- 󱘣 │                          │                        │  git                                                                       499 of 1150 │
-   │                          │                        │▌★ git  ·  Git: status / staging view  ·  git.status_pane                    space g s █│
- 󰢱 │                          │                        │ ★ view  ·  Activity: open git graph  ·  view.activity_git                ctrl+shift+g █│
-   │                          │                        │ git  ·  Git: diff the worktree  ·  git.diff                     space g D / space g d █│
-   │                          │                        │ git  ·  Open branch menu  ·  git.branch_menu                                          █│
-   │                          │                        │ git  ·  Git: refresh status now  ·  git.refresh                                       █│
-   │                          │                        │ git  ·  Git: diff this file (split)  ·  git.diff_file                       space g f █│here
-   │                          │                        │ git  ·  Git: toggle blame gutter  ·  git.blame_toggle            space g b / ctrl+k b █│
-   │                          │                        │ git  ·  Git: commit staged changes  ·  git.commit              space g c / ctrl+k g c █│
-   │                          │                        │ git  ·  Git: delete tag (picker)  ·  git.tag_delete                                   █│
-   │                          │                        │ git  ·  Git: redo the last undone commit  ·  git.redo                                 █│
-   │                          │                        │ git  ·  Git: commit graph (DAG browser)  ·  git.graph                       space g l █│
-   │                          │                        │ git  ·  Git: create a new branch  ·  git.new_branch                                   █│s
-   │                          │                        │ git  ·  Git: unstage everything  ·  git.unstage_all                                   █│ee
-   │                          │                        │ git  ·  Graph: drop the selected commit(s)  ·  git.drop                               █│tree
-   │                          │                        │ git  ·  Git: stash (push -u, optional message)  ·  git.stash                space g S █│ette
-   │                          │                        │ git  ·  Git: reopen a closed repo tab  ·  git.reopen_repo                             █│enu
-   │                          │                        │ git  ·  Graph: filter by branch…  ·  git.graph_filter_branch                          █│
-   │                          │                        │ git  ·  Graph: filter by date range…  ·  git.graph_filter_date                        █│
-   │                          │                        │ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│
-   │                          │                        └────────────────────────────────────────────────────────────────────────────────────────┘
-   │                          │
-   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │──────────────────────────│
-   │ Sidebar              󰐃 ⋮ │
-   │                          │
-   │ Arrows or j/k walk rows. │
-   │ Enter opens the          │
-   │ selection. Ctrl+Shift+P  │
-  │ opens the palette.       │
-   │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:34  ws   —
+   │  ● /Users/chrismc…            │ 󰐕                                                                                                                                                  󱸀  󲀀    
+▌ │▌    docs                         │
+   │   󱼅    notes.md                   │
+ 󰍉 │     src                          │
+   │   󱼄    main.zig                   │
+ 󰊢 │   󱼅    util.zig                 M │
+   │      .gitignore                   │
+  │      CHANGELOG.md               ? │
+   │     󰂺 README.md                    │
+ 󰐱 │                                    │
+   │                   󰐙 Add workspace  │
+ 󰎒 │                                    │
+   │                                    │
+  │                                    │
+   │                                    │
+  │                                    │                                                                                               _
+   │                                    │                                                               _ __ ___    _ __    _ __ ___   | |
+  │                                    │                                                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                                    │              ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
+ 󱘣 │                                    │              │  git                                                                       499 of 1158 │
+   │                                    │              │▌★ git  ·  Git: status / staging view  ·  git.status_pane                    space g s █│
+ 󰢱 │                                    │              │ ★ view  ·  Activity: open git graph  ·  view.activity_git                ctrl+shift+g █│
+   │                                    │              │ git  ·  Git: diff the worktree  ·  git.diff                     space g D / space g d █│
+   │                                    │              │ git  ·  Open branch menu  ·  git.branch_menu                                          █│
+   │                                    │              │ git  ·  Git: refresh status now  ·  git.refresh                                       █│
+   │                                    │              │ git  ·  Git: diff this file (split)  ·  git.diff_file                       space g f █│sion here
+   │                                    │              │ git  ·  Git: toggle blame gutter  ·  git.blame_toggle            space g b / ctrl+k b █│
+   │                                    │              │ git  ·  Git: commit staged changes  ·  git.commit              space g c / ctrl+k g c █│
+   │                                    │              │ git  ·  Git: delete tag (picker)  ·  git.tag_delete                                   █│
+   │                                    │              │ git  ·  Git: redo the last undone commit  ·  git.redo                                 █│
+   │                                    │              │ git  ·  Git: commit graph (DAG browser)  ·  git.graph                       space g l █│ file
+   │                                    │              │ git  ·  Git: create a new branch  ·  git.new_branch                                   █│ files
+   │                                    │              │ git  ·  Git: unstage everything  ·  git.unstage_all                                   █│le tree
+   │                                    │              │ git  ·  Graph: drop the selected commit(s)  ·  git.drop                               █│ the tree
+   │                                    │              │ git  ·  Git: stash (push -u, optional message)  ·  git.stash                space g S █│d palette
+   │                                    │              │ git  ·  Git: reopen a closed repo tab  ·  git.reopen_repo                             █│key menu
+   │                                    │              │ git  ·  Graph: filter by branch…  ·  git.graph_filter_branch                          █│heet
+   │                                    │              │ git  ·  Graph: filter by date range…  ·  git.graph_filter_date                        █│gs
+   │                                    │              │ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│le
+   │                                    │              └────────────────────────────────────────────────────────────────────────────────────────┘
+   │                                    │
+   │                                    │                                                                   mnml 0.3.0-dev+gabd6de27
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │────────────────────────────────────│
+   │ Sidebar                        󰐃 ⋮ │
+   │                                    │
+   │ Arrows or j/k walk rows. Enter     │
+   │ opens the selection. Ctrl+Shift+P  │
+   │ opens the palette.                 │
+  │                                    │
+   │                                    │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  16:56  ws   —
                                                                                                    ⋯

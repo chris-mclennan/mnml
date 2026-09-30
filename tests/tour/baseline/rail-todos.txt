@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │ TODOS (2)              │ 󰐕                                                                                                                                                            󱸀  󲀀    
-  │  󰍉 / filter              │
-   │                          │
- 󰍉 │  + New todo              │
-   │                          │
- 󰊢 │▌TODO read th…  …ain.zig:6│
-   │ FIXME an emp…  …in.zig:10│
-  │                          │
-   │                          │
- 󰐱 │                          │
-   │                          │
- 󰎒 │                          │
-   │                          │
-  │                          │
-   │                          │
-  │                          │                                                                                                    _
-   │                          │                                                                    _ __ ___    _ __    _ __ ___   | |
-▌ │                          │                                                                   | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │                          │                                                                   | | | | | | | | | | | | | | | | | |
- 󱘣 │                          │                                                                   |_| |_| |_| |_| |_| |_| |_| |_| |_|
-   │                          │
- 󰢱 │                          │                                                                workspace · ws  on main · 1 changed file
-   │                          │
-   │                          │                                   WORKSPACES                                          SESSIONS
-   │                          │                                    ws                                        open
-   │                          │                                                                                        + New Claude Code session here
-   │                          │                                   RECENT FILES
-   │                          │                                    main.zig                                   src      No session to resume
-   │                          │
-   │                          │                                                                                       SHORTCUTS
-   │                          │                                                                                        Ctrl+P         find a file
-   │                          │                                                                                        Ctrl+R         recent files
-   │                          │                                                                                        Ctrl+Shift+E   the file tree
-   │                          │                                                                                        Ctrl+B         toggle the tree
-   │                          │                                                                                        Ctrl+Shift+P   command palette
-   │                          │                                                                                        Ctrl+K         which-key menu
-   │                          │                                                                                        Ctrl+K Ctrl+S  cheatsheet
-   │                          │                                                                                        Ctrl+,         settings
-   │                          │                                                                                        Ctrl+N         new file
-   │                          │                                                                                        Ctrl+Q         quit
-   │                          │
-   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │                          │
-   │──────────────────────────│
-   │ Todos                󰐃 ⋮ │
-   │                          │
-   │ Arrows walk rows. Enter  │
-   │ jumps to the source. F6  │
-   │ cycles focus.            │
-  │                          │
-   │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:34  ws   —
+   │ TODOS (2)   sort: Newest first    │ 󰐕                                                                                                                                                  󱸀  󲀀    
+  │  󰍉 / filter                        │
+   │                                    │
+ 󰍉 │  + New todo                        │
+   │                                    │
+ 󰊢 │▌TODO read the numbers …  …ain.zig:6│
+   │ FIXME an empty list sh…  …in.zig:10│
+  │                                    │
+   │                                    │
+ 󰐱 │                                    │
+   │                                    │
+ 󰎒 │                                    │
+   │                                    │
+  │                                    │
+   │                                    │
+  │                                    │                                                                                               _
+   │                                    │                                                               _ __ ___    _ __    _ __ ___   | |
+▌ │                                    │                                                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                                    │                                                              | | | | | | | | | | | | | | | | | |
+ 󱘣 │                                    │                                                              |_| |_| |_| |_| |_| |_| |_| |_| |_|
+   │                                    │
+ 󰢱 │                                    │                                                           workspace · ws  on main · 1 changed file
+   │                                    │
+   │                                    │                              WORKSPACES                                          SESSIONS
+   │                                    │                               ws                                        open
+   │                                    │                                                                                   + New Claude Code session here
+   │                                    │                              RECENT FILES
+   │                                    │                               main.zig                                   src      No session to resume
+   │                                    │
+   │                                    │                                                                                  SHORTCUTS
+   │                                    │                                                                                   Ctrl+P         find a file
+   │                                    │                                                                                   Ctrl+R         recent files
+   │                                    │                                                                                   Ctrl+Shift+E   the file tree
+   │                                    │                                                                                   Ctrl+B         toggle the tree
+   │                                    │                                                                                   Ctrl+Shift+P   command palette
+   │                                    │                                                                                   Ctrl+K         which-key menu
+   │                                    │                                                                                   Ctrl+K Ctrl+S  cheatsheet
+   │                                    │                                                                                   Ctrl+,         settings
+   │                                    │                                                                                   Ctrl+N         new file
+   │                                    │                                                                                   Ctrl+Q         quit
+   │                                    │
+   │                                    │                                                                   mnml 0.3.0-dev+gabd6de27
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │                                    │
+   │────────────────────────────────────│
+   │ Todos                          󰐃 ⋮ │
+   │                                    │
+   │ Arrows walk rows. Enter jumps to   │
+   │ the source. F6 cycles focus.       │
+   │                                    │
+  │                                    │
+   │                                    │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  16:56  ws   —
                                                                                                    ⋯

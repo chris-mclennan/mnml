@@ -109,6 +109,31 @@ pub const rows = [_]Row{
     .{ .parent = "Sidebar", .label = "Auto-hide (reveal on the edge)", .entry = sidebarMode("auto", .@"view.sidebar_mode_auto", "the column stays down until the pointer rests in its one-cell screen edge, then paints over the editor — no pane moves and no terminal is resized") },
     .{ .parent = "Sidebar", .label = "Hidden (keyboard only)", .entry = sidebarMode("hidden", .@"view.sidebar_mode_hidden", "hover is off entirely; a command that targets the column still brings it up as a one-shot overlay, which is the only door left") },
 
+    // ── the sidebar divider's right-click menu ──
+    .{ .menu = "Sidebar divider", .label = "Reset width", .entry = .{
+        .title = "Reset the sidebar's width",
+        .body = "Drops the width a drag or *Set width…* gave the left column and puts back the config's: the number `ui.tree_width` names, or — at its default `auto` — a fifth of the window, 30 to 48 cells, which follows a resize again. The config file is not touched.",
+        .links = &.{ .{ .command = .{ .id = .@"view.reset_tree_width", .label = "Reset the width" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Tree width in Settings" } } },
+    } },
+    .{ .menu = "Sidebar divider", .label = "Set width…", .entry = .{
+        .title = "Set the sidebar's width",
+        .body = "Opens a prompt for the left column's width: a number of cells (`36`) or a share of the window (`25%`), landing between 10 and 80 cells — anything else is refused with a toast. The width holds like a dragged one: through a window resize and back with the session, until *Reset width*. To change the default for the workspace, use the Settings row instead.",
+        .links = &.{ .{ .command = .{ .id = .@"view.set_tree_width", .label = "Set it" } }, .{ .command = .{ .id = .@"view.reset_tree_width", .label = "Reset it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Tree width in Settings" } } },
+    } },
+    .{ .menu = "Sidebar divider", .label = "Hide sidebar", .entry = .{
+        .title = "Hide sidebar",
+        .body = "Puts the left column away and gives its width to the panes; the rail's icons stay, so a section is one click from coming back, and the width it had comes back with it.",
+        .keys = &.{.{ .command = .@"view.toggle_tree", .label = "Toggle the left column" }},
+        .links = &.{ .{ .command = .{ .id = .@"view.toggle_tree", .label = "Hide it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Sidebar mode in Settings" } } },
+    } },
+    .{ .menu = "Sidebar divider", .label = "Auto-hide sidebar", .entry = .{
+        .title = "Auto-hide the sidebar",
+        .body = "Stops docking the side columns: the one you are on goes down now and slides back over the editor when the pointer rests at its screen edge, leaving the panes their full width. It is `ui.sidebar = auto`, written to the home config, so it holds in every workspace; the tick says it is already on. The rail's *Sidebar ▸* rows switch it back.",
+        .links = &.{ .{ .command = .{ .id = .@"view.sidebar_mode_auto", .label = "Auto-hide it" } }, .{ .command = .{ .id = .@"view.sidebar_mode_always", .label = "Dock it again" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Sidebar mode in Settings" } } },
+    } },
+    .{ .menu = "Sidebar divider", .label = "Move sidebar to the right", .entry = sidebarSide("right", "the right column, and the outline to the left") },
+    .{ .menu = "Sidebar divider", .label = "Move sidebar to the left", .entry = sidebarSide("left", "the left column, beside the rail, and the outline to the right") },
+
     // ── the palette bar's sidebar toggle ──
     .{ .label = "Hide sidebar", .entry = .{
         .title = "Hide sidebar",
@@ -124,7 +149,7 @@ pub const rows = [_]Row{
     } },
     .{ .label = "Reset sidebar width", .entry = .{
         .title = "Reset sidebar width",
-        .body = "Puts the left column back to thirty columns — the width a fresh mnml starts at — undoing a drag of its divider. It is the live width only: `ui.tree_width` in the config is neither read nor written here, so a custom default is safe but is not what you get back. *Reset view to default* does this along with everything else the frame hides.",
+        .body = "Puts the left column back on the config's width, undoing a drag of its divider or *Set width…*: the number `ui.tree_width` names, or — at its default `auto` — a fifth of the window, 30 to 48 cells, which then follows a resize again. The config itself is not written. *Reset view to default* does this along with everything else the frame hides.",
         .links = &.{ .{ .command = .{ .id = .@"view.reset_tree_width", .label = "Reset the width" } }, .{ .command = .{ .id = .@"view.reset_layout", .label = "Reset the whole view" } }, .{ .settings = .{ .row = copy.settingsRow("ui.tree_width"), .label = "Column width in Settings" } } },
     } },
     .{ .label = "Focus sidebar", .entry = .{
@@ -489,6 +514,15 @@ fn sidebarMode(comptime value: []const u8, comptime id: command.CommandId, compt
         .title = "Sidebar — " ++ value,
         .body = "Writes `ui.sidebar = " ++ value ++ "` to the home config, so the side column behaves this way in every workspace: " ++ what ++ ". The tick marks the word in force, and any session pin is dropped as the mode changes. The rail and its icons stay whichever is picked.",
         .links = &.{ .{ .command = .{ .id = id, .label = "Use this mode" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar"), .label = "Sidebar mode in Settings" } }, .{ .command = .{ .id = .@"view.toggle_tree", .label = "Toggle the column now" } } },
+    };
+}
+
+/// The sidebar divider's move row: `ui.sidebar_side` flipped.
+fn sidebarSide(comptime dest: []const u8, comptime what: []const u8) Entry {
+    return .{
+        .title = "Move the sidebar to the " ++ dest,
+        .body = "Writes `ui.sidebar_side = ." ++ dest ++ "` to the home config: the sections that live on the sidebar by default — the explorer, TODOS, NOTES and the rest — go to " ++ what ++ ". A section you moved by hand (its rail menu's *Move to … side*) stays where you put it, and the dock is not touched.",
+        .links = &.{ .{ .command = .{ .id = .@"view.flip_sidebar_side", .label = "Move it" } }, .{ .settings = .{ .row = copy.settingsRow("ui.sidebar_side"), .label = "Sidebar side in Settings" } } },
     };
 }
 

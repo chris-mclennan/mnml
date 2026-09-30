@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │  main.zig 󰅖   󰐕                                                     󱸀  󲀀       │ 󲀀 ghostty (zsh) 󰅖   󰐕                                                󱸀  󲀀      
-▌ │▌    docs               │▌src › main.zig                                                                     │▌tour % ls src docs
-   │   󱼅    notes.md         │▌  1 const std = @import("std");                                                    │▌docs:
- 󰍉 │     src                │▌  2 const util = @import("util.zig");                                              │▌notes.md
-   │   󱼄    main.zig         │▌  3                                                                                │▌
- 󰊢 │   󱼅    util.zig       M │▌  4 /// The entry point: add a few numbers and print the total.                    │▌src:
-   │      .gitignore         │▌  5 pub fn main() !void {                                                          │▌main.zig        util.zig
-  │      CHANGELOG.md     ? │▌  6     // TODO: read the numbers from the command line.                           │▌tour % ▯
-   │     󰂺 README.md          │▌  7     const numbers = [_]i64{ 1, 2, 3, 4, 5 };                                   │▌
- 󰐱 │                          │▌  8 │   const total = util.sum(&numbers);                                          │▌
-   │         󰐙 Add workspace  │▌  9 │   std.debug.print("total: {d}\n", .{total});                                 │▌
- 󰎒 │                          │▌ 10 │   // FIXME: an empty list should print a friendlier message.                 │▌
-   │                          │▌ 11 │   if (total == 0) std.debug.print("nothing to add\n", .{});                  │▌
-  │                          │▌ 12 }                                                                              │▌
-   │                          │▌                                                                                   │▌
-  │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-  │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
- 󱘣 │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
- 󰢱 │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │──────────────────────────│▌                                                                                   │▌
-   │ main.zig  ·  ZIG  ·  󰐃 ⋮ │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
-   │ [F12] Definition ·       │▌                                                                                   │▌
-   │ [Shift+F12] References · │▌                                                                                   │▌
-   │ [Ctrl+.] Code actions ·  │▌                                                                                   │▌
-  │ [Ctrl+P] Files           │▌                                                                                   │▌
-   │                          │▌                                                                                   │▌
- EDIT  dev   main  󰐙 1  󰛕 1   main.zig  › main                                                                     󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    07:37  ws   zig
+   │  ● /Users/chrismc…            │  main.zig 󰅖   󰐕                                                󱸀  󲀀       │ 󲀀 ghostty (zsh) 󰅖   󰐕                                           󱸀  󲀀      
+▌ │▌    docs                         │▌src › main.zig                                                                │▌tour % ls src docs
+   │   󱼅    notes.md                   │▌  1 const std = @import("std");                                               │▌docs:
+ 󰍉 │     src                          │▌  2 const util = @import("util.zig");                                         │▌notes.md
+   │   󱼄    main.zig                   │▌  3                                                                           │▌
+ 󰊢 │   󱼅    util.zig                 M │▌  4 /// The entry point: add a few numbers and print the total.               │▌src:
+   │      .gitignore                   │▌  5 pub fn main() !void {                                                     │▌main.zig        util.zig
+  │      CHANGELOG.md               ? │▌  6     // TODO: read the numbers from the command line.                      │▌tour % ▯
+   │     󰂺 README.md                    │▌  7     const numbers = [_]i64{ 1, 2, 3, 4, 5 };                              │▌
+ 󰐱 │                                    │▌  8 │   const total = util.sum(&numbers);                                     │▌
+   │                   󰐙 Add workspace  │▌  9 │   std.debug.print("total: {d}\n", .{total});                            │▌
+ 󰎒 │                                    │▌ 10 │   // FIXME: an empty list should print a friendlier message.            │▌
+   │                                    │▌ 11 │   if (total == 0) std.debug.print("nothing to add\n", .{});             │▌
+  │                                    │▌ 12 }                                                                         │▌
+   │                                    │▌                                                                              │▌
+  │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+  │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+ 󱘣 │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+ 󰢱 │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │────────────────────────────────────│▌                                                                              │▌
+   │ main.zig  ·  ZIG  ·  L7:45  ·  󰐃 ⋮ │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+   │ [F12] Definition · [Shift+F12]     │▌                                                                              │▌
+   │ References · [Ctrl+.] Code actions │▌                                                                              │▌
+   │ · [Ctrl+P] Files                   │▌                                                                              │▌
+  │                                    │▌                                                                              │▌
+   │                                    │▌                                                                              │▌
+ EDIT  dev   main  󰐙 1  󰛕 1   main.zig  › main                                                                     󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    16:56  ws   zig
                                                                                                    ⋯

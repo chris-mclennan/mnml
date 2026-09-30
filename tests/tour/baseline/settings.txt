@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │ 󰐕                                                                                                                                                            󱸀  󲀀    
-▌ │▌    docs               │
-   │     󱼅  notes.md         │
- 󰍉 │     src                │
-   │     󱼄  main.zig         │
- 󰊢 │     󱼅  util.zig       M │
-   │      .gitignore         │
-  │      CHANGELOG.md     ? │
-   │     󰂺 README.md          │
- 󰐱 │                          │                           ╭ Settings · → .mnml/config.zon ───────────────────────────────────────────────────╮
-   │         󰐙 Add workspace  │                           │ UI · Editor · AI · Integrations · Reset                                          │
- 󰎒 │                          │                           │ ── UI ──                                                                        █│
-   │                          │                           │ ▸ Line numbers:                      off / [on]                                 █│
-  │                          │                           │   Relative line numbers:             [off] / on                                 █│
-   │                          │                           │   Highlight cursor line:             [off] / on                                 █│
-  │                          │                           │   Soft wrap:                         [off] / on                                 █│
-   │                          │                           │   Scrollbar:                         off / [on]                                 █│
-  │                          │                           │   Show whitespace:                   [off] / on                                 █│
-   │                          │                           │   Highlight trailing whitespace:     [off] / on                                 █│
- 󱘣 │                          │                           │   Rainbow brackets:                  [off] / on                                 █│
-   │                          │                           │   Syntax highlighting:               off / [on]                                 █│
- 󰢱 │                          │                           │   Tree previews on arrow:            off / [on]                                 █│
-   │                          │                           │   Preview tabs:                      off / [on]                                 █│
-   │                          │                           │   TODOS sort:                        [newest] / oldest / name / name_desc       █│
-   │                          │                           │   Theme:                             [onedark] ‹ 62/94 ›                        █│
-   │                          │                           │   ASCII icons:                       [off] / on                                 █│on here
-   │                          │                           │   Clock in statusline:               off / [on]                                 █│
-   │                          │                           │   Menu bar:                          [always] / auto / hidden                   █│
-   │                          │                           │   Activity bar:                      [always] / auto / hidden                   █│
-   │                          │                           │   Side columns:                      [always] / auto / hidden                   █│
-   │                          │                           │   Launcher dock:                     always / [auto_hide] / hidden              █│ile
-   │                          │                           │   Launcher dock edge:                [bottom] / left / right                    █│iles
-   │                          │                           │   Launcher dock placement:           [above statusline] / below command line    █│ tree
-   │                          │                           │   Launcher dock labels:              icon / [icon_label] / label                █│he tree
-   │                          │                           │   Launcher dock alignment:           start / [center] / end                     █│palette
-   │                          │                           │   Launcher dock + button:            off / [on]                                 █│y menu
-   │                          │                           │   Launcher dock + end:               [right] / left                             █│et
-   │                          │                           │   Launcher dock running mark:        [bright] / dot / none                      █│
-   │                          │                           │   Edge grips on slide-ins:           off / [on]                                 █│
-   │                          │                           │   Debug toolbar strip:               [auto] / always / hidden                   █│
-   │                          │                           │   Diag chip on tabs:                 [count] / dot / off                        █│
-   │                          │                           │   Expand indicator:                  [chevron] / triangle                       █│
-   │                          │                           │   Integration tab indicator:         [block] / rule / line / quarter ›          █│
-   │                          │                           │   Picker position:                   [center] / top                             █│
-   │                          │                           │   Workspace dots:                    off / [on]                                 █│
-   │                          │                           │   Hover help:                        off / [on]                                 █│
-   │                          │                           │   Hover tooltips:                    [off] / on                                 █│
-   │                          │                           │ 1–36 of 123  ←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel │
-   │                          │                           ╰──────────────────────────────────────────────────────────────────────────────────╯
-   │──────────────────────────│
-   │ Sidebar              󰐃 ⋮ │
-   │                          │
-   │ Arrows or j/k walk rows. │
-   │ Enter opens the          │
-   │ selection. Ctrl+Shift+P  │
-  │ opens the palette.       │
-   │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:34  ws   —
+   │  ● /Users/chrismc…            │ 󰐕                                                                                                                                                  󱸀  󲀀    
+▌ │▌    docs                         │
+   │   󱼅    notes.md                   │
+ 󰍉 │     src                          │
+   │   󱼄    main.zig                   │
+ 󰊢 │   󱼅    util.zig                 M │
+   │      .gitignore                   │
+  │      CHANGELOG.md               ? │
+   │     󰂺 README.md                    │
+ 󰐱 │                                    │                 ╭ Settings · → .mnml/config.zon ───────────────────────────────────────────────────╮
+   │                   󰐙 Add workspace  │                 │ UI · Editor · AI · Integrations · Reset                                          │
+ 󰎒 │                                    │                 │ ── UI ──                                                                        █│
+   │                                    │                 │ ▸ Line numbers:                      off / [on]                                 █│
+  │                                    │                 │   Relative line numbers:             [off] / on                                 █│
+   │                                    │                 │   Highlight cursor line:             [off] / on                                 █│
+  │                                    │                 │   Soft wrap:                         [off] / on                                 █│
+   │                                    │                 │   Scrollbar:                         off / [on]                                 █│
+  │                                    │                 │   Show whitespace:                   [off] / on                                 █│
+   │                                    │                 │   Highlight trailing whitespace:     [off] / on                                 █│
+ 󱘣 │                                    │                 │   Rainbow brackets:                  [off] / on                                 █│
+   │                                    │                 │   Syntax highlighting:               off / [on]                                 █│
+ 󰢱 │                                    │                 │   Tree previews on arrow:            off / [on]                                 █│
+   │                                    │                 │   Preview tabs:                      off / [on]                                 █│
+   │                                    │                 │   TODOS sort:                        [newest] / oldest / name / name_desc       █│
+   │                                    │                 │   Theme:                             [onedark] ‹ 62/94 ›                        █│
+   │                                    │                 │   ASCII icons:                       [off] / on                                 █│session here
+   │                                    │                 │   Clock in statusline:               off / [on]                                 █│
+   │                                    │                 │   Menu bar:                          [always] / auto / hidden                   █│me
+   │                                    │                 │   Activity bar:                      [always] / auto / hidden                   █│
+   │                                    │                 │   Side columns:                      [always] / auto / hidden                   █│
+   │                                    │                 │   Launcher dock:                     always / [auto_hide] / hidden              █│d a file
+   │                                    │                 │   Launcher dock edge:                [bottom] / left / right                    █│ent files
+   │                                    │                 │   Launcher dock placement:           [above statusline] / below command line ›  █│ file tree
+   │                                    │                 │   Launcher dock labels:              icon / [icon_label] / label                █│gle the tree
+   │                                    │                 │   Launcher dock alignment:           start / [center] / end                     █│mand palette
+   │                                    │                 │   Launcher dock + button:            off / [on]                                 █│ch-key menu
+   │                                    │                 │   Launcher dock + end:               [right] / left                             █│atsheet
+   │                                    │                 │   Launcher dock running mark:        [bright] / dot / none                      █│tings
+   │                                    │                 │   Edge grips on slide-ins:           off / [on]                                 █│ file
+   │                                    │                 │   Debug toolbar strip:               [auto] / always / hidden                   █│t
+   │                                    │                 │   Diag chip on tabs:                 [count] / dot / off                        █│
+   │                                    │                 │   Expand indicator:                  [chevron] / triangle                       █│
+   │                                    │                 │   Integration tab indicator:         [block] / rule / line / quarter ›          █│
+   │                                    │                 │   Picker position:                   [center] / top                             █│
+   │                                    │                 │   Workspace dots:                    off / [on]                                 █│
+   │                                    │                 │   Hover help:                        off / [on]                                 █│
+   │                                    │                 │   Hover tooltips:                    [off] / on                                 █│
+   │                                    │                 │ 1–36 of 123  ←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel │
+   │                                    │                 ╰──────────────────────────────────────────────────────────────────────────────────╯
+   │────────────────────────────────────│
+   │ Sidebar                        󰐃 ⋮ │
+   │                                    │
+   │ Arrows or j/k walk rows. Enter     │
+   │ opens the selection. Ctrl+Shift+P  │
+   │ opens the palette.                 │
+  │                                    │
+   │                                    │
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  16:56  ws   —
                                                                                                    ⋯

@@ -1744,6 +1744,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
             app.focus = .{ .pane = app.active.? };
         },
         .tab_width => try context_menus.acceptTabWidth(app, text),
+        .tree_width => try context_menus.acceptTreeWidth(app, text),
         .image_open => try image_pane.acceptOpen(app, text),
         .replace => try cmd_find.replaceAll(app, text),
         .filter_shell => try filterThroughShell(app, text),
@@ -2644,6 +2645,11 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             else => {},
         },
         .divider => |id| {
+            // The sidebar's divider has a menu: its width, hiding it, its side.
+            if (m.kind == .press and m.button == .right and id == render.tree_divider_id) {
+                if (app.overlay != .none) closeOverlay(app);
+                return context_menus.openTreeDividerMenu(app, m.x, m.y);
+            }
             if (m.kind != .press or m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
             // The info view's rule: a double-click puts back the
@@ -3672,7 +3678,7 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         },
         .tree_divider => if (m.kind == .drag) {
             const upper_w = app.screen.width;
-            app.tree.width = std.math.clamp(m.x, 8, upper_w -| 22);
+            side.pinTreeWidth(app, std.math.clamp(m.x, 8, upper_w -| 22));
         },
         .right_divider => if (m.kind == .drag) {
             app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
@@ -5305,7 +5311,8 @@ const HitTag = std.meta.Tag(@import("../ui/hit.zig").HitTarget);
 
 pub const right_click_of = std.EnumArray(HitTag, RightClick).init(.{
     .pane = .here,
-    .divider = .{ .none = "drag" },
+    // The sidebar's divider opens its menu; the others only drag.
+    .divider = .here,
     .tab = .here,
     .tab_close = .here,
     .breadcrumb = .here,

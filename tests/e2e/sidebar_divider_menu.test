@@ -1,0 +1,39 @@
+# Right-click the sidebar's divider — the one-cell edge between the
+# left column and the editor, at column 30 of a 120-wide frame (the
+# window share: a fifth, never under 30). The menu: the width by the
+# config or by hand, the column's two ways out of sight, and its side.
+write whole_at_thirty.md "one\n"
+expect screen contains "whole_at_thirty.md "
+rightclick 30 10
+expect screen contains "Reset width"
+expect screen contains "Set width…"
+expect screen contains "Hide sidebar"
+expect screen contains "Auto-hide sidebar"
+expect screen contains "Move sidebar to the right"
+# Set width… takes a share of the window: 40% of 120 is 48 cells, so
+# the divider moves to column 48.
+key down
+key enter
+expect screen contains "Sidebar width (cells, or a share like 25%)"
+type "40%"
+key enter
+expect screen contains "sidebar width: 48"
+rightclick 48 10
+expect screen contains "Reset width"
+# Junk is refused and the width stays.
+key down
+key enter
+type "wide"
+key enter
+expect screen contains "sidebar width: a number of cells or a share like 25%"
+rightclick 48 10
+expect screen contains "Reset width"
+# Reset width: back to the share — the divider at 30 again.
+key enter
+rightclick 30 10
+expect screen contains "Move sidebar to the right"
+# Move sidebar to the right: the explorer goes to the right column; the
+# row now offers the way back.
+key end
+key enter
+expect screen contains "sidebar: right side"

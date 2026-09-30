@@ -128,6 +128,10 @@ architecture behind it is in `docs/DESIGN.md`.
   proportions. Integrations, terminals and session panes all follow the one
   rule now. `integrations.arrange = .fixed` — a row under Integrations in the
   settings overlay — puts back the old half-the-active-pane sizing.
+- The sidebar is a fifth of the window by default — 30 cells up to 150
+  columns, 40 at 200, never more than 48 — and follows a resize; a number in
+  `ui.tree_width` still pins it. Right-click its divider to reset or set the
+  width (cells or `25%`), hide or auto-hide it, or move it to the other side.
 
 ### Config — ZON, not TOML
 

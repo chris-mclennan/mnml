@@ -18,12 +18,14 @@
 .{
     // The pane rails: the focused pane's `▌` is bright, a stepped-back
     // pane's is dimmed. The shell was just opened and holds the focus.
-    .{ .shot = "split-shell", .col = 116, .row = 10, .fx = 0.25, .expect = "#abb2bf", .why = "the focused shell pane's rail is bright" },
-    .{ .shot = "split-shell", .col = 31, .row = 10, .fx = 0.25, .expect = "#4c5e47", .why = "the unfocused editor's rail is its stepped-back green" },
-    .{ .shot = "split-shell", .col = 116, .row = 10, .fx = 0.25, .unlike = .{ .col = 31, .row = 10, .fx = 0.25, .min_delta = 60 }, .why = "focused and stepped-back rails are told apart" },
+    // At 200 wide the sidebar is its window share, 40 cells, so the
+    // editor's rail is column 41 and the shell's, past the split, 121.
+    .{ .shot = "split-shell", .col = 121, .row = 10, .fx = 0.25, .expect = "#abb2bf", .why = "the focused shell pane's rail is bright" },
+    .{ .shot = "split-shell", .col = 41, .row = 10, .fx = 0.25, .expect = "#4c5e47", .why = "the unfocused editor's rail is its stepped-back green" },
+    .{ .shot = "split-shell", .col = 121, .row = 10, .fx = 0.25, .unlike = .{ .col = 41, .row = 10, .fx = 0.25, .min_delta = 60 }, .why = "focused and stepped-back rails are told apart" },
     // Focus back on the editor: the two swap.
-    .{ .shot = "editor-refocused", .col = 31, .row = 10, .fx = 0.25, .expect = "#98c379", .why = "the focused editor's rail is full green" },
-    .{ .shot = "editor-refocused", .col = 116, .row = 10, .fx = 0.25, .expect = "#525861", .why = "the unfocused shell's rail steps back to grey" },
+    .{ .shot = "editor-refocused", .col = 41, .row = 10, .fx = 0.25, .expect = "#98c379", .why = "the focused editor's rail is full green" },
+    .{ .shot = "editor-refocused", .col = 121, .row = 10, .fx = 0.25, .expect = "#525861", .why = "the unfocused shell's rail steps back to grey" },
     // The statusline mode chip: TREE blue at rest, HELP lavender while
     // the info panel holds the keys (`help.focus`).
     .{ .shot = "start", .col = 0, .row = 58, .fx = 0.1, .fy = 0.1, .expect = "#61afef", .why = "the mode chip is TREE blue at rest" },

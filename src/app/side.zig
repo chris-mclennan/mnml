@@ -130,8 +130,12 @@ pub const State = struct {
     /// its last move — what `Ctrl-W K` brings a docked section back to.
     came_from: std.EnumArray(Section, ?Side) = .initFill(null),
     /// The right column's width (`ui.right_panel_width`); the left's
-    /// is `tree.width` (`ui.tree_width`).
+    /// is `tree.width` (`ui.tree_width`, resolved by `treeWidth`).
     right_width: u16 = 32,
+    /// The left column's live width was set by hand — a divider drag,
+    /// *Set width…*, a restored session that had one — and no longer
+    /// follows the config or a resize. *Reset width* clears it.
+    tree_pinned: bool = false,
     /// // changed (bottom-dock): the dock's height in rows
     /// (`ui.bottom_panel_height`; Rust's `bottom_panel_height`).
     bottom_height: u16 = 12,
@@ -196,6 +200,52 @@ pub fn shown(app: *const App, side: Side) ?Section {
 
 pub fn isShown(app: *const App, s: Section) bool {
     return shown(app, sideOf(app, s)) == s;
+}
+
+/// The left column's width by the config at `cols` wide — the one
+/// answer every reader of `ui.tree_width` asks: the number when it names
+/// one, else `tree_width_share_pct` of the window clamped to
+/// `tree_width_auto_min..max` (30 at 80 and 120 columns, 32 at 160, 40
+/// at 200). A hand-set width (`tree_pinned`) is not this; `resolvedTreeWidth`
+/// is what the live column falls back to.
+pub fn treeWidth(cfg: *const Config, cols: u16) u16 {
+    if (cfg.ui.tree_width != 0) return std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
+    const share: u16 = @intCast(@as(u32, cols) * Config.tree_width_share_pct / 100);
+    return std.math.clamp(share, Config.tree_width_auto_min, Config.tree_width_auto_max);
+}
+
+/// `treeWidth` for the app's own window.
+pub fn defaultTreeWidth(app: *const App) u16 {
+    return treeWidth(&app.cfg, app.screen.width);
+}
+
+/// Put the left column back on the config's width when nothing pinned
+/// it — at start, on a resize, on a config reload. Under git mode's
+/// snap the width the mode gives back is the one that moves.
+pub fn syncTreeWidth(app: *App) void {
+    if (app.side.tree_pinned) return;
+    const w = defaultTreeWidth(app);
+    if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (ps.side == .left) {
+        ps.n = w;
+        return;
+    };
+    app.tree.width = w;
+}
+
+/// A width set by hand: the live column takes it and keeps it through
+/// a resize until *Reset width*.
+pub fn pinTreeWidth(app: *App, n: u16) void {
+    app.side.tree_pinned = true;
+    app.tree.width = n;
+    app.needs_render = true;
+}
+
+/// *Reset width* / `view.reset_tree_width`: drop a hand-set width and
+/// go back to the config's — its number, or the window share.
+pub fn resetTreeWidth(app: *App) void {
+    app.side.tree_pinned = false;
+    syncTreeWidth(app);
+    app.needs_render = true;
 }
 
 /// A host's own measure: the columns in cells across, the dock in rows
@@ -400,10 +450,15 @@ fn fallbackFor(app: *const App, side: Side, gone: Section) ?Section {
     return null;
 }
 
-/// Re-read every section's side from the config (a `ui.sidebar_side`
-/// change): a shown section whose side changed moves.
-pub fn reseed(app: *App) void {
+/// Re-read the sections' sides after `ui.sidebar_side` flipped away
+/// from `before`: a section still where the old default put it follows
+/// the new one (moving, if shown); one moved by hand (*Move to right
+/// side*, `Ctrl-W L`) keeps its column.
+pub fn reseedFrom(app: *App, before: Config.ColumnSide) void {
+    var old = app.cfg;
+    old.ui.sidebar_side = before;
     for (Section.all) |s| {
+        if (sideOf(app, s) != configuredSide(&old, s)) continue;
         const want = configuredSide(&app.cfg, s);
         if (want == sideOf(app, s)) continue;
         const was_shown = isShown(app, s);
@@ -991,4 +1046,68 @@ test "git mode's snap is the mode's: the column it narrowed gets its width back 
     try command.run(&app, .{ .static = .@"view.toggle_right_panel" });
     try t.expectEqual(@as(u16, 32), app.side.right_width);
     try t.expectEqual(@as(u16, 40), app.tree.width);
+}
+
+test "treeWidth: a fifth of the window, 30..48 — 30 at 80 and 120, 32 at 160, 40 at 200 — unless ui.tree_width names a number" {
+    var cfg: Config = .{};
+    try t.expectEqual(@as(u16, 30), treeWidth(&cfg, 80));
+    try t.expectEqual(@as(u16, 30), treeWidth(&cfg, 120));
+    try t.expectEqual(@as(u16, 32), treeWidth(&cfg, 160));
+    try t.expectEqual(@as(u16, 40), treeWidth(&cfg, 200));
+    // The clamps: never under 30, never over 48.
+    try t.expectEqual(Config.tree_width_auto_min, treeWidth(&cfg, 40));
+    try t.expectEqual(Config.tree_width_auto_min, treeWidth(&cfg, 0));
+    try t.expectEqual(Config.tree_width_auto_max, treeWidth(&cfg, 300));
+    try t.expectEqual(Config.tree_width_auto_max, treeWidth(&cfg, 1000));
+    // An explicit number wins at every width, clamped as the load does.
+    cfg.ui.tree_width = 36;
+    for ([_]u16{ 80, 120, 200, 400 }) |cols| try t.expectEqual(@as(u16, 36), treeWidth(&cfg, cols));
+    cfg.ui.tree_width = 3;
+    try t.expectEqual(Config.tree_width_min, treeWidth(&cfg, 200));
+}
+
+test "the left column: the share at start and on a resize; an explicit number holds; a drag pins through a resize; reset unpins; the session keeps a pin and not a share" {
+    {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 200, .rows = 40 });
+        defer app.deinit();
+        try t.expectEqual(@as(u16, 40), app.tree.width);
+        try app.resize(80, 24);
+        try t.expectEqual(@as(u16, 30), app.tree.width);
+        try app.resize(160, 40);
+        try t.expectEqual(@as(u16, 32), app.tree.width);
+        // A drag wins over the share, and holds through a resize.
+        pinTreeWidth(&app, 45);
+        try app.resize(200, 40);
+        try t.expectEqual(@as(u16, 45), app.tree.width);
+        // A session saved now remembers the pin; unpinned, it does not.
+        var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_state.deinit();
+        const session = @import("session.zig");
+        const pinned = try session.capture(&app, arena_state.allocator());
+        try t.expectEqual(@as(u16, 45), pinned.tree_width);
+        try t.expectEqual(@as(?bool, true), pinned.tree_width_pinned);
+        resetTreeWidth(&app);
+        try t.expectEqual(@as(u16, 40), app.tree.width);
+        const auto = try session.capture(&app, arena_state.allocator());
+        try t.expectEqual(@as(?bool, false), auto.tree_width_pinned);
+        // Under git mode's snap a resize moves the width the mode gives
+        // back, not the snapped one.
+        try command.run(&app, .{ .static = .@"view.activity_git" });
+        try t.expectEqual(@as(u16, 40), app.tree.width); // a fifth of 200, the snap's own rule
+        try app.resize(160, 40);
+        try command.run(&app, .{ .static = .@"view.activity_explorer" });
+        try t.expectEqual(@as(u16, 32), app.tree.width);
+    }
+    {
+        var cfg: Config = .{};
+        cfg.ui.tree_width = 36;
+        var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 200, .rows = 40 });
+        defer app.deinit();
+        try t.expectEqual(@as(u16, 36), app.tree.width);
+        try app.resize(80, 24);
+        try t.expectEqual(@as(u16, 36), app.tree.width);
+        pinTreeWidth(&app, 50);
+        resetTreeWidth(&app);
+        try t.expectEqual(@as(u16, 36), app.tree.width);
+    }
 }

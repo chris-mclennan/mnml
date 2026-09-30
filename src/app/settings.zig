@@ -282,7 +282,9 @@ pub const rows = [_]RowSpec{
     // // changed (bottom-dock): the dock's pair, beside the column's.
     .{ .path = "ui.bottom_panel_visible", .label = "Bottom dock at start", .section = .ui, .scope = .workspace },
     .{ .path = "ui.bottom_panel_height", .label = "Bottom dock rows", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.bottom_panel_height_min, .max = config.Config.bottom_panel_height_max, .step = 1 } },
-    .{ .path = "ui.tree_width", .label = "Tree width", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.tree_width_min, .max = config.Config.tree_width_max, .step = 2 } },
+    // 0 is `auto` — the window share (`side.treeWidth`); a step off it
+    // starts from the width the share gives now.
+    .{ .path = "ui.tree_width", .label = "Tree width", .section = .ui, .scope = .workspace, .number = .{ .min = config.Config.tree_width_min, .max = config.Config.tree_width_max, .step = 2, .zero = "auto" } },
     .{ .path = "ui.sidebar_side", .label = "Default sidebar side", .section = .ui, .scope = .home },
     // The width under which a docked column (`ui.sidebar`) reads as
     // `auto`; 0 is never. With the column's other geometry — its
@@ -931,13 +933,26 @@ pub fn adjust(app: *App, id: u32, delta: i8) Allocator.Error!void {
     inline for (rows, 0..) |r, i| if (i == id) {
         const cur = rowIndex(app, r.path);
         if (r.number) |num| {
-            const next = if (delta < 0) @max(cur -| num.step, num.min) else @min(cur + num.step, num.max);
+            // A word at 0 (`auto`): a step off it starts from the value
+            // the word stands for now; a step down from `min` lands on it.
+            const base = if (num.zero != null and cur == 0) zeroValue(app, r.path) else cur;
+            const next = if (delta < 0)
+                (if (num.zero != null and base <= num.min) 0 else @max(base -| num.step, num.min))
+            else
+                @min(@max(base + num.step, num.min), num.max);
             return setRow(app, id, next);
         }
         const n = options(r.path).len;
         const next = if (delta < 0) (cur + n - 1) % n else (cur + 1) % n;
         return setRow(app, id, next);
     };
+}
+
+/// What a number row's 0 word stands for right now — the value a step
+/// off it starts from.
+fn zeroValue(app: *const App, comptime path: []const u8) usize {
+    if (comptime std.mem.eql(u8, path, "ui.tree_width")) return side.defaultTreeWidth(app);
+    return 0;
 }
 
 /// Set row `id` to its `idx`th option: the live config, the derived
@@ -962,8 +977,15 @@ pub fn setRow(app: *App, id: u32, idx: usize) Allocator.Error!void {
             app.needs_render = true;
             return;
         }
+        const side_before = app.cfg.ui.sidebar_side;
         setIndex(&app.cfg, r.path, idx);
         try applyDerived(app, r.path);
+        // The sections that follow the default change columns; one moved
+        // by hand keeps its own (as the divider menu's *Move sidebar*).
+        if (comptime std.mem.eql(u8, r.path, "ui.sidebar_side")) {
+            side.reseedFrom(app, side_before);
+            if (app.overlay != .none) app.focus = .overlay;
+        }
         _ = try persist(app, r.scope, comptime keyPath(r.path), fieldPtr(&app.cfg, r.path).*);
         if (app.overlay == .settings) if (app.overlay.settings.overrides[i]) |over| {
             const arena = app.frame.allocator();
@@ -1008,7 +1030,7 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
     } else if (comptime std.mem.eql(u8, path, "ui.clock")) {
         @import("clock.zig").seed(app);
     } else if (comptime std.mem.eql(u8, path, "ui.tree_width")) {
-        app.tree.width = app.cfg.ui.tree_width;
+        side.resetTreeWidth(app);
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_width")) {
         app.side.right_width = @max(app.cfg.ui.right_panel_width, 8);
     } else if (comptime std.mem.eql(u8, path, "ui.right_panel_visible")) {
@@ -1027,9 +1049,6 @@ fn applyDerived(app: *App, comptime path: []const u8) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         };
-        if (app.overlay != .none) app.focus = .overlay;
-    } else if (comptime std.mem.eql(u8, path, "ui.sidebar_side")) {
-        side.reseed(app);
         if (app.overlay != .none) app.focus = .overlay;
     } else if (comptime std.mem.eql(u8, path, "editor.tab_width")) {
         try app.syncBufferPrefs();
@@ -1085,7 +1104,7 @@ test "rows: every path is a bool, an enum, a number or the theme; defaults index
         var d: Config = .{};
         if (r.number) |num| {
             try t.expect(comptime isNumber(r.path));
-            try t.expect(currentIndex(&d, r.path) >= num.min and currentIndex(&d, r.path) <= num.max);
+            try t.expect(currentIndex(&d, r.path) >= num.floor() and currentIndex(&d, r.path) <= num.max);
         } else {
             try t.expect(options(r.path).len >= 2);
             try t.expect(currentIndex(&d, r.path) < options(r.path).len);
@@ -1484,6 +1503,57 @@ test "number rows: → steps the right panel width, writes it, and the config se
     defer t.allocator.free(screen);
     try t.expect(std.mem.indexOf(u8, screen, "Right panel width:") != null);
     try t.expect(std.mem.indexOf(u8, screen, "‹ [30] ›") != null);
+}
+
+test "the tree width row: `auto` by default; a step off it starts from the share; a step below 10 is auto again; the drag's pin gives way" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 200, .rows = 80 });
+    defer app.deinit();
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    side.pinTreeWidth(&app, 55);
+    try open(&app);
+    for (try items(&app, app.frame.allocator()), 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Tree width")) {
+        app.overlay.settings.ui.cursor = i;
+        try t.expectEqual(@as(usize, 0), it.row.current);
+        try t.expect(!it.row.modified);
+        var vb: [16]u8 = undefined;
+        try t.expectEqualStrings("auto", ui_settings.valueWord(it.row, &vb));
+    };
+    try app.render();
+    {
+        const screen = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+        defer t.allocator.free(screen);
+        try t.expect(std.mem.indexOf(u8, screen, "‹ [auto] ›") != null);
+    }
+    // → from auto: the share (40 at 200) and one step, written, and the
+    // drag's 55 gives way to it.
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expectEqual(@as(u16, 42), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 42), app.tree.width);
+    try t.expect(!app.side.tree_pinned);
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".tree_width = 42") != null);
+    }
+    // ← from auto starts from the share too.
+    try app.handle(.{ .key = Key.ctrl('r') });
+    try t.expectEqual(@as(u16, 0), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expectEqual(@as(u16, 38), app.cfg.ui.tree_width);
+    // Down to the floor, then one more is auto.
+    setIndex(&app.cfg, "ui.tree_width", Config.tree_width_min);
+    try app.handle(.{ .key = Key.named(.left) });
+    try t.expectEqual(@as(u16, 0), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 40), app.tree.width);
 }
 
 /// The row index of a path, for the tests.

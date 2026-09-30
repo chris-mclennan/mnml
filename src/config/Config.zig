@@ -486,6 +486,12 @@ pub const MdEngine = union(enum) {
 
 pub const tree_width_min: u16 = 10;
 pub const tree_width_max: u16 = 80;
+/// `ui.tree_width = 0` (the default): the left column takes this share
+/// of the window, in percent, clamped to `tree_width_auto_min..max` —
+/// 30 cells at 80 and 120 columns, 32 at 160, 40 at 200.
+pub const tree_width_share_pct: u16 = 20;
+pub const tree_width_auto_min: u16 = 30;
+pub const tree_width_auto_max: u16 = 48;
 /// // changed (bottom-dock): the dock's row clamp — Rust's
 /// `session.rs` clamps a restored `bottom_panel_height` to 3..60 and
 /// `ui/mod.rs` floors the drawn height at 3.
@@ -513,8 +519,11 @@ pub const Ui = struct {
     theme_toggle: ?[]const u8 = null,
     theme_auto_system: bool = false,
     ascii_icons: bool = false,
-    /// Clamped to `tree_width_min..max` on load.
-    tree_width: u16 = 30,
+    /// The left column's width in cells. 0 (the default) is a share of
+    /// the window — a fifth, clamped to 30..48 — that follows a resize;
+    /// a number pins it, clamped to `tree_width_min..max` on load.
+    /// Dragging the divider overrides either for the session.
+    tree_width: u16 = 0,
     /// The right column opens at start (on the last section it showed,
     /// else the first section whose side is right).
     right_panel_visible: bool = false,
@@ -1382,7 +1391,7 @@ test "defaults are the shipped values" {
     try std.testing.expectEqual(LintParser.vimgrep, (Linter{}).parser);
     // ui
     try std.testing.expectEqualStrings("onedark", c.ui.theme);
-    try std.testing.expectEqual(@as(u16, 30), c.ui.tree_width);
+    try std.testing.expectEqual(@as(u16, 0), c.ui.tree_width);
     try std.testing.expectEqual(@as(u16, 32), c.ui.right_panel_width);
     try std.testing.expect(c.ui.line_numbers);
     try std.testing.expect(!c.ui.relative_line_numbers);

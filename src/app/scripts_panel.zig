@@ -1133,13 +1133,15 @@ test "SCRIPTS: a script that tripped the budget wears a ⏱ N chip, at the shipp
     );
     const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
     defer t.allocator.free(data);
-    // The SHIPPED default: `ui.tree_width = 30` leaves the column 26
-    // cells, which the label, version and badge already fill. The chip
-    // is painted at the right edge and its cells come out of the run
+    // The SHIPPED default: the window share is 30 cells at 120 wide
+    // (and at anything up to 150), which leaves the column 26 cells,
+    // which the label, version and badge already fill. The chip is
+    // painted at the right edge and its cells come out of the run
     // first, so this is the width it has to survive.
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = data, .cols = 120, .rows = 40 });
     defer app.deinit();
-    try t.expectEqual(@as(u16, 30), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 0), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 30), app.tree.width);
     try command.run(&app, .{ .static = .@"view.activity_scripts" });
     // Nothing has run: no chip on any row.
     {

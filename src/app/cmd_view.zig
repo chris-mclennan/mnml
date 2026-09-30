@@ -259,9 +259,10 @@ fn toggleAutoMdPreview(app: *App) CommandError!void {
     app.needs_render = true;
 }
 
+/// Back to the config's width — `ui.tree_width`'s number, or the
+/// window share when it is 0 — undoing a drag or *Set width…*.
 fn resetTreeWidth(app: *App) CommandError!void {
-    app.tree.width = @import("tree.zig").default_width;
-    app.needs_render = true;
+    @import("side.zig").resetTreeWidth(app);
 }
 
 fn toggleKeymap(app: *App) CommandError!void {

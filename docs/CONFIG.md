@@ -148,7 +148,7 @@ otherwise. Copy what you need; leave the rest out.
         .theme_toggle = null, // a second theme for theme.toggle
         .theme_auto_system = false, // follow the OS light/dark from launch (theme.auto_system)
         .ascii_icons = false,
-        .tree_width = 30, // clamped to 10..80
+        .tree_width = 0, // 0 = auto: a fifth of the window, 30..48 cells, following a resize; a number (10..80) pins it
         .right_panel_visible = false,
         .right_panel_width = 32, // the right column (the Rust right panel's width)
         .bottom_panel_visible = false, // the dock at start (Rust's bottom panel)
@@ -1877,7 +1877,7 @@ file written since the overlay opened — a file that did not exist is
 removed again.
 
 Rows are discrete choices (bools, enums, the theme) and numbers
-(`tree_width`, `right_panel_width`, `bottom_panel_height`,
+(`tree_width` — whose 0 reads `auto`, one step below 10 —, `right_panel_width`, `bottom_panel_height`,
 `sidebar_auto_below`, `wheel_lines`, `md_image_rows`,
 `hover_help_height`, `hover_help_grace_ms`, `color_column`, `focus_follows_mouse_delay_ms`,
 `tab_width`, `text_width`, `chord_timeout_ms`, `report`, `suggest_idle_ms`,
