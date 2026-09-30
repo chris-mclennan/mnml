@@ -112,6 +112,13 @@ pub const Server = struct {
         } else self.state.failing = false;
     }
 
+    /// When answers go out gzipped (`State.Gzip`).
+    pub fn gzipAnswers(self: *Server, mode: bb.Gzip) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.gzip = mode;
+    }
+
     /// Answer `/2.0/user` with a 403 from now on.
     pub fn denyUser(self: *Server, on: bool) void {
         self.state_lock.lockUncancelable(self.io);
@@ -165,8 +172,10 @@ pub const Server = struct {
         var auth: []const u8 = "";
         var inm_buf: [256]u8 = undefined;
         var inm: []const u8 = "";
+        var wants_gzip = false;
         var it = request.iterateHeaders();
         while (it.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "accept-encoding")) wants_gzip = acceptsGzip(h.value);
             if (std.ascii.eqlIgnoreCase(h.name, "authorization") and h.value.len <= auth_buf.len) {
                 @memcpy(auth_buf[0..h.value.len], h.value);
                 auth = auth_buf[0..h.value.len];
@@ -207,18 +216,36 @@ pub const Server = struct {
             self.state.now_secs = Io.Timestamp.now(self.io, .real).toSeconds();
             self.clock_set = true;
         }
-        const reply = bb.handle(self.arena.allocator(), &self.state, .{
+        var reply = bb.handle(self.arena.allocator(), &self.state, .{
             .method = method,
             .target = target,
             .body = body,
             .authorization = auth,
             .if_none_match = inm,
         }) catch bb.Reply{ .status = 500, .body = "{\"error\":{\"message\":\"out of memory\"}}" };
+        const plain_len = reply.body.len;
+        const gzip = switch (self.state.gzip) {
+            .off => false,
+            .when_asked => wants_gzip,
+            .always => true,
+        } and reply.body.len > 0;
+        var gzipped = false;
+        if (gzip) {
+            if (gzipBody(self.arena.allocator(), reply.body)) |z| {
+                reply.body = z;
+                gzipped = true;
+                self.state.gzipped += 1;
+            } else |_| {}
+        }
         self.state_lock.unlock(self.io);
 
-        var extra: [6]std.http.Header = undefined;
+        var extra: [7]std.http.Header = undefined;
         var n_extra: usize = 1;
         extra[0] = .{ .name = "content-type", .value = reply.content_type };
+        if (gzipped) {
+            extra[n_extra] = .{ .name = "content-encoding", .value = "gzip" };
+            n_extra += 1;
+        }
         var ra_buf: [8]u8 = undefined;
         if (reply.retry_after_secs) |secs| {
             extra[n_extra] = .{ .name = "retry-after", .value = std.fmt.bufPrint(&ra_buf, "{d}", .{secs}) catch "1" };
@@ -236,7 +263,8 @@ pub const Server = struct {
             extra[n_extra + 2] = .{ .name = "x-ratelimit-nearlimit", .value = if (b.near) "true" else "false" };
             n_extra += 3;
         }
-        self.logRequest(method, target, reply.status, reply.body.len);
+        // The log keeps the plain size, whatever went out on the wire.
+        self.logRequest(method, target, reply.status, plain_len);
         if (self.delay_ms > 0) self.io.sleep(.fromMilliseconds(self.delay_ms), .awake) catch {};
         request.respond(reply.body, .{
             .status = @enumFromInt(reply.status),
@@ -266,6 +294,38 @@ pub const Server = struct {
         file.writePositionalAll(self.io, line, end) catch {};
     }
 };
+
+/// True when an `Accept-Encoding` value offers gzip: `gzip` (or
+/// `x-gzip`, or `*`) in the list, and not refused with `q=0`.
+pub fn acceptsGzip(value: []const u8) bool {
+    var items = std.mem.tokenizeScalar(u8, value, ',');
+    while (items.next()) |item| {
+        var parts = std.mem.tokenizeScalar(u8, item, ';');
+        const name = std.mem.trim(u8, parts.next() orelse continue, " \t");
+        if (!std.ascii.eqlIgnoreCase(name, "gzip") and !std.ascii.eqlIgnoreCase(name, "x-gzip") and !std.mem.eql(u8, name, "*")) continue;
+        var refused = false;
+        while (parts.next()) |param| {
+            const p = std.mem.trim(u8, param, " \t");
+            if (std.mem.startsWith(u8, p, "q=") and (std.fmt.parseFloat(f32, p[2..]) catch 1) == 0) refused = true;
+        }
+        if (!refused) return true;
+    }
+    return false;
+}
+
+/// `body` as a gzip stream, on `arena`.
+pub fn gzipBody(arena: Allocator, body: []const u8) (Allocator.Error || Io.Writer.Error)![]const u8 {
+    const flate = std.compress.flate;
+    var out: Io.Writer.Allocating = try .initCapacity(arena, body.len + 64);
+    const window = try arena.alloc(u8, flate.max_window_len);
+    // The compressor's match tables run past a hundred kilobytes: on
+    // the arena, not on the accept thread's stack.
+    const z = try arena.create(flate.Compress);
+    z.* = try flate.Compress.init(&out.writer, window, .gzip, .default);
+    try z.writer.writeAll(body);
+    try z.finish();
+    return out.written();
+}
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
@@ -312,6 +372,26 @@ test "a request with no credentials comes back 401 over the wire too" {
     const res = try client.fetch(.{ .location = .{ .url = url }, .method = .GET, .response_writer = &out.writer, .keep_alive = false });
     try t.expectEqual(@as(u16, 401), @intFromEnum(res.status));
     try t.expectEqual(@as(u32, 1), srv.snapshot().unauthorized);
+}
+
+test "--gzip: an Accept-Encoding that offers gzip is read as one, and the body round-trips through the std decompressor" {
+    try t.expect(acceptsGzip("gzip, deflate"));
+    try t.expect(acceptsGzip("deflate, GZIP;q=0.5"));
+    try t.expect(acceptsGzip("*"));
+    try t.expect(!acceptsGzip("identity"));
+    try t.expect(!acceptsGzip("gzip;q=0"));
+
+    var a = std.heap.ArenaAllocator.init(t.allocator);
+    defer a.deinit();
+    const plain = "{\"values\":[{\"id\":1234,\"title\":\"Fix the login redirect\"},{\"id\":1198,\"title\":\"Fix the login redirect again\"}]}";
+    const z = try gzipBody(a.allocator(), plain);
+    try t.expectEqualSlices(u8, &.{ 0x1f, 0x8b }, z[0..2]);
+    var in: Io.Reader = .fixed(z);
+    const window = try a.allocator().alloc(u8, std.compress.flate.max_window_len);
+    var d: std.compress.flate.Decompress = .init(&in, .gzip, window);
+    var back: Io.Writer.Allocating = .init(a.allocator());
+    _ = try d.reader.streamRemaining(&back.writer);
+    try t.expectEqualStrings(plain, back.written());
 }
 
 test "stop wakes an accept nobody ever connected to — what makes --lifetime-secs real" {

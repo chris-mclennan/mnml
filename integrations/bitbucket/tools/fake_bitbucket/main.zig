@@ -14,6 +14,8 @@
 //!                                             `X-RateLimit-*` on every answer
 //!   mnml-fake-bitbucket --log-file bb.jsonl   a JSON line per request served
 //!   mnml-fake-bitbucket --delay-ms 3000       hold every reply three seconds
+//!   mnml-fake-bitbucket --gzip                gzip an answer whose request offered gzip
+//!   mnml-fake-bitbucket --gzip-always         gzip every answer, whatever was offered
 //!
 //! The lifetime is what makes it safe in a test script: a run that
 //! fails half way still leaves nothing behind. The pane reaches it
@@ -39,6 +41,7 @@ pub fn main(init: std.process.Init) !u8 {
     var log_file: ?[]const u8 = null;
     var extra_prs: u32 = 0;
     var delay_ms: u32 = 0;
+    var gzip: @import("server.zig").Gzip = .off;
     var retry_after: ?u32 = null;
     var budget_limit: u32 = 0;
     var budget_remaining: ?u32 = null;
@@ -85,6 +88,10 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--log-file") and i + 1 < args.len) {
             i += 1;
             log_file = args[i];
+        } else if (std.mem.eql(u8, a, "--gzip")) {
+            gzip = .when_asked;
+        } else if (std.mem.eql(u8, a, "--gzip-always")) {
+            gzip = .always;
         } else if (std.mem.eql(u8, a, "--delay-ms") and i + 1 < args.len) {
             i += 1;
             delay_ms = std.fmt.parseInt(u32, args[i], 10) catch 0;
@@ -106,6 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (budget_limit > 0) srv.budgetHeaders(budget_limit, budget_remaining orelse budget_limit);
     if (extra_prs > 0) srv.setExtraPrs(extra_prs);
     srv.delay_ms = delay_ms;
+    srv.gzipAnswers(gzip);
     // A fresh log per run: the measurement is one tab load's worth, not
     // everything this file has ever seen.
     if (log_file) |p| {
@@ -161,6 +169,8 @@ const usage =
     \\  --rate-limit-remaining N  where -Remaining starts (default: the limit); it drops one per request
     \\  --log-file PATH       append one JSON line per request served
     \\  --delay-ms N          hold every reply N ms (catch a pane mid-fetch)
+    \\  --gzip                gzip an answer whose request's Accept-Encoding offers gzip
+    \\  --gzip-always         gzip every answer, whatever the request offered (a proxy's habit)
     \\
     \\Point the integration at it with BITBUCKET_BASE_URL=<url>, or
     \\BITBUCKET_BASE_URL=@<path> to read the --url-file.
