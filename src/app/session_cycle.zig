@@ -13,7 +13,11 @@
 //! A session is a pty pane running an AI product — the bare `claude` /
 //! `codex` or one of their profile shims (`pty_pane.productOf`) —
 //! running or exited: an ended session still has a pane to look at.
-//! A pane that sits in no page's tree is not in the ring.
+//! The bottom dock's hosted panes (`bottom.zig`) are out of every
+//! page's tree but still on screen, so the ring takes them too, after
+//! the pages, in the dock strip's order; a step to one shows it in the
+//! dock rather than pulling it back into the splits. Any other pane in
+//! no page's tree is not in the ring.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -39,22 +43,26 @@ pub fn isSession(app: *App, id: PaneId) bool {
 }
 
 /// Every session pane, in ring order: page by page, each page's leaves
-/// in tree order, each leaf's tabs in strip order. On `arena`.
+/// in tree order, each leaf's tabs in strip order; then the bottom
+/// dock's, in its strip's order. On `arena`.
 pub fn list(app: *App, arena: Allocator) Allocator.Error![]PaneId {
     var out: std.ArrayListUnmanaged(PaneId) = .empty;
     for (app.layouts.layouts.items) |*layout| {
         for (try layout.leaves(arena)) |lid| {
             const leaf = layout.leaf(lid) orelse continue;
-            for (leaf.tabs.items) |id| {
-                if (!isSession(app, id)) continue;
-                // A pane lives in one leaf of one page; the check keeps
-                // the ring honest if that ever stops holding.
-                if (std.mem.indexOfScalar(PaneId, out.items, id) != null) continue;
-                try out.append(arena, id);
-            }
+            for (leaf.tabs.items) |id| try addSession(app, arena, &out, id);
         }
     }
+    for (app.bottom.panes.items) |id| try addSession(app, arena, &out, id);
     return out.items;
+}
+
+fn addSession(app: *App, arena: Allocator, out: *std.ArrayListUnmanaged(PaneId), id: PaneId) Allocator.Error!void {
+    if (!isSession(app, id)) return;
+    // A pane lives in one leaf of one page, or in the dock; the check
+    // keeps the ring honest if that ever stops holding.
+    if (std.mem.indexOfScalar(PaneId, out.items, id) != null) return;
+    try out.append(arena, id);
 }
 
 /// Where a session sits in the ring: `index` counts from zero.
@@ -96,7 +104,10 @@ pub fn step(app: *App, dir: Dir) CommandError!void {
         app.toastReplace(step_toast, "no Claude Code or Codex sessions open", .{});
         return;
     };
-    app.showPane(to);
+    // A docked session is shown where it lives: the dock's strip
+    // switches to it. `showPane` would take it out of the dock.
+    const bottom = @import("bottom.zig");
+    if (bottom.hosts(app, to)) try bottom.host(app, to) else app.showPane(to);
     app.focus = .{ .pane = to };
     app.needs_render = true;
     const at = std.mem.indexOfScalar(PaneId, ring, to).?;
@@ -374,6 +385,37 @@ test "the statusline's sessions chip: ` ‹ ▣ 2/2 › ` while sessions are ope
     try t.expectEqual(s2, app.active.?);
     try f.click((try f.hitOn(.{ .statusline_seg = statusline.SegId.sessions.raw() })).?);
     try t.expect(@import("side.zig").isShown(app, .sessions));
+}
+
+test "a session in the bottom dock stays in the ring: its strip and the statusline read 2/2, the steps reach it there and leave it docked" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(120, 40);
+    defer f.deinit();
+    const app = &f.app;
+    const bottom = @import("bottom.zig");
+    const s1 = try f.run(.@"ai.claude_code_new_right");
+    const s2 = try f.run(.@"ai.codex_new_right");
+    try command.run(app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    try t.expect(bottom.hosts(app, s2));
+    try t.expectEqual(s2, app.active.?);
+    try t.expectEqualSlices(PaneId, &.{ s1, s2 }, try list(app, app.frame.allocator()));
+    // The claude strip reads 1/2, the dock's 2/2, and the statusline's
+    // chip the focused session's place, not the bare count.
+    const text = try f.screenText();
+    try t.expect(std.mem.indexOf(u8, text, "\u{2039} 1/2 \u{203A}") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\u{2039} 2/2 \u{203A}") != null);
+    try t.expect(std.mem.indexOf(u8, text, " 2/2 \u{203A} ") != null);
+    try t.expectEqual(@as(usize, 3), std.mem.count(u8, text, "\u{2039}"));
+    // The steps go round both sessions; the docked one is shown in the
+    // dock, never pulled back into the splits.
+    try command.run(app, .{ .static = .@"ai.focus_next_session" });
+    try t.expectEqual(s1, app.active.?);
+    try command.run(app, .{ .static = .@"ai.focus_next_session" });
+    try t.expectEqual(s2, app.active.?);
+    try t.expectEqual(s2, app.focus.pane);
+    try t.expect(bottom.hosts(app, s2));
+    try t.expect(app.layouts.current().leafOf(s2) == null);
+    try t.expectEqualStrings("session 2/2", app.lastToast().?[0.."session 2/2".len]);
 }
 
 test "the statusline's sessions chip narrows in order: the whole ` ‹ ▣ 2/2 › `, then ` ‹ ▣ › `, then ` ▣ ` — never back to a wider form on a narrower row" {
