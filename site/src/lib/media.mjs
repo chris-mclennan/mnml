@@ -11,10 +11,21 @@ const list = (() => {
   try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return []; }
 })();
 
+// A recording is 200x60 cells; at the capture's 8x17px cell that is
+// 1600x1020, the frame the page reserves before the poster loads.
+export const CELLS = { width: 1600, height: 1020 };
+
+function pngSize(file) {
+  const b = fs.readFileSync(file);
+  if (b.length < 24 || b.toString("ascii", 12, 16) !== "IHDR") return null;
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+}
+
 export function media(name) {
   const dir = path.join(SITE_ROOT, "public/media");
   const has = (ext) => fs.existsSync(path.join(dir, `${name}.${ext}`));
   if (!has("webm")) return null;
   const meta = list.find((m) => m.name === name) || {};
-  return { video: `/media/${name}.webm`, poster: has("png") ? `/media/${name}.png` : null, title: meta.title || name };
+  const size = has("png") ? pngSize(path.join(dir, `${name}.png`)) : null;
+  return { video: `/media/${name}.webm`, poster: size ? `/media/${name}.png` : null, title: meta.title || name, ...(size || CELLS) };
 }
