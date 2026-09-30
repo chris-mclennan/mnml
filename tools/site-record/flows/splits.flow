@@ -1,0 +1,35 @@
+title: Splits and tabs
+flow: Split the editor right and down, open a file in each split, then start a second tab page and jump back to the first.
+open src/main.zig
+until "fn main"
+record
+wait 1000
+key "ctrl+\\"
+wait 700
+key ctrl+p
+wait 250
+slowtype "util" 80
+key enter
+until "pub fn sum"
+wait 1000
+run view.split_down
+wait 700
+key ctrl+p
+wait 250
+slowtype "readme" 80
+key enter
+wait 1400
+poster
+run view.focus_left
+wait 500
+keys @90 down down down down down
+wait 700
+run tab.new
+wait 900
+key ctrl+p
+wait 250
+slowtype "changelog" 70
+key enter
+wait 1500
+key alt+1
+wait 2000

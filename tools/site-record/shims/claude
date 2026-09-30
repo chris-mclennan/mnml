@@ -1,0 +1,38 @@
+#!/bin/bash
+# tools/site-record/shims/claude — the `claude` a site recording sees.
+# No model runs and nothing leaves the machine: it writes a transcript
+# for its session id (what the sessions views read), names its pane
+# through the window title, prints a short stand-in exchange, then
+# stays open as a process named `claude` so the scan counts it live.
+sid=""
+while [ $# -gt 0 ]; do
+  case "$1" in --session-id|--resume) sid=$2; shift 2 ;; *) shift ;; esac
+done
+[ -n "$sid" ] || sid=5e551001-0000-4000-8000-0000000000ff
+ask=${SITE_RECORD_ASK:-add a max() helper to src/util.zig, with a test}
+ENC=$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')
+mkdir -p "$HOME/.claude/projects/$ENC"
+cwd=${SITE_RECORD_CWD:-$PWD}
+printf '{"type":"user","cwd":"%s","gitBranch":"main","message":{"role":"user","content":"%s"}}\n' \
+  "$cwd" "$ask" > "$HOME/.claude/projects/$ENC/$sid.jsonl"
+printf '\033]0;%s\007' "$ask"
+dim=$'\033[2m' bold=$'\033[1m' acc=$'\033[38;5;173m' ok=$'\033[32m' off=$'\033[0m'
+say() { printf '%s\n' "$1"; sleep "${2:-0.35}"; }
+sleep 0.6
+say "${acc}●${off} ${bold}agent session${off} ${dim}(recording stand-in — no model runs)${off}" 0.2
+say "${dim}  cwd ~/tour · branch main${off}" 0.8
+say ""
+say "${bold}> ${ask}${off}" 1.0
+say ""
+say "${acc}●${off} Read ${bold}src/util.zig${off} ${dim}(12 lines)${off}" 0.9
+say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— add pub fn max(xs: []const i64) ?i64${off}" 1.0
+say "${acc}●${off} Edit ${bold}src/util.zig${off} ${dim}— test \"max picks the largest\"${off}" 1.0
+say "${acc}●${off} Run  ${bold}zig build test${off}" 1.2
+say "  ${ok}✓${off} 2 tests passed" 0.8
+say ""
+say "max() returns null for an empty slice, so callers decide what" 0.1
+say "\"no numbers\" means. Both tests pass." 0.1
+printf '%s,"message":{"role":"assistant","content":[{"type":"text","text":"Added max() and a test; both tests pass."}]}}\n' \
+  "{\"type\":\"assistant\",\"cwd\":\"$cwd\",\"gitBranch\":\"main\"" >> "$HOME/.claude/projects/$ENC/$sid.jsonl"
+printf '\n%s>%s ' "$bold" "$off"
+exec -a claude /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done' --session-id "$sid"
