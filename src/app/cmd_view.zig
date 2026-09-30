@@ -928,7 +928,7 @@ fn discovery(app: *App) CommandError!void {
 /// press inside it is not "outside".
 pub const panel_item: u32 = std.math.maxInt(u32);
 
-pub const version = "0.3.0-zig";
+pub const version = build_options.version;
 
 pub fn drawInfo(app: *App, ui: Ui, screen: Rect, kind: app_mod.InfoKind) void {
     const th = ui.theme;

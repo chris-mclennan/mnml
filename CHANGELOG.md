@@ -10,7 +10,80 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
-## v0.3.0 (unreleased)
+## v0.3.1
+
+mnml 0.3.1 is a fix release for the Jira and Bitbucket integrations, with
+what landed on the editor since 0.3.0 alongside it.
+
+### Jira and Bitbucket 0.2.1 — the gzip fix
+
+- The reason for this release. Jira and Bitbucket compress their answers
+  when the client offers it, and both integrations handed the compressed
+  bytes to the JSON parser: every Jira pane said "the search answer was not
+  JSON", and Bitbucket's panes failed the same way. The body is now read
+  through the answer's content-encoding, as mnml's own HTTP client already
+  does.
+- A parse failure names what it saw: the read error that cut the body
+  short, or the content-type, the size and the first bytes.
+- This release's `integrations.json` offers Jira 0.2.1 and Bitbucket 0.2.1.
+  An installed 0.2.0 reads *update available* in the Marketplace tab.
+
+### Sessions
+
+- Session cycling: `ai.focus_next_session` / `ai.focus_prev_session`
+  (`ctrl+alt+pagedown` / `ctrl+alt+pageup`, `]a` / `[a` in a vim editor,
+  with a count) step through every Claude Code and Codex pane — splits,
+  stacked tabs, other tab pages and the bottom dock — with a `‹ 3/7 ›` on
+  each session's tab strip and on the statusline's new sessions chip.
+- The Claude and Codex chip menus open a session in a new tab or on a new
+  tab page, and a worktree profile's session lands there too once its
+  branch name is answered.
+
+### The frame
+
+- The launcher dock can live on the command line's own row:
+  `ui.dock.placement = .shared` (`:dock shared`, or *on command line* in
+  Settings) puts its items on the `:` row, always up with no grip and no
+  extra row. Typing never moves them; they step aside only while a long
+  command would reach them.
+- The tree draws its connectors on every row below the top level —
+  folders and files, a `│` while a sibling follows and a `└` on the last
+  child — in the comment grey, so they can be seen.
+- The tree's workspace dot (`ui.show_workspace_dots`) marks the active
+  workspace with `●` and every other root with `○`, instead of sitting on
+  the primary for good; a click on a dot switches to that workspace,
+  and the rest of the header still folds. An extra root's *Switch to this
+  workspace* switches directly instead of opening the picker. Removing the
+  active root hands the dot, open, back to the primary.
+- *About* prints the build's own version, not a fixed `0.3.0`.
+
+### Integrations on the top bar
+
+- The top bar's integration chips sit three cells apart, the same rhythm as
+  the right-panel toggle beside them, instead of five.
+- A newly installed integration — from the Marketplace, a local folder, a
+  launcher or a shell `<binary> --install` — starts off the top bar; its
+  menu's *Show on top bar* puts it there, and a reinstall or update keeps
+  what you chose. Browser keeps its chip.
+- An integration's rebuild chip is no longer hidden by the host rewriting
+  its manifest.
+
+### Testing
+
+- The Jira and Bitbucket tests, and the corpus files for both panes, run
+  against a fake site that compresses its answers.
+- The tour and the drive harness launch mnml with the update check off, so
+  a newer release on GitHub no longer changes every screenshot.
+- A corpus file for session cycling and one for the shared dock.
+
+### The website
+
+- mnml.sh: the home page, downloads read from the latest release, the
+  docs — install, getting started, configuration and its option
+  reference, features, Lua, integrations — the release notes, and nine
+  short recordings of mnml at work.
+
+## v0.3.0
 
 mnml 0.3.0 is the same editor, rewritten in Zig 0.16.0. One static binary per
 platform, no runtime, and the shared `.test` corpus as the definition of
@@ -102,12 +175,6 @@ architecture behind it is in `docs/DESIGN.md`.
   Codex panes, every `ai.*` runner, the Claude Agents dashboard (sessions
   across workspaces, filters, pause chip, live tail, kill), the 24 h spend
   report and the statusline meter.
-- Session cycling: `ai.focus_next_session` / `ai.focus_prev_session`
-  (`ctrl+alt+pagedown` / `ctrl+alt+pageup`, `]a` / `[a` in a vim editor)
-  step through every Claude Code and Codex pane — splits, stacked tabs,
-  other tab pages — with a `‹ 3/7 ›` on each session's tab strip and on the
-  statusline's new sessions chip; the Claude and Codex chip menus open a
-  session in a new tab or on a new tab page.
 - HTTP: `Pane.request` — the tabbed request pane, the send worker, the
   `http.*` commands. The request parser, envs, cookie jar, JWT decoding, SSE,
   a JSON-schema subset, HAR and Postman import, the captured log, chains,
@@ -186,16 +253,6 @@ architecture behind it is in `docs/DESIGN.md`.
 - The statusline measures its chips in cells and never ends a lane on a
   dangling powerline arrow; chips of equal priority lay out by id.
 - Restart outside `run.sh` relaunches mnml instead of quitting.
-- The launcher dock can live on the command line's own row:
-  `ui.dock.placement = .shared` (`:dock shared`, or *on command line* in
-  Settings) puts its items right of whatever is typed there, always up with
-  no grip and no extra row, and steps aside while a long command would reach
-  them.
-- The top bar's integration chips sit three cells apart, the same rhythm as
-  the right-panel toggle beside them, instead of five.
-- A newly installed integration (Marketplace, a local folder, a launcher)
-  starts off the top bar; its menu's *Show on top bar* puts it there, and a
-  reinstall or update keeps what you chose. Browser keeps its chip.
 
 ### Testing
 
