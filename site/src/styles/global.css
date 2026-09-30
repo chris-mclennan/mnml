@@ -275,7 +275,9 @@ button { font: inherit; }
 /* the commands reference: 1,150 rows in 50 tables — skip layout and
    paint for the ones off screen */
 .prose.big .table-wrap { content-visibility: auto; contain-intrinsic-size: auto 800px; }
-.prose.big td:nth-child(2) { min-width: 18em; }
+.prose.big table { font-size: 14px; }
+.prose.big td code { overflow-wrap: normal; }
+.prose.big th, .prose.big td { padding-right: 12px; }
 
 .callout { --c: var(--callout-note); border-left: 3px solid var(--c); padding: 4px 0 4px 20px; margin: 24px 0; }
 .callout.tip { --c: var(--callout-tip); }
