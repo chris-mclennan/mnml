@@ -167,6 +167,8 @@ fn write(io: Io, dir: []const u8, rel: []const u8, text: []const u8) !void {
 
 fn writeExe(io: Io, dir: []const u8, rel: []const u8, text: []const u8) !void {
     try write(io, dir, rel, text);
+    // No mode bits on Windows, where `--demo` is refused anyway.
+    if (comptime builtin.os.tag == .windows) return;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ dir, rel });
     try Io.Dir.cwd().setFilePermissions(io, path, .fromMode(0o755), .{});
@@ -409,7 +411,7 @@ pub fn startFakes(gpa: Allocator, io: Io, env: *const Map, root: []const u8, ws:
             .stdin = .ignore,
             .stdout = .ignore,
             .stderr = .ignore,
-            .pgid = 0,
+            .pgid = if (builtin.os.tag == .windows) null else 0,
         }) catch null;
     }
     if (fakes.running() == 0) return fakes;

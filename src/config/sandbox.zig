@@ -30,8 +30,10 @@
 //! On exit the process that made the directory (its pid is
 //! `MNML_SANDBOX_PID`; a nested mnml in a shell pane is not it) removes
 //! it, unless `--sandbox-keep` was given — then it says where it is. A
-//! sandbox this process did not make is never removed. A crash or a
-//! `kill -9` leaves it to the OS's temp cleanup.
+//! sandbox this process did not make is never removed. SIGTERM, SIGHUP
+//! and SIGINT end the run the way a quit does, so it is removed then too
+//! (`core/exit_signal.zig`); a crash or a `kill -9` leaves it to the OS's
+//! temp cleanup.
 //!
 //! POSIX only: Windows has no `execve`, and the flag is refused there
 //! with a message rather than half-working.

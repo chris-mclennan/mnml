@@ -1811,8 +1811,11 @@ inherit all of it. Without a workspace argument the sandbox opens
   `--sandbox` does not re-execute; it only sets `MNML_SANDBOX`.
 - **On exit** the process that made the directory removes it; a nested
   mnml in a shell pane never does, and a directory mnml did not make is
-  never touched. `--sandbox-keep` keeps it and prints its path. A crash
-  leaves it for the OS's temp cleanup.
+  never touched. `--sandbox-keep` keeps it and prints its path. SIGTERM,
+  SIGHUP and SIGINT (a closed window, `kill`, a stopped container) end the
+  run the way a quit does — the directory is removed and the exit status
+  is 128 + the signal, 143 for SIGTERM; a second signal exits at once. A
+  crash or `kill -9` leaves it for the OS's temp cleanup.
 - Only the app takes the flag — the terminal UI and `--headless`. A
   one-shot subcommand (`mnml run FILE`, `mnml test`, …) ignores it.
 
@@ -1862,7 +1865,8 @@ Then, before the first frame:
 
 Whatever is not beside the binary is skipped and named in the first
 frame's toast. A ` demo ` chip sits where the sandbox chip does. On
-exit the fakes are stopped, then the whole sandbox is removed.
+exit — a quit, or SIGTERM / SIGHUP / SIGINT — the fakes are stopped,
+then the whole sandbox is removed.
 
 ## Writes
 

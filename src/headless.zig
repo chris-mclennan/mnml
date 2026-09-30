@@ -19,6 +19,7 @@ const screen_mod = @import("ipc/screen.zig");
 const driver_mod = @import("e2e/driver.zig");
 const keymap = @import("core/keymap.zig");
 const input = @import("core/key.zig");
+const exit_signal = @import("core/exit_signal.zig");
 
 pub const Driver = driver_mod.Driver;
 pub const Size = struct { cols: u16, rows: u16 };
@@ -43,28 +44,13 @@ pub const Options = struct {
     wait_slice_ms: u64 = 40,
 };
 
-/// Set by SIGTERM / SIGINT / SIGHUP; the loop turns it into an
-/// `exit{reason:signal}` line so the host has a death certificate.
-var signal_flag: std.atomic.Value(bool) = .init(false);
+/// How a run ended.
+pub const End = enum { quit, restart, signal };
 
-fn onSignal(_: std.c.SIG) callconv(.c) void {
-    signal_flag.store(true, .release);
-}
-
-fn installSignalHandlers() void {
-    if (builtin.os.tag == .windows) return;
-    var sa: posix.Sigaction = .{
-        .handler = .{ .handler = onSignal },
-        .mask = posix.sigemptyset(),
-        .flags = 0,
-    };
-    posix.sigaction(.TERM, &sa, null);
-    posix.sigaction(.INT, &sa, null);
-    posix.sigaction(.HUP, &sa, null);
-}
-
-/// Run until `quit`. Returns true when a restart was requested.
-pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: Options) !bool {
+/// Run until `quit`, a restart, or SIGTERM / SIGINT / SIGHUP
+/// (`core/exit_signal.zig`) — each leaves through the exit hook and a
+/// last dump; a signal's exit line says `reason: signal`.
+pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: Options) !End {
     var ch = try ipc.Channel.init(gpa, io, workspace, opts.ipc);
     defer ch.deinit();
     {
@@ -75,8 +61,7 @@ pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: 
         try a.writer.writeByte('}');
         ch.appendEvent(a.written());
     }
-    signal_flag.store(false, .release);
-    installSignalHandlers();
+    exit_signal.install();
 
     var loop: Loop = .{ .gpa = gpa, .io = io, .driver = driver, .ch = &ch, .workspace = workspace, .opts = opts };
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -85,10 +70,7 @@ pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: 
     while (true) {
         _ = arena_state.reset(.retain_capacity);
         const arena = arena_state.allocator();
-        if (signal_flag.load(.acquire)) {
-            ch.appendEvent("{\"event\":\"exit\",\"reason\":\"signal\",\"note\":\"SIGTERM/SIGINT/SIGHUP — early exit\"}");
-            return false;
-        }
+        if (exit_signal.caught() != null) break;
         try loop.frame(arena);
         if (loop.quit) break;
         const any = try loop.drainCommands(arena);
@@ -101,8 +83,13 @@ pub fn run(gpa: Allocator, io: Io, driver: Driver, workspace: []const u8, opts: 
     driver.shutdown();
     _ = arena_state.reset(.retain_capacity);
     try loop.frame(arena_state.allocator());
+    if (exit_signal.caught()) |sig| {
+        var buf: [96]u8 = undefined;
+        ch.appendEvent(std.fmt.bufPrint(&buf, "{{\"event\":\"exit\",\"reason\":\"signal\",\"signal\":\"{d}\"}}", .{sig}) catch "{\"event\":\"exit\",\"reason\":\"signal\"}");
+        return .signal;
+    }
     ch.appendEvent(if (loop.restart) "{\"event\":\"exit\",\"restart\":true}" else "{\"event\":\"exit\"}");
-    return loop.restart;
+    return if (loop.restart) .restart else .quit;
 }
 
 const Loop = struct {
@@ -434,9 +421,9 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
         \\
     };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 20, .rows = 3 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 20, .rows = 3 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
 
     const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
     defer t.allocator.free(events);
@@ -523,9 +510,9 @@ test "restart is reported through the exit line and the return value" {
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines = "{\"cmd\":\"restart\"}\n" };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 12, .rows = 2 } });
+    const end = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 12, .rows = 2 } });
     th.join();
-    try t.expect(restart);
+    try t.expectEqual(End.restart, end);
     try t.expect(stub.restart);
     const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc/events.jsonl", t.allocator, .unlimited);
     defer t.allocator.free(events);
@@ -548,9 +535,9 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 150, .lines = @embedFile("ipc/golden/tier2.commands.jsonl") };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
 
     // The state the commands left behind: one segment (`ci` cleared), the
     // badge, a pinned-nothing (warn is ephemeral), no notifier spawned.
@@ -605,9 +592,9 @@ test "a quit runs the exit hook, as the terminal loop does" {
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines = "{\"cmd\":\"quit\"}\n" };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
     try drv.app.script().runString("assert(EXITS == 1, 'exit hook ran ' .. EXITS .. ' times')");
 }
 

@@ -184,7 +184,11 @@ pub fn build(b: *std.Build) void {
     root_module.addOptions("build_options", build_options);
     root_module.linkLibrary(onig_lib);
     const exe = b.addExecutable(.{ .name = "mnml-zig", .root_module = root_module });
-    b.installArtifact(exe);
+    const exe_install = b.addInstallArtifact(exe, .{});
+    b.getInstallStep().dependOn(&exe_install.step);
+    // The installed binary, for the unit tests that run it as a process
+    // (`src/config/sandbox_signal_test.zig`: a signal ends `--sandbox`).
+    build_options.addOption([]const u8, "mnml_exe", b.getInstallPath(.bin, b.fmt("mnml-zig{s}", .{if (target.result.os.tag == .windows) ".exe" else ""})));
 
     const run_step = b.step("run", "Run mnml-zig");
     const run_cmd = b.addRunArtifact(exe);
@@ -243,6 +247,7 @@ pub fn build(b: *std.Build) void {
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .name = "integrations-index-tests", .root_module = integrations_index_mod, .filters = test_filters })).step);
     const tests = b.addTest(.{ .root_module = exe.root_module, .filters = test_filters, .test_runner = test_runner });
     const tests_run = b.addRunArtifact(tests);
+    tests_run.step.dependOn(&exe_install.step);
     unit_step.dependOn(&tests_run.step);
     // ── e2e: the .test corpus under `zig build` ──
     // `zig build e2e [-- ARGS]` runs the whole corpus (tests/e2e)
@@ -926,6 +931,7 @@ pub fn build(b: *std.Build) void {
     const fake_bitbucket_exe_name = b.fmt("mnml-fake-bitbucket{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
     build_options.addOption([]const u8, "fake_bitbucket_exe", b.getInstallPath(.bin, fake_bitbucket_exe_name));
     bitbucket_step.dependOn(&fake_bitbucket_install.step);
+    tests_run.step.dependOn(&fake_bitbucket_install.step);
     e2e_run.step.dependOn(&fake_bitbucket_install.step);
     gate_in_test.step.dependOn(&fake_bitbucket_install.step);
     corpus_run.step.dependOn(&fake_bitbucket_install.step);

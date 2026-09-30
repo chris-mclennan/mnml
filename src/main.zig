@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const mem_report = @import("core/mem_report.zig");
 const os_path = @import("core/os_path.zig");
+const exit_signal = @import("core/exit_signal.zig");
 const e2e = @import("e2e/root.zig");
 const headless = @import("headless.zig");
 const sdk_platform = @import("mnml_sdk").platform;
@@ -114,6 +115,12 @@ pub fn main(init: std.process.Init) !u8 {
         if (@import("builtin").os.tag != .windows) try setenvOwned(gpa, config.sandbox.env_var, root);
     };
     defer config.sandbox.finish(io, env, plain[1..], err_w);
+    // SIGTERM / SIGHUP / SIGINT from here on end either loop the way a
+    // quit does, and `main` returns 128 + signal through the defers
+    // above and below: the fakes stop, the sandbox goes
+    // (`core/exit_signal.zig`). Before the demo's setup, so a signal
+    // during it is not a hard kill that leaves the directory behind.
+    exit_signal.install();
     // `--demo`: in the process that owns the sandbox, the workspace, the
     // home and the offline fakes (`src/config/demo.zig`). The fakes stop
     // before the sandbox is removed (defers run last-first).
@@ -1067,8 +1074,11 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
     const cfg: e2e.driver.Config = .{ .workspace = ws_abs, .data_root = startup.data_root, .cols = size.cols, .rows = size.rows, .cfg = startup.loaded.config, .loaded = startup.loaded, .startup_hook = true, .env = env };
     const driver = try factory.make(gpa, io, cfg);
     defer driver.deinit();
-    const restart = try headless.run(gpa, io, driver, ws_abs, opts);
-    return if (restart) 75 else 0;
+    return switch (try headless.run(gpa, io, driver, ws_abs, opts)) {
+        .quit => 0,
+        .restart => 75,
+        .signal => exit_signal.status(exit_signal.caught().?),
+    };
 }
 
 test {
@@ -1088,6 +1098,7 @@ test {
     _ = @import("core/clipboard_os.zig");
     _ = @import("core/child.zig");
     _ = @import("core/os_path.zig");
+    _ = @import("core/exit_signal.zig");
     _ = @import("app.zig");
     _ = @import("regex/regex.zig");
     _ = @import("ipc/root.zig");
