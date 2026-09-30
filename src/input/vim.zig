@@ -2863,7 +2863,12 @@ test "every chord a spec lists as the vim handler's own reaches that spec's comm
         var last: InputResult = .ignored;
         while (it.next()) |tok| last = try v.handleKey(keymap.parseKeySpec(tok).?, .{}, a);
         try testing.expect(last == .app);
-        try testing.expectEqualStrings(s.id, @tagName(last.app.run_command));
+        // `]a` / `[a` carry their count; the command is the step's.
+        const id: []const u8 = switch (last.app) {
+            .session_step => |ss| if (ss.forward) "ai.focus_next_session" else "ai.focus_prev_session",
+            else => @tagName(last.app.run_command),
+        };
+        try testing.expectEqualStrings(s.id, id);
         listed += 1;
     };
     // `Ctrl-W w` and `Ctrl-W W` at least.

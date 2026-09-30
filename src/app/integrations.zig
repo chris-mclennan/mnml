@@ -3645,6 +3645,8 @@ test "discovery: manifests become dyn commands with bindings; a broken file is a
     defer tmp.cleanup();
     var app = try testApp(&tmp);
     defer app.deinit();
+    // A data root that has seen `hello` and keeps its chip on the bar.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = top_bar_record, .data = "on hello\n" });
     try refresh(&app);
     const st = &app.integrations;
     try testing.expectEqual(@as(usize, 1), st.list.len);
