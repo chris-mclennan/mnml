@@ -456,8 +456,8 @@ fn sizeIndex(values: []const u64, v: u64) usize {
     return values.len - 1;
 }
 
-/// // changed (dock-placement): `ui.dock.placement` is a two-value
-/// enum whose tag names (`inner` / `outer`) say nothing to a person
+/// // changed (dock-placement): `ui.dock.placement` is an
+/// enum (three values since dock-shared) whose tag names (`inner` / `outer`) say nothing to a person
 /// reading a settings row. The row offers the words instead; the key
 /// keeps the tags, because the list is in tag order and `setIndex`
 /// writes `@enumFromInt(i)` as it does for every other enum row.
@@ -465,7 +465,7 @@ fn isDockPlacement(comptime path: []const u8) bool {
     return std.mem.eql(u8, path, "ui.dock.placement");
 }
 
-pub const dock_placement_labels = [_][]const u8{ "above statusline", "below command line" };
+pub const dock_placement_labels = [_][]const u8{ "above statusline", "below command line", "on command line" };
 
 /// `ai.suggest_backend` is not a typed field: the config keeps it in
 /// `ai.extra` (a string, aliases allowed) and the setup picker sets a

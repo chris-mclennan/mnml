@@ -171,11 +171,15 @@ const Case = struct {
     rail: Config.ActivityBar,
     right_column: bool,
     bottom_panel: bool,
+    /// // changed (dock-shared): a bottom strip's row — `.shared` puts
+    /// it on the `:` line's, where its items share the row's hits.
+    dock_placement: Config.DockPlacement = .inner,
 };
 
 fn apply(app: *App, c: Case) void {
     app.cfg.ui.dock.edge = c.dock_edge;
     app.cfg.ui.dock.mode = c.dock_mode;
+    app.cfg.ui.dock.placement = c.dock_placement;
     app.launcher_dock.pinned = false;
     app.launcher_dock.open = c.dock_mode == .auto_hide and c.dock_open;
     app.launcher_dock.by_key = app.launcher_dock.open;
@@ -190,16 +194,16 @@ fn apply(app: *App, c: Case) void {
 
 fn describe(c: Case) void {
     std.debug.print(
-        "case: dock {s}/{s}{s} · sidebar {s}{s} · menu_bar {s} · rail {s} · right {} · bottom {}\n",
+        "case: dock {s}/{s}/{s}{s} · sidebar {s}{s} · menu_bar {s} · rail {s} · right {} · bottom {}\n",
         .{
-            @tagName(c.dock_edge), @tagName(c.dock_mode),                     if (c.dock_open) " (revealed)" else "",
-            @tagName(c.sidebar),   if (c.sidebar_pinned) " (pinned)" else "", @tagName(c.menu_bar),
-            @tagName(c.rail),      c.right_column,                            c.bottom_panel,
+            @tagName(c.dock_edge), @tagName(c.dock_mode),                     @tagName(c.dock_placement), if (c.dock_open) " (revealed)" else "",
+            @tagName(c.sidebar),   if (c.sidebar_pinned) " (pinned)" else "", @tagName(c.menu_bar),       @tagName(c.rail),
+            c.right_column,        c.bottom_panel,
         },
     );
 }
 
-test "the edge-band audit: no grip ever takes another surface's cell, and no control is ever shadowed — every dock edge × mode × state, at 80x24, 120x40 and 376x92" {
+test "the edge-band audit: no grip ever takes another surface's cell, and no control is ever shadowed — every dock edge × placement × mode × state, at 80x24, 120x40 and 376x92" {
     const sizes = [_]struct { cols: u16, rows: u16 }{
         .{ .cols = 80, .rows = 24 },
         .{ .cols = 120, .rows = 40 },
@@ -209,7 +213,9 @@ test "the edge-band audit: no grip ever takes another surface's cell, and no con
         var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = size.cols, .rows = size.rows });
         defer app.deinit();
         _ = try app.openScratch();
-        for ([_]Config.DockEdge{ .bottom, .left, .right }) |dock_edge| {
+        for ([_]Config.DockEdge{ .bottom, .left, .right }) |dock_edge| for (std.enums.values(Config.DockPlacement)) |dock_placement| {
+            // A side dock ignores the placement: one pass is all of it.
+            if (dock_edge != .bottom and dock_placement != .inner) continue;
             for ([_]Config.DockMode{ .always, .auto_hide, .hidden }) |dock_mode| {
                 for ([_]bool{ false, true }) |dock_open| {
                     if (dock_open and dock_mode != .auto_hide) continue;
@@ -230,6 +236,7 @@ test "the edge-band audit: no grip ever takes another surface's cell, and no con
                                                 .rail = rail,
                                                 .right_column = right_column,
                                                 .bottom_panel = bottom_panel,
+                                                .dock_placement = dock_placement,
                                             };
                                             apply(&app, c);
                                             try app.render();
@@ -251,7 +258,7 @@ test "the edge-band audit: no grip ever takes another surface's cell, and no con
                     }
                 }
             }
-        }
+        };
     }
 }
 

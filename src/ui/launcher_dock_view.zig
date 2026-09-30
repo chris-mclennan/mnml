@@ -112,6 +112,12 @@ pub const Props = struct {
     pinned: bool = false,
     /// How a running item is marked.
     running_mark: RunningMark = .bright,
+    /// // changed (dock-shared): the strip fills its whole area with
+    /// its own darker ground. Off when it shares a row with something
+    /// else (`ui.dock.placement = .shared`, the `:` line's row): then
+    /// only the run and the pin chip wear that ground, and the cells
+    /// between them keep the row's own.
+    ground: bool = true,
 };
 
 /// Where the pin chip goes on a bottom strip: the last three cells.
@@ -170,7 +176,7 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
     const pal = th.palette;
     const bg = pal.bg_darker;
     const hover_bg = pal.bg2;
-    ui.fill(area, Theme.onBg(th.fg, bg));
+    if (props.ground) ui.fill(area, Theme.onBg(th.fg, bg));
     switch (props.edge) {
         .bottom => drawRow(ui, area, props, bg, hover_bg),
         .left, .right => drawColumn(ui, area, props, bg, hover_bg),
@@ -178,7 +184,18 @@ pub fn draw(ui: Ui, area: Rect, props: Props) void {
     pin_chip.draw(ui, pinRect(area, props.edge), .{ .pinned = props.pinned, .bg = bg, .hit = .{ .launcher_dock = .pin } });
 }
 
-fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
+/// Where a bottom strip's run lands: how many items fit whole, the
+/// cells they take, and the column the first one starts on.
+pub const RowLayout = struct {
+    fits: usize,
+    total: u16,
+    start: u16,
+};
+
+/// The bottom strip's arithmetic, without the paint — the app asks it
+/// where the run would land before it decides whether the strip may
+/// share a row (`app/launcher_dock.zig`, `sharedStrip`).
+pub fn rowLayout(ui: Ui, area: Rect, props: Props) RowLayout {
     // The pin chip owns the strip's tail; items stop before it.
     const limit = pinRect(area, .bottom);
     const right_edge = if (limit.isEmpty()) area.right() else limit.x;
@@ -187,17 +204,24 @@ fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Co
     // output: moving the run must never change which items are on it.
     var fits: usize = 0;
     var total: u16 = 0;
-    {
-        var x: u16 = area.x + 1;
-        for (props.items) |it| {
-            const w = itemWidth(ui, it, props.labels, props.running_mark);
-            if (x + w > right_edge) break;
-            x += w;
-            total += w;
-            fits += 1;
-        }
+    var x: u16 = area.x + 1;
+    for (props.items) |it| {
+        const w = itemWidth(ui, it, props.labels, props.running_mark);
+        if (x + w > right_edge) break;
+        x += w;
+        total += w;
+        fits += 1;
     }
-    var x = rowStart(area.x, right_edge, total, props.@"align");
+    return .{ .fits = fits, .total = total, .start = rowStart(area.x, right_edge, total, props.@"align") };
+}
+
+fn drawRow(ui: Ui, area: Rect, props: Props, bg: vaxis.Color, hover_bg: vaxis.Color) void {
+    const lay = rowLayout(ui, area, props);
+    const fits = lay.fits;
+    var x = lay.start;
+    // Without a ground of its own the run still wears one, so it reads
+    // as a strip on a row it shares.
+    if (!props.ground and lay.total > 0) ui.fill(Rect.init(x, area.y, lay.total, 1), Theme.onBg(ui.theme.fg, bg));
     for (props.items[0..fits], 0..) |it, i| {
         const w = itemWidth(ui, it, props.labels, props.running_mark);
         const cell = Rect.init(x, area.y, w, 1);

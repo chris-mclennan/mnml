@@ -130,8 +130,12 @@ pub const State = struct {
 // ─── mode and geometry ──────────────────────────────────────────────────
 
 /// `ui.dock.mode`, with the session's pin on top of it.
+/// // changed (dock-shared): a strip on the `:` line's row has no
+/// reveal to run — it is on a row that is always there — so
+/// `.auto_hide` reads `.always` under `.shared`. `.hidden` still hides.
 pub fn mode(app: *const App) Mode {
     if (app.launcher_dock.pinned) return .always;
+    if (app.cfg.ui.dock.mode == .auto_hide and sharesCmdline(app)) return .always;
     return app.cfg.ui.dock.mode;
 }
 
@@ -177,6 +181,15 @@ pub fn placement(app: *const App) Placement {
     return app.cfg.ui.dock.placement;
 }
 
+/// // changed (dock-shared): the strip lives ON the `:` line's row —
+/// a bottom dock under `ui.dock.placement = .shared`. It carves no row
+/// (`banded` is false), wears no grip, registers no dwell band, and is
+/// painted by `render` into the part of that row the typed command
+/// does not reach (`sharedStrip`).
+pub fn sharesCmdline(app: *const App) bool {
+    return placement(app) == .shared;
+}
+
 /// The strip is carved out of the frame this frame — `render.chrome`'s
 /// one question.
 pub fn docked(app: *const App) bool {
@@ -209,7 +222,9 @@ pub fn docked(app: *const App) bool {
 /// already governs (the grip stands down while a line is open).
 pub fn banded(app: *const App) bool {
     if (app.zen or mode(app) == .hidden) return false;
-    if (edge(app) == .bottom) return mode(app) == .always;
+    // // changed (dock-shared): a `.shared` strip is paint on a row the
+    // frame already keeps — the `:` line's — so it reserves nothing.
+    if (edge(app) == .bottom) return mode(app) == .always and !sharesCmdline(app);
     return true;
 }
 
@@ -267,6 +282,11 @@ pub fn overlayRect(app: *const App, full: Rect) Rect {
         .bottom => switch (placement(app)) {
             .outer => band,
             .inner => innerRow(full) orelse .empty,
+            // // changed (dock-shared): the `:` line's row, which the
+            // band already is when nothing is carved under it. Only a
+            // `hidden` strip's one-shot reveal (`view.dock_toggle`)
+            // gets here; `render` lays it out with `sharedStrip`.
+            .shared => band,
         },
         .left => if (full.w >= side_min_width) Rect.init(band.x, band.y, width, band.h) else .empty,
         .right => if (full.w >= side_min_width) Rect.init(band.right() -| width, band.y, width, band.h) else .empty,
@@ -285,6 +305,47 @@ pub fn innerRow(full: Rect) ?Rect {
     const upper = rnd.frameRects(full, .{}).upper;
     if (upper.h < height) return null;
     return Rect.init(upper.x, upper.bottom() -| height, upper.w, height);
+}
+
+/// // changed (dock-shared): where a `.shared` strip paints on the `:`
+/// line's row this frame, and where its run starts.
+pub const Shared = struct {
+    /// The strip's area — the row, less the cells an open `:` line
+    /// paints. Empty when the strip steps aside.
+    area: Rect,
+    /// The first item's column (the area's end when the run is empty).
+    run_x: u16,
+};
+
+/// // changed (dock-shared): the `.shared` layout. `row` is the `:`
+/// line's row; `line_w` is the width an open `:` line paints — the
+/// prompt, the typed text and the caret cell — or null when none is
+/// open.
+///
+/// With no line open the strip has the whole row, and the run and the
+/// pin chip sit in it per `ui.dock.align` exactly as the bottom strip's
+/// do. With a line open the strip's area starts where the line's paint
+/// ends, and the view keeps its one leading cell of air, so the run is
+/// aligned within the space RIGHT of the command. **The step-aside
+/// rule:** the line never pushes an item off the strip — when that
+/// space can no longer hold every item the whole row holds (with no
+/// items dropped, that is `line_w + 1 + run + 3 > row.w`: the line,
+/// its cell of air, the run, the pin chip), the strip is not painted
+/// at all this frame, registers no hit, and comes back the frame the
+/// line closes or shortens.
+pub fn sharedStrip(app: *App, ui: Ui, row: Rect, line_w: ?u16) Allocator.Error!Shared {
+    const hidden: Shared = .{ .area = .empty, .run_x = row.right() };
+    if (row.isEmpty() or !sharesCmdline(app) or !shown(app)) return hidden;
+    const list = try items(app, ui.arena);
+    const props = try viewProps(app, ui, list);
+    const whole = view.rowLayout(ui, row, props);
+    const lw = line_w orelse 0;
+    if (lw >= row.w) return hidden;
+    const area = Rect.init(row.x + lw, row.y, row.w - lw, row.h);
+    if (view.pinRect(area, .bottom).isEmpty()) return hidden;
+    const here = view.rowLayout(ui, area, props);
+    if (here.fits < whole.fits) return hidden;
+    return .{ .area = area, .run_x = if (here.fits == 0) view.pinRect(area, .bottom).x else here.start };
 }
 
 // ─── the dwell ──────────────────────────────────────────────────────────
@@ -831,6 +892,19 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     st.rect = area;
     st.count = @intCast(list.len);
     if (st.cursor >= list.len) st.cursor = if (list.len == 0) 0 else @intCast(list.len - 1);
+    view.draw(ui, area, try viewProps(app, ui, list));
+    if (mode(app) != .always) hover_zones.register(app, .{
+        .rect = area,
+        .id = .launcher_dock,
+        .dwell_ms = app.cfg.ui.dock.reveal_ms,
+        .priority = hover_zones.prio_dock,
+    });
+}
+
+/// The strip as the view is told it — one builder, so the paint and
+/// `sharedStrip`'s arithmetic can never disagree about the run.
+fn viewProps(app: *App, ui: Ui, list: []const Item) Allocator.Error!view.Props {
+    const st = &app.launcher_dock;
     const props_items = try ui.arena.alloc(view.Item, list.len);
     for (list, props_items) |it, *v| v.* = .{
         .glyph = it.glyph,
@@ -840,7 +914,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .running = it.running,
         .attention = it.attention,
     };
-    view.draw(ui, area, .{
+    return .{
         .items = props_items,
         .edge = switch (edge(app)) {
             .bottom => .bottom,
@@ -864,13 +938,8 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             .dot => .dot,
             .none => .none,
         },
-    });
-    if (mode(app) != .always) hover_zones.register(app, .{
-        .rect = area,
-        .id = .launcher_dock,
-        .dwell_ms = app.cfg.ui.dock.reveal_ms,
-        .priority = hover_zones.prio_dock,
-    });
+        .ground = !sharesCmdline(app),
+    };
 }
 
 /// The colour an item paints in: a role through the one resolver the
@@ -942,6 +1011,13 @@ fn appendLabelRows(app: *App, rows: *std.ArrayListUnmanaged(command.MenuItem)) A
         .label = if (side) "Place: below the command line (bottom edge only)" else "Place: below the command line",
         .action = .{ .set_dock_placement = .outer },
         .checked = place == .outer,
+    });
+    // // changed (dock-shared): the third row — on the `:` line's own
+    // row, right of what is typed there.
+    try rows.append(app.gpa, .{
+        .label = if (side) "Place: on the command line (bottom edge only)" else "Place: on the command line",
+        .action = .{ .set_dock_placement = .shared },
+        .checked = place == .shared,
     });
     const at = app.cfg.ui.dock.@"align";
     try rows.append(app.gpa, .{
@@ -1205,7 +1281,9 @@ pub fn describe(app: *App, arena: Allocator, part: Part) Allocator.Error!tooltip
     switch (part) {
         .pin => return .{
             .title = if (app.launcher_dock.pinned) "Dock pinned" else "Pin the dock",
-            .detail = "click keeps the dock open · right-click: mode, edge, placement, settings",
+            // // changed (dock-shared): on the `:` line's row the strip
+            // is always up, so the pin has nothing to keep open.
+            .detail = if (sharesCmdline(app)) "on the command line's row the dock is always up · right-click: mode, edge, placement, settings" else "click keeps the dock open · right-click: mode, edge, placement, settings",
         },
         .item => |i| {
             const list = try items(app, arena);
@@ -1312,9 +1390,9 @@ pub fn setEdge(app: *App, next: Edge) CommandError!void {
     app.needs_render = true;
 }
 
-/// `ui.dock.placement`, persisted: `:dock inner` / `:dock outer` (and
-/// their `above` / `below` spellings), the Settings row and the two
-/// *Place:* rows on the strip's own right-click menu all land here. A
+/// `ui.dock.placement`, persisted: `:dock inner` / `:dock outer` /
+/// `:dock shared` (and their `above` / `below` / `cmdline` spellings),
+/// the Settings row and the three *Place:* rows on the strip's own right-click menu all land here. A
 /// side dock takes the key without complaint — it is the BOTTOM
 /// strip's question, and moving back to the bottom edge answers it.
 pub fn setPlacement(app: *App, next: Placement) CommandError!void {
@@ -1325,6 +1403,7 @@ pub fn setPlacement(app: *App, next: Placement) CommandError!void {
     app.toast("dock: {s}", .{switch (next) {
         .inner => "above the statusline",
         .outer => "below the command line",
+        .shared => "on the command line",
     }});
     app.needs_render = true;
 }
@@ -2195,14 +2274,19 @@ test "the strip's Settings rows: the six discrete `ui.dock.*` choices, each read
     // // changed (dock-placement): the placement row offers the two
     // choices in a person's words rather than the enum's tags — the
     // list is in tag order, so `.inner` is still index 0.
+    // // changed (dock-shared): and a third, `on command line`.
     const place_opts = @import("settings.zig").options("ui.dock.placement");
-    try t.expectEqual(@as(usize, 2), place_opts.len);
+    try t.expectEqual(@as(usize, 3), place_opts.len);
     try t.expectEqualStrings("above statusline", place_opts[0]);
     try t.expectEqualStrings("below command line", place_opts[1]);
+    try t.expectEqualStrings("on command line", place_opts[2]);
     var fresh: @import("../config/Config.zig") = .{};
     try t.expectEqual(@as(usize, 0), @import("settings.zig").currentIndex(&fresh, "ui.dock.placement"));
     @import("settings.zig").setIndex(&fresh, "ui.dock.placement", 1);
     try t.expectEqual(Placement.outer, fresh.ui.dock.placement);
+    @import("settings.zig").setIndex(&fresh, "ui.dock.placement", 2);
+    try t.expectEqual(Placement.shared, fresh.ui.dock.placement);
+    try t.expectEqual(@as(usize, 2), @import("settings.zig").currentIndex(&fresh, "ui.dock.placement"));
 }
 
 test "the `+`: its hover copy is the verb, its menu is the tab bar's own, and the keyboard's End reaches it — it ends the run" {
@@ -2408,4 +2492,205 @@ test "the running mark follows real state: a session whose child exited loses it
     app.panes.pty(app.active.?).?.exit = .{ .code = 0 };
     list = try items(&app, app.frame.allocator());
     try t.expect(!Probe.item(list, "claude_code").running);
+}
+
+// ─── `.shared`: the strip on the `:` line's row ─────────────────────────
+
+/// The row a `.shared` strip's items answer on: the first and one past
+/// the last column with an item hit, or null when none does.
+fn itemSpan(app: *const App, y: u16) ?struct { start: u16, end: u16 } {
+    var start: ?u16 = null;
+    var end: u16 = 0;
+    const w: u16 = @intCast(app.screen.width);
+    var x: u16 = 0;
+    while (x < w) : (x += 1) {
+        const h = app.hits.at(x, y) orelse continue;
+        if (h != .launcher_dock or h.launcher_dock != .item) continue;
+        if (start == null) start = x;
+        end = x + 1;
+    }
+    return if (start) |s| .{ .start = s, .end = end } else null;
+}
+
+/// Any launcher-dock hit anywhere on the screen.
+fn anyDockHit(app: *const App) bool {
+    const w: u16 = @intCast(app.screen.width);
+    const hgt: u16 = @intCast(app.screen.height);
+    var y: u16 = 0;
+    while (y < hgt) : (y += 1) {
+        var x: u16 = 0;
+        while (x < w) : (x += 1) {
+            if (app.hits.at(x, y)) |h| if (h == .launcher_dock) return true;
+        }
+    }
+    return false;
+}
+
+/// Open the app's `:` line holding `s`, the caret at its end.
+fn typeLine(app: *App, s: []const u8) !void {
+    const cmdline = @import("cmdline.zig");
+    if (app.cmdline == null) cmdline.open(app);
+    const c = &app.cmdline.?;
+    c.text.clearRetainingCapacity();
+    try c.text.appendSlice(app.gpa, s);
+    c.caret = s.len;
+}
+
+test "`.shared`: the strip lives ON the `:` line's row — no row carved, no grip, `auto_hide` reading `always`, the run centred and the pin chip at the far end, the rest of the row still the `:` line's click target" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const full = Rect.init(0, 0, 120, 40);
+    try t.expectEqual(Mode.auto_hide, app.cfg.ui.dock.mode);
+    try setPlacement(&app, .shared);
+    try t.expect(sharesCmdline(&app));
+    // Nothing to summon: the mode reads `always`, the file keeps its own.
+    try t.expectEqual(Mode.always, mode(&app));
+    try t.expectEqual(Mode.auto_hide, app.cfg.ui.dock.mode);
+    try t.expect(!gripShown(&app));
+    try t.expect(!banded(&app));
+    // No row is carved: the frame is the dock-less one, row for row.
+    const none = render.frameRects(full, .{});
+    const fr = render.frameRects(full, render.chrome(&app));
+    try t.expect(fr.launcher_dock.isEmpty());
+    try t.expect(fr.upper.eql(none.upper) and fr.status.eql(none.status) and fr.cmdline.eql(none.cmdline));
+
+    try app.render();
+    // The strip is the `:` row, and it is up without any dwell.
+    try t.expectEqual(Rect.init(0, 39, 120, 1), app.launcher_dock.rect);
+    const span = itemSpan(&app, 39).?;
+    const run_w = span.end - span.start;
+    // Centred in 1..117 exactly as the bottom strip is (the view's own
+    // `rowStart`): the pin chip keeps 117..119.
+    try t.expectEqual(@max(@as(u16, 1), (117 - run_w) / 2), span.start);
+    try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
+    // Left of the run the row is still the `:` line's click target.
+    const bar = app.hits.at(2, 39).?;
+    try t.expect(bar == .button and bar.button == @intFromEnum(render.Button.cmdline_bar));
+    // No item anywhere else on the screen, and no dwell band watched.
+    try t.expect(itemSpan(&app, 37) == null and itemSpan(&app, 38) == null);
+    var grip = false;
+    for (app.hits.items.items) |e| if (e.target == .button and e.target.button == @intFromEnum(render.Button.edge_grip_dock)) {
+        grip = true;
+    };
+    try t.expect(!grip);
+
+    // `.hidden` still hides it: no item, no pin.
+    try setMode(&app, .hidden);
+    try app.render();
+    try t.expect(!anyDockHit(&app));
+    try t.expect(app.launcher_dock.rect.isEmpty());
+}
+
+test "`.shared` with a `:` line open: the run is aligned in the space RIGHT of the typed command — centre, start and end — and the pin chip keeps the row's far end" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try setPlacement(&app, .shared);
+    try app.render();
+    const run_w = blk: {
+        const s = itemSpan(&app, 39).?;
+        break :blk s.end - s.start;
+    };
+    // `:abc▏` paints five cells; the area starts at 5 and the view keeps
+    // one cell of air, so nothing can start before column 6.
+    try typeLine(&app, "abc");
+    const lw: u16 = 5;
+    const cases = [_]struct { a: Align, line: u16, bare: u16 }{
+        .{ .a = .center, .line = @max(lw + 1, lw + (117 - lw - run_w) / 2), .bare = @max(@as(u16, 1), (117 - run_w) / 2) },
+        .{ .a = .start, .line = lw + 1, .bare = 1 },
+        .{ .a = .end, .line = 117 - run_w, .bare = 117 - run_w },
+    };
+    for (cases) |c| {
+        app.cfg.ui.dock.@"align" = c.a;
+        try typeLine(&app, "abc");
+        try app.render();
+        const s = itemSpan(&app, 39).?;
+        try t.expectEqual(c.line, s.start);
+        try t.expectEqual(run_w, s.end - s.start);
+        try t.expect(s.start >= lw + 1);
+        try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
+        // The line's own cells are the line's.
+        try t.expect(app.hits.at(2, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
+        @import("cmdline.zig").close(&app);
+        try app.render();
+        try t.expectEqual(c.bare, itemSpan(&app, 39).?.start);
+    }
+}
+
+test "`.shared` steps aside at the exact width: the line, a cell of air, the run and the pin chip fill the row — one more typed cell and the strip is gone, hits and all, until the line shortens or closes" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try setPlacement(&app, .shared);
+    try app.render();
+    const run_w = blk: {
+        const s = itemSpan(&app, 39).?;
+        break :blk s.end - s.start;
+    };
+    // `:` + n typed cells + the caret cell = n + 2 painted cells; the
+    // strip fits while (n + 2) + 1 + run + 3 <= 120.
+    const n_fit: usize = 120 - 3 - 1 - run_w - 2;
+    var text: [120]u8 = undefined;
+    @memset(&text, 'x');
+    try typeLine(&app, text[0..n_fit]);
+    try app.render();
+    const s = itemSpan(&app, 39).?;
+    try t.expectEqual(run_w, s.end - s.start);
+    try t.expectEqual(@as(u16, @intCast(n_fit + 2 + 1)), s.start); // pressed against the line's air cell
+    try t.expect(app.hits.at(118, 39).?.launcher_dock == .pin);
+
+    // One more cell and the text would reach the first item: the strip
+    // steps aside whole — no item, no pin chip, no hit anywhere.
+    try typeLine(&app, text[0 .. n_fit + 1]);
+    try app.render();
+    try t.expect(!anyDockHit(&app));
+    try t.expect(app.launcher_dock.rect.isEmpty());
+    // The row is the line's again, all of it.
+    try t.expect(app.hits.at(118, 39).?.button == @intFromEnum(render.Button.cmdline_bar));
+
+    // Shortened, it comes back; closed, it is back on the whole row.
+    try typeLine(&app, text[0..n_fit]);
+    try app.render();
+    try t.expect(itemSpan(&app, 39) != null);
+    try typeLine(&app, text[0 .. n_fit + 1]);
+    try app.render();
+    try t.expect(!anyDockHit(&app));
+    @import("cmdline.zig").close(&app);
+    try app.render();
+    try t.expectEqual(@max(@as(u16, 1), (117 - run_w) / 2), itemSpan(&app, 39).?.start);
+}
+
+test "`.shared` is a bottom strip's word: a side dock ignores it (auto-hide, grip and all), and no mode ever shows the bottom grip under it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    try setPlacement(&app, .shared);
+    // Every mode, bottom edge: the grip is never shown, never painted.
+    for ([_]Mode{ .always, .auto_hide, .hidden }) |m| {
+        app.cfg.ui.dock.mode = m;
+        try app.render();
+        try t.expect(!gripShown(&app));
+        for (app.hits.items.items) |e| try t.expect(!(e.target == .button and e.target.button == @intFromEnum(render.Button.edge_grip_dock)));
+    }
+    // A side dock reads `.inner`, keeps its own auto-hide, its band and
+    // its grip — and nothing of the strip lands on the `:` row.
+    app.cfg.ui.dock.mode = .auto_hide;
+    try setEdge(&app, .left);
+    try t.expectEqual(Placement.inner, placement(&app));
+    try t.expectEqual(Placement.shared, app.cfg.ui.dock.placement);
+    try t.expect(!sharesCmdline(&app));
+    try t.expectEqual(Mode.auto_hide, mode(&app));
+    try app.render();
+    try t.expect(gripShown(&app));
+    try t.expect(itemSpan(&app, 39) == null);
+    try t.expect(banded(&app));
 }
