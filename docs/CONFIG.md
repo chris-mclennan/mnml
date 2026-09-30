@@ -1816,6 +1816,54 @@ inherit all of it. Without a workspace argument the sandbox opens
 - Only the app takes the flag — the terminal UI and `--headless`. A
   one-shot subcommand (`mnml run FILE`, `mnml test`, …) ignores it.
 
+### `--demo`
+
+`mnml --demo` is `--sandbox` with something in it: a small Zig project
+with history, offline Jira and Bitbucket, and a stand-in Claude Code. It
+needs no network and no account, and it is the same fixture the site's
+recordings are made from. It opens its own workspace, so it takes no
+workspace argument, and it will not start inside a sandbox.
+
+On top of the sandbox's variables the re-exec sets these, and drops
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `BITBUCKET_ACCESS_TOKEN`,
+`BITBUCKET_APP_PASSWORD`, `BITBUCKET_PERSONAL_TOKEN`, `MNML_JIRA_CONFIG`,
+`MNML_BITBUCKET_CONFIG`, `MNML_MARKETPLACE_LOCAL` and `MNML_ENV`:
+
+| variable | value |
+| --- | --- |
+| `MNML_DEMO` | `<root>/tour` — the workspace; with `MNML_SANDBOX`, what turns the chip into ` demo ` |
+| `PATH` | `<root>/demo/bin` first — the stand-in `claude` and `codex` |
+| `JIRA_BASE_URL` / `BITBUCKET_BASE_URL` | `@<root>/demo/jira.url` / `@<root>/demo/bb.url`, the fakes' URL files |
+| `JIRA_API_TOKEN` / `BITBUCKET_API_TOKEN` | the fakes' own tokens |
+| `JIRA_RATELIMIT_STATE` / `BITBUCKET_RATELIMIT_STATE` | files under `<root>/demo/` |
+| `MNML_NO_UPDATE_CHECK` | `1` |
+| `MNML_OPEN_URL` | `none` — a link opens nothing |
+| `MNML_AGENTS_PGID` | a process group nobody is in: the agents scan sees the demo's sessions, not the machine's |
+| `GIT_CEILING_DIRECTORIES` | `<root>` |
+
+Then, before the first frame:
+
+- **The workspace** `<root>/tour` is written from files the binary
+  carries (`data/demo/`), and `git` makes its history: five commits and
+  a merge, a commit of request files by a second author, an open
+  `feature/cli-args` branch, then a modified file and an untracked one.
+  Without `git` the files are there and the history is not.
+- **The home** gets a `config.zon` that skips the first-launch setup,
+  an `init.lua` that opens `src/util.zig` with a Claude Code session on
+  its right and a shell under that (edit it to change the first screen),
+  three earlier agent transcripts for the sessions views, and the Jira
+  and Bitbucket configs.
+- **The integrations** built beside the binary are linked into the data
+  root and `mnml-jira --install` / `mnml-bitbucket --install` run.
+- **The fakes** `mnml-fake-jira` and `mnml-fake-bitbucket` beside the
+  binary start on ports the OS picks, each in a process group of its
+  own and told to exit with mnml; their URLs go into the workspace's
+  `.mnml/env/dev.env`, which `requests/*.http` use.
+
+Whatever is not beside the binary is skipped and named in the first
+frame's toast. A ` demo ` chip sits where the sandbox chip does. On
+exit the fakes are stopped, then the whole sandbox is removed.
+
 ## Writes
 
 Settings screens and toggles write back with `persistScalar`: the file is

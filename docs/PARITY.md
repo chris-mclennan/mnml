@@ -43,9 +43,9 @@ loop starts that check (`24b9b6a8`).
 | Testing & quality | 20 | 0 | 0 | 0 | 20 |
 | UI & theming | 97 | 0 | 1 | 0 | 98 |
 | Workspace trust | 11 | 0 | 0 | 0 | 11 |
-| Headless, IPC & extensibility | 60 | 0 | 2 | 1 | 63 |
+| Headless, IPC & extensibility | 61 | 0 | 2 | 0 | 63 |
 | Languages | 6 | 0 | 0 | 0 | 6 |
-| **total** | **605** | **0** | **7** | **1** | **613** |
+| **total** | **606** | **0** | **7** | **0** | **613** |
 
 The two integration sections at the bottom (jira: 44 done, 1 cut, of 45;
 bitbucket: 41 done, 1 cut, of 42) are counted apart: they measure the
@@ -174,7 +174,6 @@ the tree. Nothing left is larger than M.
 | item | size | section |
 |---|---|---|
 | (none — every spec id has a runner or a `cutRunner`; `zig build -Dpartial=false` builds and CI runs it) | — | Headless, IPC & extensibility |
-| `--demo` launch mode (deferred until the website work) | M | Headless, IPC & extensibility |
 
 Everything else the first Remaining list named landed on the `remaining`
 branch (2026-09-05; the corpus was 351/352 then — the one failure asserted TOML; it asserts ZON since 2026-09-07 and the corpus is 393/393): MRU buffers, pins and `tab.reopen`; the symbol,
@@ -889,7 +888,7 @@ real adapters refuse (`arguments: []`, `initialized` before `launch`).
 | `MNML_STARTUP_PICKER=1` | done | `wanted` in `startup_picker.zig` | also when the workspace is `$HOME` |
 | `--startup-picker` flag | done | `src/main.zig` | sets `MNML_STARTUP_PICKER=1` for the process |
 | `--sandbox` — a throwaway HOME / XDG_CONFIG_HOME / data root, re-exec before config load, banner | done | `src/config/sandbox.zig`, `src/main.zig`, the `sandbox` chip in `src/app/statusline.zig`, `src/tui/loop.zig` | re-execs (same pid) with `HOME`, `XDG_CONFIG_HOME`, `MNML_DATA_ROOT`, `MNML_SANDBOX`, `MNML_SANDBOX_PID`; a yellow ` sandbox ` chip + window title + first-frame toast where Rust painted a persistent toast; a red ` sandbox? ` when the variable is set but the home is not throwaway. `// changed:` the owning process removes the dir on exit (Rust left it and pruned >6 h-old ones on the next launch); `--sandbox-keep` keeps it. The session is neither restored nor autosaved, and no running-instance marker is written. POSIX only — Windows refuses the flag. No `run.sh sandbox` verb: `./run.sh WS --sandbox` passes it through |
-| `--demo` — the bundled demo workspace + mock servers, over `--sandbox` | missing | — | deferred: to be revisited with the website work (screenshots / tapes are its consumer) |
+| `--demo` — the bundled demo workspace + mock servers, over `--sandbox` | done | `src/config/demo.zig`, `data/demo/` (embedded by `data/root.zig`), `src/config/sandbox.zig`, `src/main.zig`, the ` demo ` chip in `src/app/statusline.zig` | `// changed:` a `--sandbox` re-exec (Rust booted against a per-user cache copy under your real home and config); the workspace is the tour / site-recording fixture (a Zig project) with its history made by `git` at first run, not Rust's Notely TypeScript tree and its tarball; `mnml-fake-jira` / `mnml-fake-bitbucket` beside the binary, in groups of their own and stopped on exit, replace Rust's python server on :7071, which outlived mnml; the integrations are installed into the sandbox's data root; the stand-in `claude` / `codex` (`data/demo/bin/`) are first on `PATH`; model API keys and the other Bitbucket tokens are dropped; the first screen is the throwaway home's `init.lua`. Also under `--headless`. No GitHub pane (there is no GitHub integration), no `$MNML_DEMO_WORKSPACE` override, no `./run.sh demo` verb |
 | `mnml.app` launcher default | done | `dist/macos/{Info.plist,launcher.sh,build-app.sh}`, `scripts/package.sh --macos-app` | ghostty first, Terminal.app else; the picker on |
 | Update check on launch | done | `src/app/update.zig` | |
 | `ui.check_updates = false` opt-out | done | `Config.zig`, `update.zig` | + `MNML_NO_UPDATE_CHECK=1` |

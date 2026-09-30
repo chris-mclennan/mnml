@@ -234,6 +234,10 @@ architecture behind it is in `docs/DESIGN.md`.
 
 ### Fixes and polish since 2026-09-20
 
+- `mnml --demo` opens a sample Zig workspace with history in a throwaway
+  home, beside offline Jira and Bitbucket servers and a stand-in Claude Code
+  session (no model runs, no network); a ` demo ` chip says so, and exit
+  stops the servers and removes it all.
 - `--headless --ascii` paints the ASCII screen, as the terminal does.
 - The update check and the Nerd Fonts release fetch run only from the
   terminal loop — never under `--headless`, a `.test` run or a unit test.
