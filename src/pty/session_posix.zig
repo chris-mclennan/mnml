@@ -236,6 +236,10 @@ pub const Session = struct {
     master: posix.fd_t,
     child: posix.pid_t,
     exit: ?Exit = null,
+    /// When `reap` saw the child go (`.awake` ms): the start of the
+    /// window in which `exited` still waits for the reader's EOF.
+    reaped_at_ms: i64 = 0,
+    io: Io,
     cols: u16,
     rows: u16,
 
@@ -330,6 +334,7 @@ pub const Session = struct {
             .shared = shared,
             .master = master,
             .child = pid,
+            .io = io,
             .cols = opts.cols,
             .rows = opts.rows,
         };
@@ -475,9 +480,20 @@ pub const Session = struct {
 
     /// The child's exit, once known. `null` while it is still running or
     /// its output has not yet drained.
+    ///
+    /// A child can be reaped before the reader has its last bytes: the
+    /// reader is a thread of its own, and on Linux the child's writes
+    /// reach the master through the tty's flip buffer, which a kernel
+    /// work item pushes after the write returns. So the exit stands only
+    /// once the reader has reached EOF (everything the child wrote is
+    /// then ringed), or `exit_grace_ms` after the reap for a child that
+    /// left the pty to something still running (no EOF is coming).
     pub fn exited(self: *Session) ?Exit {
         if (self.exit == null) self.reap(false);
-        return self.exit;
+        const e = self.exit orelse return null;
+        if (self.eof()) return e;
+        if (nowMs(self.io) - self.reaped_at_ms < exit_grace_ms) return null;
+        return e;
     }
 
     /// True once the pty reported EOF: the child (and anyone it handed the
@@ -531,8 +547,16 @@ pub const Session = struct {
         if (rc != self.child) return;
         self.shared.reaped.store(true, .release);
         self.exit = exitFromStatus(@bitCast(status));
+        self.reaped_at_ms = nowMs(self.io);
     }
 };
+
+/// How long `exited` waits for EOF after the reap (see there).
+const exit_grace_ms = 250;
+
+/// How long the reader keeps reading after a hang-up that came with
+/// nothing to read (see `readerMain`), in total.
+const hup_grace_ms = 250;
 
 fn exitFromStatus(status: u32) Exit {
     if (c.W.IFEXITED(status)) return .{ .code = c.W.EXITSTATUS(status) };
@@ -550,6 +574,7 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
     // What one drain step copies out of the outbox; the tty takes about
     // a kilobyte at a time anyway.
     var chunk: [16 * 1024]u8 = undefined;
+    var hup_waited_ms: u32 = 0;
     while (!shared.closing.load(.acquire)) {
         // Back-pressure: a full ring means the UI is more than 256 KiB
         // behind. Stop asking for input and look again in a moment; the
@@ -569,24 +594,35 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
         const rev = fds[0].revents;
         if (rev & (posix.POLL.ERR | posix.POLL.NVAL) != 0) break;
         if (rev & posix.POLL.OUT != 0) flushOutbox(shared, &chunk);
-        if (rev & posix.POLL.IN != 0) {
+        const hup = rev & posix.POLL.HUP != 0;
+        // A hang-up is not the end by itself: the read that follows it
+        // is. Linux can report HUP without IN while the child's last
+        // bytes are still in the tty flip buffer (a kernel work item
+        // moves them to the master's read queue), so a HUP with room in
+        // the ring reads anyway; the read then returns them or EIO.
+        if (rev & posix.POLL.IN != 0 or (hup and room)) {
             const got = posix.read(shared.master, shared.ring.writable()) catch |err| switch (err) {
-                // macOS delivers EIO (mapped to InputOutput) once the slave is
-                // closed; Linux too. Either way the child is finished with us.
+                // EIO (InputOutput) once the slave is closed and the input
+                // drained, on macOS and Linux alike: the definitive end.
                 error.InputOutput => break,
-                error.WouldBlock => continue,
+                error.WouldBlock => {
+                    // HUP and nothing yet: look again, a bounded while
+                    // in all, so a wedged pty cannot keep the reader.
+                    if (hup) {
+                        if (hup_waited_ms >= hup_grace_ms) break;
+                        sleepMs(1);
+                        hup_waited_ms += 1;
+                    }
+                    continue;
+                },
                 else => break,
             };
             if (got == 0) break;
             if (shared.ring.commit(got)) shared.callNotify();
             continue;
         }
-        // HUP without IN means the slave side is gone — but only when IN
-        // was asked for: with the ring full, output may still be waiting.
-        if (rev & posix.POLL.HUP != 0) {
-            if (room) break;
-            sleepMs(1);
-        }
+        // HUP with the ring full: output may still be waiting for room.
+        if (hup) sleepMs(1);
     }
     shared.outbox.close();
     shared.eof.store(true, .release);
@@ -664,6 +700,11 @@ fn childExec(
 
 fn defaultShell() []const u8 {
     return "/bin/sh";
+}
+
+/// Monotonic milliseconds, for spans only.
+fn nowMs(io: Io) i64 {
+    return Io.Timestamp.now(io, .awake).toMilliseconds();
 }
 
 /// poll(2) with no descriptors is a portable sleep that needs no `Io`.
@@ -848,6 +889,51 @@ test "a short command's output reaches the terminal and its exit is reaped" {
     try testing.expect(std.mem.indexOf(u8, text, "hi from the pty") != null);
 }
 
+test "an exit is held back until the output written after it is ringed" {
+    // The shell exits at once; a background job it left on the pty
+    // prints only once the test says go. So the child is reaped with
+    // its output still to come — the order Linux produces by itself
+    // (a child is reapable before its last bytes are readable) — and
+    // `exited` must wait for the reader's EOF, not report the exit and
+    // let the pane stop pumping before "late" arrives. HUP is ignored
+    // before the fork: the leader's exit hangs up its process group.
+    // Linux only: on macOS the job's output never arrives after the
+    // leader's exit, so there is nothing late to wait for.
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var env = try testEnv();
+    defer env.deinit();
+    const s = try Session.spawn(testing.allocator, testing.io, .{
+        .cols = 40,
+        .rows = 4,
+        .env = &env,
+        .cwd = dir,
+        .argv = &.{ "/bin/sh", "-c", "trap '' HUP; (while [ ! -e go ]; do sleep 0.01; done; printf late) & exit 0" },
+        .poll_interval_ms = 20,
+    });
+    defer s.deinit();
+    s.reap(true);
+    try testing.expectEqual(Exit{ .code = 0 }, s.exit.?);
+    // Reaped, no EOF, inside the grace: not exited yet.
+    try testing.expectEqual(@as(?Exit, null), s.exited());
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "go", .data = "" });
+    // The pane's order: pump, and ask for the exit only with nothing
+    // ringed.
+    var waited: u32 = 0;
+    while (true) : (waited += 5) {
+        if (waited > 5000) return error.ChildDidNotExit;
+        _ = s.pump();
+        if (!s.backlog() and s.exited() != null) break;
+        sleepMs(5);
+    }
+    const text = try s.terminal().plainString(testing.allocator);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "late") != null);
+}
+
 test "the child sees the TERM the probe chose and a truecolor COLORTERM" {
     var env = try testEnv();
     defer env.deinit();
@@ -1023,10 +1109,6 @@ test "stress: the reader has let go of the block by the time deinit returns" {
         s.deinit();
         try testing.expectEqual(std.heap.Check.ok, dbg.deinit());
     }
-}
-
-fn nowMs(io: Io) i64 {
-    return Io.Timestamp.now(io, .awake).toMilliseconds();
 }
 
 test "1 MiB written to a child that never reads returns at once; the child lives and an interrupt still reaches it" {
