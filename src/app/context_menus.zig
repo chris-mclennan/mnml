@@ -1668,8 +1668,8 @@ fn openMaximizeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 }
 
 /// The strip's AI chips (Rust `split_strip_ai_buttons`): toggle the
-/// existing pane, a new session in each half, the layout mode, the
-/// glyph pair.
+/// existing pane, a new session in each half, in a new tab of this leaf
+/// or on a new tab page, the layout mode, the glyph pair.
 fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!void {
     const grid = app.cfg.ui.ai_layout_mode == .grid;
     var mem = std.heap.ArenaAllocator.init(app.gpa);
@@ -1680,6 +1680,8 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "New Codex session in right half", .action = .{ .command = .@"ai.codex_new_right" } },
         .{ .label = "New Codex session in top half", .action = .{ .command = .@"ai.codex_new_top" } },
         .{ .label = "New Codex session in bottom half", .action = .{ .command = .@"ai.codex_new_bottom" } },
+        .{ .label = "New Codex session in a new tab", .action = .{ .command = .@"ai.codex_new_tab" } },
+        .{ .label = "New Codex session in a new tab page", .action = .{ .command = .@"ai.codex_new_page" } },
         .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
@@ -1690,6 +1692,8 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "New Claude Code session in right half", .action = .{ .command = .@"ai.claude_code_new_right" } },
         .{ .label = "New Claude Code session in top half", .action = .{ .command = .@"ai.claude_code_new_top" } },
         .{ .label = "New Claude Code session in bottom half", .action = .{ .command = .@"ai.claude_code_new_bottom" } },
+        .{ .label = "New Claude Code session in a new tab", .action = .{ .command = .@"ai.claude_code_new_tab" } },
+        .{ .label = "New Claude Code session in a new tab page", .action = .{ .command = .@"ai.claude_code_new_page" } },
         .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },

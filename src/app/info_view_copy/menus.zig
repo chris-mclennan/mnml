@@ -92,6 +92,8 @@ const phase_one = [_]Row{
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in right half", .entry = newSession(.claude, "right") },
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in top half", .entry = newSession(.claude, "top") },
     .{ .menu = "Claude Code launcher", .label = "New Claude Code session in bottom half", .entry = newSession(.claude, "bottom") },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in a new tab", .entry = newSessionTab(.claude, false) },
+    .{ .menu = "Claude Code launcher", .label = "New Claude Code session in a new tab page", .entry = newSessionTab(.claude, true) },
     .{ .menu = "Codex launcher", .label = "Toggle existing Codex pane", .entry = .{
         .title = "Go to the Codex pane",
         .body = "Brings the running Codex session's pane forward and focuses it, and starts a session when there is none — it never hides the pane. The session is the `codex` CLI in a terminal pane, in the workspace; Codex has no API route in this build, so the CLI must be on PATH.",
@@ -101,6 +103,8 @@ const phase_one = [_]Row{
     .{ .menu = "Codex launcher", .label = "New Codex session in right half", .entry = newSession(.codex, "right") },
     .{ .menu = "Codex launcher", .label = "New Codex session in top half", .entry = newSession(.codex, "top") },
     .{ .menu = "Codex launcher", .label = "New Codex session in bottom half", .entry = newSession(.codex, "bottom") },
+    .{ .menu = "Codex launcher", .label = "New Codex session in a new tab", .entry = newSessionTab(.codex, false) },
+    .{ .menu = "Codex launcher", .label = "New Codex session in a new tab page", .entry = newSessionTab(.codex, true) },
     .{ .label = "Layout: Grid (splits)", .entry = .{
         .title = "AI layout — grid",
         .body = "Several sessions at once as a grid of splits — two side by side, four in a two-by-two — each visible, with the `+ Add Claude Code` card in an empty slot. `ui.ai_layout_mode = grid`. The alternative stacks them as tabs in one leaf, which suits a narrow terminal.",
@@ -267,6 +271,22 @@ fn newSession(comptime product: enum { claude, codex }, comptime half: []const u
         .title = if (claude) "New Claude Code session — " ++ half ++ " half" else "New Codex session — " ++ half ++ " half",
         .body = (if (claude) "Starts another Claude Code session — the `claude` CLI in a terminal pane — in the " ++ half ++ " half of the active pane's leaf, so the code and the session sit side by side or stacked. Each session has its own SESSIONS card and rail colour. The grid rows below lay out two or four at once." else "Starts another Codex session — the `codex` CLI in a terminal pane — in the " ++ half ++ " half of the active pane's leaf, so the code and the session sit side by side or stacked. Each session has its own SESSIONS card and rail colour."),
         .links = &.{ .{ .command = .{ .id = if (claude) .@"ai.claude_code_new" else .@"ai.codex_new", .label = "New session beside the pane" } }, .{ .command = .{ .id = .@"ai.new_session_worktree", .label = "New session in a worktree" } } },
+    };
+}
+
+fn newSessionTab(comptime product: enum { claude, codex }, comptime page: bool) Entry {
+    const claude = product == .claude;
+    const name = if (claude) "Claude Code" else "Codex";
+    const cli = if (claude) "`claude`" else "`codex`";
+    const id: command.CommandId = if (claude) (if (page) .@"ai.claude_code_new_page" else .@"ai.claude_code_new_tab") else (if (page) .@"ai.codex_new_page" else .@"ai.codex_new_tab");
+    return .{
+        .title = if (page) "New " ++ name ++ " session — new tab page" else "New " ++ name ++ " session — new tab",
+        .body = if (page)
+            "Starts another " ++ name ++ " session — the " ++ cli ++ " CLI in a terminal pane — alone on a fresh page in the TABS cluster, inserted after the current page and shown. The page you were on keeps its layout untouched; the next-session / previous-session keys cycle across pages to reach it."
+        else
+            "Starts another " ++ name ++ " session — the " ++ cli ++ " CLI in a terminal pane — as a new tab in the active leaf's strip, right after the current tab, with no split. The session gets the leaf; the tab you were on is one click or one next-session / previous-session step away.",
+        .keys = &.{ .{ .command = .@"ai.focus_next_session", .label = "Next session" }, .{ .command = .@"ai.focus_prev_session", .label = "Previous session" } },
+        .links = &.{ .{ .command = .{ .id = id, .label = "Open one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
     };
 }
 
