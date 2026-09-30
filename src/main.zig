@@ -84,7 +84,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
-            try w.print("mnml-zig {s} ({s} profile)\n", .{ version, @tagName(profile.of(env)) });
+            try w.print("mnml {s} ({s} profile)\n", .{ version, @tagName(profile.of(env)) });
             try w.flush();
             return 0;
         }

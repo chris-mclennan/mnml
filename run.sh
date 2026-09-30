@@ -234,7 +234,7 @@ shipped_integrations() {
 # else on the machine do not.)
 is_ours() {
   [ -x "$1" ] || return 1
-  "$1" --version 2>/dev/null | grep -q '^mnml-zig '
+  "$1" --version 2>/dev/null | grep -qE '^mnml(-zig)? .*\((stable|dev) profile\)'
 }
 
 # The installed mnml's stable data root — asked of the binary itself, so
@@ -297,7 +297,7 @@ do_install() {
     local ver
     ver=$("$built" --version 2>/dev/null)
     case "$ver" in
-      "mnml-zig "*"(stable profile)") log "verified: $ver" ;;
+      "mnml-zig "*"(stable profile)"|"mnml "*"(stable profile)") log "verified: $ver" ;;
       *) log "$say: $built --version said \"$ver\" — refusing to install an unverified build"; return 1 ;;
     esac
   fi

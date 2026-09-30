@@ -299,9 +299,9 @@ check "install: left the foreign binary alone" 'grep -q "unknown flag" "$PREFIX_
 
 out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh install 2>&1); rc=$?
 check "install: exit 0" '[ $rc -eq 0 ]' "$out"
-check "install: verified the build before copying" 'echo "$out" | grep -q "verified: mnml-zig "' "$out"
+check "install: verified the build before copying" 'echo "$out" | grep -qE "verified: mnml(-zig)? "' "$out"
 check "install: the host landed as PREFIX/bin/mnml" '[ -x "$PREFIX_OK/bin/mnml" ]'
-check "install: PREFIX/bin/mnml --version says what it is" '"$PREFIX_OK/bin/mnml" --version | grep -q "^mnml-zig "' "$("$PREFIX_OK/bin/mnml" --version 2>&1)"
+check "install: PREFIX/bin/mnml --version says what it is" '"$PREFIX_OK/bin/mnml" --version | grep -qE "^mnml(-zig)? .*\((stable|dev) profile\)"' "$("$PREFIX_OK/bin/mnml" --version 2>&1)"
 check "install: the integration landed too" '[ -x "$PREFIX_OK/bin/mnml-jira" ]'
 check "install: the font came with it" '[ -f "$PREFIX_OK/share/mnml/fonts/MnmlSymbols.ttf" ]'
 # The Marketplace tab's default source rides in share/ beside the font:
@@ -311,7 +311,7 @@ check "install: the manifest went to the stable data root" '[ -f "$MNML_DATA_ROO
 check "install: the data root's link points at PREFIX, not at a zig-out" '[ "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira")" = "$PREFIX_OK/bin/mnml-jira" ]' "$(readlink "$MNML_DATA_ROOT/bin/mnml-jira" 2>&1)"
 check "install: the sample binary ships, its manifest does not" '[ -x "$PREFIX_OK/bin/mnml-sample" ] && [ ! -f "$MNML_DATA_ROOT/integrations/sample.zon" ]'
 out=$(cd "$FAKE" && PREFIX="$PREFIX_OK" ./run.sh installed-status 2>&1)
-check "installed-status: names the installed version" 'echo "$out" | grep -q "^installed: mnml-zig "' "$out"
+check "installed-status: names the installed version" 'echo "$out" | grep -qE "^installed: mnml(-zig)? "' "$out"
 check "installed-status: names the data root" 'echo "$out" | grep -q "^data:      $MNML_DATA_ROOT\$"' "$out"
 check "installed-status: the link reads as pointing into the prefix" 'echo "$out" | grep -q "^link:      mnml-jira → $PREFIX_OK/bin/mnml-jira\$"' "$out"
 

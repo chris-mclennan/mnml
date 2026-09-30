@@ -211,7 +211,7 @@ pub const Mode = enum { todo, commit_msg };
 /// only thing git reads; the reason goes to `e` (stderr in `main`).
 pub fn childMain(io: Io, gpa: Allocator, mode: Mode, args: []const [:0]const u8, e: *Io.Writer) u8 {
     if (args.len < 2) {
-        e.print("mnml-zig {s}: expected <file> <target>\n", .{if (mode == .todo) "--rebase-todo" else "--commit-msg"}) catch {};
+        e.print("mnml {s}: expected <file> <target>\n", .{if (mode == .todo) "--rebase-todo" else "--commit-msg"}) catch {};
         e.flush() catch {};
         return 2;
     }
@@ -220,13 +220,13 @@ pub fn childMain(io: Io, gpa: Allocator, mode: Mode, args: []const [:0]const u8,
             var reason: ?[]u8 = null;
             defer if (reason) |r| gpa.free(r);
             writeTodo(io, gpa, args[0], args[1], &reason) catch |err| {
-                e.print("mnml-zig --rebase-todo: {s}\n", .{reason orelse @errorName(err)}) catch {};
+                e.print("mnml --rebase-todo: {s}\n", .{reason orelse @errorName(err)}) catch {};
                 e.flush() catch {};
                 return 1;
             };
         },
         .commit_msg => writeCommitMsg(io, gpa, args[0], args[1]) catch |err| {
-            e.print("mnml-zig --commit-msg: {s}\n", .{@errorName(err)}) catch {};
+            e.print("mnml --commit-msg: {s}\n", .{@errorName(err)}) catch {};
             e.flush() catch {};
             return 1;
         },
@@ -294,7 +294,7 @@ test "the sequence editor on a real todo file: git's todo is replaced by the pla
     try testing.expectError(error.PlanMismatch, writeTodo(testing.io, testing.allocator, plan_path, todo_path, &reason));
     try testing.expectEqualStrings("the rebase lists 4444444, which the plan leaves out", reason.?);
     try testing.expectEqual(@as(u8, 1), childMain(testing.io, testing.allocator, .todo, &argv, &err_w));
-    try testing.expectEqualStrings("mnml-zig --rebase-todo: the rebase lists 4444444, which the plan leaves out\n", err_w.buffered());
+    try testing.expectEqualStrings("mnml --rebase-todo: the rebase lists 4444444, which the plan leaves out\n", err_w.buffered());
     err_w = .fixed(&err_buf);
     const untouched = try tmp.dir.readFileAlloc(testing.io, "git-rebase-todo", arena, .unlimited);
     try testing.expect(std.mem.endsWith(u8, untouched, "pick 4444444 fourth\n"));
@@ -302,7 +302,7 @@ test "the sequence editor on a real todo file: git's todo is replaced by the pla
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "git-rebase-todo", .data = "pick 1111111 first\npick 2222222 second one\n" });
     try testing.expect((try mismatch(arena, plan, "pick 1111111 first\npick 2222222 second one\n")) != null);
     try testing.expectEqual(@as(u8, 2), childMain(testing.io, testing.allocator, .todo, argv[0..1], &err_w));
-    try testing.expectEqualStrings("mnml-zig --rebase-todo: expected <file> <target>\n", err_w.buffered());
+    try testing.expectEqualStrings("mnml --rebase-todo: expected <file> <target>\n", err_w.buffered());
 }
 
 test "the message editor: the record for the file's subject replaces it and leaves the queue; a squash's combined message and an unknown subject pass through" {
