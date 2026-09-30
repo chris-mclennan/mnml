@@ -51,6 +51,13 @@ for a in "$@"; do
   esac
 done
 set -- ${args[@]+"${args[@]}"}
+# The fakes the tour drives (mnml-fake-jira, mnml-fake-bitbucket, …) come from
+# `zig build`; a stale one once served the old fixture's names into an accepted
+# baseline (2026-09-30), so the verbs that launch install them first.
+case "${1:-}" in
+  diff|accept|-h|--help|help) ;;
+  *) (cd "$ROOT" && zig build) || exit $? ;;
+esac
 # A driver older than tools/drive/ is rebuilt (or, under
 # MNML_DRIVE_NO_REBUILD=1, refused) before anything launches; `diff` and
 # `accept` never launch, so they skip it (tools/tour/stamp.py).
