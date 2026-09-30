@@ -23,6 +23,11 @@ there for reviewing and fixing what they wrote.
 
 ## Feature Highlights
 
+- **[AI coding sessions](/docs/features/ai)**: Claude Code and Codex in
+  terminal splits that tile themselves, a sessions table for every
+  session on the machine, a git worktree per session, spend and usage
+  on the statusline, and ghost-text suggestions.
+
 - **[Two complete keymaps](/docs/features/editor#two-keymap-profiles)**:
   vim (Neovim and NvChad's chords, with which-key under `space`) or
   standard (VS Code's). Neither is an afterthought bolted onto the other.
@@ -31,11 +36,6 @@ there for reviewing and fixing what they wrote.
   buffer line, powerline statusline and file icons, in NvChad's 94
   base46 colour themes — with a command palette, right-click menus and
   the mouse everywhere.
-
-- **[AI coding sessions](/docs/features/ai)**: Claude Code and Codex in
-  terminal splits that tile themselves, a sessions table for every
-  session on the machine, a git worktree per session, spend and usage
-  on the statusline, and ghost-text suggestions.
 
 - **[Terminal panes on libghostty](/docs/features/terminal)**: shells,
   runners and tools in splits, emulated by the same library Ghostty is

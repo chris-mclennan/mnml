@@ -103,8 +103,11 @@ lists what is known to work and what is still open.
 
 ## Reporting a bug
 
-Search the [issues](https://github.com/chris-mclennan/mnml/issues) first,
-then open a new one with:
+<!-- cards -->
+- [GitHub Issues](https://github.com/chris-mclennan/mnml/issues) — Search existing reports, and open a new one for a bug or a request.
+- [Source on GitHub](https://github.com/chris-mclennan/mnml) — The code, the design notes under docs/, and the changelog.
+
+Search the issues first, then open a new one with:
 
 - `mnml --version`;
 - your operating system and terminal;

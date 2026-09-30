@@ -6,16 +6,14 @@ hideToc: true
 
 ## Get Started
 
-Install mnml and run it in a project folder. The first launch asks a
-few questions — vim or standard keys, whether your font has icons,
-which AI tools you use — and after that
+Install mnml and run it in a project folder. Answer a few questions on
+the first launch, and after that
 [no configuration is required](/docs/config#zero-configuration).
 
 ### Installation Instructions
 
-Prebuilt binaries for macOS, Linux and Windows, with installers,
-Homebrew, winget, and `.deb` / `.rpm` packages. Or build from source
-with Zig.
+Prebuilt binaries and packages for macOS, Linux and Windows. Or build
+from source with Zig.
 
 <!-- buttons -->
 - [Download](/download) — prebuilt binaries and packages for every platform
