@@ -21,7 +21,7 @@
 //! chevron; its slot is blank. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
 //! shifted right so they meet the chevron above), painted in the
-//! trace colour (`bg2`, `bg3` on the lit cursor row), the chevrons
+//! trace colour (the palette's `comment` grey), the chevrons
 //! `expander.zig`'s pair in its colour, the file icons `icons.zig`.
 //! Every glyph has its `ui.ascii_icons` twin beside it. The cursor row
 //! carries the list panels' marker (`▌`, the accent when the tree has
@@ -373,7 +373,9 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     const rail_bg = pal.bg_darker;
     const lit = is_cursor and p.focused;
     const bg = if (is_cursor) (if (p.focused) pal.bg2 else pal.bg) else rail_bg;
-    const trace = if (lit) pal.bg3 else pal.bg2;
+    // The comment grey, not bg2: at bg2 on the rail the lines sat at
+    // ~1.3:1 contrast (Rust's colour) and the user could not see them.
+    const trace = pal.comment;
     const w = r.w -| sb_w;
     ui.hit(Rect.init(r.x, r.y, w, 1), .{ .tree_node = e.idx });
     // The leading cell keeps the rail's ground so the highlight never
@@ -590,8 +592,8 @@ test "connectors: every row below the top level, folders and files alike — a b
     try f.expectRow(7, "   \u{F1F05}   \u{F15B} e");
     try f.expectRow(8, "     \u{F15B} f");
     // The lines take the trace colour, the chevron keeps its own.
-    try testing.expect(vaxis.Color.eql(f.style(3, 5).fg, f.theme.palette.bg2));
-    try testing.expect(vaxis.Color.eql(f.style(5, 5).fg, f.theme.palette.bg2));
+    try testing.expect(vaxis.Color.eql(f.style(3, 5).fg, f.theme.palette.comment));
+    try testing.expect(vaxis.Color.eql(f.style(5, 5).fg, f.theme.palette.comment));
     // ASCII: no chevron slot, the folder triangles, the dot, `| ` bars.
     var g = try Fixture.init(30, 10);
     defer g.deinit();
