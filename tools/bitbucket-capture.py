@@ -3,7 +3,7 @@
 
 The inventory the Zig integration is built from is the Rust reference's
 own screens. They are cut here against `mnml-fake-bitbucket` — an
-invented workspace (`acme`, repos `api` / `web`, people `Chris M` /
+invented workspace (`acme`, repos `api` / `web`, people `Max Orr` /
 `Dana R` / `Sam K`, keys like `ENG-4210`) on the loopback — never
 against the live Bitbucket API, so nothing captured from anyone's real
 workspace can reach a committed file.

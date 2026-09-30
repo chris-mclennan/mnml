@@ -2082,7 +2082,7 @@ test "a build line is a door: the whole line is one hit, and it opens that run" 
     try t0.tree.?.setExpanded("ENG-2", true);
     try t0.tree.?.putPrs("ENG-2", &.{.{ .id = "#1", .status = "OPEN", .url = "https://bitbucket.org/acme/api/pull-requests/1" }});
     try t0.tree.?.setPrExpanded("ENG-2", "#1", true);
-    try t0.tree.?.putPipelines("ENG-2", "#1", &.{.{ .build_number = 413, .branch = "chris/fix", .created_on = "2026-09-15T15:20:00+00:00" }});
+    try t0.tree.?.putPipelines("ENG-2", "#1", &.{.{ .build_number = 413, .branch = "bug/fix", .created_on = "2026-09-15T15:20:00+00:00" }});
     var f = try Frame.init(testing.allocator, 120, 40);
     defer f.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

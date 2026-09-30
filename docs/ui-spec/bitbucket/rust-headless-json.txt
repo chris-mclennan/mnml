@@ -17,7 +17,7 @@ email: me@example.com
 refresh_interval_secs: 0
 scope: recent
 recent_window_days: 14
-whoami: ok — Chris M (account_id: acct-chris)
+whoami: ok — Max Orr (account_id: acct-max)
   tab 1 (Open + Draft): kind=workspace_open_prs, state=OPEN
   tab 2 (Merged): kind=workspace_merged_prs, state=OPEN
   tab 3 (Pipelines): kind=workspace_pipelines, state=OPEN

@@ -6,11 +6,11 @@
 ▌     main                               COMPLETED      #412     ✓ SUCCESSFUL
 ▌     develop                            COMPLETED      #411     ✗ FAILED
 ▌     release/1.2                        COMPLETED      #405     ⊘ STOPPED
-▌     chris/fix-login                    IN_PROGRESS    #413
+▌     bug/fix-login                      IN_PROGRESS    #413
 ▌  web                                  3 branches
 ▌     main                               COMPLETED      #70      ✓ SUCCESSFUL
 ▌     staging                            —
-▌     chris/empty-state                  PENDING        #77
+▌     feature/empty-state                PENDING        #77
 ▌
 ▌
 ▌

@@ -42,7 +42,7 @@ expect screen contains "#411"
 expect screen contains "✗ FAILED"
 expect screen contains "release/1.2"
 expect screen contains "⊘ STOPPED"
-expect screen contains "chris/fix-login"
+expect screen contains "bug/fix-login"
 expect screen contains "IN_PROGRESS"
 expect screen contains "#413"
 # The stale experiment and the older feature are curated away.

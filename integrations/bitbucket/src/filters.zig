@@ -419,24 +419,24 @@ test "Status: the API states behind a set, and whether a loaded listing already 
 }
 
 test "Author: all, me (by account), or one name seen; a pane that cannot say who it is matches nothing as me" {
-    const mine = mkPr("OPEN", false, "Chris M", "acct-chris", "main");
+    const mine = mkPr("OPEN", false, "Max Orr", "acct-max", "main");
     const danas = mkPr("OPEN", false, "Dana R", "acct-dana", "main");
     var f: Filters = .{};
-    try t.expect(f.prMatches(mine, "acct-chris"));
-    try t.expect(f.prMatches(danas, "acct-chris"));
+    try t.expect(f.prMatches(mine, "acct-max"));
+    try t.expect(f.prMatches(danas, "acct-max"));
     f.author = .me;
-    try t.expect(f.prMatches(mine, "acct-chris"));
-    try t.expect(!f.prMatches(danas, "acct-chris"));
+    try t.expect(f.prMatches(mine, "acct-max"));
+    try t.expect(!f.prMatches(danas, "acct-max"));
     // No account known: `me` is decided by the fetch alone, so the
     // row-level check lets the listing through as it came.
     try t.expect(f.prMatches(danas, ""));
     f.author = .{ .named = "Dana R" };
-    try t.expect(!f.prMatches(mine, "acct-chris"));
-    try t.expect(f.prMatches(danas, "acct-chris"));
-    try t.expectEqualStrings("all", (Author{ .all = {} }).label("Chris M"));
-    try t.expectEqualStrings("Chris M", (Author{ .me = {} }).label("Chris M"));
+    try t.expect(!f.prMatches(mine, "acct-max"));
+    try t.expect(f.prMatches(danas, "acct-max"));
+    try t.expectEqualStrings("all", (Author{ .all = {} }).label("Max Orr"));
+    try t.expectEqualStrings("Max Orr", (Author{ .me = {} }).label("Max Orr"));
     try t.expectEqualStrings("me", (Author{ .me = {} }).label(""));
-    try t.expectEqualStrings("Dana R", (Author{ .named = "Dana R" }).label("Chris M"));
+    try t.expectEqualStrings("Dana R", (Author{ .named = "Dana R" }).label("Max Orr"));
     try t.expect(Author.eql(.{ .named = "x" }, .{ .named = "x" }));
     try t.expect(!Author.eql(.{ .named = "x" }, .{ .named = "y" }));
     try t.expect(!Author.eql(.all, .me));
@@ -490,13 +490,13 @@ fn mkRun(creator: []const u8, ref: []const u8, state: []const u8, result: []cons
 }
 
 test "Pipelines: run by, branch, type, status and trigger each narrow the loaded runs; case does not matter" {
-    const main_ok = mkRun("Chris M", "main", "COMPLETED", "SUCCESSFUL", "PUSH", "branches", "pipeline_ref_target");
+    const main_ok = mkRun("Max Orr", "main", "COMPLETED", "SUCCESSFUL", "PUSH", "branches", "pipeline_ref_target");
     const dev_bad = mkRun("Dana R", "develop", "COMPLETED", "FAILED", "SCHEDULE", "default", "pipeline_ref_target");
-    const custom = mkRun("Chris M", "release/1.2", "COMPLETED", "STOPPED", "MANUAL", "custom", "pipeline_ref_target");
+    const custom = mkRun("Max Orr", "release/1.2", "COMPLETED", "STOPPED", "MANUAL", "custom", "pipeline_ref_target");
     const on_pr = mkRun("Sam K", "sam/x", "IN_PROGRESS", "", "PUSH", "pull-requests", "pipeline_pullrequest_target");
     var f: Filters = .{};
     for ([_]model.Pipeline{ main_ok, dev_bad, custom, on_pr }) |r| try t.expect(f.runMatches(r));
-    f = .{ .run_by = "Chris M" };
+    f = .{ .run_by = "Max Orr" };
     try t.expect(f.runMatches(main_ok));
     try t.expect(f.runMatches(custom));
     try t.expect(!f.runMatches(dev_bad));
@@ -524,7 +524,7 @@ test "Pipelines: run by, branch, type, status and trigger each narrow the loaded
     f = .{ .trigger = "manual" };
     try t.expect(f.runMatches(custom));
     // Two at once is an AND.
-    f = .{ .run_by = "Chris M", .trigger = "push" };
+    f = .{ .run_by = "Max Orr", .trigger = "push" };
     try t.expect(f.runMatches(main_ok));
     try t.expect(!f.runMatches(custom));
     try t.expect(f.pipelinesNarrowed());
@@ -532,7 +532,7 @@ test "Pipelines: run by, branch, type, status and trigger each narrow the loaded
 }
 
 test "a branch row of the tree: the Branch chip finds a branch with no run; every other chip needs one" {
-    const ok = mkRun("Chris M", "main", "COMPLETED", "SUCCESSFUL", "PUSH", "branches", "");
+    const ok = mkRun("Max Orr", "main", "COMPLETED", "SUCCESSFUL", "PUSH", "branches", "");
     var f: Filters = .{ .branch = "staging" };
     try t.expect(f.branchMatches("staging", null));
     try t.expect(!f.branchMatches("main", ok));
@@ -575,10 +575,10 @@ test "the values seen: each once, sorted without regard to case, the empty value
     try s.add("Develop");
     try s.add("main");
     try s.add("");
-    try s.add("chris/fix");
+    try s.add("bug/fix");
     const got = s.sorted();
     try t.expectEqual(@as(usize, 3), got.len);
-    try t.expectEqualStrings("chris/fix", got[0]);
+    try t.expectEqualStrings("bug/fix", got[0]);
     try t.expectEqualStrings("Develop", got[1]);
     try t.expectEqualStrings("main", got[2]);
 }

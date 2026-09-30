@@ -184,7 +184,7 @@ test "a stale entry, a clock that went backwards and `off` all decline to serve"
     const url = "https://api.bitbucket.org/2.0/user";
     var fill = try tmpCache(dir, .fill);
     defer fill.deinit();
-    fill.put(url, "{\"account_id\":\"acct-chris\"}", 1000);
+    fill.put(url, "{\"account_id\":\"acct-max\"}", 1000);
 
     {
         var prime = try tmpCache(dir, .prime);

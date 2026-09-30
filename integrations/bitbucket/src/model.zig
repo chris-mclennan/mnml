@@ -537,8 +537,8 @@ const t = std.testing;
 
 const pr_json =
     \\{"id":7,"title":"Fix the thing","state":"OPEN","draft":false,"updated_on":"2026-09-15T12:00:00+00:00",
-    \\ "author":{"display_name":"Chris M","account_id":"acct-chris"},
-    \\ "source":{"branch":{"name":"chris/fix"},"commit":{"hash":"head1234"},"repository":{"full_name":"acme/api"}},
+    \\ "author":{"display_name":"Max Orr","account_id":"acct-max"},
+    \\ "source":{"branch":{"name":"bug/fix"},"commit":{"hash":"head1234"},"repository":{"full_name":"acme/api"}},
     \\ "destination":{"branch":{"name":"main"},"repository":{"full_name":"acme/api"}},
     \\ "description":{"raw":"body text"},
     \\ "links":{"html":{"href":"https://bitbucket.org/acme/api/pull-requests/7"}},
@@ -553,7 +553,7 @@ test "a pull request reads its columns, its approvals and its repo halves" {
     const parsed = try std.json.parseFromSliceLeaky(j.Value, a, pr_json, .{});
     const pr = try parsePullRequest(a, parsed);
     try t.expectEqual(@as(i64, 7), pr.id);
-    try t.expectEqualStrings("chris/fix", pr.source_branch);
+    try t.expectEqualStrings("bug/fix", pr.source_branch);
     try t.expectEqualStrings("main", pr.dest_branch);
     try t.expectEqualStrings("acme", pr.workspaceSlug());
     try t.expectEqualStrings("api", pr.repoSlug());
@@ -567,7 +567,7 @@ test "a pull request reads its columns, its approvals and its repo halves" {
     try t.expectEqualStrings("REVIEWER", pr.participants[0].role);
     try t.expect(pr.reviewedBy("acct-dana"));
     try t.expect(!pr.reviewedBy("acct-sam"));
-    try t.expect(!pr.reviewedBy("acct-chris"));
+    try t.expect(!pr.reviewedBy("acct-max"));
     try t.expect(!pr.reviewedBy(""));
     try t.expectEqualStrings("body text", pr.description);
     try t.expectEqualStrings("abcdef123456", pr.merge_commit);
@@ -690,7 +690,7 @@ test "a thread is waiting on someone only when nobody resolved it and nobody rep
         // Answered — by anyone. A reply closes the loop whoever wrote
         // it: "I disagree" is an answer as much as a fix is.
         .{ .id = 2, .author = "Sam K", .body = "escape the value here" },
-        .{ .id = 3, .author = "Chris M", .body = "pushed an escape", .parent_id = 2 },
+        .{ .id = 3, .author = "Max Orr", .body = "pushed an escape", .parent_id = 2 },
         // Marked resolved, never replied to: not waiting.
         .{ .id = 4, .author = "Ada L", .body = "nit: name", .resolved = true },
         // Deleted: gone, not waiting.

@@ -3,8 +3,8 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  [ 󰍉 Search ]  [ Status: Open ▾ ]  [ Author ▾ ]  [ Target branch ▾ ]                                      [ 󰑐 Refresh ]
    REPO / #PR                  STATE      AUTHOR             BRANCH                 UPDATED      TITLE
- ▶ api                         2 PRs      Chris M            chris/fix-login        2026-09-17   #1234 · Fix the login r
- ▶ web                         1 PRs      Chris M            chris/empty-state      2026-09-17   #820 · Redesign the emp
+ ▶ api                         2 PRs      Max Orr            bug/fix-login          2026-09-17   #1234 · Fix the login r
+ ▶ web                         1 PRs      Max Orr            feature/empty-state    2026-09-17   #820 · Redesign the emp
 
 
 

@@ -89,7 +89,7 @@ shell : > wire.jsonl
 key shift+u
 expect screen contains " author "
 expect screen contains "all"
-expect screen contains "me (Chris M)"
+expect screen contains "me (Max Orr)"
 expect screen contains "Dana R"
 expect screen contains "Sam K"
 type Dana
@@ -111,7 +111,7 @@ key shift+u
 type me
 key enter
 wait 1200
-expect screen contains " author: Chris M "
+expect screen contains " author: Max Orr "
 expect screen contains "#1234"
 expect screen contains "#820"
 expect screen lacks "#1198"

@@ -169,8 +169,8 @@ test "one build line, four facts, the same order in both panes" {
     );
     // Running, on a feature branch, minutes ago.
     try testing.expectEqualStrings(
-        "\u{23f5} IN_PROGRESS \u{b7} chris/fix \u{b7} 30m \u{b7} #413",
-        caption(&buf, .{ .state = "IN_PROGRESS", .branch = "chris/fix", .created_on = "2026-09-15T18:50:00+00:00", .number = 413 }, now, false),
+        "\u{23f5} IN_PROGRESS \u{b7} bug/fix \u{b7} 30m \u{b7} #413",
+        caption(&buf, .{ .state = "IN_PROGRESS", .branch = "bug/fix", .created_on = "2026-09-15T18:50:00+00:00", .number = 413 }, now, false),
     );
     // Ascii: plain glyphs and a plain separator, so nothing falls back
     // to a box on a terminal without the font.

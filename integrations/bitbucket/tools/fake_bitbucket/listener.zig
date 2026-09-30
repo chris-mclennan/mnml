@@ -354,7 +354,7 @@ test "the listener answers a real HTTP request on an ephemeral port" {
         .keep_alive = false,
     });
     try t.expectEqual(@as(u16, 200), @intFromEnum(res.status));
-    try t.expect(std.mem.indexOf(u8, out.written(), "acct-chris") != null);
+    try t.expect(std.mem.indexOf(u8, out.written(), "acct-max") != null);
 }
 
 test "a request with no credentials comes back 401 over the wire too" {

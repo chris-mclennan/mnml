@@ -5,7 +5,7 @@ from. The oracle is the Rust `mnml-forge-bitbucket` (0.3.29), built with
 a base-URL override and run **against the offline fake server**
 (`integrations/bitbucket/tools/fake_bitbucket/`, the `mnml-fake-bitbucket`
 binary) — an invented workspace `acme` with repos `api` and `web`,
-people `Chris M` / `Dana R` / `Sam K`, and ticket keys like `ENG-4210`.
+people `Max Orr` / `Dana R` / `Sam K`, and ticket keys like `ENG-4210`.
 No screen here was ever cut against the live Bitbucket API, and none may
 be: a capture of somebody's real workspace must not reach a committed
 file.
@@ -65,14 +65,14 @@ hint chips on the right).
 | refresh | `rust-full-refresh-in-flight` → `rust-full-after-refresh` | `r` or the Refresh pill | status `refreshing <tab>…` then `<tab> · N repos, M PRs` (`(K errored)` when some repo failed); the UI freezes during the fetch |
 | the Search chip | `rust-full-click-search-chip` | click `[ 󰍉 Search ]` | status `filter not wired yet (round-1 visual)` — a dead placeholder, like Target branch / Branch / Pipeline type / Trigger type (the port's toolbar answers all of these; see decision 1 below) |
 | the Status chip | `rust-full-click-status-chip` | click | cycles to the next tab |
-| the Author chip | `rust-full-click-author-chip` (the `…-refreshing` frame is too brief to catch offline) | click | toggles mine-only: `[ Author: Chris M ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
+| the Author chip | `rust-full-click-author-chip` (the `…-refreshing` frame is too brief to catch offline) | click | toggles mine-only: `[ Author: Max Orr ▾ ]`, refetches with `author.account_id = me` (open + one merged peek), status `<tab>: filter → Authored by me`; click again → `All` |
 | tab keys | `rust-full-tab-key` | `Tab` / `Shift+Tab` / `1`–`9` | the strip's highlight moves |
 | paging | `rust-full-pgdn`, `rust-full-home`, `rust-c-pgdn/pgup/end` | `PageDown` / `PageUp` / `Home`,`g` / `End`,`G` | ±10 rows, the ends |
 | hide a repo | `rust-c-hide-repo` | `x` on a tree row | the repo's rows go, status `hid web (H to un-hide all)`, `hidden_repos` written to the TOML (comments dropped) |
 | un-hide | `rust-c-unhide-all` | `H` | the repos return (collapsed), status `un-hid 1 repo(s)`; `nothing hidden` when the list is empty |
 | scope | `rust-c-scope-cycle-1/2/3` | `s` | status `scope: explicit` → `scope: all` → `scope: recent`; written to the TOML; the tabs refetch |
 | reorder | `rust-c-reorder-down`, `-up` | `alt+↓` / `alt+↑` on a tree row | the repo swaps places; `repo_order` written |
-| mine-only launch | `rust-mine-120x40`, `rust-mine-pr-row`, `-end`, `-show-all` | `--only prs-mine` (the statusline chip's click) | one tab `Mine`; `[ Author: Chris M ▾ ]`; each repo shows my open PRs plus one merged peek; `[ Show N more merged ]` |
+| mine-only launch | `rust-mine-120x40`, `rust-mine-pr-row`, `-end`, `-show-all` | `--only prs-mine` (the statusline chip's click) | one tab `Mine`; `[ Author: Max Orr ▾ ]`; each repo shows my open PRs plus one merged peek; `[ Show N more merged ]` |
 | open on the web | (not pressed live — it opens the user's browser) | `o` / `Enter` on a non-tree row | `webbrowser::open(url)`; status `opened <url>` / `open failed: <e>`; PR → its html link, branch → `…/branch/<name>`, pipeline → `…/pipelines/results/<n>`, repo header → `…/pull-requests` or `…/branches` |
 | copy the URL | (not pressed live — it writes the clipboard) | `y` | `pbcopy` / `xclip` / `wl-copy` / `clip`; status `copied <url>` / `copy failed: <e>` |
 | approve | (not pressed live) | `a` with the detail open | `POST …/approve` or `DELETE` when `✓ you approved`; status `approved ws/repo#id` / `unapproved …` / `approval toggle failed: <e>`; `approve needs Account:Read on the app password` when whoami failed |

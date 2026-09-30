@@ -129,7 +129,7 @@ const t = std.testing;
 
 const sample =
     \\{"id":7,"title":"Fix the thing","state":"OPEN","closed":null,
-    \\ "source":{"branch":{"name":"chris/fix"},"repository":{"full_name":"acme/api"}},
+    \\ "source":{"branch":{"name":"bug/fix"},"repository":{"full_name":"acme/api"}},
     \\ "description":{"raw":"body text","html":"<p>body</p>"},
     \\ "links":{"html":{"href":"https://bitbucket.org/acme/api/pull-requests/7"}},
     \\ "participants":[{"approved":true},{"approved":false}],
@@ -146,7 +146,7 @@ test "fields, dotted paths, ints, bools, arrays — a missing hop is empty, neve
     try t.expectEqual(@as(i64, -1), int(v, "nope", -1));
     try t.expect(boolean(v, "draft", false));
     try t.expect(!boolean(v, "nope", false));
-    try t.expectEqualStrings("chris/fix", pathStr(v, "source.branch.name"));
+    try t.expectEqualStrings("bug/fix", pathStr(v, "source.branch.name"));
     try t.expectEqualStrings("acme/api", pathStr(v, "source.repository.full_name"));
     try t.expectEqualStrings("", pathStr(v, "destination.branch.name"));
     try t.expectEqualStrings("https://bitbucket.org/acme/api/pull-requests/7", pathStr(v, "links.html.href"));

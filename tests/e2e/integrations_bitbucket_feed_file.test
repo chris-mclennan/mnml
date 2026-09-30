@@ -20,7 +20,7 @@ shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-fi
 # The feed file is relative to the config's own directory. A heartbeat
 # in it now makes it live from the pane's first look.
 write feed.jsonl "{\"kind\":\"heartbeat\",\"at\":1,\"source\":\"e2e\"}\n"
-write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-chris\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 1, .poll_max_secs = 1, .feed = .{ .file = \"feed.jsonl\", .stale_secs = 120, .sweep_secs = 600 }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 1, .poll_max_secs = 1, .feed = .{ .file = \"feed.jsonl\", .stale_secs = 120, .sweep_secs = 600 }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
 write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
 command integrations.show_marketplace
 expect screen contains "Mkt (1)"

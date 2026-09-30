@@ -328,14 +328,14 @@ test "the strategy cycles through what the repo allows, and names itself Bitbuck
 test "the confirm names the pull request, its branches and its strategy" {
     const c: Confirm = .{
         .title = "Fix the login redirect",
-        .source = "chris/fix-login",
+        .source = "bug/fix-login",
         .target = "main",
         .strategy = .squash,
         .url = "https://bitbucket.org/acme/api/pull-requests/1234",
     };
     var buf: [160]u8 = undefined;
     try testing.expectEqualStrings(" Merge acme/api/pull-requests/1234 ", c.heading(&buf));
-    try testing.expectEqualStrings("chris/fix-login \u{2192} main", c.branchLine(&buf));
+    try testing.expectEqualStrings("bug/fix-login \u{2192} main", c.branchLine(&buf));
     try testing.expectEqualStrings("strategy: squash   (\u{2190}\u{2192} changes it)", c.strategyLine(&buf));
     try testing.expectEqualStrings("acme/api/pull-requests/1234", shortUrlTail(c.url));
     try testing.expectEqualStrings("nothing/like/a/url", shortUrlTail("nothing/like/a/url"));
@@ -346,7 +346,7 @@ test "the prompt names the PR, the strategy and the variable, and asks for the o
     defer arena_state.deinit();
     const p = try prompt(arena_state.allocator(), .{
         .title = "Fix the login redirect",
-        .source = "chris/fix-login",
+        .source = "bug/fix-login",
         .target = "main",
         .strategy = .squash,
         .url = "https://bitbucket.org/acme/api/pull-requests/1234",
@@ -354,7 +354,7 @@ test "the prompt names the PR, the strategy and the variable, and asks for the o
     try testing.expect(std.mem.startsWith(u8, p, "/agents:merge-pr https://bitbucket.org/acme/api/pull-requests/1234\n"));
     try testing.expect(std.mem.indexOf(u8, p, "$BITBUCKET_ACCESS_TOKEN") != null);
     try testing.expect(std.mem.indexOf(u8, p, "merge_strategy: squash") != null);
-    try testing.expect(std.mem.indexOf(u8, p, "chris/fix-login -> main") != null);
+    try testing.expect(std.mem.indexOf(u8, p, "bug/fix-login -> main") != null);
     try testing.expect(std.mem.indexOf(u8, p, "title: Fix the login redirect") != null);
     // The pane reads the session's last line back onto the button, so
     // the prompt has to ask for one it can read.

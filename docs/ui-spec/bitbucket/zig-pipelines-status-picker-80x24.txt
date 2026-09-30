@@ -6,11 +6,11 @@
 ▌     main│                                                          │CESSFUL
 ▌     deve│▌ ✓ any                                                   │LED
 ▌     rele│▌   FAILED                                                │PPED
-▌     chri│▌   IN_PROGRESS                                           │
+▌     bug/│▌   IN_PROGRESS                                           │
 ▌  web   │▌   PENDING                                               │
 ▌     main│▌   STOPPED                                               │CESSFUL
 ▌     stag│▌   SUCCESSFUL                                            │
-▌     chri│                                                          │
+▌     feat│                                                          │
 ▌         │                                                          │
 ▌         │                                                          │
 ▌         │                                                          │

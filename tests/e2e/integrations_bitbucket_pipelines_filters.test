@@ -34,8 +34,8 @@ expect screen lacks "▾ api"
 expect screen contains "main"
 expect screen contains "develop"
 expect screen contains "release/1.2"
-expect screen contains "chris/fix-login"
-expect screen contains "chris/empty-state"
+expect screen contains "bug/fix-login"
+expect screen contains "feature/empty-state"
 shell : > wire.jsonl
 
 # Status: the values the runs carry, sorted; `failed` keeps develop
@@ -53,7 +53,7 @@ expect screen contains " status: FAILED "
 expect screen contains "develop"
 expect screen contains "✗ FAILED"
 expect screen lacks "release/1.2"
-expect screen lacks "chris/fix-login"
+expect screen lacks "bug/fix-login"
 expect screen lacks "✓ SUCCESSFUL"
 # `any` clears it.
 key shift+s
@@ -73,7 +73,7 @@ type manual
 key enter
 wait 400
 expect screen contains " trigger: manual "
-expect screen contains "chris/empty-state"
+expect screen contains "feature/empty-state"
 expect screen lacks "develop"
 expect screen lacks "release/1.2"
 key shift+t
@@ -83,7 +83,7 @@ wait 400
 expect screen contains " trigger: any"
 
 # Pipeline type: release/1.2's run came from the custom section,
-# chris/fix-login's ran on a pull request, the rest on branches.
+# bug/fix-login's ran on a pull request, the rest on branches.
 key shift+p
 expect screen contains " type "
 expect screen contains "branch"
@@ -119,13 +119,13 @@ expect screen contains " branch: any "
 # Run by: the people who ran them.
 key shift+u
 expect screen contains " run by "
-expect screen contains "Chris M"
+expect screen contains "Max Orr"
 expect screen contains "Dana R"
 type Dana
 key enter
 wait 400
 expect screen contains " run by: Dana R "
-expect screen contains "chris/empty-state"
+expect screen contains "feature/empty-state"
 expect screen lacks "main"
 # Two at once is an AND: Dana's runs that failed — none.
 key shift+s

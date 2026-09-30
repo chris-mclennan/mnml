@@ -50,7 +50,7 @@
   {
     "name": "marketplace",
     "title": "The Marketplace",
-    "seconds": 7.0,
+    "seconds": 6.9,
     "flow": "Integrations install from the Marketplace in the sidebar: browse, press i, and the new pane opens against its (here offline, fake) service."
   }
 ]

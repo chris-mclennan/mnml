@@ -722,9 +722,9 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     var who = try client.whoami(t.allocator);
     defer who.deinit(t.allocator);
     try t.expect(who == .ok);
-    try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-chris") != null);
+    try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-max") != null);
 
-    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
+    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-max\"", 25);
     defer prs.deinit(t.allocator);
     try t.expect(prs == .ok);
     try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Fix the login redirect") != null);
@@ -736,7 +736,7 @@ test "against the fake server: whoami, the lists, approve and unapprove, a 404 a
     try t.expect(std.mem.indexOf(u8, pl.ok.bytes, "\"build_number\":412") != null);
     var br = try client.listBranches(t.allocator, "acme", "web", 100);
     defer br.deinit(t.allocator);
-    try t.expect(std.mem.indexOf(u8, br.ok.bytes, "chris/empty-state") != null);
+    try t.expect(std.mem.indexOf(u8, br.ok.bytes, "feature/empty-state") != null);
 
     var ok = try client.approve(t.allocator, "acme", "api", 1198);
     defer ok.deinit(t.allocator);
@@ -764,7 +764,7 @@ test "against a server that gzips: the client asks for identity, and a body comp
     // Asked for `identity`, a server that honours Accept-Encoding sends
     // plain bytes.
     srv.gzipAnswers(.when_asked);
-    var asked = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
+    var asked = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-max\"", 25);
     defer asked.deinit(t.allocator);
     try t.expect(asked == .ok);
     try t.expectEqual(@as(u32, 0), srv.snapshot().gzipped);
@@ -772,7 +772,7 @@ test "against a server that gzips: the client asks for identity, and a body comp
     // A proxy that compresses whatever was asked: the body is read
     // through its Content-Encoding, not handed to the parser as gzip.
     srv.gzipAnswers(.always);
-    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-chris\"", 25);
+    var prs = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "author.account_id = \"acct-max\"", 25);
     defer prs.deinit(t.allocator);
     try t.expect(prs == .ok);
     try t.expect(std.mem.indexOf(u8, prs.ok.bytes, "Fix the login redirect") != null);
@@ -828,7 +828,7 @@ test "against the fake server: an access token goes out as a Bearer and an accou
         var who = try client.whoami(t.allocator);
         defer who.deinit(t.allocator);
         try t.expect(who == .ok);
-        try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-chris") != null);
+        try t.expect(std.mem.indexOf(u8, who.ok.bytes, "acct-max") != null);
         try t.expectEqual(server.Credential.basic_account, srv.snapshot().last_credential);
     }
 }
