@@ -485,7 +485,7 @@ test "an issue reads its fields, its parent epic, the team select and the sprint
     const i = try parseIssue(a.allocator(),
         \\{"id":"1","key":"ENG-9","fields":{"summary":"s","status":{"name":"In PR Review","statusCategory":{"key":"indeterminate"}},
         \\ "issuetype":{"name":"Bug"},"priority":{"name":"High"},"updated":"2026-09-15T09:00:00.000+0000",
-        \\ "assignee":{"accountId":"a1","displayName":"Ada"},"reporter":null,"fixVersions":[{"name":"13.20.0"}],
+        \\ "assignee":{"accountId":"a1","displayName":"Ada"},"reporter":null,"fixVersions":[{"name":"2.8.0"}],
         \\ "components":[{"name":"web"}],"labels":["admin","tools"],"parent":{"key":"ENG-1","fields":{"summary":"Epic one","issuetype":{"name":"Epic"}}},
         \\ "customfield_10056":{"value":"Apollo"},"customfield_10020":[{"name":"Sprint 3"},"com.atlassian.greenhopper.service.sprint.Sprint@1[id=2,name=Sprint 4,state=CLOSED]"]}}
     , "customfield_10056");
@@ -493,7 +493,7 @@ test "an issue reads its fields, its parent epic, the team select and the sprint
     try testing.expectEqualStrings("In PR Review", i.status);
     try testing.expectEqualStrings("Ada", i.assigneeName());
     try testing.expectEqualStrings("—", i.reporterName());
-    try testing.expectEqualStrings("13.20.0", i.fix_versions[0]);
+    try testing.expectEqualStrings("2.8.0", i.fix_versions[0]);
     try testing.expectEqualStrings("tools", i.labels[1]);
     try testing.expectEqualStrings("ENG-1", i.epicKey().?);
     try testing.expectEqualStrings("Apollo", i.team);

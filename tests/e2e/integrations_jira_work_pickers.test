@@ -55,8 +55,8 @@ expect screen lacks "transition ENG-2"
 key f
 expect screen contains "assign fixVersion on ticket"
 expect screen contains "— Clear fixVersion —"
-expect screen contains "13.17.0"
-expect screen contains "13.14.0 (released)"
+expect screen contains "2.5.0"
+expect screen contains "2.2.0 (released)"
 key esc
 # .: the ticket's buttons — ENG-2 is In PR Review, so Review.
 type .

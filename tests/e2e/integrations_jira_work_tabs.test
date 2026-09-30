@@ -31,7 +31,7 @@ wait 500
 write sdk/mnml-sdk/build.zig ""
 write integrations/jira/build.zig ""
 write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } } }"
-write .mnml/integrations/jira/config.zon ".{\n    // keep this comment\n    .jira_url = \"https://jira.invalid\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 },\n    .tabs = .{\n        .{\n            // the one that changes every release\n            .name = \"QA Actionable now\",\n            .kind = .jql_editable,\n            .jql = \"project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC\",\n            .vars = .{\n                .{ .name = \"project\", .value = \"ENG\" },\n                .{ .name = \"versions\", .values = .{ \"13.15.0\", \"13.17.0\" } },\n            },\n        },\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
+write .mnml/integrations/jira/config.zon ".{\n    // keep this comment\n    .jira_url = \"https://jira.invalid\",\n    .email = \"fake@acme.com\",\n    .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 },\n    .tabs = .{\n        .{\n            // the one that changes every release\n            .name = \"QA Actionable now\",\n            .kind = .jql_editable,\n            .jql = \"project = {project} AND fixVersion in ({versions}) ORDER BY updated DESC\",\n            .vars = .{\n                .{ .name = \"project\", .value = \"ENG\" },\n                .{ .name = \"versions\", .values = .{ \"2.3.0\", \"2.5.0\" } },\n            },\n        },\n        .{ .name = \"My open work items\", .kind = .work_open },\n        .{ .name = \"Reported by me\", .kind = .work_reported },\n    },\n}\n"
 command integrations.show_in_dev
 expect screen contains "INTEGRATIONS"
 drag 30 5 60 5
@@ -67,7 +67,7 @@ expect screen contains "2 My open work items"
 expect screen contains "3 Reported by me"
 # The vars are chips on the header, beside the door that edits them.
 expect screen contains " project: ENG "
-expect screen contains " versions: 13.15.0 +1 "
+expect screen contains " versions: 2.3.0 +1 "
 expect screen contains " J edit "
 # ...and the chip names the key that opens the editor: J (on a tab with
 # vars; `E` is expand-all on the tree).

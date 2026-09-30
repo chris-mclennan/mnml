@@ -884,7 +884,7 @@ pub fn projectVersions(c: *Client, arena: Allocator, project: []const u8) CallEr
 /// The unreleased versions in the order a release tab reads them:
 /// `startDate` ascending with the undated last, and **name descending**
 /// between two undated ones (most projects never set a start date, and
-/// `13.16.0` is the one being worked on, not `13.1.0`). `contains`
+/// `2.4.0` is the one being worked on, not `2.1.0`). `contains`
 /// narrows to one release track first.
 pub fn unreleasedVersions(arena: Allocator, all: []const model.Version, contains: []const u8) Allocator.Error![]const model.Version {
     var keep: std.ArrayList(model.Version) = .empty;
@@ -1122,7 +1122,7 @@ test "the team clause goes to the server, wrapping the where and keeping the ord
         "project in (ENG, OPS) AND (assignee = currentUser()) ORDER BY updated DESC",
         try withProjects(arena, "assignee = currentUser() ORDER BY updated DESC", &.{ "ENG", "OPS" }),
     );
-    try testing.expectEqualStrings("project = ENG AND fixVersion = \"13.15.0\" ORDER BY rank", try fixVersionJql(arena, "ENG", "13.15.0", ""));
+    try testing.expectEqualStrings("project = ENG AND fixVersion = \"2.3.0\" ORDER BY rank", try fixVersionJql(arena, "ENG", "2.3.0", ""));
     try testing.expect(std.mem.indexOf(u8, try fixVersionJql(arena, "ENG", "a\"b", ""), "\"a\\\"b\"") != null);
 }
 
@@ -1131,30 +1131,30 @@ test "versions: the release resolve order and the picker order" {
     defer a.deinit();
     const arena = a.allocator();
     const all = [_]model.Version{
-        .{ .name = "13.14.0", .released = true },
-        .{ .name = "13.15.0" },
-        .{ .name = "13.16.0", .start_date = "2026-09-01" },
-        .{ .name = "13.17.0", .start_date = "2026-09-15" },
+        .{ .name = "2.2.0", .released = true },
+        .{ .name = "2.3.0" },
+        .{ .name = "2.4.0", .start_date = "2026-09-01" },
+        .{ .name = "2.5.0", .start_date = "2026-09-15" },
         .{ .name = "Mobile - 1.6.X", .archived = true },
     };
     const open = try unreleasedVersions(arena, &all, "");
     try testing.expectEqual(@as(usize, 4), open.len);
-    try testing.expectEqualStrings("13.16.0", open[0].name);
-    try testing.expectEqualStrings("13.17.0", open[1].name);
+    try testing.expectEqualStrings("2.4.0", open[0].name);
+    try testing.expectEqualStrings("2.5.0", open[1].name);
     try testing.expectEqualStrings("Mobile - 1.6.X", open[2].name);
-    try testing.expectEqualStrings("13.15.0", open[3].name);
-    try testing.expectEqualStrings("13.16.0", pickVersion(open, .current_release).?.name);
-    try testing.expectEqualStrings("13.17.0", pickVersion(open, .next_release).?.name);
-    const track = try unreleasedVersions(arena, &all, "13.");
+    try testing.expectEqualStrings("2.3.0", open[3].name);
+    try testing.expectEqualStrings("2.4.0", pickVersion(open, .current_release).?.name);
+    try testing.expectEqualStrings("2.5.0", pickVersion(open, .next_release).?.name);
+    const track = try unreleasedVersions(arena, &all, "2.");
     try testing.expectEqual(@as(usize, 3), track.len);
     try testing.expect(pickVersion(&.{}, .current_release) == null);
     // The picker: unreleased first, dated by start desc, archived gone.
     const pick = try pickerVersions(arena, &all);
     try testing.expectEqual(@as(usize, 4), pick.len);
-    try testing.expectEqualStrings("13.17.0", pick[0].name);
-    try testing.expectEqualStrings("13.16.0", pick[1].name);
-    try testing.expectEqualStrings("13.15.0", pick[2].name);
-    try testing.expectEqualStrings("13.14.0", pick[3].name);
+    try testing.expectEqualStrings("2.5.0", pick[0].name);
+    try testing.expectEqualStrings("2.4.0", pick[1].name);
+    try testing.expectEqualStrings("2.3.0", pick[2].name);
+    try testing.expectEqualStrings("2.2.0", pick[3].name);
 }
 
 test "a Jira error answer becomes the sentence Jira wrote, not the number" {
@@ -1326,8 +1326,8 @@ test "the client against a real socket: search, detail, the full issue, transiti
     try testing.expect((try addComment(&c, arena, "ENG-3", "picking this up")) == .ok);
     try testing.expect((try setAssignee(&c, arena, "ENG-3", fake.account_me)) == .ok);
     try testing.expectEqualStrings(fake.account_me, store.find("ENG-3").?.assignee);
-    try testing.expect((try setFixVersion(&c, arena, "ENG-3", "13.15.0")) == .ok);
-    try testing.expectEqualStrings("13.15.0", store.find("ENG-3").?.fix_version);
+    try testing.expect((try setFixVersion(&c, arena, "ENG-3", "2.3.0")) == .ok);
+    try testing.expectEqualStrings("2.3.0", store.find("ENG-3").?.fix_version);
 
     // Watch, then unwatch with the account id from /myself.
     const me = try okOr(model.User, try myself(&c, arena));
@@ -1347,7 +1347,7 @@ test "the client against a real socket: search, detail, the full issue, transiti
     const users = try okOr([]const model.User, try assignableUsers(&c, arena, "ENG"));
     try testing.expectEqual(@as(usize, fake.user_count), users.len);
     const versions = try okOr([]const model.Version, try projectVersions(&c, arena, "ENG"));
-    try testing.expectEqualStrings("13.16.0", pickVersion(try unreleasedVersions(arena, versions, ""), .current_release).?.name);
+    try testing.expectEqualStrings("2.4.0", pickVersion(try unreleasedVersions(arena, versions, ""), .current_release).?.name);
 
     try lb.finish(&c, arena);
     try group.await(io);

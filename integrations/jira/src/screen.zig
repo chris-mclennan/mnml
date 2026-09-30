@@ -1677,7 +1677,7 @@ test "initials, the fixVersion pill's value and the hard wrap" {
     try testing.expectEqualStrings("MG", initials(&buf, "Mary Goode"));
     try testing.expectEqualStrings("A", initials(&buf, "ada"));
     try testing.expectEqualStrings("?", initials(&buf, ""));
-    try testing.expectEqualStrings("13.16.0", fixVersionOf("project = ENG AND fixVersion = \"13.16.0\" ORDER BY rank").?);
+    try testing.expectEqualStrings("2.4.0", fixVersionOf("project = ENG AND fixVersion = \"2.4.0\" ORDER BY rank").?);
     try testing.expect(fixVersionOf("project = ENG") == null);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1880,7 +1880,7 @@ test "Fix Versions: the pill, the bump star, the transition picker's rows, and t
     try paint(ar, &f, a, .{});
     try testing.expect(std.mem.startsWith(u8, try rowText(ar, &f, 0), "▌JIRA FIX VERSIONS (8)"));
     const r2 = try rowText(ar, &f, 3);
-    try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 13.16.0 ") != null);
+    try testing.expect(std.mem.indexOf(u8, r2, " fixVersion: 2.4.0 ") != null);
     try testing.expect(std.mem.indexOf(u8, r2, " ⓧ") != null);
     // The `space:` placeholder is gone: it named the tab's project and did nothing.
     try testing.expect(std.mem.indexOf(u8, r2, " space: ") == null);

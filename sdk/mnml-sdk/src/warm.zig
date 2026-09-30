@@ -818,7 +818,7 @@ test "the sync mark is the store's own fetched_at, so a delta window survives a 
         // "what moved since" is only ever an answer about the listing
         // it was measured for. A picker that rewrites the query gets a
         // full refetch, not a window onto the last one.
-        try t.expect(marks.jiraSince(&b, "work_open", "project = ENG AND fixVersion = \"13.15.0\"", now) == null);
+        try t.expect(marks.jiraSince(&b, "work_open", "project = ENG AND fixVersion = \"2.3.0\"", now) == null);
         try t.expectEqual(@as(i64, 0), marks.lastSync("work_open", ""));
     }
 }
