@@ -278,6 +278,8 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         .title = "The side column hides here",
         .detail = "rest here to slide it in \u{b7} click docks it for this session (view.sidebar_pin) \u{b7} right-click: the column's modes",
     };
+    if (id == @intFromEnum(render.Button.session_prev)) return .{ .title = "Previous session", .detail = "click: the session before this one in the ring, on whichever page holds it (ai.focus_prev_session)" };
+    if (id == @intFromEnum(render.Button.session_next)) return .{ .title = "Next session", .detail = "click: the session after this one in the ring, on whichever page holds it (ai.focus_next_session)" };
     if (id == @intFromEnum(render.Button.edge_grip_dock)) return .{
         .title = "The launcher dock hides here",
         .detail = "rest here to bring the strip up \u{b7} click keeps it (view.dock_pin) \u{b7} right-click: its mode, edge and settings",
@@ -567,6 +569,9 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             .unsafe => .{ .title = "sandbox — NOT isolated", .detail = "MNML_SANDBOX is set, but HOME or the data root is not a throwaway directory · click says which" },
             else => .{ .title = "sandbox", .detail = "a --sandbox run: HOME, the config and the state are a throwaway directory · click says where" },
         },
+        .sessions => .{ .title = "Sessions", .detail = "the Claude Code / Codex panes open, and the focused one's place · click: the sessions section" },
+        .session_prev => .{ .title = "Previous session", .detail = "click: the session before this one, on whichever page holds it" },
+        .session_next => .{ .title = "Next session", .detail = "click: the session after this one, on whichever page holds it" },
         _ => null,
     };
 }

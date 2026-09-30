@@ -284,6 +284,18 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
             .body = "The three dots at the middle of this edge mark the band that brings the launcher dock up: rest the pointer on it and the strip — integrations, terminals, launchers, pinned commands — paints over the editor's edge. Click reveals AND pins it for the session; right-click is the dock's menu — its mode, its edge, placement, labels, settings. A pinned dock shows no grip.",
             .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Reveal and pin the dock" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
+        .session_prev => .{
+            .title = "Previous session",
+            .body = "The `‹` of this session's `‹ 3/7 ›`: the session before it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Before the first it wraps to the last. `3/7` is this session's place and the count; a narrow strip drops the number first.",
+            .keys = &.{ .{ .command = .@"ai.focus_prev_session", .label = "Previous session" }, .{ .command = .@"ai.focus_next_session", .label = "Next session" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_prev_session", .label = "Go back one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        },
+        .session_next => .{
+            .title = "Next session",
+            .body = "The `›` of this session's `‹ 3/7 ›`: the session after it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Past the last it wraps to the first. `3/7` is this session's place and the count; a narrow strip drops the number first.",
+            .keys = &.{ .{ .command = .@"ai.focus_next_session", .label = "Next session" }, .{ .command = .@"ai.focus_prev_session", .label = "Previous session" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_next_session", .label = "Go forward one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        },
         else => null,
     };
 }

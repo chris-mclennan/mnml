@@ -301,3 +301,114 @@ test "new session in a new tab: the active leaf's strip, right after the current
     try t.expectEqual(@as(usize, 0), app.layouts.active);
     try t.expectEqual(s, app.active.?);
 }
+
+test "the strip's ` ‹ 2/3 › ` on every session pane, none on a file; its arrows step the ring from the session they sit on" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(160, 40);
+    defer f.deinit();
+    const app = &f.app;
+    const file = app.active.?;
+    const s1 = try f.run(.@"ai.claude_code_new_right");
+    const s2 = try f.run(.@"ai.codex_new_right");
+    const s3 = try f.run(.@"ai.claude_code_new_page");
+    @import("cmd_tab.zig").switchTab(app, 0);
+    f.focus(file);
+    const text = try f.screenText();
+    try t.expect(std.mem.indexOf(u8, text, "\u{2039} 1/3 \u{203A}") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\u{2039} 2/3 \u{203A}") != null);
+    // One nav per session strip on this page, none on the file's — and
+    // the statusline's chip, the third.
+    try t.expectEqual(@as(usize, 3), std.mem.count(u8, text, "\u{2039}"));
+    const render = @import("render.zig");
+    // s2's `›` (the rightmost leaf's): the ring goes on to page 2's s3,
+    // though the file had the keys.
+    var right_next: ?[2]u16 = null;
+    try f.app.render();
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        while (x < app.screen.width) : (x += 1) if (app.hits.at(x, y)) |h| if (h == .button and h.button == @intFromEnum(render.Button.session_next)) {
+            right_next = .{ x, y };
+        };
+    }
+    try f.click(right_next.?);
+    try t.expectEqual(s3, app.active.?);
+    try t.expectEqual(@as(usize, 1), app.layouts.active);
+    // s3's `‹`: back to s2 on page 1.
+    try f.click((try f.hitOn(.{ .button = @intFromEnum(render.Button.session_prev) })).?);
+    try t.expectEqual(s2, app.active.?);
+    try t.expectEqual(@as(usize, 0), app.layouts.active);
+    // s1's `‹` (the leftmost nav): before the first is the last, s3.
+    try f.click((try f.hitOn(.{ .button = @intFromEnum(render.Button.session_prev) })).?);
+    try t.expectEqual(s3, app.active.?);
+    try t.expectEqual(@as(usize, 0), (try position(app, app.frame.allocator(), s1)).?.index);
+}
+
+test "the statusline's sessions chip: ` ‹ ▣ 2/2 › ` while sessions are open, a bare count off them; the arrows and the chip click through" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(160, 40);
+    defer f.deinit();
+    const app = &f.app;
+    const statusline = @import("statusline.zig");
+    const bar: u16 = 38;
+    const file = app.active.?;
+    // No session: no chip.
+    try t.expect((try f.hitOn(.{ .statusline_seg = statusline.SegId.sessions.raw() })) == null);
+    const s1 = try f.run(.@"ai.claude_code_new_right");
+    const s2 = try f.run(.@"ai.codex_new_page");
+    try t.expectEqual(s2, app.active.?);
+    var text = try f.screenText();
+    try t.expect(std.mem.indexOf(u8, text, " \u{2039} ") != null);
+    try t.expect(std.mem.indexOf(u8, text, " 2/2 \u{203A} ") != null);
+    // Off the ring: the count alone.
+    @import("cmd_tab.zig").switchTab(app, 0);
+    f.focus(file);
+    text = try f.screenText();
+    try t.expect(std.mem.indexOf(u8, text, " 2 \u{203A} ") != null);
+    // The arrows step the ring; the chip opens SESSIONS.
+    const next_at = (try f.hitOn(.{ .statusline_seg = statusline.SegId.session_next.raw() })).?;
+    try t.expectEqual(bar, next_at[1]);
+    try f.click(next_at);
+    try t.expectEqual(s1, app.active.?);
+    try f.click((try f.hitOn(.{ .statusline_seg = statusline.SegId.session_prev.raw() })).?);
+    try t.expectEqual(s2, app.active.?);
+    try f.click((try f.hitOn(.{ .statusline_seg = statusline.SegId.sessions.raw() })).?);
+    try t.expect(@import("side.zig").isShown(app, .sessions));
+}
+
+test "the statusline's sessions chip narrows in order: the whole ` ‹ ▣ 2/2 › `, then ` ‹ ▣ › `, then ` ▣ ` — never back to a wider form on a narrower row" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(160, 30);
+    defer f.deinit();
+    const app = &f.app;
+    _ = try f.run(.@"ai.claude_code_new_right");
+    _ = try f.run(.@"ai.codex_new_tab");
+    const glyph = comptime @import("../ui/activity_bar.zig").Section.sessions.meta().glyph;
+    const Form = enum(u8) { full, arrows, bare, gone };
+    var last: Form = .full;
+    var seen = std.EnumSet(Form).initEmpty();
+    var w: u16 = 160;
+    while (w >= 40) : (w -= 2) {
+        try app.resize(w, 30);
+        const text = try f.screenText();
+        var rows = std.mem.splitScalar(u8, text, '\n');
+        var i: usize = 0;
+        const bar = while (rows.next()) |line| : (i += 1) {
+            if (i == 28) break line;
+        } else "";
+        const form: Form = if (std.mem.indexOf(u8, bar, "\u{2039} " ++ glyph ++ " 2/2 \u{203A}") != null)
+            .full
+        else if (std.mem.indexOf(u8, bar, "\u{2039} " ++ glyph ++ " \u{203A}") != null)
+            .arrows
+        else if (std.mem.indexOf(u8, bar, " " ++ glyph ++ " ") != null)
+            .bare
+        else
+            .gone;
+        try t.expect(@intFromEnum(form) >= @intFromEnum(last));
+        last = form;
+        seen.insert(form);
+    }
+    try t.expect(seen.contains(.full));
+    try t.expect(seen.contains(.arrows));
+    try t.expect(seen.contains(.bare));
+}
