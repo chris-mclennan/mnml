@@ -364,7 +364,24 @@ pub const PromptPurpose = union(enum) {
 
     pub const BpTarget = struct { path: []u8, line: u32 };
     pub const AccountPrompt = struct { name: []u8, title: []u8 };
-    pub const SessionWorktreeName = struct { product: Config.AiProduct, profile: []u8 };
+    pub const SessionWorktreeName = struct {
+        product: Config.AiProduct,
+        profile: []u8,
+        /// Where the session opens once it is named: what the command
+        /// that raised the prompt asked for.
+        where: Where = .{},
+
+        pub const Where = struct {
+            placement: pty_pane.Placement = .right,
+            /// `ai.*_new_tab`: the tab the session goes right after.
+            after_tab: ?PaneId = null,
+            /// `ai.*_new_page`: the empty page opened for the session;
+            /// it goes again when the prompt is cancelled or the launch
+            /// fails.
+            empty_page: ?EmptyPage = null,
+        };
+        pub const EmptyPage = struct { page: usize, from_page: usize, from_pane: ?PaneId };
+    };
 
     pub fn deinit(p: PromptPurpose, gpa: Allocator) void {
         switch (p) {

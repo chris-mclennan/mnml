@@ -53,6 +53,7 @@ const copilot_app = @import("copilot.zig");
 const transcript = @import("../ai/transcript.zig");
 const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
+const session_worktree = @import("session_worktree.zig");
 const ai_grid = @import("ai_grid.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
@@ -759,6 +760,12 @@ pub fn overlayClosing(app: *App) void {
     switch (app.overlay) {
         .confirm => |c| switch (c.purpose) {
             .ai_tool => |id| answerConfirm(app, id, false),
+            else => {},
+        },
+        // Enter moves the purpose out before closing, so only a prompt
+        // that goes unanswered gets here.
+        .prompt => |p| switch (p.purpose) {
+            .session_worktree_name => |w| session_worktree.promptCancelled(app, w),
             else => {},
         },
         else => {},
@@ -1626,43 +1633,34 @@ fn codexNewPage(app: *App) CommandError!void {
 /// of the strip where the eye is not.
 fn openInNewTab(app: *App, product: Product) CommandError!void {
     const before = app.active;
-    const id = (try openSession(app, product, .tab)) orelse return;
+    const id = (try openSession(app, product, .tab)) orelse {
+        // A worktree profile's name prompt: the tab goes after this one
+        // once it is named.
+        if (session_worktree.pendingWhere(app)) |w| w.after_tab = before;
+        return;
+    };
     const b = before orelse return;
-    const layout = app.layouts.current();
-    const lid = layout.leafOf(b) orelse return;
-    if (layout.leafOf(id) != lid) return;
-    const leaf = layout.leaf(lid).?;
-    const at = std.mem.indexOfScalar(PaneId, leaf.tabs.items, b) orelse return;
-    layout.reorderTab(id, at + 1);
+    session_worktree.placeAfter(app, id, b);
 }
 
 /// `ai.*_new_page`: a session alone on a fresh tab page, inserted right
 /// after the current one and shown. Nothing opened (the product routed
-/// off, a spawn that failed, a worktree profile's name prompt) takes the
-/// empty page back and returns to the page it came from.
+/// off, a spawn that failed) takes the empty page back and returns to
+/// the page it came from. A worktree profile's name prompt keeps the
+/// page up until it is answered — the session lands there — or
+/// cancelled, which takes it back (`session_worktree.promptCancelled`).
 fn openOnNewPage(app: *App, product: Product) CommandError!void {
     const ls = &app.layouts;
     const from_page = ls.active;
     const from_pane = app.active;
     try @import("cmd_tab.zig").tabNewEmpty(app);
-    const page = ls.active;
+    const e: session_worktree.EmptyPage = .{ .page = ls.active, .from_page = from_page, .from_pane = from_pane };
     const opened = openSession(app, product, .tab) catch |err| {
-        dropEmptyPage(app, page, from_page, from_pane);
+        session_worktree.dropEmptyPage(app, e);
         return err;
     };
-    if (opened == null) dropEmptyPage(app, page, from_page, from_pane);
-}
-
-/// Undo `tabNewEmpty` when nothing landed on the page: the page goes if
-/// it is still empty, and the page and pane that were on screen return.
-fn dropEmptyPage(app: *App, page: usize, from_page: usize, from_pane: ?PaneId) void {
-    const ls = &app.layouts;
-    if (page >= ls.layouts.items.len or !ls.layouts.items[page].isEmpty()) return;
-    var gone = ls.layouts.orderedRemove(page);
-    gone.deinit();
-    ls.active = @min(from_page, ls.layouts.items.len - 1);
-    app.setActive(from_pane);
-    app.needs_render = true;
+    if (opened != null) return;
+    if (session_worktree.pendingWhere(app)) |w| w.empty_page = e else session_worktree.dropEmptyPage(app, e);
 }
 
 /// `ai.session_picker`: this workspace's transcripts, newest first;

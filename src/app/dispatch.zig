@@ -1758,7 +1758,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .new_note => |dir| try notes.acceptNew(app, dir, text),
         .new_finding => |dir| try findings.acceptNew(app, dir, text),
         .sessions_rename => |id| try sessions.acceptRename(app, id, text),
-        .session_worktree_name => |w| try toastOnFail(app, @import("session_worktree.zig").acceptNameCmd(app, w.product, w.profile, text)),
+        .session_worktree_name => |w| try toastOnFail(app, @import("session_worktree.zig").acceptNameCmd(app, w, text)),
         .session_commit => |repo| try toastOnFail(app, session_changes.acceptCommit(app, repo, text)),
         .cloud_run_ticket => try cloud_agents.acceptRun(app, text, null),
         .cloud_run_wizard_ticket => try cloud_agents.acceptWizardTicket(app, text),
