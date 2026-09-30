@@ -2,3 +2,4 @@ node_modules/
 dist/
 .astro/
 src/data/release.latest.json
+public/og.png

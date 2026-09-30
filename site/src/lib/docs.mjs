@@ -10,6 +10,7 @@ import path from "node:path";
 import { CONTENT_ROOT } from "./paths.mjs";
 import { PAGES, GENERATED_LEDE } from "./nav.mjs";
 import { parseFrontmatter, renderMarkdown, renderRepoDoc } from "./markdown.mjs";
+import { renderConfigReference } from "./config-reference.mjs";
 
 function contentFile(url) {
   const rel = url.replace(/^\/docs\/?/, "");
@@ -40,7 +41,7 @@ export function docsPages() {
 // → { title, description, html, headings, hideToc, source, state }
 export function loadPage(page) {
   if (page.generated) {
-    const { html, headings } = renderRepoDoc(page.generated);
+    const { html, headings } = page.generated === "docs/CONFIG.md" ? renderConfigReference() : renderRepoDoc(page.generated);
     return { title: page.title, description: GENERATED_LEDE[page.generated] || "", html, headings, hideToc: false, source: page.generated, state: "generated" };
   }
   const file = contentFile(page.url);

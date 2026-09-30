@@ -29,6 +29,8 @@ it in.)
 
 ## What that gives a program in a pane
 
+<!-- video: terminal -->
+
 Everything below is handled by the pane today:
 
 - **Colour.** Palette and 24-bit RGB colours, underline styles and

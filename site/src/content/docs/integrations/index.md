@@ -24,6 +24,8 @@ Three integrations live in the mnml repository, under
 | **Bitbucket** | Pull requests (open and merged, yours and those awaiting your review) and recent pipeline runs per repository and branch, with statusline counts. |
 | **Sample** | The SDK's sample: a small counter pane that answers keys and clicks. It is the starting point for writing your own. |
 
+<!-- video: jira -->
+
 Each is released on its own tag in the repository, named
 `<id>-v<version>` (for example `jira-v0.2.0`). Jira and Bitbucket need
 credentials for your account; each one's README has its setup:

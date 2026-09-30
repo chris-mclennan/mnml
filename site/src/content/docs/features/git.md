@@ -26,6 +26,8 @@ file.
 
 ## Status and staging
 
+<!-- video: git -->
+
 | Command | Keys | |
 | ------- | ---- | - |
 | `git.status_pane` | `space g s` | The status and staging view. |

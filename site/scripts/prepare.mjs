@@ -22,6 +22,16 @@ for (const p of gen) {
 if (bad) process.exit(1);
 console.log(`prepare: ${gen.length} generated-page sources found`);
 
+// The option reference walks docs/CONFIG.md's complete file key by key
+// (scripts/config-options.mjs). A line it cannot place is still on the
+// page, in the whole file at the end, but has no heading of its own.
+{
+  const { loadConfigOptions } = await import("./config-options.mjs");
+  const { entries, unparsed } = loadConfigOptions(repoRoot);
+  console.log(`prepare: option reference — ${entries.length} keys from docs/CONFIG.md`);
+  for (const l of unparsed) console.warn(`prepare: option reference could not place this line (it stays in the whole file): ${l.trim()}`);
+}
+
 const out = path.resolve("src/data/release.latest.json");
 if (process.env.SITE_OFFLINE === "1") {
   fs.rmSync(out, { force: true });
@@ -38,5 +48,23 @@ if (process.env.SITE_OFFLINE === "1") {
     console.log(`prepare: latest release ${rel.tag}, ${rel.assets.length} assets`);
   } catch (e) {
     console.log(`prepare: could not read the latest release (${e.message}) — using ${fs.existsSync(out) ? "the last fetched one" : "src/data/release.json"}`);
+  }
+}
+
+// 3. The link-preview image, og.png (1200x630), rendered from the hero
+//    recording's poster so it follows a re-recorded hero. Build output
+//    (gitignored); src/layouts/Site.astro names it only when it exists.
+{
+  const { ogImage } = await import("./og-image.mjs");
+  const pub = path.resolve("public");
+  const poster = path.join(pub, "media/hero.png");
+  const out = path.join(pub, "og.png");
+  try {
+    if (!fs.existsSync(poster)) throw new Error("no media/hero.png");
+    ogImage(poster, out);
+    console.log("prepare: og.png from media/hero.png");
+  } catch (e) {
+    fs.rmSync(out, { force: true });
+    console.warn(`prepare: no og.png (${e.message}) — the pages go without a preview image`);
   }
 }

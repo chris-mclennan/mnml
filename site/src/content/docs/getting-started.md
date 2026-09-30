@@ -82,6 +82,8 @@ You do not need to learn many keys, because these four find the rest:
 Right-click almost anything — a file, a tab, a chip on the statusline —
 for a menu of what you can do with it.
 
+<!-- video: palette -->
+
 ## A tour in five commands
 
 - ``ctrl+shift+` `` opens a terminal beside your code. Or type `:term`.

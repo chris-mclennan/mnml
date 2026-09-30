@@ -106,6 +106,8 @@ is focused, which is why the segment calls it through `pcall`.
 > (`mnml test`), which is also how you can test your own scripts. See *Testing a script* in the
 > [Lua reference](/docs/lua/reference#testing-a-script).
 
+<!-- video: lua -->
+
 ## Writing scripts in mnml
 
 Editing an `init.lua` in mnml gets completion and hover for the `mnml`

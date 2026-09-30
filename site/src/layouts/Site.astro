@@ -9,7 +9,16 @@ import "../styles/global.css";
 import Navbar from "../components/Navbar.astro";
 import Footer from "../components/Footer.astro";
 const { title, description = "", chrome = true, current = Astro.url.pathname } = Astro.props;
-const full = title === "mnml" ? "mnml" : `${title} – mnml`;
+// A title that already names mnml ("mnml Docs", "About mnml") stands
+// alone, as ghostty.org's "Ghostty Docs" does.
+const full = /\bmnml\b/.test(title) ? title : `${title} – mnml`;
+// og.png is build output of scripts/prepare.mjs (from the hero poster);
+// the PNG icons are committed renders of favicon.svg. Each is named only
+// when it is there.
+import fs from "node:fs";
+import path from "node:path";
+const built = (f) => fs.existsSync(path.resolve("public", f));
+const og = built("og.png") ? new URL("/og.png", Astro.site ?? Astro.url).href : null;
 ---
 <!doctype html>
 <html lang="en" data-theme="dark">
@@ -22,6 +31,15 @@ const full = title === "mnml" ? "mnml" : `${title} – mnml`;
     {description && <meta property="og:description" content={description} />}
     <meta name="theme-color" content="#0f0f11" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    {built("favicon-32.png") && <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />}
+    {built("apple-touch-icon.png") && <link rel="apple-touch-icon" href="/apple-touch-icon.png" />}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="mnml" />
+    {og && <meta property="og:image" content={og} />}
+    {og && <meta property="og:image:width" content="1200" />}
+    {og && <meta property="og:image:height" content="630" />}
+    {og && <meta property="og:image:alt" content="A frame from a recording of mnml, the terminal IDE, in NvChad's chrome." />}
+    <meta name="twitter:card" content={og ? "summary_large_image" : "summary"} />
     <script is:inline>
       try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
     </script>

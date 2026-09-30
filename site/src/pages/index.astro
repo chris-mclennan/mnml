@@ -17,7 +17,10 @@ const { width, height } = hero || CELLS;
       </div>
       <div class="window-body">
         {hero ? (
-          <video src={hero.video} poster={hero.poster} width={width} height={height} autoplay muted loop playsinline preload="auto" aria-label={hero.title}></video>
+          <video poster={hero.poster} width={width} height={height} autoplay muted loop playsinline preload="auto" aria-label={hero.title}>
+            {hero.mp4 && <source src={hero.mp4} type="video/mp4" />}
+            <source src={hero.video} type="video/webm" />
+          </video>
         ) : (
           <div class="placeholder">recording pending</div>
         )}

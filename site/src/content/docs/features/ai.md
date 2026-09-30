@@ -10,6 +10,8 @@ code, and adds what a terminal alone cannot: a layout for running
 several at once, a view of which ones need you, a worktree per session,
 and a record of what each one changed and spent.
 
+<!-- video: sessions -->
+
 ## Sessions in splits
 
 A session is the real `claude` or `codex` program running in a
