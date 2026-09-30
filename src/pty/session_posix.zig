@@ -534,6 +534,10 @@ pub const Session = struct {
     }
 };
 
+/// How long the reader keeps reading after a hang-up that came with
+/// nothing to read (see `readerMain`), in total.
+const hup_grace_ms = 250;
+
 fn exitFromStatus(status: u32) Exit {
     if (c.W.IFEXITED(status)) return .{ .code = c.W.EXITSTATUS(status) };
     if (c.W.IFSIGNALED(status)) return .{ .signal = @intFromEnum(c.W.TERMSIG(status)) };
@@ -550,6 +554,7 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
     // What one drain step copies out of the outbox; the tty takes about
     // a kilobyte at a time anyway.
     var chunk: [16 * 1024]u8 = undefined;
+    var hup_waited_ms: u32 = 0;
     while (!shared.closing.load(.acquire)) {
         // Back-pressure: a full ring means the UI is more than 256 KiB
         // behind. Stop asking for input and look again in a moment; the
@@ -569,24 +574,35 @@ fn readerMain(shared: *Shared, gpa: Allocator) void {
         const rev = fds[0].revents;
         if (rev & (posix.POLL.ERR | posix.POLL.NVAL) != 0) break;
         if (rev & posix.POLL.OUT != 0) flushOutbox(shared, &chunk);
-        if (rev & posix.POLL.IN != 0) {
+        const hup = rev & posix.POLL.HUP != 0;
+        // A hang-up is not the end by itself: the read that follows it
+        // is. Linux can report HUP without IN while the child's last
+        // bytes are still in the tty flip buffer (a kernel work item
+        // moves them to the master's read queue), so a HUP with room in
+        // the ring reads anyway; the read then returns them or EIO.
+        if (rev & posix.POLL.IN != 0 or (hup and room)) {
             const got = posix.read(shared.master, shared.ring.writable()) catch |err| switch (err) {
-                // macOS delivers EIO (mapped to InputOutput) once the slave is
-                // closed; Linux too. Either way the child is finished with us.
+                // EIO (InputOutput) once the slave is closed and the input
+                // drained, on macOS and Linux alike: the definitive end.
                 error.InputOutput => break,
-                error.WouldBlock => continue,
+                error.WouldBlock => {
+                    // HUP and nothing yet: look again, a bounded while
+                    // in all, so a wedged pty cannot keep the reader.
+                    if (hup) {
+                        if (hup_waited_ms >= hup_grace_ms) break;
+                        sleepMs(1);
+                        hup_waited_ms += 1;
+                    }
+                    continue;
+                },
                 else => break,
             };
             if (got == 0) break;
             if (shared.ring.commit(got)) shared.callNotify();
             continue;
         }
-        // HUP without IN means the slave side is gone — but only when IN
-        // was asked for: with the ring full, output may still be waiting.
-        if (rev & posix.POLL.HUP != 0) {
-            if (room) break;
-            sleepMs(1);
-        }
+        // HUP with the ring full: output may still be waiting for room.
+        if (hup) sleepMs(1);
     }
     shared.outbox.close();
     shared.eof.store(true, .release);
