@@ -852,15 +852,19 @@ Code's F3 / Shift+F3 find next / previous, for one) and move into (a) or
 listed here so `tools/keymap-parity-check.sh` can hold the doc to the
 specs in both directions.
 
-*vim profile — 3 chords*
+*vim profile — 7 chords*
 
 | chord | command |
 |---|---|
+| `[ a` | `ai.focus_prev_session` |
+| `] a` | `ai.focus_next_session` |
+| `ctrl+alt+pagedown` | `ai.focus_next_session` |
+| `ctrl+alt+pageup` | `ai.focus_prev_session` |
 | `space` | `whichkey.leader` |
 | `space shift+k` | `help.focus` |
 | `space t p` | `help.pin_toggle` |
 
-*standard profile — 30 chords*
+*standard profile — 32 chords*
 
 | chord | command |
 |---|---|
@@ -877,6 +881,8 @@ specs in both directions.
 | `ctrl+alt+j` | `editor.add_cursor_below` |
 | `ctrl+alt+k` | `editor.add_cursor_above` |
 | `ctrl+alt+n` | `sessions.next_waiting` |
+| `ctrl+alt+pagedown` | `ai.focus_next_session` |
+| `ctrl+alt+pageup` | `ai.focus_prev_session` |
 | `ctrl+alt+shift+left` | `view.focus_prev_split` |
 | `ctrl+alt+shift+right` | `view.focus_next_split` |
 | `ctrl+alt+up` | `editor.add_cursor_above` |
