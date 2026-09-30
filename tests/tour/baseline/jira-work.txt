@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │ INTEGRATIONS           │ 󲀀 jira_work: install 󰅖   󰌃 Jira Work 󰅖   󰐕                                                                                                          󰅁  󰅂  󱸀  󲀀      
-  │ Inst (7) Mkt (0)  (1)   │▌JIRA WORK (3)  as of 3s ago                                                                                                                               5/h      ?
-   │  󰍉 / filter              │▌ 1 Assigned   2 Recently Done
- 󰍉 │                          │▌ ▀▀▀▀▀▀▀▀▀▀▀▀
-   │▌ [dev] Jira Work  0.2.0  │▌ basic   jql   󰍉 / filter   assignee: All   type: —   status: All
- 󰊢 │▌   integrations/jira     │▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
-   │                          │▌ In PR Review (1)
-  │                          │▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur                                                                  [ Review]
-   │                          │▌        MERGED                                                  Validate the card form on blur                                                                 [󰏌 Open]
-▌󰐱 │                          │▌        OPEN                                                    Follow-up: trim the whitespace                                            [󰏌 Open] [ Review] [󰘭 Merge]
-   │                          │▌ In Progress (1)
- 󰎒 │                          │▌     ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
-   │                          │▌ To Do (1)
-  │                          │▌     ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with a voucher                                                    [ Triage] [ Fix]
-   │                          │▌
-  │                          │▌
-   │                          │▌
-  │                          │▌
-   │                          │▌
- 󱘣 │                          │▌
-   │                          │▌
- 󰢱 │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │──────────────────────────│▌
-   │ Jira Work            󰐃 ⋮ │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-  │                          │▌
-   │                          │ Assigned · 3 issues                                          t transition · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  20:35  ws   —
+   │ INTEGRATIONS      sort: A-Z       │ 󲀀 jira_work: install 󰅖   󰌃 Jira Work 󰅖   󰐕                                                                                                󰅁  󰅂  󱸀  󲀀      
+  │ Installed (7) Marketplace (0)  (1)│▌JIRA WORK (3)  as of 3s ago                                                                                                                     5/h      ?
+   │  󰍉 / filter                        │▌ 1 Assigned   2 Recently Done
+ 󰍉 │                                    │▌ ▀▀▀▀▀▀▀▀▀▀▀▀
+   │▌ [dev] Jira Work  0.2.0  installed │▌ basic   jql   󰍉 / filter   assignee: All   type: —   status: All
+ 󰊢 │▌   integrations/jira               │▌ KEY               STATUS        ASSIGNEE            UPDATED     SUMMARY
+   │                                    │▌ In PR Review (1)
+  │                                    │▌    ENG-2         In PR Review  Ada Lovelace        2026-09-15  Card form validates on blur                                                        [ Review]
+   │                                    │▌        MERGED                                                  Validate the card form on blur                                                       [󰏌 Open]
+▌󰐱 │                                    │▌        OPEN                                                    Follow-up: trim the whitespace                                  [󰏌 Open] [ Review] [󰘭 Merge]
+   │                                    │▌ In Progress (1)
+ 󰎒 │                                    │▌     ENG-1         In Progress   Ada Lovelace        2026-09-15  Checkout rewrite
+   │                                    │▌ To Do (1)
+  │                                    │▌     ENG-5         To Do         Ada Lovelace        2026-09-15  Basket total wrong with a voucher                                          [ Triage] [ Fix]
+   │                                    │▌
+  │                                    │▌
+   │                                    │▌
+  │                                    │▌
+   │                                    │▌
+ 󱘣 │                                    │▌
+   │                                    │▌
+ 󰢱 │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │────────────────────────────────────│▌
+   │ Jira Work                      󰐃 ⋮ │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+  │                                    │▌
+   │                                    │ Assigned · 3 issues                                t transition · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  16:57  ws   —
                                                                                                    ⋯

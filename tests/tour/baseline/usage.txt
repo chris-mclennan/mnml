@@ -1,60 +1,60 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │ 󱸀 Claude Usage 󰅖   󰐕                                                                                                                                      󱸀  󲀀      
-▌ │▌    docs               │▌ Claude usage · r refresh · a add · L claude login · R capture · esc close                                                                                            ⋯
-   │     󱼅  notes.md         │▌
- 󰍉 │     src                │▌ (active) personal  · sam@example.com · sam@example.com's Organization
-   │     󱼄  main.zig         │▌
- 󰊢 │     󱼅  util.zig       M │▌ Current session · in force
-   │      .gitignore         │▌                                                              95% used
-  │      CHANGELOG.md     ? │▌   Resets 8:20pm
-   │     󰂺 README.md          │▌
- 󰐱 │                          │▌ Current week (all models)
-   │         󰐙 Add workspace  │▌                                                              52% used
- 󰎒 │                          │▌   Resets Sep 19 at 5am
-   │                          │▌
-  │                          │▌ This week by surface · as of 7:55pm
-   │                          │▌   Claude Code                      38%
-  │                          │▌   Chat                             9%
-   │                          │▌   Cowork                           4%
-  │                          │▌   Other                            1%
-   │                          │▌
- 󱘣 │                          │▌ Current week (Fable)
-   │                          │▌                                                              55% used
- 󰢱 │                          │▌   Resets Sep 19 at 5am
-   │                          │▌
-   │                          │▌   Extra usage: off
-   │                          │▌
-   │                          │▌
-   │                          │▌ work  · sam@work.example · Example Co
-   │                          │▌
-   │                          │▌ Current session
-   │                          │▌                                                              24% used
-   │                          │▌   Resets 11:05pm
-   │                          │▌
-   │                          │▌ Current week (all models)
-   │                          │▌                                                              71% used
-   │                          │▌   Resets Sep 16 at 9am
-   │                          │▌
-   │                          │▌
-   │                          │▌ consulting 
-   │                          │▌
-   │                          │▌   Anthropic asked us to retry in 3150s (429)
-   │                          │▌
-   │                          │▌ no data yet · last error: HTTP 429 retry-after=3150
-   │                          │▌
-   │                          │▌ `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │──────────────────────────│▌
-   │ Claude Usage         󰐃 ⋮ │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-   │                          │▌
-  │                          │▌
-   │                          │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:34  ws   —
+   │  ● /Users/chrismc…            │ 󱸀 Claude Usage 󰅖   󰐕                                                                                                                            󱸀  󲀀      
+▌ │▌    docs                         │▌ Claude usage · r refresh · a add · L claude login · R capture · esc close                                                                                  ⋯
+   │   󱼅    notes.md                   │▌
+ 󰍉 │     src                          │▌ (active) personal  · sam@example.com · sam@example.com's Organization
+   │   󱼄    main.zig                   │▌
+ 󰊢 │   󱼅    util.zig                 M │▌ Current session · in force
+   │      .gitignore                   │▌                                                              95% used
+  │      CHANGELOG.md               ? │▌   Resets 8:20pm
+   │     󰂺 README.md                    │▌
+ 󰐱 │                                    │▌ Current week (all models)
+   │                   󰐙 Add workspace  │▌                                                              52% used
+ 󰎒 │                                    │▌   Resets Sep 19 at 5am
+   │                                    │▌
+  │                                    │▌ This week by surface · as of 7:55pm
+   │                                    │▌   Claude Code                      38%
+  │                                    │▌   Chat                             9%
+   │                                    │▌   Cowork                           4%
+  │                                    │▌   Other                            1%
+   │                                    │▌
+ 󱘣 │                                    │▌ Current week (Fable)
+   │                                    │▌                                                              55% used
+ 󰢱 │                                    │▌   Resets Sep 19 at 5am
+   │                                    │▌
+   │                                    │▌   Extra usage: off
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌ work  · sam@work.example · Example Co
+   │                                    │▌
+   │                                    │▌ Current session
+   │                                    │▌                                                              24% used
+   │                                    │▌   Resets 11:05pm
+   │                                    │▌
+   │                                    │▌ Current week (all models)
+   │                                    │▌                                                              71% used
+   │                                    │▌   Resets Sep 16 at 9am
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌ consulting 
+   │                                    │▌
+   │                                    │▌   Anthropic asked us to retry in 3150s (429)
+   │                                    │▌
+   │                                    │▌ no data yet · last error: HTTP 429 retry-after=3150
+   │                                    │▌
+   │                                    │▌ `:ai.refresh_usage` to force fetch · `:ai.show_last_response` for raw JSON
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │────────────────────────────────────│▌
+   │ Claude Usage                   󰐃 ⋮ │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+   │                                    │▌
+  │                                    │▌
+   │                                    │▌
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  16:57  ws   —
                                                                                                    ⋯
