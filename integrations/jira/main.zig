@@ -67,7 +67,7 @@ pub fn chipColorOf(family: ?config.Family) []const u8 {
     };
     return if (m.chip) |c| c.color else "";
 }
-pub const version = "0.2.0";
+pub const version = "0.2.1";
 
 /// The two statusline segments the Work chip publishes — the
 /// manifest's slots, replaced live with their counts. They are two

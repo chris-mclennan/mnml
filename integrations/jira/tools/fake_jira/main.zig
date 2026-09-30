@@ -69,7 +69,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-pub const version = "0.2.0";
+pub const version = "0.2.1";
 /// `email:token` for `fake@acme.com` / `fake-token`, base64 — the Jira
 /// credential the server accepts unless `--no-auth`.
 pub const expected_auth = "Basic ZmFrZUBhY21lLmNvbTpmYWtlLXRva2Vu";

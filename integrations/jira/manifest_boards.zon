@@ -8,7 +8,7 @@
     .id = "jira_boards",
     .label = "Jira Boards",
     .description = "Jira: active sprint + backlog",
-    .version = "0.2.0",
+    .version = "0.2.1",
     .binary = "mnml-jira",
     .category = "tracker",
     .chip = .{ .glyph = "\u{f0303}", .fallback = "JB", .color = "magenta", .tooltip = "Jira Boards", .in_palette_bar = false }, // nf-md-jira

@@ -37,7 +37,7 @@ const request_log = sdk.request_log;
 pub const Reason = request_log.Reason;
 
 pub const default_base_url = "https://api.bitbucket.org/2.0";
-pub const user_agent = "mnml-bitbucket/0.2.0";
+pub const user_agent = "mnml-bitbucket/0.2.1";
 
 pub const Method = enum {
     GET,

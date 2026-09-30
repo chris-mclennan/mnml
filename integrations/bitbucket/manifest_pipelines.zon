@@ -7,7 +7,7 @@
     .id = "bitbucket_pipelines",
     .label = "Bitbucket Pipelines",
     .description = "Bitbucket: recent pipeline runs per repo/branch",
-    .version = "0.2.0",
+    .version = "0.2.1",
     .binary = "mnml-bitbucket",
     .args = .{ "--only", "pipelines" },
     .category = "forge",
