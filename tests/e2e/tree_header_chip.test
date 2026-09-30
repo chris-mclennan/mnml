@@ -3,8 +3,9 @@
 # sidebar width three of the cluster fit — new folder at columns
 # 17..19, new file at 20..22, pull at 23..25 — and the refresh chip at
 # 26..28, one cell short of the divider. A click on the new-file chip
-# opens the path prompt; the new-folder chip its own; the header row
-# itself folds the tree and a second click opens it.
+# opens the path prompt; the new-folder chip its own; the header's label
+# folds the tree and a second click opens it (columns 7..8 are the
+# workspace dot, a target of its own).
 write src/main.zig "const x = 1;\n"
 write README.md "# hi\n"
 click 21 1
@@ -14,9 +15,9 @@ expect screen lacks "New file (workspace-relative)"
 click 18 1
 expect screen contains "New folder (workspace-relative)"
 key esc
-click 8 1
+click 10 1
 expect screen lacks "README.md"
 expect screen lacks "main.zig"
-click 8 1
+click 10 1
 expect screen contains "README.md"
 expect screen contains "main.zig"

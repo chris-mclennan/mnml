@@ -1,7 +1,8 @@
 # The jumplist (src/app/jumplist.zig): a big jump and a file switch push,
 # nav.back / nav.forward walk them. Multi-root workspaces (src/app/tree.zig):
 # view.add_workspace's prompt completes a directory on Tab and the root
-# lands as a collapsed section; view.switch_workspace opens one section.
+# lands as a collapsed section; view.switch_workspace opens one section
+# and moves the `●` to it.
 write a.txt "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n"
 write b.txt "b1\nb2\n"
 write extra/lib/c.txt "c\n"
@@ -42,5 +43,6 @@ expect screen lacks " lib"
 command view.switch_workspace
 type extra
 key enter
-expect screen contains " ○ extra"
+# The pick is the active workspace now: its dot is the `●`.
+expect screen contains " ● extra"
 expect screen contains " lib"
