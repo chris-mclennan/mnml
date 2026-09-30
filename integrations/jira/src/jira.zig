@@ -68,7 +68,29 @@ pub const Raw = struct {
     status: u16,
     body: []u8,
     retry_after_secs: ?f64,
+    /// The body read's error, when it stopped short; the body holds what
+    /// arrived before it.
+    read_error: ?[]const u8 = null,
+    /// The answer's content-type, for a parse failure to name.
+    content_type: ?[]const u8 = null,
 };
+
+/// What a body that failed to parse as JSON was: the read error if the
+/// body stopped short, else the content-type and the first bytes —
+/// "the search answer was not JSON" alone left nothing to go on.
+pub fn notJson(arena: Allocator, what: []const u8, raw: Raw) []const u8 {
+    // "the search answer …" / "the answer …": the blank `what` drops its space.
+    const label: []const u8 = if (what.len == 0) "answer" else std.fmt.allocPrint(arena, "{s} answer", .{what}) catch "answer";
+    if (raw.read_error) |e| return std.fmt.allocPrint(arena, "the {s} was cut short after {d} bytes ({s})", .{ label, raw.body.len, e }) catch label;
+    var head: [96]u8 = undefined;
+    var n: usize = 0;
+    for (raw.body) |b| {
+        if (n >= head.len) break;
+        head[n] = if (b >= 0x20 and b < 0x7f) b else '.';
+        n += 1;
+    }
+    return std.fmt.allocPrint(arena, "the {s} was not JSON ({s}, {d} bytes: {s})", .{ label, raw.content_type orelse "no content-type", raw.body.len, head[0..n] }) catch label;
+}
 
 /// How a 429 is answered when the pane has handed the client no budget
 /// (a one-shot `--values` run): the SDK's backoff, started at Jira's
@@ -292,7 +314,9 @@ pub const Client = struct {
         var retry_after: ?f64 = null;
         var rate_limit: request_log.RateLimit = .{};
         var hit = response.head.iterateHeaders();
+        var ctype: ?[]const u8 = null;
         while (hit.next()) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, "content-type")) ctype = arena.dupe(u8, h.value) catch null;
             if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
                 if (sdk.ratelimit.parseRetryAfter(h.value)) |secs| retry_after = @floatFromInt(secs);
             }
@@ -301,12 +325,26 @@ pub const Client = struct {
         }
         var out: Io.Writer.Allocating = .init(arena);
         var transfer: [4096]u8 = undefined;
-        const reader = response.reader(&transfer);
+        // The body is read through the content-encoding the site chose:
+        // the std client offers gzip, deflate and zstd, and a body that
+        // came back compressed is bytes the JSON parser cannot read
+        // (it said "the search answer was not JSON" and nothing else).
+        const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+            .identity => &.{},
+            .zstd => try arena.alloc(u8, std.compress.zstd.default_window_len),
+            .deflate, .gzip => try arena.alloc(u8, std.compress.flate.max_window_len),
+            .compress => &.{},
+        };
+        var decompress: std.http.Decompress = undefined;
+        const reader = if (response.head.content_encoding == .compress) response.reader(&transfer) else response.readerDecompressing(&transfer, &decompress, decompress_buffer);
+        // A truncated body still leaves a usable status; the read error
+        // travels with the body so a parse failure can name it.
+        var read_error: ?[]const u8 = null;
         _ = reader.streamRemaining(&out.writer) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,
-            // A truncated body still leaves a usable status.
-            else => {},
+            else => read_error = @errorName(err),
         };
+        if (response.head.content_encoding == .compress) read_error = "UnsupportedCompressionMethod";
         // A 429 or a 5xx parks every process on the bucket, not just
         // this one — for as long as the site said, when it said.
         if (ratelimit.shouldPenalise(status)) {
@@ -316,7 +354,7 @@ pub const Client = struct {
         // A read that carried its body back is a miss; the pane's own
         // stores count their hits (`App.seedPrs`). A write is neither.
         budget.record(.{ .now_secs = Io.Timestamp.now(c.io, .real).toSeconds(), .rate_limit = rate_limit, .cache = if (read and status >= 200 and status < 300) .miss else .none });
-        return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = retry_after };
+        return .{ .status = status, .body = out.toOwnedSlice() catch return error.OutOfMemory, .retry_after_secs = retry_after, .read_error = read_error, .content_type = ctype };
     }
 
     /// One line in the request log. Best effort: a log is never a
@@ -551,7 +589,7 @@ pub fn searchPage(c: *Client, arena: Allocator, jql: []const u8, extra_fields: [
     };
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
-        return .{ .failed = .{ .status = raw.status, .message = "the search answer was not JSON" } };
+        return .{ .failed = .{ .status = raw.status, .message = notJson(arena, "search", raw) } };
     };
     const issues = json.array(doc, "issues");
     const total = json.getInt(doc, "total");
@@ -924,7 +962,7 @@ pub fn boardIssues(c: *Client, arena: Allocator, board_id: u64, extra_jql: ?[]co
         const raw = try c.request(arena, .GET, url, null, reason);
         if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
         const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
-            return .{ .failed = .{ .status = raw.status, .message = "the board answer was not JSON" } };
+            return .{ .failed = .{ .status = raw.status, .message = notJson(arena, "board", raw) } };
         };
         const issues = json.array(doc, "issues");
         try all.appendSlice(arena, issues);
@@ -1041,7 +1079,7 @@ fn getJson(c: *Client, arena: Allocator, url: []const u8, reason: Reason) CallEr
     const raw = try c.request(arena, .GET, url, null, reason);
     if (raw.status < 200 or raw.status >= 300) return .{ .failed = try failureOf(arena, raw.status, raw.body) };
     const doc = std.json.parseFromSliceLeaky(Value, arena, raw.body, .{}) catch {
-        return .{ .failed = .{ .status = raw.status, .message = "the answer was not JSON" } };
+        return .{ .failed = .{ .status = raw.status, .message = notJson(arena, "", raw) } };
     };
     return .{ .ok = doc };
 }

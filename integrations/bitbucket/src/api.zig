@@ -534,7 +534,17 @@ pub const Client = struct {
         var transfer: [4096]u8 = undefined;
         var sink: Io.Writer.Allocating = .init(gpa);
         errdefer sink.deinit();
-        const reader = response.reader(&transfer);
+        // Read through the content-encoding the site chose: the std
+        // client offers gzip, deflate and zstd, and a compressed body
+        // handed to the JSON parser as-is reads as "not JSON".
+        const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+            .identity, .compress => &.{},
+            .zstd => try gpa.alloc(u8, std.compress.zstd.default_window_len),
+            .deflate, .gzip => try gpa.alloc(u8, std.compress.flate.max_window_len),
+        };
+        defer if (decompress_buffer.len > 0) gpa.free(decompress_buffer);
+        var decompress: std.http.Decompress = undefined;
+        const reader = if (response.head.content_encoding == .compress) response.reader(&transfer) else response.readerDecompressing(&transfer, &decompress, decompress_buffer);
         _ = reader.streamRemaining(&sink.writer) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,
             else => {
