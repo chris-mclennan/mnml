@@ -1,0 +1,5 @@
+---
+// A one-line shell command with a copy button.
+const { cmd, prompt = "$" } = Astro.props;
+---
+<div class="cmd"><span class="prompt" aria-hidden="true">{prompt}</span><code>{cmd}</code><button class="copy" type="button" data-copy={cmd} aria-label="Copy command">Copy</button></div>
