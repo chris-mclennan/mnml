@@ -28,6 +28,7 @@ const image = @import("../image/root.zig");
 const marker = @import("marker.zig");
 const app_driver = @import("../app/driver.zig");
 const pty_pane = @import("../app/pty_pane.zig");
+const exit_signal = @import("../core/exit_signal.zig");
 
 /// How often the IPC tail looks at `command`. A wrapper's `stop` /
 /// `restart` lands within this; the UI thread's one wait is untouched.
@@ -177,6 +178,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     var bridge: Io.Group = .init;
     try bridge.concurrent(io, bridgeTask, .{ term, &app });
     if (channel) |*c| try bridge.concurrent(io, ipcTask, .{ c, &app });
+    if (exit_signal.wakeFd()) |fd| try bridge.concurrent(io, signalTask, .{ fd, &app });
     defer bridge.cancel(io);
 
     var buf: [64]event.AppEvent = undefined;
@@ -191,6 +193,14 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
             error.Canceled => break,
         };
         app.events.wake.reset();
+        // SIGTERM / SIGHUP / SIGINT: out the way a quit goes — the
+        // session saved, the terminal given back — with 128 + signal.
+        if (exit_signal.caught()) |sig| {
+            app.restart = false;
+            app.exit_code = exit_signal.status(sig);
+            app.quit = true;
+            break;
+        }
         var input_seen = false;
         while (true) {
             const n = app.events.drain(io, &buf);
@@ -268,6 +278,22 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
 
 /// The frame interval while a terminal pane is working off a backlog.
 const flood_frame_ms = 16;
+
+/// Waits on the signal self-pipe (`core/exit_signal.zig`) and wakes the
+/// UI thread, which parks on the event queue and would otherwise not
+/// look at the signal until the next key or timer. Runs until the group
+/// is cancelled.
+fn signalTask(fd: std.posix.fd_t, app: *App) Io.Cancelable!void {
+    const pipe_r: Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+    var byte: [16]u8 = undefined;
+    while (true) {
+        _ = pipe_r.readStreaming(app.io, &.{&byte}) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            else => return,
+        };
+        app.events.post(app.io, .timer);
+    }
+}
 
 /// Tail `<ipc>/command` and post every line as an event. Runs until the
 /// group is cancelled.
