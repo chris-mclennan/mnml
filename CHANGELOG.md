@@ -25,13 +25,17 @@ the release ships one file), and one line per change a user can see.
   home, beside offline Jira and Bitbucket servers and a stand-in Claude Code
   session (no model runs, no network); a ` demo ` chip says so, and exit
   stops the servers and removes it all.
-
-
 - `mnml --sandbox` and `mnml --demo` clean up when the process is sent
   SIGTERM, SIGHUP or SIGINT — a closed window or a stopped container —
   as they do on a quit: the terminal is given back, the demo's servers
   stop, the throwaway home is removed, and the exit status is 128 + the
   signal (143 for SIGTERM).
+
+### Fixes
+
+- On Linux, a terminal pane whose command prints and exits at once
+  (`:terminal printf hi`) could come up empty: the exit was noticed before
+  the command's last output was read. The exit now waits for that output.
 
 ## v0.3.1
 
