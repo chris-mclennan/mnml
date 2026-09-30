@@ -11,14 +11,17 @@
 //! the label and the refresh chip fit, one cell of margin kept clear at
 //! the edge. An extra workspace (`[[workspaces]]`) is its expander and ` name ` alone.
 //!
-//! An entry is ` ` + indent + connector + chevron + icon + name, the git
-//! badge right-aligned (a cell of air between it, or a long name, and the
-//! scrollbar): two cells of indent per level, a `│` down every
-//! ancestor level that has siblings to come (levels 2 and up — the top
-//! level draws none, as neo-tree), the chevron slot of a file row taking
-//! `│` or `└` under the parent's folder icon. The connectors are mnml's
+//! An entry is ` ` + indent + connectors + chevron + icon + name, the
+//! git badge right-aligned (a cell of air between it, or a long name,
+//! and the scrollbar). The connectors are neo-tree's: every row below
+//! the top level, folder or file, carries two cells a level — for each
+//! ancestor level `│ ` while that ancestor has siblings still to come,
+//! else blank, and at its own level, under the parent's chevron, `│ `
+//! when a sibling follows or `└ ` on the last child. A file has no
+//! chevron; its slot is blank. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
-//! shifted right so they meet the chevron above), the chevrons
+//! shifted right so they meet the chevron above), painted in the
+//! trace colour (`bg2`, `bg3` on the lit cursor row), the chevrons
 //! `expander.zig`'s pair in its colour, the file icons `icons.zig`.
 //! Every glyph has its `ui.ascii_icons` twin beside it. The cursor row
 //! carries the list panels' marker (`▌`, the accent when the tree has
@@ -373,6 +376,7 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     const right = r.x + w;
     const trace_style = Theme.onBg(Theme.withFg(t.fg, trace), bg);
     const cont: []const u8 = if (ui.ascii) cont_ascii ++ " " else cont_glyph ++ " ";
+    const corner: []const u8 = if (ui.ascii) corner_ascii ++ " " else corner_glyph ++ " ";
     // Indent: two cells under the root, then the ancestor levels. A row
     // too deep for the column drops its outermost levels (nvim-tree's
     // left truncation) behind a `…`, so the chevron, the icon and ~10
@@ -381,20 +385,22 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     const keep_levels: u8 = @intCast(@min(255, ((right -| x) -| (2 + 4 + 10)) / 2));
     const skip: u8 = e.depth -| keep_levels;
     x += ui.putStr(x, r.y, right -| x, if (skip > 0) (if (ui.ascii) "< " else "\u{2026} ") else "  ", trace_style);
+    // Every row below the top level carries its connectors (neo-tree's
+    // rule): a bar down each ancestor level whose folder has siblings
+    // still to come, then at the row's own level — under the parent's
+    // chevron — a bar when a sibling follows, the corner on the last.
     var level: u16 = @as(u16, skip) + 1;
     while (level < e.depth) : (level += 1) {
-        x += ui.putStr(x, r.y, right -| x, if (level >= 2 and hasLaterSibling(items, i, @intCast(level))) cont else "  ", trace_style);
+        x += ui.putStr(x, r.y, right -| x, if (hasLaterSibling(items, i, @intCast(level))) cont else "  ", trace_style);
     }
-    // The row's own level: bars from level two, spaces at level one.
-    if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, if (e.depth >= 2) cont else "  ", trace_style);
-    // The chevron slot: a folder's expander in its own colour, a file's
-    // connector in the trace's.
+    if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, if (isLastChild(items, i)) corner else cont, trace_style);
+    // The chevron slot: a folder's expander in its own colour; a file
+    // has none, its connector already drawn.
     if (!ui.ascii) {
         if (e.is_dir) {
             x += ui.putStr(x, r.y, right -| x, expander.slot(ui, e.expanded), expander.style(ui, Theme.onBg(t.fg, bg)));
         } else {
-            const slot: []const u8 = if (e.depth >= 1) (if (isLastChild(items, i)) corner_glyph ++ " " else cont_glyph ++ " ") else "  ";
-            x += ui.putStr(x, r.y, right -| x, slot, trace_style);
+            x += ui.putStr(x, r.y, right -| x, "  ", trace_style);
         }
     }
     // The icon.
@@ -466,7 +472,7 @@ test "the spec's rows at 26 columns: header, chips at 17/20/23/26, icons, connec
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
     try f.expectRow(0, " \u{F47C} /pri…      \u{EA80}  \u{EA7F}  \u{EB40}  \u{EB37}");
     try f.expectRow(1, "\u{258c}  \u{F47C} \u{F07C} src");
-    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
+    try f.expectRow(2, "   \u{F1F05}   \u{E68B} main.rs");
     try f.expectRow(3, "     \u{E702} .gitignore       ?");
     try f.expectRow(4, "     \u{E71E} package.json");
     try f.expectRow(5, "     \u{F00BA} README.md");
@@ -553,7 +559,7 @@ test "the label truncates to what the cluster leaves: five cells at 26, and neve
     try h.expectRow(1, " \u{F460} a-very-long-workspace…");
 }
 
-test "connectors: ancestors with siblings to come draw a bar from level two, the top level none, a file's slot is the corner on the last child" {
+test "connectors: every row below the top level, folders and files alike — a bar down each ancestor level with siblings to come, a bar or the corner at its own level under the parent's chevron" {
     const items = [_]Item{
         section(0, "/w/", true),
         entry(0, "a", 0, true, true),
@@ -569,13 +575,16 @@ test "connectors: ancestors with siblings to come draw a bar from level two, the
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &items });
     try f.expectRow(1, "   \u{F47C} \u{F07C} a");
-    try f.expectRow(2, "     \u{F47C} \u{F07C} b");
-    try f.expectRow(3, "     \u{F1F04} \u{F1F04} \u{F15B} c1");
-    try f.expectRow(4, "     \u{F1F04} \u{F47C} \u{F07C} c2");
-    try f.expectRow(5, "     \u{F1F04} \u{F1F04} \u{F1F05} \u{F15B} d");
-    try f.expectRow(6, "     \u{F1F04} \u{F1F05} \u{F15B} c3");
-    try f.expectRow(7, "     \u{F1F05} \u{F15B} e");
+    try f.expectRow(2, "   \u{F1F04} \u{F47C} \u{F07C} b");
+    try f.expectRow(3, "   \u{F1F04} \u{F1F04}   \u{F15B} c1");
+    try f.expectRow(4, "   \u{F1F04} \u{F1F04} \u{F47C} \u{F07C} c2");
+    try f.expectRow(5, "   \u{F1F04} \u{F1F04} \u{F1F05}   \u{F15B} d");
+    try f.expectRow(6, "   \u{F1F04} \u{F1F05}   \u{F15B} c3");
+    try f.expectRow(7, "   \u{F1F05}   \u{F15B} e");
     try f.expectRow(8, "     \u{F15B} f");
+    // The lines take the trace colour, the chevron keeps its own.
+    try testing.expect(vaxis.Color.eql(f.style(3, 5).fg, f.theme.palette.bg2));
+    try testing.expect(vaxis.Color.eql(f.style(5, 5).fg, f.theme.palette.bg2));
     // ASCII: no chevron slot, the folder triangles, the dot, `| ` bars.
     var g = try Fixture.init(30, 10);
     defer g.deinit();
@@ -584,9 +593,26 @@ test "connectors: ancestors with siblings to come draw a bar from level two, the
     _ = draw(ui, g.full(), .{ .items = &items });
     try g.expectRow(0, " v /w/         d+ f+ ↓  ↕  \u{21BA}");
     try g.expectRow(1, "   ▼ a");
-    try g.expectRow(3, "     | · c1");
-    try g.expectRow(5, "     | | · d");
+    try g.expectRow(2, "   | ▼ b");
+    try g.expectRow(3, "   | | · c1");
+    try g.expectRow(5, "   | | \\ · d");
+    try g.expectRow(7, "   \\ · e");
     try g.expectRow(8, "   · f");
+}
+
+test "connectors: a row too deep for the column folds its outer levels into `…` and keeps its name, the kept levels still drawn" {
+    var items: [17]Item = undefined;
+    items[0] = section(0, "/w/", true);
+    for (0..15) |d| items[d + 1] = entry(@intCast(d), "pkg", @intCast(d), true, true);
+    items[16] = entry(15, "Main.java", 15, false, false);
+    var f = try Fixture.init(30, 17);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), .{ .items = &items });
+    var buf: [256]u8 = undefined;
+    const deepest = f.row(16, &buf);
+    try testing.expect(std.mem.startsWith(u8, deepest, " \u{2026} "));
+    try testing.expect(std.mem.endsWith(u8, deepest, "\u{F1F05}   \u{E738} Main.java"));
+    try testing.expect(std.mem.indexOf(u8, deepest, " \u{F1F05} ") != null);
 }
 
 test "badges: M / A / ? / ! right-aligned, the unsaved dot beating git, a repo row in orange with its marker" {
@@ -685,7 +711,7 @@ test "the cursor row's marker: the list panels' bar in the leading cell, the acc
     var f = try Fixture.init(26, 10);
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = true });
-    try f.expectRow(2, "\u{258c}    \u{F1F05} \u{E68B} main.rs");
+    try f.expectRow(2, "\u{258c}  \u{F1F05}   \u{E68B} main.rs");
     try f.expectRow(1, "   \u{F47C} \u{F07C} src");
     try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
     try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
@@ -700,7 +726,7 @@ test "the cursor row's marker: the list panels' bar in the leading cell, the acc
     // On a section header, and only there.
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 7, .focused = true });
     try f.expectRow(7, "\u{258c}\u{F460} mixr");
-    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
+    try f.expectRow(2, "   \u{F1F05}   \u{E68B} main.rs");
     // No cursor: no marker anywhere; ascii has its twin.
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items });
     var y: u16 = 0;
