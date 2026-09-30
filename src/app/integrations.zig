@@ -665,6 +665,42 @@ pub fn refresh(app: *App) Allocator.Error!void {
     app.needs_render = true;
 }
 
+/// An install just finished: rescan, and settle each manifest's
+/// top-bar chip. A newly installed integration starts OFF the top bar,
+/// whatever its manifest says — `<binary> --install` writes the SDK's
+/// default, and an integration earns its place there when the user puts
+/// it there (*Show on top bar*). One that was already installed — a
+/// reinstall, an update, a rebuild — keeps what the user last chose,
+/// since `--install` rewrote the file from scratch. The first-party
+/// chips are not manifests and keep their own defaults (`first_party`).
+pub fn refreshAfterInstall(app: *App) Allocator.Error!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
+    var before: std.StringHashMapUnmanaged(bool) = .empty;
+    for (st.list) |*inst| {
+        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
+        try before.put(arena, try arena.dupe(u8, inst.id()), on_bar);
+    }
+    try refresh(app);
+    var rewrote = false;
+    for (st.list) |*inst| {
+        var chip = inst.manifest.chip orelse continue;
+        const want = before.get(inst.id()) orelse false;
+        if (chip.in_palette_bar == want) continue;
+        chip.in_palette_bar = want;
+        var m = inst.manifest;
+        m.chip = chip;
+        const text = try manifest_mod.render(app.gpa, m);
+        defer app.gpa.free(text);
+        Io.Dir.cwd().writeFile(app.io, .{ .sub_path = inst.path, .data = text }) catch |err| {
+            try app.toastLevel(.warn, "integrations: cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
+            continue;
+        };
+        rewrote = true;
+    }
+    if (rewrote) try refresh(app);
+}
+
 /// The id of the 0.2-manifests notice toast: its right-click menu
 /// carries *Don't show again* (`integrations.dismiss_toml_notice`).
 pub const toml_toast_id = "integrations-toml";
@@ -1169,7 +1205,7 @@ pub fn tick(app: *App) Allocator.Error!void {
     const dir = try arena.dupe(u8, job.dir);
     job.deinit(app.gpa);
     st.job = null;
-    try refresh(app);
+    try refreshAfterInstall(app);
     if (st.dev_scanned) try scanDev(app);
     app.toast("integrations: installed {s} from {s}", .{ id, app.relPath(dir) });
 }
@@ -1482,7 +1518,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
     if (chip.installed) |row| {
         st.menu_row = .{ .tab = .installed, .idx = manifestVirtual(row) };
         const inst = &st.list[row];
-        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else true;
+        const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
         try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
         try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
@@ -3886,9 +3922,14 @@ test "install from a dev folder: the prebuilt sample's --install runs in a task 
     try testing.expect(command.resolve(&app, "sample.open") != null);
     try testing.expect(command.resolve(&app, "sample.hello") != null);
     try testing.expect(app.ipc_fx.find("sample.chip") != null);
-    const c = try chips(&app, app.frame.allocator());
-    try testing.expectEqualStrings("sample", c[c.len - 1].id);
-    try testing.expect(c[c.len - 1].enabled);
+    // Installed, and its chip is listed — but a new install starts off
+    // the top bar: the manifest on disk says so, and `chips` leaves it out.
+    const all = try allChips(&app, app.frame.allocator());
+    try testing.expectEqualStrings("sample", all[all.len - 1].id);
+    try testing.expect(all[all.len - 1].enabled);
+    try testing.expect(!all[all.len - 1].in_palette_bar);
+    try testing.expect(!st.list[0].manifest.chip.?.in_palette_bar);
+    for (try chips(&app, app.frame.allocator())) |ch| try testing.expect(!std.mem.eql(u8, ch.id, "sample"));
     // The Dev tab now says so; the Installed tab lists it.
     var txt = try screenText(&app);
     defer testing.allocator.free(txt);
@@ -3901,6 +3942,20 @@ test "install from a dev folder: the prebuilt sample's --install runs in a task 
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "Sample  0.1.0") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "sample.open") != null);
+    // *Show on top bar* from its menu puts the chip there…
+    try st.setMenuChip(testing.allocator, "sample");
+    try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
+    const on = try chips(&app, app.frame.allocator());
+    try testing.expectEqualStrings("sample", on[on.len - 1].id);
+    // …and a reinstall keeps what the user chose: `--install` rewrites
+    // the file with the SDK's default, the host settles it back.
+    try command.run(&app, .{ .static = .@"integrations.show_in_dev" });
+    app.integrations.panel.cursor = 0;
+    try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'i' } }));
+    try waitFor(&app, 20_000, &app, Done.done);
+    try testing.expect(st.list[0].manifest.chip.?.in_palette_bar);
+    const again = try chips(&app, app.frame.allocator());
+    try testing.expectEqualStrings("sample", again[again.len - 1].id);
     // The ex-backed command toasts.
     try command.runNamed(&app, "sample.hello");
     try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "Hello from the sample integration") != null);

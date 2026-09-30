@@ -154,7 +154,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .links = &.{.{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed ones" } }},
         } else .{
             .title = try std.fmt.allocPrint(arena, "Integration {d}", .{r.idx + 1}),
-            .body = "An installed integration — its chip, label and state. Enter opens it; right-click is its menu: details, disable or enable, show on the top bar, add to the activity bar, the manifest, copy the id, open as, update, rebuild, uninstall. A disabled row is dimmed.",
+            .body = "An installed integration — its chip, label and state. Enter opens it; right-click is its menu: details, disable or enable, show on or hide from the top bar (a new install starts off it), add to the activity bar, the manifest, copy the id, open as, update, rebuild, uninstall. A disabled row is dimmed.",
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
             .links = &.{ .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } }, .{ .command = .{ .id = .@"integrations.show_manifest", .label = "Show the manifest" } } },
         },

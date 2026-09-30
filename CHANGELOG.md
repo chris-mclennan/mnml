@@ -191,6 +191,11 @@ architecture behind it is in `docs/DESIGN.md`.
   Settings) puts its items right of whatever is typed there, always up with
   no grip and no extra row, and steps aside while a long command would reach
   them.
+- The top bar's integration chips sit three cells apart, the same rhythm as
+  the right-panel toggle beside them, instead of five.
+- A newly installed integration (Marketplace, a local folder, a launcher)
+  starts off the top bar; its menu's *Show on top bar* puts it there, and a
+  reinstall or update keeps what you chose. Browser keeps its chip.
 
 ### Testing
 

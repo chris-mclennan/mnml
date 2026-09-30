@@ -974,17 +974,20 @@ fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
 }
 
 /// The integration chips between the right-panel toggle and the right
-/// cluster, Rust's `paint_integration_chips_in_gap`: from the toggle's
-/// right edge, ` glyph ` every five cells, in the muted colour on the
-/// bar's ground, a three-cell slot left at the cluster's end; the AI
-/// chips paint on the strip instead. A click is `integrations.chipClick`.
+/// cluster: from the toggle's right edge, ` glyph ` every `gap_chip_stride`
+/// cells — the toggle's own rhythm, so toggle → Browser → the next chip
+/// all sit three apart — in the muted colour on the bar's ground, a
+/// three-cell slot left at the cluster's end; the AI chips paint on the
+/// strip instead. A click is `integrations.chipClick`.
+pub const gap_chip_stride: u16 = 3;
+
 fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocator.Error!void {
     const th = ui.theme;
     const right = cluster_left -| 1;
     if (right <= left) return;
     const avail = right - left;
     if (avail < 3) return;
-    const room = (avail - 3) / 5;
+    const room = (avail - 3) / gap_chip_stride;
     if (room == 0) return;
     const strip = try integrations.chips(app, ui.arena);
     var x = left;
@@ -998,7 +1001,7 @@ fn drawGapChips(app: *App, ui: Ui, left: u16, cluster_left: u16, y: u16) Allocat
         const r = Rect.init(x, y, 3, 1);
         _ = ui.putStr(x + 1, y, 1, glyph, .{ .fg = th.palette.comment, .bg = th.palette.bg_dark });
         ui.hit(r, .{ .button = integrations_view.chip_base + @as(u32, @intCast(i)) });
-        x += 5;
+        x += gap_chip_stride;
         painted += 1;
     }
 }
@@ -3692,6 +3695,26 @@ test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; e
     const arow = ascii[0..std.mem.indexOfScalar(u8, ascii, '\n').?];
     try t.expect(std.mem.indexOf(u8, arow, "|  <  >    ?  ws") != null);
     try t.expect(std.mem.indexOf(u8, arow, "+  \u{25CF}\u{2501}  x") != null);
+}
+
+test "the gap chips keep the toggle's rhythm: toggle, Browser, the next chip, each three cells apart" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    app.cfg.ui.top_bar_cluster_mode = .compact;
+    app.cfg.ui.integration_icons = &.{
+        .{ .id = "browser", .glyph = "\u{EB01}", .fallback = "B", .command = "browser.open", .color = "blue", .label = "Browser", .enabled = true, .in_palette_bar = true },
+        .{ .id = "http", .glyph = "\u{F1D8}", .fallback = "H", .command = "view.activity_http", .color = "teal", .label = "HTTP", .enabled = true, .in_palette_bar = true },
+    };
+    const text = try screenText(&app);
+    defer t.allocator.free(text);
+    const row0 = text[0..std.mem.indexOfScalar(u8, text, '\n').?];
+    // The toggle's glyph, then each chip's, one stride on.
+    try t.expect(std.mem.indexOf(u8, row0, "\u{EC00}  \u{EB01}  \u{F1D8} ") != null);
+    try t.expectEqual(@intFromEnum(Button.toggle_right_panel), app.hits.at(82, 0).?.button);
+    try t.expectEqual(integrations_view.chip_base, app.hits.at(85, 0).?.button);
+    try t.expectEqual(integrations_view.chip_base + 1, app.hits.at(85 + gap_chip_stride, 0).?.button);
+    try t.expectEqual(@as(u16, 3), gap_chip_stride);
 }
 
 test "ui.click_echo: a left press underlines the word under it for 120 ms; off, nothing" {

@@ -1778,7 +1778,7 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             defer r.destroy(gpa);
             if (st.installing) |cur| gpa.free(cur);
             st.installing = null;
-            try integrations.refresh(app);
+            try integrations.refreshAfterInstall(app);
             if (i.rebuilt)
                 try app.toastLevel(if (i.warn) .warn else .info, "{s}: {s}", .{ i.id, i.detail })
             else

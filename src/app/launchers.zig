@@ -102,7 +102,7 @@ pub fn installFile(app: *App, path: []const u8) CommandError!void {
     };
     const id = try arena.dupe(u8, m.id);
     const shown = try arena.dupe(u8, app.relPath(dest));
-    try integrations.refresh(app);
+    try integrations.refreshAfterInstall(app);
     app.toast("installed {s} — wrote {s}", .{ id, shown });
 }
 
