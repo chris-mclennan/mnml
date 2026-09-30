@@ -198,7 +198,7 @@ and re-cut — v0.2.9 → v0.2.10, v0.2.18 → v0.2.19.
 
 ## Versions
 
-- `build.zig.zon`'s `.version` is the dev baseline (`0.3.0-dev`). It is not
+- `build.zig.zon`'s `.version` is the dev baseline (`0.3.1-dev`). It is not
   the tag; `-Dversion=` is, and `release.yml` passes the tag through.
 - A prerelease tag (`v0.3.0-rc0`) creates a GitHub prerelease. The MSI's
   ProductVersion is numeric, so `build.ps1` strips the suffix to `0.3.0` for
