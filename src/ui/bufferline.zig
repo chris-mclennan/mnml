@@ -20,7 +20,10 @@
 //! The right end, from the edge inward: the four split buttons (a
 //! shell, split right, split down, maximize — each ` glyph `), before
 //! them the AI chips that are enabled (dropped one by one on a strip
-//! short of room), before those the markdown mode chip, and before that
+//! short of room), before those the markdown mode chip, before that a
+//! session pane's ` ‹ 3/7 › ` (its place among every Claude Code / Codex
+//! session; the number, then the arrows, give way before the active tab
+//! would be cut), and before that
 //! the ` 󰅁  󰅂 ` pair whenever the leaf holds two or more tabs — lit and
 //! registered only when there is something to scroll to, painted dim
 //! otherwise so the strip does not reflow at either end.
@@ -102,6 +105,27 @@ pub const AiChip = struct {
     fg: Color,
 };
 
+/// A session pane's place in the session ring (`app/session_cycle.zig`):
+/// ` ‹ 3/7 › ` left of the mode chip, the two arrows `.button` hits for
+/// the previous / next session. `index` counts from zero.
+pub const SessionNav = struct {
+    index: usize,
+    count: usize,
+    prev: u32,
+    next: u32,
+};
+
+/// How much of the ` ‹ 3/7 › ` a strip has room for: the number goes
+/// first, then the arrows — the tabs keep `narrow_room` either way.
+pub const NavForm = enum { none, arrows, full };
+
+/// ` ‹ ` / ` › ` — one session arrow, a button's width.
+pub const nav_button_w: u16 = 3;
+pub const nav_prev_glyph = "\u{2039}";
+pub const nav_next_glyph = "\u{203A}";
+pub const nav_prev_ascii = "<";
+pub const nav_next_ascii = ">";
+
 /// The split cluster's `.button` ids; `ai` paints before the four.
 /// The cluster's ids. `max` is null on the empty layout — Rust paints
 /// three buttons there, the maximize one only once a pane is open.
@@ -138,6 +162,8 @@ pub const Opts = struct {
     /// The leaf's pane has the keys. False puts the active chip's name
     /// in the dim role under `ui.focus_cue = dim | both` (`focus_cue.words`).
     focused: bool = true,
+    /// The active pane is an AI session: its ` ‹ 3/7 › `.
+    session_nav: ?SessionNav = null,
 };
 
 /// What `draw` painted: the offset it settled on, how many chips it
@@ -425,16 +451,53 @@ const Geometry = struct {
     mode_x: u16,
     split_x: u16,
     n_ai: usize,
+    nav_x: u16 = 0,
+    nav_form: NavForm = .none,
 };
 
-fn geometry(ui: Ui, area: Rect, tabs_len: usize, opts: Opts) Geometry {
+/// The ` 3/7 ` between the session arrows.
+fn navLabel(ui: Ui, nav: SessionNav) []const u8 {
+    return ui.fmt("{d}/{d}", .{ nav.index + 1, nav.count });
+}
+
+fn navWidth(ui: Ui, nav: SessionNav, form: NavForm) u16 {
+    return switch (form) {
+        .none => 0,
+        .arrows => 2 * nav_button_w,
+        .full => 2 * nav_button_w + ui.width(navLabel(ui, nav)),
+    };
+}
+
+/// The widest session-nav form that still leaves the active tab whole
+/// (and never less than `narrow_room`) next to the rest of the furniture
+/// (`fixed`: the split cluster and the mode chip; the chevrons and the
+/// 󰐕 are added here). The number gives way first, then the arrows —
+/// the session's own name on its tab outranks both.
+fn navFormFor(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, fixed: u16) NavForm {
+    const nav = opts.session_nav orelse return .none;
+    const chevrons: u16 = if (tabs.len >= 2) 2 * arrow_w else 0;
+    var active_w: u16 = 0;
+    for (tabs) |tab| if (tab.active) {
+        active_w = chipWidth(ui, tab);
+    };
+    const reserved = fixed + chevrons + plus_w + @max(narrow_room, active_w);
+    for ([_]NavForm{ .full, .arrows }) |form| {
+        if (area.w >= reserved + navWidth(ui, nav, form)) return form;
+    }
+    return .none;
+}
+
+fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
+    const tabs_len = tabs.len;
     var n_ai: usize = if (opts.split) |s| s.ai.len else 0;
     const base: u16 = if (opts.split) |sp| (if (sp.max != null) split_buttons_w else split_buttons_w - split_button_w) else 0;
     while (n_ai > 0 and area.w < base + @as(u16, @intCast(n_ai)) * split_button_w) n_ai -= 1;
     const split_total = base + @as(u16, @intCast(n_ai)) * split_button_w;
     const mode_w: u16 = if (opts.mode_chip) |m| ui.width(m.label) else 0;
+    const nav_form = navFormFor(ui, area, tabs, opts, split_total + mode_w);
+    const nav_w: u16 = if (opts.session_nav) |nav| navWidth(ui, nav, nav_form) else 0;
     const right = area.right();
-    const tabs_right0 = right -| (split_total + mode_w);
+    const tabs_right0 = right -| (split_total + mode_w + nav_w);
     const arrows_w: u16 = if (tabs_len >= 2) 2 * arrow_w else 0;
     const arrows_x = @max(tabs_right0 -| arrows_w, area.x);
     return .{
@@ -444,6 +507,8 @@ fn geometry(ui: Ui, area: Rect, tabs_len: usize, opts: Opts) Geometry {
         .mode_x = @max(right -| (split_total + mode_w), area.x),
         .split_x = @max(right -| split_total, area.x),
         .n_ai = n_ai,
+        .nav_x = @max(right -| (split_total + mode_w + nav_w), area.x),
+        .nav_form = nav_form,
     };
 }
 
@@ -558,7 +623,7 @@ fn narrowWidth(area: Rect) u16 {
 /// clamp pulls it back so the tail fills the strip).
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
-    const g = geometry(ui, area, tabs.len, opts);
+    const g = geometry(ui, area, tabs, opts);
     if (narrowActive(ui, area, tabs, opts, g)) |a| return a;
     const room = stripRight(ui, area, tabs, opts, g) -| area.x;
     const first = clampScroll(ui, tabs, room, current);
@@ -576,7 +641,7 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     ui.fill(area, t.bufferline);
     if (area.isEmpty()) return .{};
     const y = area.y;
-    const g = geometry(ui, area, tabs.len, opts);
+    const g = geometry(ui, area, tabs, opts);
     if (narrowActive(ui, area, tabs, opts, g)) |a| {
         _ = paintChip(ui, area.x, y, narrowWidth(area), tabs[a], opts.leaf, @intCast(a), opts.focused);
         return .{ .first = a, .painted = 1, .hidden_left = a, .hidden_right = tabs.len - a - 1 };
@@ -665,9 +730,33 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
         }
     }
 
+    if (opts.session_nav) |nav| if (g.nav_form != .none) drawNav(ui, g.nav_x, y, area.right(), nav, g.nav_form);
+
     if (opts.split) |s| drawSplit(ui, g.split_x, y, area.right(), s, g.n_ai, opts.zoomed);
 
     return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right };
+}
+
+/// ` ‹ 3/7 › ` from `x0` (` ‹  › ` in the `.arrows` form): each arrow a
+/// button-wide `.button` hit, the position between them in the dim role.
+fn drawNav(ui: Ui, x0: u16, y: u16, right: u16, nav: SessionNav, form: NavForm) void {
+    const p = ui.theme.palette;
+    const bg = p.bg_darker;
+    var x = x0;
+    const arrow: Style = .{ .fg = p.fg, .bg = bg, .bold = true };
+    if (x + nav_button_w > right) return;
+    ui.fill(Rect.init(x, y, nav_button_w, 1), .{ .bg = bg });
+    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) nav_prev_ascii else nav_prev_glyph, arrow);
+    ui.hit(Rect.init(x, y, nav_button_w, 1), .{ .button = nav.prev });
+    x += nav_button_w;
+    if (form == .full) {
+        const label = navLabel(ui, nav);
+        x += ui.putStr(x, y, right -| x, label, .{ .fg = p.comment, .bg = bg });
+    }
+    if (x + nav_button_w > right) return;
+    ui.fill(Rect.init(x, y, nav_button_w, 1), .{ .bg = bg });
+    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) nav_next_ascii else nav_next_glyph, arrow);
+    ui.hit(Rect.init(x, y, nav_button_w, 1), .{ .button = nav.next });
 }
 
 /// The split cluster from `x`: the AI chips, then ` term `, ` right `,
@@ -1185,6 +1274,69 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     try testing.expect(h.fgEql(10, 0, .{ .fg = h.theme.palette.cyan }));
     // The ASCII twins of the test glyphs are spelled beside them.
     try testing.expect(rust_ascii.len + diff_ascii.len + preview_ascii.len > 0);
+}
+
+test "a session pane's strip: ` ‹ 3/7 › ` before the cluster, each arrow a button; short of room the number goes first, then the arrows, and the active tab stays whole" {
+    const tabs = [_]Tab{.{ .id = 1, .title = "claude", .glyph = "x", .active = true }};
+    const opts: Opts = .{
+        .new_tab = 9,
+        .split = .{ .term = 1, .right = 2, .down = 3, .max = 4 },
+        .session_nav = .{ .index = 2, .count = 7, .prev = 60, .next = 61 },
+    };
+    // Room for all of it: 12 cells of cluster, 9 of nav, the tab's 12
+    // and the 󰐕 — 36 and up.
+    var f = try Fixture.init(50, 1);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), &tabs, opts);
+    try f.expectContains(" " ++ nav_prev_glyph ++ " 3/7 " ++ nav_next_glyph ++ "  " ++ ghost_glyph);
+    // The nav ends where the cluster starts: 50 - 12 - 9 = 29.
+    for ([_]u16{ 29, 30, 31 }) |x| try testing.expectEqual(@as(u32, 60), f.hits.at(x, 0).?.button);
+    for ([_]u16{ 35, 36, 37 }) |x| try testing.expectEqual(@as(u32, 61), f.hits.at(x, 0).?.button);
+    // The number between them is no target.
+    try testing.expect(f.hits.at(33, 0) == null);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(38, 0).?.button);
+    // The active chip is untouched.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(1, 0).?.tab.idx);
+
+    // Short of room: the number goes, the arrows stay (33..35).
+    var g = try Fixture.init(34, 1);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), &tabs, opts);
+    try g.expectContains(" " ++ nav_prev_glyph ++ "  " ++ nav_next_glyph ++ "  " ++ ghost_glyph);
+    try g.expectLacks("3/7");
+    try testing.expectEqual(@as(u32, 60), g.hits.at(16, 0).?.button);
+    try testing.expectEqual(@as(u32, 61), g.hits.at(19, 0).?.button);
+
+    // Shorter still: the arrows go too, before the tab would.
+    var h = try Fixture.init(32, 1);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), &tabs, opts);
+    try h.expectLacks(nav_prev_glyph);
+    try h.expectLacks(nav_next_glyph);
+    try h.expectContains(" x claude ");
+
+    // The session's own name outranks the nav: an 18-cell name keeps
+    // its chip whole, and the nav takes only what is left over.
+    const long = [_]Tab{.{ .id = 1, .title = "fix the failing te", .glyph = "x", .active = true }};
+    var l = try Fixture.init(44, 1);
+    defer l.deinit();
+    _ = draw(l.ui(), l.full(), &long, opts);
+    try l.expectContains(" x fix the failing te " ++ close_glyph);
+    try l.expectLacks(nav_prev_glyph);
+    var m = try Fixture.init(45, 1);
+    defer m.deinit();
+    _ = draw(m.ui(), m.full(), &long, opts);
+    try m.expectContains(" x fix the failing te " ++ close_glyph);
+    try m.expectContains(nav_prev_glyph ++ "  " ++ nav_next_glyph);
+    try m.expectLacks("3/7");
+
+    // `--ascii`: `<` and `>`.
+    var a = try Fixture.init(50, 1);
+    defer a.deinit();
+    var aui = a.ui();
+    aui.ascii = true;
+    _ = draw(aui, a.full(), &tabs, opts);
+    try a.expectContains(" " ++ nav_prev_ascii ++ " 3/7 " ++ nav_next_ascii ++ " ");
 }
 
 test "the name a terminal goes by, per `$TERM_PROGRAM` and `WT_SESSION`; the mark is mnml's own either way, and both marks have an `--ascii` twin" {

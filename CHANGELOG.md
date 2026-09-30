@@ -102,6 +102,12 @@ architecture behind it is in `docs/DESIGN.md`.
   Codex panes, every `ai.*` runner, the Claude Agents dashboard (sessions
   across workspaces, filters, pause chip, live tail, kill), the 24 h spend
   report and the statusline meter.
+- Session cycling: `ai.focus_next_session` / `ai.focus_prev_session`
+  (`ctrl+alt+pagedown` / `ctrl+alt+pageup`, `]a` / `[a` in a vim editor)
+  step through every Claude Code and Codex pane — splits, stacked tabs,
+  other tab pages — with a `‹ 3/7 ›` on each session's tab strip and on the
+  statusline's new sessions chip; the Claude and Codex chip menus open a
+  session in a new tab or on a new tab page.
 - HTTP: `Pane.request` — the tabbed request pane, the send worker, the
   `http.*` commands. The request parser, envs, cookie jar, JWT decoding, SSE,
   a JSON-schema subset, HAR and Postman import, the captured log, chains,

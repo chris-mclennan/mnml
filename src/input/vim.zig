@@ -1262,6 +1262,9 @@ pub const Vim = struct {
                     'm' => runCmd(.@"editor.method_prev"),
                     // Neovim's default `[b` (`:bprevious`, `:help [b`).
                     'b' => runCmd(.@"buffer.prev"),
+                    // The session ring backwards (`app/session_cycle.zig`).
+                    // Neovim's `[a` is the argument list, which mnml has none of.
+                    'a' => runCmd(.@"ai.focus_prev_session"),
                     // `[p` / `[P` / `]P` all put BEFORE with the indent
                     // adjusted (`:help [p`); a count repeats the put.
                     'p', 'P' => repeated(arena, .paste_before_indent, n),
@@ -1287,6 +1290,9 @@ pub const Vim = struct {
                     'm' => runCmd(.@"editor.method_next"),
                     // Neovim's default `]b` (`:bnext`, `:help ]b`).
                     'b' => runCmd(.@"buffer.next"),
+                    // The session ring (`app/session_cycle.zig`); Neovim's
+                    // `]a` is the argument list, which mnml has none of.
+                    'a' => runCmd(.@"ai.focus_next_session"),
                     // `]p` puts AFTER with the indent adjusted; `]P` is
                     // vim's synonym for `[P` (`:help ]p`).
                     'p' => repeated(arena, .paste_after_indent, n),

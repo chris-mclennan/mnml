@@ -1,0 +1,77 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Session cycling: `ai.focus_next_session` / `ai.focus_prev_session`
+# walk every Claude Code / Codex pane in one ring — page order, then
+# layout order, stacked tabs in strip order — wrapping at the ends and
+# crossing tab pages. Each session's strip reads its place, ` ‹ 2/3 › `.
+# The keys: ctrl+alt+pagedown / pageup in both profiles, `]a` / `[a` in
+# a vim editor.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600
+write bin/codex #!/bin/bash\nprintf '\\033]0;codex one\\007'\nprintf 'fake codex\\n'\nexec sleep 600
+shell chmod +x bin/claude bin/codex
+write a.txt "alpha alpha"
+open a.txt
+# Nothing to cycle yet: a toast says so, the file keeps the keys.
+command ai.focus_next_session
+expect screen contains "no Claude Code or Codex sessions open"
+expect pane a.txt
+# Page 1: a Claude session beside the file. Page 2: Codex alone on a
+# new page, then a second Claude stacked as a tab next to it.
+command ai.claude_code_new_right
+wait 400
+command ai.codex_new_page
+wait 400
+command ai.claude_code_new_tab
+wait 400
+expect screen contains "fake claude 2"
+expect screen contains "‹ 3/3 ›"
+expect screen lacks "alpha alpha"
+# Back to the file on page 1: next is the first session.
+command tab.first
+wait 200
+expect pane a.txt
+command ai.focus_next_session
+wait 200
+expect pane claude 1
+expect screen contains "‹ 1/3 ›"
+expect screen contains "alpha alpha"
+# On to page 2, through its stacked tabs, and round to the start.
+command ai.focus_next_session
+wait 200
+expect pane codex one
+expect screen contains "‹ 2/3 ›"
+expect screen lacks "alpha alpha"
+command ai.focus_next_session
+wait 200
+expect pane claude 2
+command ai.focus_next_session
+wait 200
+expect pane claude 1
+expect screen contains "alpha alpha"
+command ai.focus_prev_session
+wait 200
+expect pane claude 2
+expect screen lacks "alpha alpha"
+# The chords, from inside a session.
+command editor.use_standard
+key ctrl+alt+pagedown
+wait 200
+expect pane claude 1
+key ctrl+alt+pageup
+wait 200
+expect pane claude 2
+# vim: `]a` / `[a` from an editor.
+command editor.use_vim
+command tab.first
+wait 200
+expect pane a.txt
+key ]
+key a
+wait 200
+expect pane claude 1
+open a.txt
+expect pane a.txt
+key [
+key a
+wait 200
+expect pane claude 2

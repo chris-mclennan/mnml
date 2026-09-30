@@ -10,6 +10,8 @@
 # first row until the fourth session takes the slot. The rows are
 # pinned from the body's left edge: the sidebar beside them holds the
 # SESSIONS cards, whose text this file does not own.
+# Each strip carries its session's place in the ring, ` ‹ 1/2 › `,
+# left of the Claude chip (`app/session_cycle.zig`).
 command ai.claude_code_new
 wait 300
 expect pane claude
@@ -17,12 +19,12 @@ expect screen lacks "│──────────────────�
 command ai.claude_code_new
 wait 300
 expect pane claude
-expect screen contains "claude 󰅖   󰐕               󱸀  󲀀       │ 󱸀 claude 󰅖"
+expect screen contains "claude 󰅖   󰐕      ‹ 1/2 ›  󱸀  󲀀       │ 󱸀 claude 󰅖"
 expect screen lacks "│─────────────────────────────────────────────────────────────────────────────────────────"
 expect screen lacks "Add Claude Code"
 command ai.claude_code_new
 wait 300
-expect screen contains "claude 󰅖   󰐕               󱸀  󲀀       │ 󱸀 claude 󰅖"
+expect screen contains "claude 󰅖   󰐕      ‹ 1/3 ›  󱸀  󲀀       │ 󱸀 claude 󰅖"
 expect screen contains "│─────────────────────────────────────────────────────────────────────────────────────────"
 expect screen contains " 󲀀       │                                            "
 expect screen contains "│▌                                           │             󰐕 Add Claude Code"

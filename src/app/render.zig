@@ -101,6 +101,7 @@ const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const pty_search = @import("pty_search.zig");
 const pty_pane = @import("pty_pane.zig");
+const session_cycle = @import("session_cycle.zig");
 const terminal_glyph = @import("terminal_glyph.zig");
 const claude_mark = @import("claude_mark.zig");
 const list_panel = @import("../ui/list_panel.zig");
@@ -242,6 +243,10 @@ pub const Button = enum(u32) {
     edge_grip_sidebar_left = 30,
     edge_grip_sidebar_right = 31,
     edge_grip_dock = 32,
+    /// A session pane's strip: the ` ‹ ` / ` › ` of its ` ‹ 3/7 › ` —
+    /// the previous / next session in the ring (`app/session_cycle.zig`).
+    session_prev = 33,
+    session_next = 34,
     /// The right cluster's tab-page chips and their `×`, 32 pages each.
     tab_page_base = 0x40,
     tab_page_close_base = 0x60,
@@ -1507,6 +1512,14 @@ fn modeChip(app: *App, ui: Ui, active: PaneId) ?bufferline.ModeChip {
     };
 }
 
+/// A session pane's place in the session ring, for its strip's
+/// ` ‹ 3/7 › `; null on every other pane.
+fn sessionNav(app: *App, active: PaneId) Allocator.Error!?bufferline.SessionNav {
+    if (!session_cycle.isSession(app, active)) return null;
+    const pos = (try session_cycle.position(app, app.frame.allocator(), active)) orelse return null;
+    return .{ .index = pos.index, .count = pos.count, .prev = @intFromEnum(Button.session_prev), .next = @intFromEnum(Button.session_next) };
+}
+
 /// The leaf's tab strip. The window (`Leaf.strip_first`) is re-fitted
 /// to the active tab when that changed since the last paint, else it
 /// stays where the wheel / chevrons left it; what was painted goes back
@@ -1528,6 +1541,7 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         // the way out (Rust `ui/mod.rs`).
         .zoomed = app.zen or (if (app.zoomedPane()) |z| layout.leafOf(z) == lid else false),
         .focused = paneFocused(app, leaf.active),
+        .session_nav = try sessionNav(app, leaf.active),
     };
     if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
         opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);

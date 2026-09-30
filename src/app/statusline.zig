@@ -64,6 +64,8 @@ const ids = @import("../core/ids.zig");
 const profile_mod = @import("../config/profile.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
+const session_cycle = @import("session_cycle.zig");
+const rail_ui = @import("../ui/activity_bar.zig");
 
 pub const FocusId = ids.FocusId;
 
@@ -124,10 +126,20 @@ pub const SegId = enum(u32) {
     /// are a throwaway directory (`src/config/sandbox.zig`). ` sandbox? `
     /// on red when `MNML_SANDBOX` is set but they are not.
     sandbox,
+    /// ` ‹ ▣ 3/7 › ` — the session ring (`app/session_cycle.zig`) while
+    /// any Claude Code / Codex pane is open: the chip is the count (and
+    /// the focused session's place), the arrows the previous / next
+    /// session.
+    sessions,
+    session_prev,
+    session_next,
     _,
 
+    /// The last id; `of` answers up to it.
+    const last: SegId = .session_next;
+
     pub fn of(id: u32) ?SegId {
-        if (id < sl.seg_app_base or id > @intFromEnum(SegId.sandbox)) return null;
+        if (id < sl.seg_app_base or id > @intFromEnum(last)) return null;
         return @enumFromInt(id);
     }
 
@@ -608,6 +620,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         const seg = Seg.init(chip.text, if (chip.has_data) p.bg_darker else p.comment, p.cyan);
         try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
     }
+    // The session ring goes here, after the AI meters, once the rest of
+    // the row is known and its width can pick the chip's form.
+    const sessions_at = right.items.len;
     // Ghost text, beside the two AI meters: nothing while it is idle
     // or while a suggestion is on screen, and a chip for every moment
     // in between — the ones that used to look identical to "off".
@@ -742,7 +757,42 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.blue).strong().withHit(sl.seg_language));
     }
 
+    try insertSessions(app, ui, area.w, left.items, &right, sessions_at);
+
     return .{ .left = left.items, .right = right.items, .middle = middle };
+}
+
+/// The session ring's chip, into `right` at `at`: ` ‹ ▣ 3/7 › ` — the
+/// focused session's place and the count (just the count when the
+/// focus is not on a session) — while at least one session is open.
+/// Short of room it gives way in steps: the number first (` ‹ ▣ › `),
+/// then the arrows (` ▣ `); the edge rule cuts what is left.
+fn insertSessions(app: *App, ui: Ui, width: u16, left: []const Seg, right: *Lane, at: usize) Allocator.Error!void {
+    const arena = ui.arena;
+    const ring = try session_cycle.list(app, arena);
+    if (ring.len == 0) return;
+    const p = &ui.theme.palette;
+    const meta = rail_ui.Section.sessions.meta();
+    const glyph = if (ui.ascii) meta.fallback else meta.glyph;
+    const idx: ?usize = if (app.active) |a| std.mem.indexOfScalar(app_mod.PaneId, ring, a) else null;
+    const num = if (idx) |i| ui.fmt("{d}/{d}", .{ i + 1, ring.len }) else ui.fmt("{d}", .{ring.len});
+    const bg = p.bg2;
+    const prev = Seg.init(if (ui.ascii) " <" else " \u{2039}", p.fg, bg).strong().withHit(SegId.session_prev.raw());
+    const next = Seg.init(if (ui.ascii) "> " else "\u{203A} ", p.fg, bg).strong().withHit(SegId.session_next.raw());
+    const full = Seg.init(ui.fmt(" {s} {s} ", .{ glyph, num }), p.purple, bg).withHit(SegId.sessions.raw());
+    const bare = Seg.init(ui.fmt(" {s} ", .{glyph}), p.purple, bg).withHit(SegId.sessions.raw());
+    const forms = [_][]const Seg{ &.{ prev, full, next }, &.{ prev, bare, next }, &.{bare} };
+    const ground = ui.theme.statusline.bg;
+    for (forms, 0..) |form, i| {
+        var lane: Lane = .empty;
+        try lane.appendSlice(arena, right.items[0..at]);
+        try lane.appendSlice(arena, form);
+        try lane.appendSlice(arena, right.items[at..]);
+        if (i + 1 == forms.len or sl.fitsWhole(ui, width, left, lane.items, ground)) {
+            right.* = lane;
+            return;
+        }
+    }
 }
 
 /// The symbol the ` › name ` chip names for a caret on `row`: the
@@ -841,8 +891,9 @@ test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.dev_profile, SegId.of(SegId.dev_profile.raw()).?);
     try testing.expectEqual(SegId.sandbox, SegId.of(SegId.sandbox.raw()).?);
     try testing.expect(SegId.of(sl.seg_mode) == null);
-    // `sandbox` is the last one; one past it is nobody's.
-    try testing.expect(SegId.of(SegId.sandbox.raw() + 1) == null);
+    try testing.expectEqual(SegId.session_next, SegId.of(SegId.session_next.raw()).?);
+    // `session_next` is the last one; one past it is nobody's.
+    try testing.expect(SegId.of(SegId.session_next.raw() + 1) == null);
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
 }
 

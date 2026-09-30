@@ -2722,6 +2722,10 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
                     .zoom => try runCmd(app, .@"view.toggle_zoom"),
+                    // The session ring's chip and its arrows.
+                    .sessions => try runCmd(app, .@"view.activity_sessions"),
+                    .session_prev => try runCmd(app, .@"ai.focus_prev_session"),
+                    .session_next => try runCmd(app, .@"ai.focus_next_session"),
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     .sandbox => if (app.sandboxState() == .unsafe)
                         app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
@@ -2963,6 +2967,16 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // Full screen's corner mark: the click leaves.
                 .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
+                // A session's ` ‹ 3/7 › `: the ring steps from the
+                // session this strip shows, whatever had the keys.
+                .session_prev => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"ai.focus_prev_session");
+                },
+                .session_next => {
+                    focusLeafAt(app, m.x, m.y);
+                    try runCmd(app, .@"ai.focus_next_session");
+                },
                 // The chips are the way to the SESSIONS panel; a click
                 // starts a session only when none of that product is
                 // running (`app/ai.zig`'s `chipClick`).

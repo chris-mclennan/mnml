@@ -86,6 +86,10 @@ pub const table = .{
     .@"ai.codex_new_right" = &codexNewRight,
     .@"ai.codex_new_top" = &codexNewTop,
     .@"ai.codex_new_bottom" = &codexNewBottom,
+    .@"ai.claude_code_new_tab" = &claudeCodeNewTab,
+    .@"ai.claude_code_new_page" = &claudeCodeNewPage,
+    .@"ai.codex_new_tab" = &codexNewTab,
+    .@"ai.codex_new_page" = &codexNewPage,
     .@"ai.session_picker" = &sessionPicker,
     .@"ai.session_search" = &sessionSearchCmd,
     .@"ai.toggle_backend" = &toggleBackend,
@@ -1603,6 +1607,62 @@ fn codexNewTop(app: *App) CommandError!void {
 }
 fn codexNewBottom(app: *App) CommandError!void {
     _ = try openSession(app, .codex, .below);
+}
+fn claudeCodeNewTab(app: *App) CommandError!void {
+    return openInNewTab(app, .claude);
+}
+fn claudeCodeNewPage(app: *App) CommandError!void {
+    return openOnNewPage(app, .claude);
+}
+fn codexNewTab(app: *App) CommandError!void {
+    return openInNewTab(app, .codex);
+}
+fn codexNewPage(app: *App) CommandError!void {
+    return openOnNewPage(app, .codex);
+}
+
+/// `ai.*_new_tab`: a session as a tab of the active leaf — no split —
+/// right after the tab that was showing there, rather than at the end
+/// of the strip where the eye is not.
+fn openInNewTab(app: *App, product: Product) CommandError!void {
+    const before = app.active;
+    const id = (try openSession(app, product, .tab)) orelse return;
+    const b = before orelse return;
+    const layout = app.layouts.current();
+    const lid = layout.leafOf(b) orelse return;
+    if (layout.leafOf(id) != lid) return;
+    const leaf = layout.leaf(lid).?;
+    const at = std.mem.indexOfScalar(PaneId, leaf.tabs.items, b) orelse return;
+    layout.reorderTab(id, at + 1);
+}
+
+/// `ai.*_new_page`: a session alone on a fresh tab page, inserted right
+/// after the current one and shown. Nothing opened (the product routed
+/// off, a spawn that failed, a worktree profile's name prompt) takes the
+/// empty page back and returns to the page it came from.
+fn openOnNewPage(app: *App, product: Product) CommandError!void {
+    const ls = &app.layouts;
+    const from_page = ls.active;
+    const from_pane = app.active;
+    try @import("cmd_tab.zig").tabNewEmpty(app);
+    const page = ls.active;
+    const opened = openSession(app, product, .tab) catch |err| {
+        dropEmptyPage(app, page, from_page, from_pane);
+        return err;
+    };
+    if (opened == null) dropEmptyPage(app, page, from_page, from_pane);
+}
+
+/// Undo `tabNewEmpty` when nothing landed on the page: the page goes if
+/// it is still empty, and the page and pane that were on screen return.
+fn dropEmptyPage(app: *App, page: usize, from_page: usize, from_pane: ?PaneId) void {
+    const ls = &app.layouts;
+    if (page >= ls.layouts.items.len or !ls.layouts.items[page].isEmpty()) return;
+    var gone = ls.layouts.orderedRemove(page);
+    gone.deinit();
+    ls.active = @min(from_page, ls.layouts.items.len - 1);
+    app.setActive(from_pane);
+    app.needs_render = true;
 }
 
 /// `ai.session_picker`: this workspace's transcripts, newest first;

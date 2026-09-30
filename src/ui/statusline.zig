@@ -250,6 +250,15 @@ fn leftWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {
     return w;
 }
 
+/// Whether both lanes fit `width` whole, with the gap between them —
+/// no left chip clipped, no right chip cut at the edge. The test a chip
+/// with a narrower form applies before it settles on its widest.
+pub fn fitsWhole(ui: Ui, width: u16, left: []const Seg, right: []const Seg, ground: Color) bool {
+    var left_cols: u16 = 0;
+    for (left) |s| left_cols += s.cols(ui);
+    return @as(u32, left_cols) + lane_gap + rightWidth(ui, right, ground) <= width;
+}
+
 /// The right lane's cells: an arrow before each chip whose ground
 /// differs from the one before it (the lane's ground before the first).
 fn rightWidth(ui: Ui, segs: []const Seg, ground: Color) u16 {

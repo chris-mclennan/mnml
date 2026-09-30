@@ -186,6 +186,24 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
             .body = "A `--sandbox` run: `HOME`, `XDG_CONFIG_HOME` and the data root are a fresh `mnml-sandbox-*` directory under the temp root, so this is what a brand-new user sees and nothing here reaches your real config, sessions or credentials — nor does anything a shell pane or an integration started from here does. The session is neither restored nor autosaved, and the running-instance marker is left to your real mnml. The directory is removed when this mnml exits (`--sandbox-keep` keeps it). Click toasts where it is.",
             .links = &.{ comptime copy.docsSection("Sandbox"), ask },
         },
+        .sessions => .{
+            .title = "Sessions — the ring",
+            .body = "Every Claude Code and Codex pane open — splits, tabs stacked in a leaf, sessions on tab pages of their own — counted in one ring, page by page then left to right. `3/7` is the focused session's place in it; a bare count means the focus is on something else. The arrows either side step through the ring; click the chip for the SESSIONS section, which has each one's card.",
+            .keys = &.{ .{ .command = .@"ai.focus_next_session", .label = "Next session" }, .{ .command = .@"ai.focus_prev_session", .label = "Previous session" } },
+            .links = &.{ .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } }, .{ .command = .{ .id = .@"ai.claude_code_new_tab", .label = "New session in a tab" } } },
+        },
+        .session_prev => .{
+            .title = "Previous session",
+            .body = "Goes to the session before the focused one in the ring — on whichever tab page holds it, which comes on screen — and gives it the keys; before the first, it wraps to the last. From a pane that is not a session it goes to the last one. A toast names where it landed.",
+            .keys = &.{ .{ .command = .@"ai.focus_prev_session", .label = "Previous session" }, .{ .command = .@"ai.focus_next_session", .label = "Next session" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_prev_session", .label = "Go back one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        },
+        .session_next => .{
+            .title = "Next session",
+            .body = "Goes to the session after the focused one in the ring — on whichever tab page holds it, which comes on screen — and gives it the keys; past the last, it wraps to the first. From a pane that is not a session it goes to the first one. A toast names where it landed.",
+            .keys = &.{ .{ .command = .@"ai.focus_next_session", .label = "Next session" }, .{ .command = .@"ai.focus_prev_session", .label = "Previous session" } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_next_session", .label = "Go forward one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+        },
         _ => null,
     };
 }
