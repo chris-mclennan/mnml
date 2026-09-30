@@ -5,7 +5,7 @@
 # keyboard from whoever is at the machine.
 #
 #   tools/tour.sh [run] [--exe PATH] [--only a,b] [--ascii] [--out DIR]
-#       launch at 120x40 in a private workspace (a small git repo, the
+#       launch at 200x60 in a private workspace (a small git repo, the
 #       offline Jira and Bitbucket), walk the curated states, shoot each
 #       to <out>/<nn>-<name>.png (+ its screen.txt), check the pixel
 #       asserts (tests/tour/asserts.zon), diff against the baselines

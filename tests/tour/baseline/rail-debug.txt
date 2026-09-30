@@ -1,40 +1,60 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │ DEBUG                  + │ 󰐕                                                                            󱸀  󲀀    
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │ DEBUG                  + │ 󰐕                                                                                                                                                            󱸀  󲀀    
   │  󰍉 / filter              │
    │                          │
  󰍉 │▌○ no session             │
    │  VARIABLES (0)          │
- 󰊢 │     no session — F5 star…│                                                            _
-   │                          │                            _ __ ___    _ __    _ __ ___   | |
-▌ │  WATCH (0)              │                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
-   │     no watches — w adds …│                           | | | | | | | | | | | | | | | | | |
- 󰐱 │                          │                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰊢 │     no session — F5 star…│
+   │                          │
+▌ │  WATCH (0)              │
+   │     no watches — w adds …│
+ 󰐱 │                          │
    │  CALL STACK (0)         │
- 󰎒 │     no session           │                        workspace · ws  on main · 1 changed file
+ 󰎒 │     no session           │
    │                          │
-  │  BREAKPOINTS (0)        │   WORKSPACES                                  SESSIONS
-   │     none — F9 sets one   │    ws                                open
-  │                          │                                                + New Claude Code session here
-   │                          │   RECENT FILES
-  │                          │    main.zig                           src      No session to resume
+  │  BREAKPOINTS (0)        │
+   │     none — F9 sets one   │
+  │                          │                                                                                                    _
+   │                          │                                                                    _ __ ___    _ __    _ __ ___   | |
+  │                          │                                                                   | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+   │                          │                                                                   | | | | | | | | | | | | | | | | | |
+ 󱘣 │                          │                                                                   |_| |_| |_| |_| |_| |_| |_| |_| |_|
    │                          │
- 󱘣 │                          │                                               SHORTCUTS
-   │                          │                                                Ctrl+P         find a file
- 󰢱 │                          │                                                Ctrl+R         recent files
-   │                          │                                                Ctrl+Shift+E   the file tree
-   │                          │                                                Ctrl+B         toggle the tree
-   │                          │                                                Ctrl+Shift+P   command palette
-   │                          │                                                Ctrl+K         which-key menu
-   │                          │                                                Ctrl+K Ctrl+S  cheatsheet
-   │                          │                                                Ctrl+,         settings
-   │                          │                                                Ctrl+N         new file
-   │──────────────────────────│                                                Ctrl+Q         quit
+ 󰢱 │                          │                                                                workspace · ws  on main · 1 changed file
+   │                          │
+   │                          │                                   WORKSPACES                                          SESSIONS
+   │                          │                                    ws                                        open
+   │                          │                                                                                        + New Claude Code session here
+   │                          │                                   RECENT FILES
+   │                          │                                    main.zig                                   src      No session to resume
+   │                          │
+   │                          │                                                                                       SHORTCUTS
+   │                          │                                                                                        Ctrl+P         find a file
+   │                          │                                                                                        Ctrl+R         recent files
+   │                          │                                                                                        Ctrl+Shift+E   the file tree
+   │                          │                                                                                        Ctrl+B         toggle the tree
+   │                          │                                                                                        Ctrl+Shift+P   command palette
+   │                          │                                                                                        Ctrl+K         which-key menu
+   │                          │                                                                                        Ctrl+K Ctrl+S  cheatsheet
+   │                          │                                                                                        Ctrl+,         settings
+   │                          │                                                                                        Ctrl+N         new file
+   │                          │                                                                                        Ctrl+Q         quit
+   │                          │
+   │                          │                                                                        mnml 0.3.0-dev+g0b8a009d
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │                          │
+   │──────────────────────────│
    │ Run and debug        󰐃 ⋮ │
-   │                          │                             mnml 0.3.0-dev+gdd7a1c9c-dirty
+   │                          │
    │ Arrows walk rows. Enter  │
    │ jumps to the source. F6  │
    │ cycles focus.            │
   │                          │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                 󱸀 95% 52%  󱼀 󰐎  LSP?    20:39  ws   —
-                                                           ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    20:33  ws   —
+                                                                                                   ⋯

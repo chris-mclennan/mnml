@@ -1,40 +1,60 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │ 󰐕                                                                            󱸀  󲀀    
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Use…            │ 󰐕                                                                                                                                                            󱸀  󲀀    
 ▌ │▌    docs               │
    │     󱼅  notes.md         │
- 󰍉 │     src    ┌ Help ────────────────────────────────────────────────────────────────────────────┐
-   │     󱼄  main.│ / filter…                                                                        │
- 󰊢 │     󱼅  util.│▾ ── modes ── (10)                                                               █│
-   │      .gitign│  NORMAL                vim normal mode (red)                                    █│
-  │      CHANGEL│  INSERT                vim/standard editable (green)                            █│
-   │     󰂺 README.│  VISUAL                vim visual — charwise (purple)                           █│
- 󰐱 │              │  V-LINE                vim visual — linewise (purple)                           █│
-   │         󰐙 Add│  V-BLOCK               vim visual — block/column (purple)                       █│
- 󰎒 │              │  REPLACE               vim replace mode (orange)                                █│
-   │              │  TREE                  file tree focused (blue)                                 █│
-  │              │  VIEW                  read-only pane focused (cyan)                            █│
-   │              │  EDIT                  standard mode editing (green)                            █│
-  │              │  PANEL                 right side panel focused (cyan)                          █│on here
-   │              │▾ ── stress meter ── (6)                                                         █│
-  │              │  0-20                  1 block, green — idle / smooth (hidden at exactly 0)     █│
-   │              │  20-40                 2 blocks, yellow — slight load                           █│
- 󱘣 │              │  40-70                 3 blocks, orange — noticeable slowdown                   █│
-   │              │  70-100                4 blocks, red — mnml is stressed                         █│ile
- 󰢱 │              │  chip location         top-right cluster + bottom-right statusline (twin bars)  █│iles
-   │              │  right-click           reset window · copy summary · toast the numbers          █│ tree
-   │              │▾ ── app ── (7)                                                                  █│he tree
-   │              │  ctrl+q                Quit mnml                                                █│palette
-   │              │  ·                     Restart mnml (rebuild + relaunch via run.sh)             █│y menu
-   │              │  ·                     Reset mnml to factory defaults (backup + relaunch)       █│et
-   │              │  ·                     Choose data layout — Portable (mnml-data/) or Normal (~/ █│
-   │              │▾ ── view ── (219)                                                               █│
-   │──────────────│  ctrl+b · space t e    Toggle left panel (file tree · Git · Integrations · Agen █│
-   │ Sidebar      │  ·                     Reset file tree width to the config default              █│
-   │              │  ·                     Click-discovery overlay (highlight what's clickable)     █│
-   │ Arrows or j/k│  ·                     Welcome: show the start surface (workspaces, recent file █│
-   │ Enter opens t│/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close      │
-   │ selection. Ct└──────────────────────────────────────────────────────────────────────────────────┘
+ 󰍉 │     src                │
+   │     󱼄  main.zig         │
+ 󰊢 │     󱼅  util.zig       M ┌ Help ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │      .gitignore         │ / filter…                                                                                                                                │
+  │      CHANGELOG.md     ? │▾ ── modes ── (10)                                                                                                                       █│
+   │     󰂺 README.md          │  NORMAL                vim normal mode (red)                                                                                            █│
+ 󰐱 │                          │  INSERT                vim/standard editable (green)                                                                                    █│
+   │         󰐙 Add workspace  │  VISUAL                vim visual — charwise (purple)                                                                                   █│
+ 󰎒 │                          │  V-LINE                vim visual — linewise (purple)                                                                                   █│
+   │                          │  V-BLOCK               vim visual — block/column (purple)                                                                               █│
+  │                          │  REPLACE               vim replace mode (orange)                                                                                        █│
+   │                          │  TREE                  file tree focused (blue)                                                                                         █│
+  │                          │  VIEW                  read-only pane focused (cyan)                                                                                    █│
+   │                          │  EDIT                  standard mode editing (green)                                                                                    █│
+  │                          │  PANEL                 right side panel focused (cyan)                                                                                  █│
+   │                          │▾ ── stress meter ── (6)                                                                                                                 █│
+ 󱘣 │                          │  0-20                  1 block, green — idle / smooth (hidden at exactly 0)                                                             █│
+   │                          │  20-40                 2 blocks, yellow — slight load                                                                                   █│
+ 󰢱 │                          │  40-70                 3 blocks, orange — noticeable slowdown                                                                           █│
+   │                          │  70-100                4 blocks, red — mnml is stressed                                                                                 █│
+   │                          │  chip location         top-right cluster + bottom-right statusline (twin bars)                                                          █│
+   │                          │  right-click           reset window · copy summary · toast the numbers                                                                  █│
+   │                          │▾ ── app ── (7)                                                                                                                          █│
+   │                          │  ctrl+q                Quit mnml                                                                                                        █│
+   │                          │  ·                     Restart mnml (rebuild + relaunch via run.sh)                                                                     █│
+   │                          │  ·                     Reset mnml to factory defaults (backup + relaunch)                                                               █│
+   │                          │  ·                     Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)                                           █│
+   │                          │▾ ── view ── (219)                                                                                                                       █│
+   │                          │  ctrl+b · space t e    Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)                                    █│
+   │                          │  ·                     Reset file tree width to the config default                                                                      █│
+   │                          │  ·                     Click-discovery overlay (highlight what's clickable)                                                             █│
+   │                          │  ·                     Welcome: show the start surface (workspaces, recent files, sessions, the chords to start with)                   █│
+   │                          │  ·                     About mnml (version + workspace metadata)                                                                        █│
+   │                          │  ·                     First-launch setup wizard (reopen)                                                                               █│
+   │                          │  ·                     Keyboard doctor (which modifier chords reach mnml?)                                                              █│
+   │                          │▾ ── integrations ── (45)                                                                                                                █│
+   │                          │  ·                     Configure integration auth… (pick from installed)                                                                █│
+   │                          │  ·                     Run diagnostics on an integration… (auth + config probe)                                                         █│
+   │                          │▾ ── view ── (219)                                                                                                                       █│
+   │                          │  ctrl+k ctrl+r · f1    Keybindings & help — help overlay (auto-generated keymap reference)                                              █│
+   │                          │  ctrl+,                Settings overlay (keyboard-driven schema editor)                                                                 █│
+   │                          │  ·                     Settings: search… (open the settings overlay with the filter focused)                                            █│
+   │                          │  ·                     Picker: toggle position (center ⇄ top)                                                                           █│
+   │                          │  ctrl+0 · ctrl+shift+e  Focus the file tree (opening it when closed)                                                                    █│
+   │                          │  ·                     Toggle workspace section (collapse/expand the file list)                                                         █│
+   │                          │  space t h             Toggle hidden files in focused tree section                                                                      █│
+   │──────────────────────────│  space t shift+h       Toggle hidden files across every workspace section                                                               █│
+   │ Sidebar              󰐃 ⋮ │  ctrl+k z · space t f  Toggle full screen (hide tree + bufferline + statusline)                                                         █│
+   │                          │/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close                                                              │
+   │ Arrows or j/k walk rows. └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   │ Enter opens the          │
+   │ selection. Ctrl+Shift+P  │
   │ opens the palette.       │
    │                          │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:40  ws   —
-                                                           ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  20:34  ws   —
+                                                                                                   ⋯

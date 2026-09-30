@@ -1,5 +1,5 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │  main.zig 󰅖   󰐕                                                          󱸀  󲀀      
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Use…            │  main.zig 󰅖   󰐕                                                                                                                                          󱸀  󲀀      
 ▌ │▌    docs               │▌src › main.zig
    │     󱼅  notes.md         │▌  1 const std = @import("std");
  󰍉 │     src                │▌  2 const util = @import("util.zig");
@@ -28,6 +28,26 @@
    │                          │▌
    │                          │▌
    │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
    │──────────────────────────│▌
    │ main.zig  ·  ZIG  ·  󰐃 ⋮ │▌
    │                          │▌
@@ -36,5 +56,5 @@
    │ [Ctrl+.] Code actions ·  │▌
   │ [Ctrl+P] Files           │▌
    │                          │▌
- EDIT  dev   …  main.zig  › main   󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    15:29  ws   zig
-                                                           ⋯
+ EDIT  dev   main  󰐙 1  󰛕 1   main.zig  › main                                                                     󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    20:33  ws   zig
+                                                                                                   ⋯

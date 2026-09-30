@@ -34,7 +34,12 @@ REVIEW = os.path.join(REPO, "tools", "tour-review.md")
 # is the same whichever --out the shots go to. (masks.zon masks the
 # cell too, belt and braces.)
 TOUR_WS = os.path.join(REPO, ".verify", "tour-ws")
-COLS, ROWS = 120, 40
+# The tour's grid: 200x60, where the whole menu bar (File … Help) fits
+# with no `»` overflow chip — at 120x40 it collapses after Edit. The
+# pixel asserts and the masks' rects are cells on this grid. `look`
+# keeps the corpus size (120x40) as its default.
+COLS, ROWS = 200, 60
+LOOK_COLS, LOOK_ROWS = 120, 40
 # A toast lives four seconds (`app.zig` `toast_ttl_ms`); a shot waits
 # this long for the last one to go before it gives up and says so.
 TOAST_WAIT_MS = 6000
@@ -282,13 +287,13 @@ def read_text(path):
         return ""
 
 
-def compare(name, fresh_png, base_png, masks, threshold_pct, tolerance):
+def compare(name, fresh_png, base_png, masks, threshold_pct, tolerance, cols=COLS, rows=ROWS):
     fresh_txt = read_text(os.path.splitext(fresh_png)[0] + ".txt")
     base_txt = read_text(os.path.splitext(base_png)[0] + ".txt")
     cells = masks_for(name, masks, fresh_txt, base_txt)
     a = imgdiff.load(base_png)
     b = imgdiff.load(fresh_png)
-    changed, total, bbox = imgdiff.diff(a, b, COLS, ROWS, cells, tolerance=tolerance)
+    changed, total, bbox = imgdiff.diff(a, b, cols, rows, cells, tolerance=tolerance)
     pct = 100.0 * changed / total if total else 0.0
     return pct, bbox, pct > threshold_pct
 
@@ -456,7 +461,8 @@ def diff_results(out, baseline, args, names=None):
     the threshold, the tolerance and one (kind, name, pct, bbox, png) per
     shot — kind `ok`, `CHANGED` or `new`. Writes flagged.txt."""
     masks = load_masks()
-    thr = args.threshold if args.threshold is not None else float(masks.get("threshold_pct", 0.02))
+    thr = args.threshold if args.threshold is not None else float(
+        masks.get("tour_threshold_pct", masks.get("threshold_pct", 0.02)))
     tol = args.tolerance if args.tolerance is not None else int(masks.get("tolerance", 24))
     rows = []
     fresh = sorted(p for p in os.listdir(out) if p.endswith(".png")) if os.path.isdir(out) else []
@@ -617,8 +623,8 @@ def main(argv):
     lk.add_argument("verb")
     lk.add_argument("rest", nargs="*")
     lk.add_argument("--exe")
-    lk.add_argument("--cols", type=int, default=COLS)
-    lk.add_argument("--rows", type=int, default=ROWS)
+    lk.add_argument("--cols", type=int, default=LOOK_COLS)
+    lk.add_argument("--rows", type=int, default=LOOK_ROWS)
     lk.add_argument("--root")
     lk.add_argument("--sandbox", action="store_true",
                     help="launch with `--sandbox` (a throwaway HOME under the window's TMPDIR)")

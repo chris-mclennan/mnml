@@ -1,5 +1,5 @@
- ❯_  mnml  File  Edit  »                     󰍉  ws                                            󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Use…            │  util.zig 󰅖   󰐕                                                          󱸀  󲀀      
+ ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
+   │  ● /Use…            │  util.zig 󰅖   󰐕                                                                                                                                          󱸀  󲀀      
 ▌ │▌    docs               │▌src › util.zig
    │     󱼅  notes.md         │▌  1 const std = @import("std");
  󰍉 │     src                │▌  2
@@ -28,13 +28,33 @@
    │                          │▌                                      │ 󰚩  Explain with Claude    │
    │                          │▌                                      │ 󰚩  Ask Claude…            │
    │                          │▌                                      │───────────────────────────│
-   │──────────────────────────│▌                                      │   Save                   │
-   │ util.zig  ·  ZIG  ·  󰐃 ⋮ │▌                                      └───────────────────────────┘
+   │                          │▌                                      │   Save                   │
+   │                          │▌                                      └───────────────────────────┘
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │                          │▌
+   │──────────────────────────│▌
+   │ util.zig  ·  ZIG  ·  󰐃 ⋮ │▌
    │                          │▌
    │ [F12] Definition ·       │▌
    │ [Shift+F12] References · │▌
    │ [Ctrl+.] Code actions ·  │▌
   │ [Ctrl+P] Files           │▌
    │                          │▌
- EDIT  dev   main  󰐙 1…  util.zig  › sum   󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  21:31  ws   zig
-                                                           ⋯
+ EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  20:34  ws   zig
+                                                                                                   ⋯
