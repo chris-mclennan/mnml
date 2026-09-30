@@ -69,7 +69,7 @@ export { svg, escapeHtml, plain };
 export function videoHtml(name) {
   const m = media(name);
   const title = escapeHtml(m?.title || name);
-  const frame = (body) => `<div class="window"><div class="window-bar"><ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul><span class="title">${title}</span><span></span></div><div class="window-body">${body}</div></div>`;
+  const frame = (body) => `<div class="window"><div class="window-bar"><ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul><svg class="proxy" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 2.2C1 1.5 1.5 1 2.2 1h3.6l1.4 1.5h6.6c.7 0 1.2.5 1.2 1.2V12c0 .7-.5 1.2-1.2 1.2H2.2C1.5 13.2 1 12.7 1 12z" fill="#53adda"/><path d="M1 4.2h14" stroke="#8ec9e5" stroke-width="1"/></svg><span class="title">${title}</span></div><div class="window-body">${body}</div></div>`;
   if (!m) return `<figure class="clip">${frame('<div class="placeholder">recording pending</div>')}</figure>\n`;
   const sources = [m.mp4 && `<source src="${m.mp4}" type="video/mp4">`, `<source src="${m.video}" type="video/webm">`].filter(Boolean).join("");
   const poster = m.poster ? ` poster="${m.poster}"` : "";
