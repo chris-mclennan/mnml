@@ -421,9 +421,9 @@ test "the loop dumps every frame, acks every command byte-for-byte, and exits on
         \\
     };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 20, .rows = 3 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 20, .rows = 3 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
 
     const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc-zig/events.jsonl", t.allocator, .unlimited);
     defer t.allocator.free(events);
@@ -510,9 +510,9 @@ test "restart is reported through the exit line and the return value" {
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines = "{\"cmd\":\"restart\"}\n" };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 12, .rows = 2 } });
+    const end = try run(t.allocator, t.io, stub.driver(), ws, .{ .size = .{ .cols = 12, .rows = 2 } });
     th.join();
-    try t.expect(restart);
+    try t.expectEqual(End.restart, end);
     try t.expect(stub.restart);
     const events = try tmp.dir.readFileAlloc(t.io, ".mnml/ipc/events.jsonl", t.allocator, .unlimited);
     defer t.allocator.free(events);
@@ -535,9 +535,9 @@ test "tier-2 golden: the Rust event shapes for segments, badges, notify and open
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 150, .lines = @embedFile("ipc/golden/tier2.commands.jsonl") };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 100, .rows = 12 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
 
     // The state the commands left behind: one segment (`ci` cleared), the
     // badge, a pinned-nothing (warn is ephemeral), no notifier spawned.
@@ -592,9 +592,9 @@ test "a quit runs the exit hook, as the terminal loop does" {
     defer t.allocator.free(cmd_path);
     var feeder: Feeder = .{ .io = t.io, .path = cmd_path, .delay_ms = 120, .lines = "{\"cmd\":\"quit\"}\n" };
     const th = try std.Thread.spawn(.{}, Feeder.run, .{&feeder});
-    const restart = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
+    const end = try run(t.allocator, t.io, drv.driver(), ws, .{ .size = .{ .cols = 40, .rows = 6 }, .ipc = .{ .subdir = "ipc-zig" } });
     th.join();
-    try t.expect(!restart);
+    try t.expectEqual(End.quit, end);
     try drv.app.script().runString("assert(EXITS == 1, 'exit hook ran ' .. EXITS .. ' times')");
 }
 
