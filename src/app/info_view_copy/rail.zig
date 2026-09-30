@@ -67,7 +67,7 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
         },
         .integrations => .{
             .title = "Integrations",
-            .body = try std.fmt.allocPrint(arena, "The installed integrations — Jira, Bitbucket, the browser, the tools — on the Installed tab, with the Marketplace beside it; a row's Enter opens the integration and its right-click offers details, disable, show on the top bar, add to the activity bar, the manifest, update, uninstall. Click shows the section; right-click is its menu. An integration's own settings land in Settings → Integrations once it is installed.{s}", .{marked(app, .integrations)}),
+            .body = try std.fmt.allocPrint(arena, "The installed integrations — Jira, Bitbucket, the browser, the tools — on the Installed tab, with the Marketplace beside it; a row's Enter opens the integration and its right-click offers details, disable, show on or hide from the top bar (a new install starts off it), add to the activity bar, the manifest, update, uninstall. Click shows the section; right-click is its menu. An integration's own settings land in Settings → Integrations once it is installed.{s}", .{marked(app, .integrations)}),
             .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
             .links = &.{ .{ .command = .{ .id = .@"view.activity_integrations", .label = "Show integrations" } }, .{ .command = .{ .id = .@"integrations.show_marketplace", .label = "The marketplace" } }, comptime copy.docsSection("Launchers and integration manifests") },
         },
@@ -126,13 +126,13 @@ fn pinned(app: *App, arena: Allocator, i: u16) Allocator.Error!?Entry {
     const pins = try integrations.pinnedChips(app, arena);
     if (i >= pins.len) return .{
         .title = "Pinned launcher",
-        .body = "An integration pinned to the rail from its chip's menu (*Add to activity bar*). Click runs the integration's command; right-click offers disable, show on the top bar, remove from the rail, pin to the dock, copy id. The pin is remembered in `ui.activity_bar_pinned_integrations`.",
+        .body = "An integration pinned to the rail from its chip's menu (*Add to activity bar*). Click runs the integration's command; right-click offers disable, show on or hide from the top bar, remove from the rail, pin to the dock, copy id. The pin is remembered in `ui.activity_bar_pinned_integrations`.",
         .links = &.{.{ .command = .{ .id = .@"view.activity_integrations", .label = "The integrations section" } }},
     };
     const c = pins[i].chip;
     return .{
         .title = try std.fmt.allocPrint(arena, "{s}{s}", .{ c.tooltip, if (c.enabled) "" else " — disabled" }),
-        .body = try std.fmt.allocPrint(arena, "The `{s}` integration, pinned to the rail from its chip's menu. Click runs its command — the same one its row in Integrations runs on Enter; right-click offers disable, show on the top bar, remove from the rail, pin to the dock, copy id. {s}The pin lives in `ui.activity_bar_pinned_integrations`, so it survives a restart and a rescan.", .{ c.id, if (c.enabled) "" else "It is disabled at the moment, so the click toasts instead of running; enable it from the menu or the Integrations section. " }),
+        .body = try std.fmt.allocPrint(arena, "The `{s}` integration, pinned to the rail from its chip's menu. Click runs its command — the same one its row in Integrations runs on Enter; right-click offers disable, show on or hide from the top bar, remove from the rail, pin to the dock, copy id. {s}The pin lives in `ui.activity_bar_pinned_integrations`, so it survives a restart and a rescan.", .{ c.id, if (c.enabled) "" else "It is disabled at the moment, so the click toasts instead of running; enable it from the menu or the Integrations section. " }),
         .keys = &.{.{ .command = .@"view.activity_integrations", .label = "Integrations" }},
         .links = &.{ .{ .command = .{ .id = .@"integrations.unpin_from_activity_bar", .label = "Remove from the rail" } }, .{ .command = .{ .id = .@"integrations.pin_to_dock", .label = "Pin to the dock" } }, .{ .command = .{ .id = .@"integrations.configure_picker", .label = "Configure it" } } },
     };
