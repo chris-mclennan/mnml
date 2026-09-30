@@ -1,0 +1,3 @@
+PROMPT='tour %# '
+RPROMPT=''
+unsetopt PROMPT_SP

@@ -81,6 +81,7 @@ mnml [WORKSPACE] [FILE…]        # open a workspace (default: the cwd), and fil
   --startup-picker              # open on the startup picker (new file, recent files, workspaces)
   --profile dev|stable          # which data root, session file and IPC mailbox
   --sandbox [--sandbox-keep]    # a throwaway HOME and data root, removed on exit unless kept
+  --demo                        # a sandbox with a sample workspace, offline Jira + Bitbucket and a stand-in Claude (no network)
   --headless                    # a virtual screen driven by file IPC under <ws>/.mnml/ (MNML_COLS / MNML_ROWS size it)
 mnml --version
 mnml test [PATH…]               # run .test scripts (below)

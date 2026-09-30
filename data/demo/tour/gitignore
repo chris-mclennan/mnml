@@ -1,0 +1,12 @@
+# The tour's scaffolding for the integration panes, not the project.
+sdk/
+integrations/
+market/
+*.url
+*.pid
+*-bucket.json
+*.jsonl
+*.lock
+*.sock
+bitbucket.zon
+.mnml/

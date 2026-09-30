@@ -1,0 +1,12 @@
+# The offline Bitbucket `mnml --demo` starts beside it. {{bitbucket}}
+# (it ends in /2.0) and {{bitbucket_basic}} come from .mnml/env/dev.env.
+
+### The workspace's repositories
+GET {{bitbucket}}/repositories/acme
+Authorization: Basic {{bitbucket_basic}}
+Accept: application/json
+
+### Open pull requests on api
+GET {{bitbucket}}/repositories/acme/api/pullrequests
+Authorization: Basic {{bitbucket_basic}}
+Accept: application/json

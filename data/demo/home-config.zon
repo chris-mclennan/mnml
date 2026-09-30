@@ -1,0 +1,5 @@
+// mnml --demo's home config: the throwaway home's, deleted on exit.
+// The first-launch setup is skipped — the demo opens on its workspace.
+.{
+    .ui = .{ .first_launch_complete = true },
+}

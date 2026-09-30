@@ -3109,6 +3109,12 @@ pub const App = struct {
         return config.sandbox.state(&self.env, self.data_root);
     }
 
+    /// A `--demo` run (`config/demo.zig`): a sandbox that is really one,
+    /// with the demo's workspace set.
+    pub fn demoActive(self: *const App) bool {
+        return self.sandboxState() == .on and config.demo.workspaceOf(&self.env) != null;
+    }
+
     /// Workspace-relative when inside it, else the path itself. The
     /// separator after the workspace is either one on Windows: a path
     /// `absPath` joined there reads `<ws>\<rel>`, and a `/` never matched

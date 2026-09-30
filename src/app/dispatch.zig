@@ -2735,6 +2735,8 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     .sandbox => if (app.sandboxState() == .unsafe)
                         app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
+                    else if (app.demoActive())
+                        app.toast("demo — HOME {s}, the workspace {s}; the offline servers stop and all of it is removed on exit", .{ app.env.get("HOME") orelse "", app.workspace })
                     else
                         app.toast("sandbox — HOME {s}, state in {s}; nothing reaches your real setup", .{ app.env.get("HOME") orelse "", app.data_root }),
                     _ => {},

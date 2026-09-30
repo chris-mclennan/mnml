@@ -511,7 +511,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // otherwise — the chip never promises a safety it cannot see.
     switch (app.sandboxState()) {
         .off => {},
-        .on => try push(&left, arena, Seg.init(" sandbox ", p.bg_darker, p.yellow).strong().withHit(SegId.sandbox.raw())),
+        // A `--demo` run is a sandbox with a workspace in it: one chip,
+        // saying which.
+        .on => try push(&left, arena, Seg.init(if (app.demoActive()) " demo " else " sandbox ", p.bg_darker, p.yellow).strong().withHit(SegId.sandbox.raw())),
         .unsafe => try push(&left, arena, Seg.init(" sandbox? ", p.bg_darker, p.red).strong().withHit(SegId.sandbox.raw())),
     }
 
@@ -933,6 +935,33 @@ test "a --sandbox run paints ` sandbox ` beside the mode, a `?` on red when the 
     try testing.expect(std.mem.indexOf(u8, warn, " sandbox? ") != null);
     try b.click(38, SegId.sandbox.raw(), .left);
     try testing.expect(std.mem.indexOf(u8, b.app.lastToast().?, "NOT isolated") != null);
+}
+
+test "a --demo run paints ` demo ` where the sandbox chip goes; its hover and click say demo; without the isolation it is ` sandbox? `, never ` demo `" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const home = std.fs.path.dirname(b.root).?;
+    try b.app.env.put("TMPDIR", std.fs.path.dirname(home).?);
+    try b.app.env.put("HOME", home);
+    try b.app.env.put("MNML_SANDBOX", home);
+    try b.app.env.put("MNML_DEMO", b.app.workspace);
+    try testing.expect(b.app.demoActive());
+    const row = try b.row(38);
+    const at = std.mem.indexOf(u8, row, " demo ") orelse return error.NoChip;
+    try testing.expect(at < 20);
+    try testing.expect(std.mem.indexOf(u8, row, "sandbox") == null);
+    const hover = (try discovery.describe(&b.app, b.app.frame.allocator(), .{ .statusline_seg = SegId.sandbox.raw() })).?;
+    try testing.expect(std.mem.indexOf(u8, hover.title, "demo") != null);
+    try b.click(38, SegId.sandbox.raw(), .left);
+    try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "demo — HOME "));
+
+    // The variable alone does not make a demo: HOME not throwaway, the
+    // chip warns as a sandbox's does.
+    try b.app.env.put("HOME", "/Users/dev");
+    try testing.expect(!b.app.demoActive());
+    const warn = try b.row(38);
+    try testing.expect(std.mem.indexOf(u8, warn, " sandbox? ") != null);
+    try testing.expect(std.mem.indexOf(u8, warn, " demo ") == null);
 }
 
 // ─── the row against the spec ────────────────────────────────────────────

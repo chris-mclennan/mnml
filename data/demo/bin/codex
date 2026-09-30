@@ -1,0 +1,6 @@
+#!/bin/bash
+# data/demo/bin/codex — the `codex` a site recording and `mnml --demo`
+# see: no model runs here, so it says so and stays open as a process
+# named `codex` until its pane closes.
+printf 'codex: a stand-in — no model runs in the demo.\n'
+exec -a codex /bin/sh -c 'i=0; while [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done'

@@ -114,9 +114,31 @@ pub fn main(init: std.process.Init) !u8 {
         if (@import("builtin").os.tag != .windows) try setenvOwned(gpa, config.sandbox.env_var, root);
     };
     defer config.sandbox.finish(io, env, plain[1..], err_w);
+    // `--demo`: in the process that owns the sandbox, the workspace, the
+    // home and the offline fakes (`src/config/demo.zig`). The fakes stop
+    // before the sandbox is removed (defers run last-first).
+    var demo_fakes: config.demo.Fakes = .{};
+    defer demo_fakes.stop(io);
+    if (config.demo.wanted(plain[1..])) {
+        const exe_dir: ?[]u8 = std.process.executableDirPathAlloc(io, gpa) catch null;
+        defer if (exe_dir) |d| gpa.free(d);
+        if (config.demo.setup(gpa, io, env, exe_dir) catch |err| blk: {
+            err_w.print("mnml-zig: --demo: the setup failed: {s}\n", .{@errorName(err)}) catch {};
+            err_w.flush() catch {};
+            break :blk null;
+        }) |s| {
+            demo_fakes = s.fakes;
+            demo_note = s.note;
+        }
+    }
+    defer if (demo_note) |n| gpa.free(n);
     for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) return headlessSubcommand(gpa, io, env, args[1..], w);
     return terminalMain(gpa, io, env, args[1..], w);
 }
+
+/// `--demo`'s first-frame toast (`config.demo.Missing.note`); set in
+/// `main` before either loop starts.
+var demo_note: ?[]u8 = null;
 
 /// `--input vim|standard` / `--input=vim`, anywhere on the line; null
 /// when absent (the config decides).
@@ -347,7 +369,7 @@ fn terminalMain(gpa: Allocator, io: Io, env: *std.process.Environ.Map, argv: []c
         .workspace = ws_abs,
         .data_root = startup.data_root,
         .files = files.items,
-        .note = startup.note,
+        .note = startup.note orelse demo_note,
     };
     const code = loop.run(gpa, io, env, cfg) catch |err| switch (err) {
         error.NotATty => return usage(w, null, "stdout is not a terminal (use --headless)"),

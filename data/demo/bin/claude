@@ -1,5 +1,6 @@
 #!/bin/bash
-# tools/site-record/shims/claude — the `claude` a site recording sees.
+# data/demo/bin/claude — the `claude` a site recording and `mnml --demo`
+# see (the demo embeds this file; `data/root.zig`).
 # No model runs and nothing leaves the machine: it writes a transcript
 # for its session id (what the sessions views read), names its pane
 # through the window title, prints a short stand-in exchange, then
@@ -19,7 +20,7 @@ printf '\033]0;%s\007' "$ask"
 dim=$'\033[2m' bold=$'\033[1m' acc=$'\033[38;5;173m' ok=$'\033[32m' off=$'\033[0m'
 say() { printf '%s\n' "$1"; sleep "${2:-0.2}"; }
 sleep 0.3
-say "${acc}●${off} ${bold}agent session${off} ${dim}(recording stand-in — no model runs)${off}" 0.2
+say "${acc}●${off} ${bold}agent session${off} ${dim}(stand-in — no model runs)${off}" 0.2
 say "${dim}  cwd ~/tour · branch main${off}" 0.4
 say ""
 say "${bold}> ${ask}${off}" 0.5
