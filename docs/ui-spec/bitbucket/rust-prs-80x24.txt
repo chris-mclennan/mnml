@@ -3,10 +3,10 @@
 └──────────────────────────────────────────────────────────────────────────────┘
  [ 󰍉 Search ]  [ Status: Open ▾ ]  [ Author ▾ ]  [ Target branch ▾ ]
    REPO /  STATE      AUTHOR       BRANCH      UPDATED      TITLE
- ▼ api     2 PRs      Chris M      chris/fix-l 2026-09-17   #1234 · Fix the logi
-     #1234 OPEN       Chris M      chris/fix-l 2026-09-17   Fix the login redire
- ▼ web     1 PRs      Chris M      chris/empty 2026-09-17   #820 · Redesign the
-     #820  OPEN       Chris M      chris/empty 2026-09-17   Redesign the empty s
+ ▼ api     2 PRs      Max Orr      bug/fix-log 2026-09-17   #1234 · Fix the logi
+     #1234 OPEN       Max Orr      bug/fix-log 2026-09-17   Fix the login redire
+ ▼ web     1 PRs      Max Orr      feature/emp 2026-09-17   #820 · Redesign the
+     #820  OPEN       Max Orr      feature/emp 2026-09-17   Redesign the empty s
                                                             [ Show 1 more older
 
 

@@ -7,7 +7,7 @@
      main                                COMPLETED      #412     SUCCESSFUL 2026-09-17
      develop                             COMPLETED      #411     FAILED     2026-09-16
      release/1.2                         COMPLETED      #405     STOPPED    2026-09-07
-     chris/fix-login                     IN_PROGRESS    #413                2026-09-17
+     bug/fix-login                       IN_PROGRESS    #413                2026-09-17
  ▶ web                                   3 branches
 
 

@@ -3,10 +3,10 @@
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  [ 󰍉 Search ]  [ Status: Open ▾ ]  [ Author ▾ ]  [ Target branch ▾ ]                                      [ 󰑐 Refresh ]
    REPO  STATE    AUTHOR    BRANCH   UPDATED  TITLE               ┌ acme/api#1234 ─────────────────────────────────────┐
- ▼ api   2 PRs    Chris M   chris/fi 2026-09- #1234 · Fix the logi│OPEN · chris/fix-login → main                       │
-     #12 OPEN     Chris M   chris/fi 2026-09- Fix the login redire│author: Chris M · updated: 2026-09-17               │
- ▼ web   1 PRs    Chris M   chris/em 2026-09- #820 · Redesign the │○ not approved · 1 total                            │
-     #82 OPEN     Chris M   chris/em 2026-09- Redesign the empty s│                                                    │
+ ▼ api   2 PRs    Max Orr   bug/fix- 2026-09- #1234 · Fix the logi│OPEN · bug/fix-login → main                         │
+     #12 OPEN     Max Orr   bug/fix- 2026-09- Fix the login redire│author: Max Orr · updated: 2026-09-17               │
+ ▼ web   1 PRs    Max Orr   feature/ 2026-09- #820 · Redesign the │○ not approved · 1 total                            │
+     #82 OPEN     Max Orr   feature/ 2026-09- Redesign the empty s│                                                    │
                                               [ Show 1 more older │Fix the login redirect                              │
                                                                   │                                                    │
                                                                   │Fixes ENG-4210. The redirect dropped the query      │
@@ -14,7 +14,7 @@
                                                                   │                                                    │
                                                                   │comments (3, most-recent first):                    │
                                                                   │                                                    │
-                                                                  │  Chris M · 2026-09-01                              │
+                                                                  │  Max Orr · 2026-09-01                              │
                                                                   │    Good point, pushed an escape.                   │
                                                                   │                                                    │
                                                                   │  Sam K · 2026-09-01                                │
