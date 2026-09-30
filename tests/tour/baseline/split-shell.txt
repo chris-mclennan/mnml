@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
    │  ● /Use…            │  main.zig 󰅖   󰐕                                                     󱸀  󲀀       │ 󲀀 ghostty (zsh) 󰅖   󰐕                                                󱸀  󲀀      
 ▌ │▌    docs               │▌src › main.zig                                                                     │▌tour % ls src docs
-   │     󱼅  notes.md         │▌  1 const std = @import("std");                                                    │▌docs:
+   │   󱼅    notes.md         │▌  1 const std = @import("std");                                                    │▌docs:
  󰍉 │     src                │▌  2 const util = @import("util.zig");                                              │▌notes.md
-   │     󱼄  main.zig         │▌  3                                                                                │▌
- 󰊢 │     󱼅  util.zig       M │▌  4 /// The entry point: add a few numbers and print the total.                    │▌src:
+   │   󱼄    main.zig         │▌  3                                                                                │▌
+ 󰊢 │   󱼅    util.zig       M │▌  4 /// The entry point: add a few numbers and print the total.                    │▌src:
    │      .gitignore         │▌  5 pub fn main() !void {                                                          │▌main.zig        util.zig
   │      CHANGELOG.md     ? │▌  6     // TODO: read the numbers from the command line.                           │▌tour %
    │     󰂺 README.md          │▌  7     const numbers = [_]i64{ 1, 2, 3, 4, 5 };                                   │▌
@@ -56,5 +56,5 @@
    │ Close.                   │▌                                                                                   │▌
   │                          │▌                                                                                   │▌
    │                          │▌                                                                                   │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    20:33  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    06:55  ws   —
                                                                                                    ⋯
