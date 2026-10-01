@@ -7645,3 +7645,47 @@ test "repoAbove and repoFor stop at GIT_CEILING_DIRECTORIES, as git does" {
     try testing.expect(!isCeiling(testing.io, "/a" ++ sep ++ "/b", "/c"));
     try testing.expect(!isCeiling(testing.io, "", "/"));
 }
+
+test "git.status_pane after view.close_others with a second tab page: the closed panes leave every page, so the status pane's recycled id is on one page and a second call reveals it instead of tripping showPane's one-leaf assert" {
+    var f = try Fixture.init(200, 60);
+    defer f.deinit();
+    try f.sh(&.{ "init", "-q", "-b", "main" });
+    for ([_][]const u8{ "main.zig", "util.zig", "CHANGELOG.md" }) |n| try f.write(n, "x\n");
+    try f.sh(&.{ "add", "-A" });
+    try f.sh(&.{ "commit", "-q", "-m", "first" });
+    try f.write("util.zig", "x\ny\n");
+    const open = struct {
+        fn open(fx: *Fixture, n: []const u8) !PaneId {
+            const abs = try std.fs.path.join(testing.allocator, &.{ fx.root, n });
+            defer testing.allocator.free(abs);
+            return fx.app.openPath(abs);
+        }
+    }.open;
+    // The site's splits flow: a split on page 1, a second page with a
+    // file of its own, back to page 1.
+    _ = try open(&f, "main.zig");
+    try command.run(&f.app, .{ .static = .@"view.split_right" });
+    _ = try open(&f, "util.zig");
+    try command.run(&f.app, .{ .static = .@"tab.new" });
+    const changelog = try open(&f, "CHANGELOG.md");
+    try command.run(&f.app, .{ .static = .@"tab.first" });
+    try testing.expectEqual(@as(?usize, 1), f.app.layouts.pageOf(changelog));
+    // The tour's reset: every other pane goes, page 2's included.
+    try command.run(&f.app, .{ .static = .@"view.close_others" });
+    try testing.expect(f.app.panes.get(changelog) == null);
+    try testing.expectEqual(@as(?usize, null), f.app.layouts.pageOf(changelog));
+    // No page names a pane the store no longer has.
+    for (f.app.layouts.layouts.items) |*l| for (l.nodes.items) |node| switch (node) {
+        .leaf => |lf| for (lf.tabs.items) |tab| try testing.expect(f.app.panes.get(tab) != null),
+        else => {},
+    };
+    _ = try open(&f, "util.zig");
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    const status = f.app.active.?;
+    try testing.expect(f.app.panes.get(status).?.* == .git_status);
+    try testing.expectEqual(@as(usize, 1), f.app.layouts.holders(status));
+    // Again: revealed where it is.
+    try command.run(&f.app, .{ .static = .@"git.status_pane" });
+    try testing.expectEqual(status, f.app.active.?);
+    try testing.expectEqual(@as(usize, 1), f.app.layouts.holders(status));
+}

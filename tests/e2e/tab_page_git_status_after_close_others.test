@@ -1,0 +1,47 @@
+# A split, a second tab page, then the git status pane. The site tour's
+# reset (`view.close_others`) closes the second page's panes from the
+# first; they must leave that page too. Before, page 2 kept their ids,
+# the status pane was handed one of the freed slots, and the second
+# `git.status_pane` found it on two pages and panicked in showPane.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write main.zig "pub fn main() void {}\n"
+write util.zig "pub fn sum() void {}\n"
+write README.md "readme\n"
+write CHANGELOG.md "changelog\n"
+shell git add -A
+shell git commit -q -m "initial"
+write util.zig "pub fn sum() void {}\npub fn max() void {}\n"
+
+open main.zig
+command view.split_right
+open util.zig
+command view.split_down
+open README.md
+command view.focus_left
+command tab.new
+open CHANGELOG.md
+expect pane "CHANGELOG.md"
+command tab.first
+expect pane "main.zig"
+
+command view.close_others
+open util.zig
+command git.status_pane
+wait 800
+expect screen contains "Unstaged changes (1)"
+expect screen contains "util.zig"
+
+# Again, from the editor: the pane is revealed where it is.
+command view.focus_left
+command git.status_pane
+wait 300
+expect screen contains "Unstaged changes (1)"
+
+# The second page lost its panes with the close; going there shows
+# nothing of the status pane.
+command tab.last
+expect screen lacks "Unstaged changes"
+command tab.first
+expect screen contains "Unstaged changes (1)"
