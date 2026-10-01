@@ -1,0 +1,21 @@
+title: Agent sessions beside the editor
+flow: Agent sessions live in panes next to your code: the SESSIONS rail lists them, a new one opens in a split, and the sessions table shows every session with its state, tokens and cost (the session is a recording stand-in; no model runs).
+# From tools/site-record/flows/sessions.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+open src/main.zig
+until "fn main"
+wait 200
+run view.activity_sessions
+wait 600
+run ai.claude_code_new_right
+until "agent session" 4000
+wait 700
+run sessions.table
+wait 600
+keys @350 down down
+key esc
+wait 400
+run view.focus_left
+until "Both tests pass." 8000
+wait 500

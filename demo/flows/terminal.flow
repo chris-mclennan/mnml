@@ -1,0 +1,24 @@
+title: The terminal pane
+flow: A shell in a split, rendered by libghostty: colour output, a git graph, a full-screen program running inside the pane, and a coloured diff.
+# From tools/site-record/flows/terminal.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+open src/main.zig
+until "fn main"
+wait 200
+run term.shell
+until "tour %" 4000
+slowtype "ls -G src docs\n" 12
+wait 300
+slowtype "git log --graph --oneline --color\n" 10
+wait 700
+slowtype "vi src/util.zig\n" 12
+wait 700
+slowtype ":set number\n" 30
+wait 700
+slowtype ":q\n" 30
+wait 100
+slowtype "git diff --color --stat\n" 8
+wait 250
+slowtype "git diff --color src/util.zig\n" 10
+wait 1000

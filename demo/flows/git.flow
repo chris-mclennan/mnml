@@ -1,0 +1,29 @@
+title: Git status and diff
+flow: The staging view lists what changed, Enter opens the diff, s stages the file, and a commit is written without leaving the editor.
+# From tools/site-record/flows/git.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+open src/util.zig
+until "pub fn sum"
+wait 150
+run git.status_pane
+until "Unstaged changes" 4000
+wait 800
+key enter
+wait 1100
+run git.diff_toggle_view
+wait 800
+run git.diff_toggle_view
+wait 900
+run git.status_pane
+wait 400
+key s
+wait 500
+key c
+wait 400
+slowtype "Add util.max for the largest element" 12
+wait 300
+key enter
+wait 900
+run view.activity_git
+wait 1100

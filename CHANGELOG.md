@@ -39,6 +39,11 @@ the release ships one file), and one line per change a user can see.
   (Not on Windows, which has no `--demo`.)
 - `mnml --help` lists `--demo`, and the sandbox's and the demo's messages
   begin `mnml:` like the rest of the command line.
+- `ipc.report_input = true` writes an `input` line to the IPC
+  `events.jsonl` when someone at the terminal presses a key, clicks,
+  scrolls or pastes (at most one a second per kind, never what was typed),
+  so a host replaying a script can tell when a person takes over. Off by
+  default.
 
 ### Fixes
 

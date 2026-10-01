@@ -1,0 +1,32 @@
+title: mnml at a glance
+flow: The editor, an agent session beside it and a shell below it; the shell runs git, the Jira pane is one tab away, and the palette finds a new session in a keystroke.
+# From tools/site-record/flows/hero.flow. The recorder's off-camera setup
+# (installing the Jira integration, building the composite) is gone:
+# `mnml --demo` installs Jira itself and opens on the composite, and
+# `home` rebuilds it when a replay starts from somewhere else.
+home
+run integrations.open_as_tab
+slowtype "git log --oneline\n" 10
+until "Start the tour project" 3000
+wait 1500
+slowtype "git show --stat HEAD~1\n" 14
+wait 1500
+# Jira, one tab away in the same pane
+run jira_work.open
+until "JIRA WORK" 15000
+heal "fetch failed" r "JIRA WORK (3)"
+wait 800
+keys @450 down down
+key d
+wait 1800
+key esc
+wait 700
+# the palette, from the editor: a new session is one query away
+run view.focus_left
+wait 300
+key ctrl+shift+p
+wait 250
+slowtype "new session" 45
+wait 1500
+key esc
+wait 800

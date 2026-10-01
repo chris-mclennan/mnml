@@ -880,6 +880,15 @@ pub const Ipc = struct {
     /// why the two are not one switch. The headless loop is the driver
     /// and takes everything regardless.
     allow_input: bool = false,
+    /// Whether the live terminal loop writes an `input` line to
+    /// `events.jsonl` when the person at the terminal presses a key,
+    /// clicks, scrolls or pastes — `{"event":"input","kind":"key"}`, at
+    /// most one a second per kind. Pointer motion and focus are not
+    /// input. Input the channel itself drives is never reported, so a
+    /// host playing a script can tell a person taking over from its
+    /// own keys (the web demo's attract mode, `demo/attract/`). What
+    /// was pressed is never written.
+    report_input: bool = false,
 };
 
 pub const CloudRunDefaults = struct {

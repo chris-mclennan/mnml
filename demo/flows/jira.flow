@@ -1,0 +1,31 @@
+title: Jira in a pane
+flow: The Jira integration as a tab: issues grouped by status, a row's detail, the second tab, and a filter — here against an offline fake server.
+# From tools/site-record/flows/jira.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+# The recorder installed Jira from the INTEGRATIONS list here; the demo
+# has it installed already.
+run integrations.open_as_tab
+reset
+open src/main.zig
+until "fn main"
+wait 100
+run jira_work.open
+until "JIRA WORK" 15000
+heal "fetch failed" r "JIRA WORK (3)"
+wait 600
+keys @300 down down down
+key d
+wait 700
+key esc
+wait 500
+key 2
+wait 1100
+key 1
+wait 700
+key /
+wait 250
+slowtype "card" 90
+wait 1000
+key esc
+wait 700
