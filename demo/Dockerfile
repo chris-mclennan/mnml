@@ -33,9 +33,15 @@ WORKDIR /src
 # build.zig.zon (or the checkout's zig-pkg/, which demo/build.sh sends
 # when it has one — it may be empty) changes, so editing a source file
 # does not re-download ~800 MB. A stub build.zig is enough for `--fetch`.
+#
+# demo/build.sh --cross builds the Linux binaries on the host instead (Zig
+# cross-compiles) and sends them as demo-prebuilt/; then both RUNs below
+# only copy, and the image build needs no compile space of its own.
 COPY build.zig.zon /src/
 COPY zig-pkg /src/zig-pkg
-RUN printf 'pub fn build(_: *@import("std").Build) void {}\n' > build.zig \
+COPY demo-prebuilt /prebuilt
+RUN if [ -x /prebuilt/bin/mnml-zig ]; then echo "prebuilt binaries: no fetch"; exit 0; fi; \
+    printf 'pub fn build(_: *@import("std").Build) void {}\n' > build.zig \
     && zig build --fetch && rm build.zig
 # Only what the build reads, so editing demo/ never rebuilds the app.
 COPY build.zig /src/
@@ -49,9 +55,10 @@ COPY tools /src/tools
 COPY vendor /src/vendor
 COPY lua /src/lua
 ARG MNML_VERSION=demo
-RUN zig build -Doptimize=ReleaseSafe -Dinstall-names -Dversion=${MNML_VERSION} --prefix /out \
-    && ls -la /out/bin /out/share/mnml/fonts \
-    && rm -rf /src/.zig-cache /zig-global-cache/*
+RUN if [ -x /prebuilt/bin/mnml-zig ]; then cp -a /prebuilt /out; \
+    else zig build -Doptimize=ReleaseSafe -Dinstall-names -Dversion=${MNML_VERSION} --prefix /out \
+      && rm -rf /src/.zig-cache /zig-global-cache/*; fi \
+    && ls -la /out/bin /out/share/mnml/fonts
 
 # ── 2. the web fonts (JetBrains Mono, Symbols Nerd Font Mono, MnmlSymbols),
 #       ttyd, and the binaries stripped ──
@@ -72,6 +79,14 @@ RUN set -eux; \
     cp /tmp/nf/LICENSE ./LICENSE-NerdFontsSymbols 2>/dev/null || true; \
     cp /tmp/jb/OFL.txt ./LICENSE-JetBrainsMono.txt 2>/dev/null || true; \
     rm -rf /tmp/nf /tmp/jb /tmp/*.zip
+# xterm.js and two addons for the page (demo/web/index.html), from npm.
+ARG XTERM_VERSION=5.5.0 XTERM_CANVAS_VERSION=0.7.0 XTERM_UNICODE11_VERSION=0.8.0
+RUN set -eux; mkdir -p /vendor; cd /tmp; \
+    for p in xterm/-/xterm-${XTERM_VERSION} addon-canvas/-/addon-canvas-${XTERM_CANVAS_VERSION} addon-unicode11/-/addon-unicode11-${XTERM_UNICODE11_VERSION}; do \
+      d=$(basename $p); mkdir -p $d; curl -fsSL "https://registry.npmjs.org/@xterm/$p.tgz" | tar -xz -C $d --strip-components 1; \
+    done; \
+    cp xterm-*/lib/xterm.js xterm-*/css/xterm.css addon-canvas-*/lib/addon-canvas.js addon-unicode11-*/lib/addon-unicode11.js /vendor/; \
+    cp xterm-*/LICENSE /vendor/LICENSE-xterm.txt; rm -rf /tmp/xterm-* /tmp/addon-*; ls -la /vendor
 # ttyd is not in Debian trixie: its static release build, per arch.
 RUN set -eux; \
     curl -fsSL -o /ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.$(uname -m)"; \
@@ -106,6 +121,7 @@ COPY demo/attract /opt/mnml-demo/attract
 COPY demo/flows /opt/mnml-demo/flows
 COPY demo/web /opt/mnml-demo/web
 COPY --from=fonts /fonts /opt/mnml-demo/web/fonts
+COPY --from=fonts /vendor /opt/mnml-demo/web/vendor
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color COLORTERM=truecolor \
     SHELL=/bin/zsh MNML_IPC_DIR=/tmp/mnml-demo/ipc \
     MNML_DEMO_PORT=7681 MNML_DEMO_CAP_S=600 MNML_DEMO_IDLE_S=180

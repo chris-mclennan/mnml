@@ -5,7 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mnml demo</title>
 <meta name="description" content="A real mnml, running in a container, in your browser.">
+<link rel="stylesheet" href="/vendor/xterm.css">
 <style>
+/* The terminal's font is one family built from three files by
+   unicode-range — JetBrains Mono for text, Symbols Nerd Font Mono for the
+   Nerd Font private-use icons, MnmlSymbols for mnml's own block
+   (U+F1B00-U+F20FF) — plus the two symbol files again as plain fallback
+   families: the canvas renderer drew the Nerd Font's supplementary-plane
+   icons (the Material Design set) as boxes through the ranged face. No
+   weight ranges on the symbol faces: Chrome never matched them with one. */
+@font-face { font-family: "mnml mono"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; unicode-range: U+E000-F8FF, U+F0000-F1AFF, U+F2100-FFFFD; }
+@font-face { font-family: "mnml mono"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; unicode-range: U+F1B00-F20FF; }
+@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Regular.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Bold.woff2) format("woff2"); font-weight: 700; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-BoldItalic.woff2) format("woff2"); font-weight: 700; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml nf"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; }
+@font-face { font-family: "mnml marks"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; }
 /* The site's window frame (site/src/styles/global.css, `.window`): a
    macOS Ghostty window measured off a screenshot — a short title bar in
    #24272d, three lights, the folder proxy icon and the title after them.
@@ -18,11 +34,12 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: var(--gray-0); color: var(--gray-5); font-family: var(--font-sans); }
-body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 16px; }
+html, body { background: var(--gray-0); color: var(--gray-5); font-family: var(--font-sans); overflow: hidden; }
+body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+/* The window wraps the terminal's grid exactly: its width and the body's
+   size are set by the script from the cell the terminal measured. */
 .window {
-  --w: min(1700px, calc(100vw - 32px), calc((100dvh - 130px) * var(--arw) / var(--arh)));
-  width: var(--w); container-type: inline-size;
+  width: min(1200px, calc(100vw - 32px)); container-type: inline-size; flex: none;
   border: 1px solid #3f4146; border-radius: 9px; overflow: hidden; background: #24272d;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
@@ -40,8 +57,13 @@ body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: col
   margin-left: max(0.2cqw, 3px); font-size: max(0.53cqw, 8px); font-weight: 700; line-height: 1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.window-body { aspect-ratio: var(--ar); background: #1e222a; position: relative; overflow: hidden; }
-#term { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: #1e222a; }
+.window-body { height: calc(100dvh - 160px); background: #1e222a; position: relative; overflow: hidden; }
+#term { position: absolute; left: 0; top: 0; background: #1e222a; visibility: hidden; }
+#term.ready { visibility: visible; }
+/* A full-screen TUI: no scrollback, no scrollbar, no padding — the window
+   wraps the 200x60 grid exactly. */
+#term .xterm { padding: 0; }
+#term .xterm-viewport { overflow-y: hidden !important; }
 
 /* the banner: over the terminal's lower edge while the tour plays */
 .banner {
@@ -63,10 +85,10 @@ body[data-phase="tour"] .banner { display: inline-flex; }
 }
 .ended h2 { color: var(--gray-9); font-size: 22px; font-weight: 600; margin-bottom: 8px; }
 .ended p { margin-bottom: 18px; }
-body[data-phase="ended"] .ended { display: grid; }
+body[data-phase="ended"] .ended, body[data-phase="lost"] .ended { display: grid; }
 
 /* the controls under the window */
-.controls { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 14px; font-size: 14px; }
+.controls { flex: none; display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 14px; font-size: 14px; }
 button, select {
   font: inherit; font-size: 14px; color: var(--gray-9); background: var(--gray-2);
   border: 1px solid var(--gray-3); border-radius: 6px; padding: 6px 12px; cursor: pointer;
@@ -74,79 +96,154 @@ button, select {
 button:hover, select:hover { border-color: var(--gray-4); }
 button.brand { background: var(--accent); color: #0f0f11; border-color: var(--accent); font-weight: 600; }
 .status { color: var(--gray-4); font-variant-numeric: tabular-nums; min-width: 22ch; }
-.note { color: var(--gray-4); font-size: 12.5px; margin-top: 10px; text-align: center; max-width: 90ch; line-height: 1.5; }
+.note { flex: none; color: var(--gray-4); font-size: 12.5px; margin-top: 10px; text-align: center; max-width: 90ch; line-height: 1.5; }
 </style>
 </head>
 <body data-phase="idle">
-  <section class="window" id="win" style="--ar:1600/1020;--arw:1600;--arh:1020" aria-label="mnml, live">
+  <section class="window" id="win" aria-label="mnml, live">
     <div class="window-bar">
       <ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul>
       <svg class="proxy" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 2.2C1 1.5 1.5 1 2.2 1h3.6l1.4 1.5h6.6c.7 0 1.2.5 1.2 1.2V12c0 .7-.5 1.2-1.2 1.2H2.2C1.5 13.2 1 12.7 1 12z" fill="#53adda"/><path d="M1 4.2h14" stroke="#8ec9e5" stroke-width="1"/></svg>
       <span class="title">mnml — tour</span>
     </div>
     <div class="window-body" id="body">
-      <iframe id="term" src="/term/" title="mnml terminal" allow="clipboard-read; clipboard-write"></iframe>
+      <div id="term" aria-label="mnml terminal"></div>
       <div class="banner" id="banner" role="button" tabindex="0">
         <span class="dot"></span><span id="banner-text">Guided tour playing — press any key or click to take over</span>
       </div>
       <div class="ended" id="ended">
         <div>
           <h2 id="ended-title">That was ten minutes of mnml.</h2>
-          <p>Each session is a fresh sandbox, gone when it ends.</p>
+          <p id="ended-text">Each session is a fresh sandbox, gone when it ends.</p>
           <button class="brand" id="again">Start again</button>
         </div>
       </div>
     </div>
   </section>
-  <div class="controls">
+  <div class="controls" id="controls">
     <button id="replay">Replay tour</button>
     <select id="picker" aria-label="Play one part of the tour"><option value="">Play one part…</option></select>
     <span class="status" id="status">connecting…</span>
   </div>
-  <p class="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
+  <p class="note" id="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-canvas.js"></script>
+<script src="/vendor/addon-unicode11.js"></script>
 <script>
+// The terminal: xterm.js and ttyd's websocket protocol, here rather than
+// ttyd's own client, because ttyd's client fits the terminal to its page
+// on every resize and that fought this page's sizing (a resize loop until
+// the fonts settled). Here nothing resizes: the terminal is created at
+// 200x60 once the fonts are in, the pty is told 200x60 once, and a window
+// resize only changes the font size.
+//
+// ttyd's protocol: GET token, websocket "tty" on /term/ws, first message
+// {"AuthToken","columns","rows"}; client→server '0'+input, '1'+resize;
+// server→client '0'+output, '1' title, '2' preferences.
 (function () {
   const COLS = 200, ROWS = 60;
-  const body = document.getElementById("body");
-  const frame = document.getElementById("term");
+  const FAMILY = '"mnml mono", "mnml nf", "mnml marks", monospace';
   const $ = (id) => document.getElementById(id);
-  let cell = null; // {w, h}: the terminal's own cell, CSS px inside the iframe
+  const win = $("win"), body = $("body"), host = $("term");
+  const T0 = performance.now();
+  const trace = (msg) => { (window.mnmlDemoTrace = window.mnmlDemoTrace || []).push(Math.round(performance.now() - T0) + "ms " + msg); };
+  let term = null, ws = null, connected = false, everConnected = false;
 
-  // The terminal's font size is chosen so 200x60 of its cells fill the
-  // window, and the iframe is sized to exactly those cells. No CSS scale:
-  // xterm.js's mouse maths and its canvas both want 1:1 pixels.
-  function layout() {
-    if (!cell) return;
-    const win = document.getElementById("win");
-    const aw = Math.round(COLS * cell.w), ah = Math.round(ROWS * cell.h);
-    win.style.setProperty("--ar", aw + "/" + ah); win.style.setProperty("--arw", aw); win.style.setProperty("--arh", ah);
-    const w = (COLS + 0.5) * cell.w + cell.padX, h = (ROWS + 0.5) * cell.h + cell.padY;
-    const k = Math.min(body.clientWidth / (COLS * cell.w + cell.padX), body.clientHeight / (ROWS * cell.h + cell.padY));
-    const want = Math.max(6, Math.floor(cell.size * k * 4) / 4);
-    if (Math.abs(want - cell.size) >= 0.25 && tries < 8) {
-      tries++;
-      frame.contentWindow.postMessage({ type: "mnml-demo-font", size: want }, location.origin);
+  // ── the font size: the largest at which 200x60 cells fit the window ──
+  function space() {
+    const cs = getComputedStyle(document.body);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const bar = win.querySelector(".window-bar").offsetHeight + 2; // + the border
+    const below = $("controls").offsetHeight + 14 + $("note").offsetHeight + 10;
+    return { w: Math.floor(innerWidth - padX - 2), h: Math.floor(innerHeight - padY - bar - below) };
+  }
+  const cellOf = () => term._core._renderService.dimensions.css.cell;
+  const fits = (c, sp) => COLS * c.width <= sp.w && ROWS * c.height <= sp.h;
+  function setSize(px) { term.options.fontSize = px; return cellOf(); }
+  function fitFont() {
+    const sp = space();
+    let size = term.options.fontSize, c = cellOf();
+    // Down until it fits, then up while it still fits; the cell is
+    // measured at each size (xterm rounds it to device pixels).
+    for (let i = 0; i < 80 && !fits(c, sp) && size > 5; i++) {
+      size = Math.min(size - 0.25, Math.floor(size * Math.min(sp.w / (COLS * c.width), sp.h / (ROWS * c.height)) * 4) / 4);
+      c = setSize(size);
     }
-    frame.style.width = w + "px"; frame.style.height = h + "px";
-    frame.style.left = Math.max(0, (body.clientWidth - COLS * cell.w - cell.padX) / 2) + "px";
-    frame.style.top = Math.max(0, (body.clientHeight - ROWS * cell.h - cell.padY) / 2) + "px";
+    for (let i = 0; i < 80; i++) {
+      const c2 = setSize(size + 0.25);
+      if (!fits(c2, sp)) { c = setSize(size); break; }
+      size += 0.25; c = c2;
+    }
+    // The window wraps the grid exactly.
+    const w = COLS * c.width, h = ROWS * c.height;
+    host.style.width = w + "px"; host.style.height = h + "px";
+    body.style.width = w + "px"; body.style.height = h + "px";
+    win.style.width = (w + 2) + "px";
+    trace("font " + size + "px, cell " + c.width + "x" + c.height + ", grid " + w + "x" + h + " in " + sp.w + "x" + sp.h);
   }
-  let tries = 0;
-  window.addEventListener("message", (e) => {
-    if (e.origin !== location.origin || !e.data || e.data.type !== "mnml-demo-cell") return;
-    cell = { w: e.data.w, h: e.data.h, padX: e.data.padX || 0, padY: e.data.padY || 0, size: e.data.size || 13 };
-    layout();
-  });
-  new ResizeObserver(() => { tries = 0; layout(); }).observe(body);
 
-  function focusTerm() {
-    try { frame.contentWindow.focus(); const t = frame.contentWindow.term; if (t) t.focus(); } catch (_) {}
+  // ── the websocket ──
+  const enc = new TextEncoder();
+  function send(prefix, data) {
+    if (!ws || ws.readyState !== 1) return;
+    const bytes = typeof data === "string" ? enc.encode(data) : data;
+    const buf = new Uint8Array(bytes.length + 1);
+    buf[0] = prefix.charCodeAt(0); buf.set(bytes, 1);
+    ws.send(buf);
   }
-  frame.addEventListener("load", focusTerm);
+  async function connect() {
+    let token = "";
+    try { token = (await (await fetch("/term/token", { cache: "no-store" })).json()).token || ""; } catch (_) {}
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/term/ws", ["tty"]);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => {
+      connected = everConnected = true;
+      // The one size the pty is ever told.
+      ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: COLS, rows: ROWS })));
+      trace("pty size sent: " + COLS + "x" + ROWS);
+      term.focus();
+      poll();
+    };
+    ws.onmessage = (e) => {
+      const d = new Uint8Array(e.data);
+      if (d[0] === 0x30) term.write(d.subarray(1));
+    };
+    ws.onclose = () => { connected = false; trace("websocket closed"); poll(); };
+  }
 
+  async function start() {
+    const faces = ["400 13px", "700 13px", "italic 400 13px", "italic 700 13px"].map((w) => w + ' "mnml mono"')
+      .concat(['13px "mnml nf"', '13px "mnml marks"']);
+    const sample = "a" + String.fromCodePoint(0xF07C, 0xF0001, 0xF1E00);
+    await Promise.all(faces.map((f) => document.fonts.load(f, sample).then((r) => trace("font loaded: " + f + " (" + r.length + " face)")))).catch(() => {});
+    term = new Terminal({
+      cols: COLS, rows: ROWS, fontFamily: FAMILY, fontSize: 13, lineHeight: 1, letterSpacing: 0,
+      scrollback: 0, cursorBlink: false, allowProposedApi: true, customGlyphs: true,
+      drawBoldTextInBrightColors: false, macOptionIsMeta: true, theme: { background: "#1e222a" },
+    });
+    term.onResize((s) => trace("term resized to " + s.cols + "x" + s.rows + " (should never happen)"));
+    term.loadAddon(new Unicode11Addon.Unicode11Addon());
+    term.unicode.activeVersion = "11";
+    term.open(host);
+    term.loadAddon(new CanvasAddon.CanvasAddon());
+    term.onData((d) => send("0", d));
+    term.onBinary((d) => send("0", Uint8Array.from(d, (ch) => ch.charCodeAt(0) & 255)));
+    fitFont();
+    host.classList.add("ready");
+    window.term = term;
+    connect();
+  }
+
+  let rt = 0;
+  window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => term && fitFont(), 150); });
+  start();
+
+  // ── the controls and the runner's state ──
   async function post(path) {
     try { const r = await fetch(path, { method: "POST" }); return await r.json(); } catch (_) { return null; }
   }
+  const focusTerm = () => term && term.focus();
   $("replay").onclick = async () => { await post("/api/replay"); poll(); focusTerm(); };
   $("picker").onchange = async (e) => {
     const v = e.target.value; e.target.value = "";
@@ -156,16 +253,34 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   const takeOver = async () => { await post("/api/stop"); poll(); focusTerm(); };
   $("banner").onclick = takeOver;
   $("banner").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") takeOver(); };
-  $("again").onclick = () => { document.body.dataset.phase = "starting"; cell = null; frame.src = "/term/?" + Date.now(); };
+  $("again").onclick = () => {
+    document.body.dataset.phase = "starting";
+    if (ws) { ws.onclose = null; ws.close(); }
+    term.reset();
+    connect();
+  };
 
   let flowsShown = false;
   const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
   async function poll() {
     let st;
-    try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "offline"; return; }
-    document.body.dataset.phase = st.phase;
+    try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "the demo server is not answering"; return; }
+    // This page's own connection decides "not connected": the runner's
+    // phase can belong to another tab's session.
+    let phase = st.phase;
+    if (!connected && everConnected && phase !== "ended") phase = "lost";
+    if (!connected && !everConnected) phase = "connecting";
+    document.body.dataset.phase = phase;
     const mins = Math.round(st.cap_s / 60);
-    $("ended-title").textContent = "That was " + (mins === 1 ? "a minute" : mins + " minutes") + " of mnml.";
+    if (phase === "lost") {
+      $("ended-title").textContent = "This page is not connected to mnml.";
+      $("ended-text").textContent = "The session ended, or another tab took it over.";
+      $("again").textContent = "Start a session";
+    } else {
+      $("ended-title").textContent = "That was " + (mins === 1 ? "a minute" : mins + " minutes") + " of mnml.";
+      $("ended-text").textContent = "Each session is a fresh sandbox, gone when it ends.";
+      $("again").textContent = "Start again";
+    }
     if (!flowsShown && st.flows) {
       for (const f of st.flows) { const o = document.createElement("option"); o.value = f.name; o.textContent = f.title; o.title = f.flow; $("picker").appendChild(o); }
       flowsShown = true;
@@ -174,10 +289,11 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     $("banner-text").textContent = "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over";
     const left = fmt(st.remaining_s);
     $("status").textContent =
-      st.phase === "tour" ? "tour playing · " + left + " left" :
-      st.phase === "live" ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " + left + " left" :
-      st.phase === "ended" ? "session over" :
-      st.phase === "starting" ? "starting mnml…" : "connecting…";
+      phase === "tour" ? "tour playing · " + left + " left" :
+      phase === "live" ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " + left + " left" :
+      phase === "ended" ? "session over" :
+      phase === "lost" ? "not connected" :
+      phase === "starting" || phase === "idle" ? "starting mnml…" : "connecting…";
   }
   poll(); setInterval(poll, 1000);
 })();

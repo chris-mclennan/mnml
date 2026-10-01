@@ -38,7 +38,9 @@ while [ $# -gt 0 ]; do
     --rebuild) REBUILD=1; shift ;;
     # this checkout's runner, flows and page over the image's (no rebuild)
     --dev) D="$ROOT/demo"; DEV=(-e MNML_DEMO_DEV=1 -v "$D/attract:/opt/mnml-demo/attract:ro" -v "$D/flows:/opt/mnml-demo/flows:ro"
-             -v "$D/web/index.html:/opt/mnml-demo/web/index.html:ro" -v "$D/web/term-head.html:/opt/mnml-demo/web/term-head.html:ro"); shift ;;
+             -v "$D/web/index.html:/opt/mnml-demo/web/index.html:ro")
+           # an image older than the page's own xterm.js: a local copy (git-ignored)
+           [ -d "$D/web/vendor" ] && DEV+=(-v "$D/web/vendor:/opt/mnml-demo/web/vendor:ro"); shift ;;
     -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "run-local.sh: unknown argument $1" >&2; exit 2 ;;
   esac

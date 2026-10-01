@@ -1,0 +1,2 @@
+# --dev only: a local copy of what the image fetches (see Dockerfile).
+web/vendor/
