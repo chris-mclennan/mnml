@@ -1420,7 +1420,27 @@ pub fn selectRelease(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!voi
     if (p.select == null) return;
     try selectDrag(app, p, x, y);
     endGesture(p);
-    _ = try copySelection(app, p);
+    if (app.cfg.ui.copy_on_select) _ = try copySelection(app, p);
+}
+
+/// Ctrl+C (or Ctrl+Shift+C) over a selection is the selection's, never
+/// the child's: it copies — unless `ui.copy_on_select` already did on
+/// the release (Ctrl+Shift+C, the explicit copy, copies either way) —
+/// lets the selection go and sends nothing. True when it took the key;
+/// with no selection Ctrl+C goes on to the child as its interrupt.
+pub fn selectionCopyKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
+    if (!k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const c: u21 = switch (k.code) {
+        .char => |c| c,
+        else => return false,
+    };
+    if (c != 'c' and c != 'C') return false;
+    if (!hasSelection(p)) return false;
+    const explicit = k.mods.shift or c == 'C';
+    if (explicit or !app.cfg.ui.copy_on_select) _ = try copySelection(app, p);
+    clearSelection(p);
+    app.needs_render = true;
+    return true;
 }
 
 /// The selection's text to the clipboard: the unnamed register (a `p`
@@ -1990,6 +2010,97 @@ test "PageUp / PageDown / Home / End and their Ctrl forms reach the child in bot
         try app.handle(.{ .key = Key.named(.enter) });
         // The Shift forms scrolled mnml's view and sent nothing.
         try t.expect(try tickUntilScreen(&app, "▌^[[5~^[[6~^[[H^[[F^[[1;5H^[[1;5F ", 5000));
+    }
+}
+
+/// A `cat -v` child with a line to select: the key tests below read what
+/// reached it back off the screen.
+fn openSelectable(app: *App, style: @import("../input/mod.zig").Style) !*PtyPane {
+    app.tree.visible = false;
+    try app.setInputStyle(style);
+    const id = try open(app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon -isig; echo 'ready SELECTME'; cat -v" }, .label = "sel" });
+    try t.expect(try tickUntilScreen(app, "ready SELECTME", 5000));
+    return app.panes.pty(id).?;
+}
+
+/// Tick until the child has read everything typed so far: a Ctrl+C
+/// discards input the child has not read yet (`Session.interrupt`), so a
+/// key sequence that must arrive whole waits for each key to land.
+fn drained(app: *App, p: *PtyPane) !void {
+    var waited: u32 = 0;
+    while (waited <= 5000) : (waited += 5) {
+        try app.tick(App.nowMs(app.io));
+        if (p.session.?.pendingInput() == 0) return;
+        app.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    return error.TestUnexpectedResult;
+}
+
+/// Drag across `SELECTME` (cells 6..13 of the child's first line).
+fn dragSelectMe(app: *App, p: *PtyPane) !void {
+    const b = p.body;
+    for ([_]struct { x: u16, kind: key_mod.MouseKind }{ .{ .x = 6, .kind = .press }, .{ .x = 13, .kind = .drag }, .{ .x = 13, .kind = .release } }) |ev|
+        try app.handle(.{ .mouse = .{ .x = b.x + ev.x, .y = b.y, .kind = ev.kind, .button = .left } });
+}
+
+test "Ctrl+C over a selection, copy on select ON: the release copied, Ctrl+C lets the selection go and sends nothing; with none it is ^C" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        try t.expect(app.cfg.ui.copy_on_select);
+        const p = try openSelectable(&app, style);
+        try dragSelectMe(&app, p);
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        try t.expect(hasSelection(p));
+        try app.clipboard.setYank("elsewhere", false);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try t.expect(!hasSelection(p));
+        // Not copied a second time: the clipboard keeps what came after.
+        try t.expectEqualStrings("elsewhere", app.clipboard.text());
+        try app.handle(.{ .key = Key.char('a') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('b') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        // Only the second Ctrl+C reached the child, as 0x03 (`cat -v`'s ^C).
+        try t.expect(try tickUntilScreen(&app, "▌a^Cb ", 5000));
+    }
+}
+
+test "Ctrl+C over a selection, copy on select OFF: the release only selects, Ctrl+C copies, lets go and sends nothing; Ctrl+Shift+C copies too" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.cfg.ui.copy_on_select = false;
+        const p = try openSelectable(&app, style);
+        try app.clipboard.setYank("before", false);
+        try dragSelectMe(&app, p);
+        try t.expect(hasSelection(p));
+        try t.expectEqualStrings("before", app.clipboard.text());
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try t.expect(!hasSelection(p));
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        // Ctrl+Shift+C is the explicit copy: it copies over a selection
+        // whatever the setting, and sends nothing either.
+        try app.clipboard.setYank("before", false);
+        try dragSelectMe(&app, p);
+        try app.handle(.{ .key = .{ .code = .{ .char = 'c' }, .mods = .{ .ctrl = true, .shift = true } } });
+        try t.expect(!hasSelection(p));
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        try app.handle(.{ .key = Key.char('a') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('b') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        try t.expect(try tickUntilScreen(&app, "▌a^Cb ", 5000));
     }
 }
 

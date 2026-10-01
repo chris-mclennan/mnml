@@ -475,6 +475,11 @@ otherwise. Copy what you need; leave the rest out.
         // way. `false` asks only when something is unsaved. `:q!` / `:qa!` and the IPC `quit` /
         // `restart` never ask.
         .confirm_quit = true,
+        // A terminal pane copies a mouse selection when the button comes up (ghostty's copy-on-select);
+        // Ctrl+C over a selection then only clears it. `false`: a drag only selects and Ctrl+C over a
+        // selection copies it. Either way Ctrl+C over a selection sends the child nothing, and with no
+        // selection it is the child's ^C.
+        .copy_on_select = true,
         .first_launch_complete = false, // set by the first-launch flow
         .config_toml_notice_shown = false, // set once the 0.2 config.toml notice has shown on this data root (see "Coming from 0.2.x")
         .integrations_toml_notice_shown = false, // set by `integrations.dismiss_toml_notice` — the 0.2 manifests notice, "Don't show again"

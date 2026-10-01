@@ -1,0 +1,30 @@
+# sizes: all
+# Ctrl+C over a selection in a terminal pane (standard profile) is the
+# selection's: the drag already copied it (`ui.copy_on_select`, on by
+# default), so Ctrl+C lets it go and the program hears NOTHING. With
+# no selection Ctrl+C is the program's own ^C (0x03). A `cat -v` child
+# with signals off prints what it was sent: `a^Cb`, not `^Ca^Cb`.
+write a.txt "\n"
+command editor.use_standard
+command view.toggle_tree
+ex term sh -c 'stty -echo -icanon -isig; echo "ready SELECTME"; cat -v'
+wait 1200
+expect screen contains "ready SELECTME"
+drag 7 2 14 2
+wait 200
+expect screen contains "copied the selection"
+key ctrl+c
+wait 200
+key a
+wait 200
+key ctrl+c
+wait 200
+key b
+key enter
+wait 600
+expect screen contains "a^Cb"
+expect screen lacks "^Ca"
+open a.txt
+command editor.use_vim
+type "p"
+expect screen contains "SELECTME"
