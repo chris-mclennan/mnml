@@ -1843,6 +1843,7 @@ On top of the sandbox's variables the re-exec sets these, and drops
 | `MNML_OPEN_URL` | `none` — a link opens nothing |
 | `MNML_AGENTS_PGID` | a process group nobody is in: the agents scan sees the demo's sessions, not the machine's |
 | `GIT_CEILING_DIRECTORIES` | `<root>` |
+| `MNML_DEMO_HOST_DATA_ROOT` | the data root this run would have used without the sandbox — where the Marketplace installed the integrations |
 
 Then, before the first frame:
 
@@ -1856,15 +1857,24 @@ Then, before the first frame:
   its right and a shell under that (edit it to change the first screen),
   three earlier agent transcripts for the sessions views, and the Jira
   and Bitbucket configs.
-- **The integrations** built beside the binary are linked into the data
-  root and `mnml-jira --install` / `mnml-bitbucket --install` run.
+- **The integrations** `mnml-jira` and `mnml-bitbucket` are looked
+  for, in order, beside the binary (a source build's `zig-out/bin`),
+  then where the Marketplace put them in `MNML_DEMO_HOST_DATA_ROOT` —
+  its link `bin/<name>`, then the file it installed,
+  `integrations/<id>/bin/<name>`. Each is linked into the sandbox's
+  data root and its `--install` run.
 - **The fakes** `mnml-fake-jira` and `mnml-fake-bitbucket` beside the
   binary start on ports the OS picks, each in a process group of its
   own and told to exit with mnml; their URLs go into the workspace's
-  `.mnml/env/dev.env`, which `requests/*.http` use.
+  `.mnml/env/dev.env`, which `requests/*.http` use. A release carries
+  them there: the macOS and Linux archives, the `.deb` / `.rpm`
+  (`/usr/bin`), the Homebrew formula, the installer script and
+  `run.sh install` all put them beside `mnml`. The Windows zip and MSI
+  do not, since Windows has no `--demo`.
 
-Whatever is not beside the binary is skipped and named in the first
-frame's toast. A ` demo ` chip sits where the sandbox chip does. On
+Whatever is not found is skipped and named in the first frame's toast,
+with the directories it was looked for in (`--headless` prints the same
+note to stderr). A ` demo ` chip sits where the sandbox chip does. On
 exit — a quit, or SIGTERM / SIGHUP / SIGINT — the fakes are stopped,
 then the whole sandbox is removed.
 

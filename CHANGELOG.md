@@ -30,6 +30,15 @@ the release ships one file), and one line per change a user can see.
   as they do on a quit: the terminal is given back, the demo's servers
   stop, the throwaway home is removed, and the exit status is 128 + the
   signal (143 for SIGTERM).
+- A downloaded mnml opens the demo with its Jira and Bitbucket panes: the
+  macOS and Linux archives, the `.deb` and `.rpm`, the Homebrew formula and
+  the installer script now carry the demo's two offline servers
+  (`mnml-fake-jira`, `mnml-fake-bitbucket`) beside `mnml`, and the demo uses
+  the Jira and Bitbucket integrations the Marketplace installed. When either
+  is missing, the first frame's notice names the folders it looked in.
+  (Not on Windows, which has no `--demo`.)
+- `mnml --help` lists `--demo`, and the sandbox's and the demo's messages
+  begin `mnml:` like the rest of the command line.
 
 ### Fixes
 
