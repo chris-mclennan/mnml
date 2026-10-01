@@ -9,9 +9,8 @@ Two flags let you look around before mnml has any of your settings:
   You see what a brand-new user sees, and nothing you do reaches your
   real config, state or credentials.
 - **`mnml --demo`** is a sandbox with something in it: a small Zig
-  project with git history, a stand-in Claude Code session, and — in a
-  source build — offline Jira and Bitbucket panes. It needs no network
-  and no account.
+  project with git history, a stand-in Claude Code session, and offline
+  Jira and Bitbucket panes. It needs no network and no account.
 
 Both remove everything they made when mnml exits.
 
@@ -137,11 +136,12 @@ What happens, in order:
    `init.lua` that sets up the first screen, three earlier agent
    transcripts for the sessions views, and configs for Jira and
    Bitbucket.
-4. **The integrations and the offline servers.** If the Jira and
-   Bitbucket integrations and the two offline servers
-   (`mnml-fake-jira`, `mnml-fake-bitbucket`) sit beside the `mnml`
-   binary, they are installed into the throwaway home and started on
-   ports the OS picks.
+4. **The integrations and the offline servers.** The two offline
+   servers (`mnml-fake-jira`, `mnml-fake-bitbucket`), which every macOS
+   and Linux release carries beside `mnml`, start on ports the OS
+   picks. The Jira and Bitbucket integrations are found beside the
+   binary or where the Marketplace installed them in your own data
+   root, and are installed into the throwaway home.
 5. **The first screen.** `src/util.zig` in the editor, a Claude Code
    session on its right, and a shell under that, with a ` demo ` chip
    where the sandbox chip would be.
@@ -163,17 +163,22 @@ it and save to watch a script reload.
 
 ### Where the Jira and Bitbucket panes come from
 
-The demo only uses what sits beside the `mnml` binary, and what is
-missing is skipped and named in the first frame's notice — the rest of
-the demo still opens.
+Two things make those panes: the offline servers that answer them, and
+the Jira and Bitbucket integrations that draw them. What is missing is
+skipped and named in the first frame's notice, with the folders the
+demo looked in — the rest of the demo still opens.
 
+- **The offline servers** sit beside `mnml` in every macOS and Linux
+  install: the release archive, the installer script, Homebrew, and
+  the `.deb` / `.rpm` (in `/usr/bin`).
+- **The integrations** are their own releases. Install Jira and
+  Bitbucket from the INTEGRATIONS section's Marketplace tab once, and
+  every `mnml --demo` after that uses them — the demo looks beside the
+  binary first, then where the Marketplace put them.
 - **A source build** (`zig build`) puts the integrations and both
   offline servers in `zig-out/bin` beside the binary, so
-  `./zig-out/bin/mnml-zig --demo` opens all of it. See
-  [Build from Source](/docs/install/build).
-- **A release download or package** carries `mnml` alone. The demo
-  then opens the project, the git history and the stand-in session,
-  and its notice says the Jira and Bitbucket panes are not installed.
+  `./zig-out/bin/mnml-zig --demo` opens all of it with nothing to
+  install. See [Build from Source](/docs/install/build).
 
 ### Cleaning up
 
