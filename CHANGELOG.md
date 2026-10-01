@@ -120,6 +120,10 @@ the release ships one file), and one line per change a user can see.
   A selection whose file is gone — `[http] default_env`, `default_env=` in
   `.rqst/config`, `$MNML_ENV`, or a pick whose file was deleted — is dropped
   rather than shown.
+- HTTP: the Response box's Body, Headers and Timeline tabs, and the request
+  Body editor, show the shared scrollbar when their rows overflow, on their
+  own column beside the text; a press on the Response bar's track jumps
+  there.
 
 ## v0.3.1
 

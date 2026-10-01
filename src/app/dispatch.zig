@@ -3502,6 +3502,16 @@ fn paneBarJump(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Error!void 
             const target: i64 = @intCast(@min((off * n) / h, n - 1));
             grep.scrollBy(g, target - @as(i64, @intCast(g.cursor)));
         },
+        // The Response box's bar lands its view at the pointer's row; the
+        // request text area's bar follows the caret, so a press there
+        // only focuses.
+        .request => |*rp| {
+            const g = rp.resp_bar;
+            if (g.shown and track.x == g.x and track.y == g.y) {
+                const n = g.total;
+                rp.resp_view.scroll_line = @intCast(@min((off * n) / h, n -| g.h));
+            }
+        },
         else => {},
     }
     focusOnPress(app, id);

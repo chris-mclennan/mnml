@@ -248,6 +248,8 @@ pub const RequestPane = struct {
     header_help: bool = false,
     row_cursor: usize = 0,
     edit_scroll: usize = 0,
+    /// The Response box's bar as the last frame painted it.
+    resp_bar: view.BarGeom = .{},
     response_tab: ResponseTab = .body,
     resp_view: editor_view.ViewState = .{},
     /// The response search (`/`, Ctrl+F with the Response block
@@ -1881,6 +1883,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .sent_line = rp.sent_line,
         .response_tab = rp.response_tab,
         .resp_view = &rp.resp_view,
+        .resp_bar = &rp.resp_bar,
         .body_wrap = rp.body_wrap,
         .focused = focused,
         .editing = rp.editing,

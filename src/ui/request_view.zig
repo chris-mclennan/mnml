@@ -38,6 +38,7 @@ const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
+const scrollbar = @import("scrollbar.zig");
 const toast = @import("toast.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -317,6 +318,9 @@ pub const Model = struct {
     sent_line: ?[]const u8,
     response_tab: ResponseTab,
     resp_view: *editor_view.ViewState,
+    /// Where the Response box's bar landed this frame, for a click or
+    /// drag on it (the app reads it back; null in a test that does not ask).
+    resp_bar: ?*BarGeom = null,
     body_wrap: bool,
     focused: bool,
     /// The focused text field is being edited: the caret shows. Off,
@@ -341,6 +345,18 @@ pub const Model = struct {
         for (m.url_vars) |v| if (!v.resolved) return true;
         return false;
     }
+};
+
+/// A painted bar's track and the rows it stands for: the Response
+/// box's, written by the view so a press on its track can land the
+/// view at the pointer's row.
+pub const BarGeom = struct {
+    x: u16 = 0,
+    y: u16 = 0,
+    h: u16 = 0,
+    total: usize = 0,
+    /// The frame painted it; a box that fits clears it.
+    shown: bool = false,
 };
 
 // ── hit ids ──
@@ -865,8 +881,18 @@ fn drawTextLines(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, 
 /// A multi-line buffer: rows from `scroll`, the caret's row kept on
 /// screen, each line after `indent` cells (a ` N ` gutter when
 /// `numbered`). Returns the caret cell when focused.
-fn drawTextArea(ui: Ui, pane: PaneId, r: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, vars: []const VarSpan, indent: u16, style: Style, numbered: bool) ?Caret {
+fn drawTextArea(ui: Ui, pane: PaneId, r_in: Rect, text: []const u8, caret: usize, focused: bool, scroll: *usize, vars: []const VarSpan, indent: u16, style: Style, numbered: bool) ?Caret {
     const p = ui.theme.palette;
+    // More lines than rows: the shared bar on the right column, the
+    // text one cell narrower so its last column is never under it.
+    const total_lines = linesOf(text);
+    var r = r_in;
+    const bar: ?Rect = if (total_lines > r_in.h and r_in.w > indent + 4) blk: {
+        const split = r_in.splitRight(1);
+        r = split.left;
+        break :blk split.rest;
+    } else null;
+    defer if (bar) |b| scrollbar.drawVertical(ui, b, .{ .pane = pane }, total_lines, r.h, scroll.*);
     const at = @min(caret, text.len);
     var caret_line: usize = 0;
     var line_start: usize = 0;
@@ -1384,18 +1410,33 @@ fn drawResponseBox(ui: Ui, pane: PaneId, r: Rect, m: Model) void {
         content = Rect.init(inner.x, inner.y + 2, inner.w, inner.h - 2);
     }
     ui.hit(content, .{ .script_hit = .{ .pane = pane, .id = hit_resp_body } });
-    // The rows, then the window `resp_view.scroll_line` picks.
-    const lines = responseRows(ui, content.w, m);
+    // The rows, then the window `resp_view.scroll_line` picks. More rows
+    // than the box holds: the shared bar takes the right column — the
+    // rows re-laid one cell narrower, so no text sits under it (the
+    // strip's chips are on the row above the content, never under it).
+    var lines = responseRows(ui, content.w, m);
+    var text = content;
+    const bar: ?Rect = if (lines.len > content.h and content.w > 4) blk: {
+        const split = content.splitRight(1);
+        text = split.left;
+        lines = responseRows(ui, text.w, m);
+        break :blk split.rest;
+    } else null;
     const max_scroll = lines.len -| content.h;
     if (m.resp_view.scroll_line > max_scroll) m.resp_view.scroll_line = @intCast(max_scroll);
     const first: usize = m.resp_view.scroll_line;
+    if (m.resp_bar) |g| g.* = .{};
+    if (bar) |b| {
+        scrollbar.drawVertical(ui, b, .{ .pane = pane }, lines.len, content.h, first);
+        if (m.resp_bar) |g| g.* = .{ .x = b.x, .y = b.y, .h = b.h, .total = lines.len, .shown = true };
+    }
     var y: u16 = 0;
     var i = first;
     while (i < lines.len and y < content.h) : ({
         i += 1;
         y += 1;
     }) {
-        const row = content.row(y);
+        const row = text.row(y);
         var x = row.x;
         for (lines[i].segs) |seg| {
             if (x >= row.right()) break;
@@ -1949,8 +1990,9 @@ test "after a send: the status title on the Response border, the Headers count, 
     m.response.?.body = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20";
     view.scroll_line = 2;
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(21, "\u{2502}  2 l2" ++ " " ** 81 ++ "\u{2502}");
-    try fx.expectRow(29, "\u{2502} 10 l10" ++ " " ** 80 ++ "\u{2502}");
+    // Twenty-one rows in eleven: the shared bar takes the last column.
+    try fx.expectRow(21, "\u{2502}  2 l2" ++ " " ** 80 ++ "\u{2588}\u{2502}");
+    try fx.expectRow(29, "\u{2502} 10 l10" ++ " " ** 79 ++ "\u{2588}\u{2502}");
     // Past the end the window is pulled back.
     view.scroll_line = 40;
     _ = draw(ui, 3, ui.canvas.full(), m);
@@ -2337,4 +2379,106 @@ test "a narrow response strip keeps its labels whole and drops the chips that wo
         try testing.expect(std.mem.indexOf(u8, row, "copy") != null);
         try testing.expect(std.mem.indexOf(u8, row, "AI") == null);
     }
+}
+
+test "the Response box's shared bar: on its own column under the strip, the thumb follows the scroll, no text under it" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var geom: BarGeom = .{};
+    var m = baseModel(&scroll, &view);
+    m.resp_bar = &geom;
+    // The report's shape: a 44-line JSON body, one line wider than the box.
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    try body.appendSlice(testing.allocator, "a" ** 120);
+    var k: usize = 1;
+    while (k < 44) : (k += 1) try body.print(testing.allocator, "\n  \"k{d}\": {d},", .{ k, k });
+    m.response = .{ .status = 200, .status_text = "OK", .headers = &.{}, .body = body.items, .body_bytes = body.items.len, .truncated = false, .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 }, .cookies = &.{} };
+    m.block = .response;
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // The box spans 0..88: the bar takes its last inner column, from
+    // the row under the strip to the box's floor.
+    const bar_x: u16 = 87;
+    try testing.expect(geom.shown);
+    try testing.expectEqual(bar_x, geom.x);
+    const top = geom.y;
+    const bottom = geom.y + geom.h - 1;
+    try testing.expect(geom.h >= 8);
+    try testing.expectEqualStrings("\u{2502}", fx.cell(bar_x + 1, top).char.grapheme);
+    try testing.expectEqualStrings("\u{2500}", fx.cell(bar_x, bottom + 1).char.grapheme);
+    const muted = fx.theme.muted.fg;
+    const track = fx.theme.chip.bg;
+    try testing.expectEqualStrings("\u{2588}", fx.cell(bar_x, top).char.grapheme);
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, top).fg, muted));
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, bottom).fg, track));
+    const sb = fx.hits.at(bar_x, top + 3).?.scrollbar;
+    try testing.expectEqual(@as(u32, 3), sb.owner.pane);
+    try testing.expectEqual(scrollbar.Axis.v, sb.axis);
+    // The strip's chips row is not the bar's: `wrap` / `copy` keep their
+    // cells, the type chip its `▼` two cells in from the edge.
+    try testing.expect(std.mem.indexOf(u8, try fx.text(), " wrap   copy ") != null);
+    try testing.expectEqualStrings("\u{25BC}", fx.cell(bar_x - 2, top - 2).char.grapheme);
+    try testing.expect(fx.hits.at(bar_x, top - 2) == null or fx.hits.at(bar_x, top - 2).? != .scrollbar);
+    // The wide first line is clipped a cell short: its last `a` sits
+    // left of the bar, never under it.
+    var row_a: ?u16 = null;
+    var y: u16 = top;
+    while (y <= bottom) : (y += 1) if (std.mem.eql(u8, fx.cell(bar_x - 1, y).char.grapheme, "a")) {
+        row_a = y;
+        break;
+    };
+    try testing.expect(row_a != null);
+    try testing.expectEqualStrings("\u{2588}", fx.cell(bar_x, row_a.?).char.grapheme);
+    // Scrolled to the end: the thumb is at the bottom of the track.
+    view.scroll_line = 1000;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, bottom).fg, muted));
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, top).fg, track));
+    const end = scrollbar.thumb(geom.h, geom.total, geom.h, view.scroll_line).?;
+    try testing.expectEqual(geom.h - end.len, end.start);
+    // A body that fits: no bar, and the geometry says so.
+    m.response.?.body = "{}";
+    view.scroll_line = 0;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try testing.expect(!geom.shown);
+    try testing.expectEqualStrings(" ", fx.cell(bar_x, top).char.grapheme);
+}
+
+test "the request Body editor scrolls with the shared bar beside its text" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    var k: usize = 0;
+    while (k < 40) : (k += 1) try body.appendSlice(testing.allocator, if (k == 0) "b" ** 120 else "\nline");
+    m.body = body.items;
+    m.field = .content;
+    m.block = .request;
+    const ui = fx.ui();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    // The request box's last inner column carries the bar, from the
+    // first body row down; the wide first line stops a cell short of it.
+    const bar_x: u16 = 87;
+    var first: ?u16 = null;
+    var y: u16 = 0;
+    while (y < 18) : (y += 1) if (std.mem.eql(u8, fx.cell(bar_x - 2, y).char.grapheme, "b")) {
+        first = y;
+        break;
+    };
+    try testing.expect(first != null);
+    try testing.expectEqualStrings("\u{2026}", fx.cell(bar_x - 1, first.?).char.grapheme);
+    try testing.expectEqualStrings("\u{2588}", fx.cell(bar_x, first.?).char.grapheme);
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, first.?).fg, fx.theme.muted.fg));
+    try testing.expectEqual(scrollbar.Axis.v, fx.hits.at(bar_x, first.?).?.scrollbar.axis);
+    // The caret at the end scrolls the text; the thumb leaves the top.
+    m.body_caret = body.items.len;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try testing.expect(scroll > 0);
+    try testing.expect(vaxis.Color.eql(fx.style(bar_x, first.?).fg, fx.theme.chip.bg));
 }

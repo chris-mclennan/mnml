@@ -3717,3 +3717,38 @@ test "env chip: no env file claims no env; a pick whose file is gone is dropped;
     try tick(&app, 0);
     try testing.expect(app.http.env_override == null);
 }
+
+test "response bar: a press at the foot of the shared bar's track lands the Response view on the body's end" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    try body.appendSlice(testing.allocator, "{");
+    var k: usize = 1;
+    while (k < 43) : (k += 1) try body.print(testing.allocator, "\n  \"k{d}\": {d},", .{ k, k });
+    try body.appendSlice(testing.allocator, "\n}");
+    const g = testing.allocator;
+    try rp.setResponse(.{ .status = 200, .status_text = try g.dupe(u8, "OK"), .final_url = try g.dupe(u8, "http://x/"), .headers = try g.alloc(client.Header, 0), .body = try g.dupe(u8, body.items) });
+    try app.render();
+    // The bar the frame painted is the one the pane recorded.
+    var track: ?@import("../ui/rect.zig") = null;
+    for (app.hits.items.items) |h| if (h.target == .scrollbar) {
+        const sb = h.target.scrollbar;
+        if (sb.owner == .pane and sb.owner.pane == id and h.rect.x == rp.resp_bar.x and h.rect.y == rp.resp_bar.y) track = h.rect;
+    };
+    try testing.expect(rp.resp_bar.shown);
+    try testing.expect(track != null);
+    try testing.expectEqual(@as(u32, 0), rp.resp_view.scroll_line);
+    const dispatch = @import("dispatch.zig");
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.bottom() - 1, .kind = .press, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.bottom() - 1, .kind = .release, .button = .left }, 1);
+    try testing.expectEqual(@as(u32, @intCast(rp.resp_bar.total - rp.resp_bar.h)), rp.resp_view.scroll_line);
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.y, .kind = .press, .button = .left }, 1);
+    try testing.expectEqual(@as(u32, 0), rp.resp_view.scroll_line);
+}

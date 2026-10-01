@@ -1,0 +1,28 @@
+# width: 120
+# height: 40
+# The Response box scrolls with the shared bar: a 44-line JSON body
+# in an 18-row box gets the bar on the box's last inner column, and a
+# press at the foot of the track lands the view on the body's end.
+write probe.http "GET http://127.0.0.1:19876/probe\n"
+write probe.http.mock.json "{\"status\": 200, \"status_text\": \"OK\", \"headers\": [[\"Content-Type\", \"application/json\"]], \"body\": \"{\\n  \\\"k1\\\": 1,\\n  \\\"k2\\\": 2,\\n  \\\"k3\\\": 3,\\n  \\\"k4\\\": 4,\\n  \\\"k5\\\": 5,\\n  \\\"k6\\\": 6,\\n  \\\"k7\\\": 7,\\n  \\\"k8\\\": 8,\\n  \\\"k9\\\": 9,\\n  \\\"k10\\\": 10,\\n  \\\"k11\\\": 11,\\n  \\\"k12\\\": 12,\\n  \\\"k13\\\": 13,\\n  \\\"k14\\\": 14,\\n  \\\"k15\\\": 15,\\n  \\\"k16\\\": 16,\\n  \\\"k17\\\": 17,\\n  \\\"k18\\\": 18,\\n  \\\"k19\\\": 19,\\n  \\\"k20\\\": 20,\\n  \\\"k21\\\": 21,\\n  \\\"k22\\\": 22,\\n  \\\"k23\\\": 23,\\n  \\\"k24\\\": 24,\\n  \\\"k25\\\": 25,\\n  \\\"k26\\\": 26,\\n  \\\"k27\\\": 27,\\n  \\\"k28\\\": 28,\\n  \\\"k29\\\": 29,\\n  \\\"k30\\\": 30,\\n  \\\"k31\\\": 31,\\n  \\\"k32\\\": 32,\\n  \\\"k33\\\": 33,\\n  \\\"k34\\\": 34,\\n  \\\"k35\\\": 35,\\n  \\\"k36\\\": 36,\\n  \\\"k37\\\": 37,\\n  \\\"k38\\\": 38,\\n  \\\"k39\\\": 39,\\n  \\\"k40\\\": 40,\\n  \\\"k41\\\": 41,\\n  \\\"k42\\\": 42\\n}\", \"ts\": 1}"
+open probe.http
+command http.send
+wait 600
+command http.replay_mock
+wait 300
+expect screen contains "\"k1\": 1"
+expect screen lacks "\"k42\": 42"
+# The bar: the box's last inner column (118), rows 23..33, beside the
+# text — the gutter's `1 {` row ends a cell short of it.
+expect screen contains "│  1 {"
+expect screen contains "█│"
+# A press at the foot of the track lands the view on the body's end.
+click 118 33
+wait 100
+expect screen contains "\"k42\": 42"
+expect screen lacks "\"k1\": 1,"
+# And at its head, back to the top.
+click 118 23
+wait 100
+expect screen contains "\"k1\": 1,"
+expect screen lacks "\"k42\": 42"
