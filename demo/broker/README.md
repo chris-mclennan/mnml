@@ -1,4 +1,10 @@
-# demo/broker — not built yet
+# demo/broker — the interface (built: `demo/cloudflare/`)
+
+`demo/cloudflare/` implements this on Cloudflare Containers: a Durable
+Object per session is the per-visitor container, the Worker routes and
+proxies, `sleepAfter` plus a hard stop past the cap reap it, `max_instances`
+and a per-IP rate limit bound it, `enableInternet = false` denies egress.
+The text below is the contract it was built against.
 
 The trial (`demo/run-local.sh`) starts one container by hand. The hosted
 demo needs a broker that gives **every visitor a fresh container** and

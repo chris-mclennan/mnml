@@ -43,7 +43,8 @@ container is the broker's job (`broker/README.md`).
 | `attract/relay.py` | publishes the port for a container that has no network |
 | `flows/` | the site recorder's flows (`tools/site-record/flows/`), minus recording-only steps |
 | `web/index.html` | the page: the site's Ghostty-style window frame, the terminal (xterm.js speaking ttyd's protocol, the web fonts), the banner, Replay / the flow picker, the end screen |
-| `broker/README.md` | the interface a per-visitor broker needs (not built) |
+| `broker/README.md` | the interface a per-visitor broker needs |
+| `cloudflare/` | the broker, built: the hosted demo on Cloudflare Containers |
 
 ## How attract mode works
 
@@ -145,20 +146,15 @@ plus the images and containers: `demo/run-local.sh stop; docker rmi
 mnml-demo:local`. The one app change (`ipc.report_input`, off by default)
 can stay or be reverted on its own.
 
-## Hosting next (not decided)
+## Hosted: Cloudflare Containers
 
-- **Cloudflare Containers**: a Worker in front routes each visitor to a
-  container instance (Durable Object per session = the broker); needs
-  the image in Cloudflare's registry (linux/amd64), websocket
-  passthrough from the Worker, instance sleep/teardown after `ended`, and
-  egress blocked (the image needs none). Pay per running instance.
-- **Fly.io**: Fly Machines API as the broker — create a machine per
-  visitor from the image, route with `fly-replay` or a small proxy app,
-  destroy on `ended`/disconnect; `auto_stop` for idle. Egress: Fly has
-  no per-machine egress switch — keep machines in a private network
-  with no public egress or accept outbound and rely on there being
-  nothing to reach out with.
-- Both: build for linux/amd64 (`docker build --platform linux/amd64`;
-  the Dockerfile is arch-agnostic), set `MNML_DEMO_PORT`, keep
-  `MNML_DEMO_LISTEN` unset (TCP), and put the broker of
-  `broker/README.md` in front.
+`cloudflare/` is the hosted form, at **mnml.sh/demo**: a Worker on the
+zone's `/demo` route, a Durable Object per visitor session (`?s=<id>`)
+that starts one container from this image built for linux/amd64
+(`cloudflare/build-image.sh`), no egress, and a control mode
+(`DEMO_CONTROL`: view / ask / open) the Worker enforces. How to run it
+under `wrangler dev`, deploy it, what it costs and how to roll it back:
+`cloudflare/README.md`. The page and runner here serve both: the page
+uses relative URLs and carries `?s=` when it has one; the runner listens
+on `MNML_DEMO_LISTEN=unix:/path` (the local trial) or `tcp:HOST:PORT`
+(hosted).
