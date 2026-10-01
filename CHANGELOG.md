@@ -104,6 +104,10 @@ the release ships one file), and one line per change a user can see.
   `● …/mnml-zig-worktrees/sidecar/`, or `● …car/` at the stock width — so
   the folder's name is what survives, not `● /Use…`. A root switched to
   names its folder beside the others, like any added root.
+- Resting the pointer on an auto-hiding dock's `⋯` grip brings the strip up
+  when `ui.dock.reveal_ms` runs out. Before, the strip came up only on the
+  next pointer event after that: a single hover (an IPC `hover`, a hand that
+  stops moving) showed nothing.
 - An auto-hiding bottom dock above the statusline (the default placement)
   showed its `⋯` grip on the screen's last row but brought its items up two
   rows higher. The grip now sits on the row the items appear on — hover it,
