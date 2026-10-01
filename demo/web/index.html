@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mnml demo</title>
 <meta name="description" content="A real mnml, running in a container, in your browser.">
-<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="vendor/xterm.css">
 <style>
 /* The terminal's font is one family built from three files by
    unicode-range — JetBrains Mono for text, Symbols Nerd Font Mono for the
@@ -14,14 +14,14 @@
    families: the canvas renderer drew the Nerd Font's supplementary-plane
    icons (the Material Design set) as boxes through the ranged face. No
    weight ranges on the symbol faces: Chrome never matched them with one. */
-@font-face { font-family: "mnml mono"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; unicode-range: U+E000-F8FF, U+F0000-F1AFF, U+F2100-FFFFD; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; unicode-range: U+F1B00-F20FF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Regular.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Bold.woff2) format("woff2"); font-weight: 700; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-BoldItalic.woff2) format("woff2"); font-weight: 700; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml nf"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; }
-@font-face { font-family: "mnml marks"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; }
+@font-face { font-family: "mnml mono"; src: url(fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; unicode-range: U+E000-F8FF, U+F0000-F1AFF, U+F2100-FFFFD; }
+@font-face { font-family: "mnml mono"; src: url(fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; unicode-range: U+F1B00-F20FF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Regular.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Bold.woff2) format("woff2"); font-weight: 700; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-BoldItalic.woff2) format("woff2"); font-weight: 700; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml nf"; src: url(fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; }
+@font-face { font-family: "mnml marks"; src: url(fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; }
 /* The site's window frame (site/src/styles/global.css, `.window`): a
    macOS Ghostty window measured off a screenshot — a short title bar in
    #24272d, three lights, the folder proxy icon and the title after them.
@@ -173,9 +173,9 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     <span class="status" id="status">connecting…</span>
   </div>
   <p class="note" id="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
-<script src="/vendor/xterm.js"></script>
-<script src="/vendor/addon-canvas.js"></script>
-<script src="/vendor/addon-unicode11.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-canvas.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
 <script>
 // The terminal: xterm.js and ttyd's websocket protocol, here rather than
 // ttyd's own client, because ttyd's client fits the terminal to its page
@@ -195,6 +195,18 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   const T0 = performance.now();
   const trace = (msg) => { (window.mnmlDemoTrace = window.mnmlDemoTrace || []).push(Math.round(performance.now() - T0) + "ms " + msg); };
   let term = null, ws = null, connected = false, everConnected = false;
+
+  // Behind the hosted demo's Worker (demo/cloudflare/) the page is
+  // `?s=<session>`: every container is one visitor's, and each request
+  // names its own, so two tabs are two containers. The local trial has
+  // no `s`. Every path is relative, so the page also works under a route
+  // prefix (`/demo/`).
+  const SESSION = new URLSearchParams(location.search).get("s");
+  const u = (path) => {
+    const url = new URL(path, location.href);
+    if (SESSION) url.searchParams.set("s", SESSION);
+    return url.toString();
+  };
 
   // ── the font size: the largest at which 200x60 cells fit the window ──
   function space() {
@@ -243,10 +255,11 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     buf[0] = prefix.charCodeAt(0); buf.set(bytes, 1);
     ws.send(buf);
   }
+  let tries = 0;
   async function connect() {
     let token = "";
-    try { token = (await (await fetch("/term/token", { cache: "no-store" })).json()).token || ""; } catch (_) {}
-    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/term/ws", ["tty"]);
+    try { token = (await (await fetch(u("term/token"), { cache: "no-store" })).json()).token || ""; } catch (_) {}
+    ws = new WebSocket(u("term/ws").replace(/^http/, "ws"), ["tty"]);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       connected = everConnected = true;
@@ -260,7 +273,12 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       const d = new Uint8Array(e.data);
       if (d[0] === 0x30) term.write(d.subarray(1));
     };
-    ws.onclose = () => { connected = false; trace("websocket closed"); poll(); };
+    ws.onclose = () => {
+      connected = false; trace("websocket closed"); poll();
+      // A first connection can fail while the sandbox is still starting
+      // (hosted, the container comes up with this page): try again.
+      if (!everConnected && ++tries < 20) setTimeout(connect, 500 * Math.min(tries, 4));
+    };
   }
 
   async function start() {
@@ -355,26 +373,30 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     if (ev.kind === "drag") setTimeout(() => { press(p, "left"); ptr.classList.add("drag"); place(ev.to_col, ev.to_row); }, lead - 60);
     ptrHide = setTimeout(() => ptr.classList.remove("on"), 4000);
   }
+  let es = null;
   try {
-    const es = new EventSource("/api/pointer");
+    es = new EventSource(u("api/pointer"));
     es.onmessage = (m) => { try { onPointer(JSON.parse(m.data)); } catch (_) {} };
   } catch (_) {}
 
   // ── the controls and the runner's state ──
   async function post(path) {
-    try { const r = await fetch(path, { method: "POST" }); return await r.json(); } catch (_) { return null; }
+    try { const r = await fetch(u(path), { method: "POST" }); return await r.json(); } catch (_) { return null; }
   }
   const focusTerm = () => term && term.focus();
-  $("replay").onclick = async () => { await post("/api/replay"); poll(); focusTerm(); };
+  $("replay").onclick = async () => { await post("api/replay"); poll(); focusTerm(); };
   $("picker").onchange = async (e) => {
     const v = e.target.value; e.target.value = "";
-    if (v) { await post("/api/play?flow=" + encodeURIComponent(v)); poll(); }
+    if (v) { await post("api/play?flow=" + encodeURIComponent(v)); poll(); }
     focusTerm();
   };
-  const takeOver = async () => { await post("/api/stop"); poll(); focusTerm(); };
+  const takeOver = async () => { await post("api/stop"); poll(); focusTerm(); };
   $("banner").onclick = takeOver;
   $("banner").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") takeOver(); };
   $("again").onclick = () => {
+    // Hosted: a new container (the Worker's `new` mints a session); the
+    // old one is left to sleep.
+    if (SESSION) { location.assign(new URL("new", location.href).pathname); return; }
     document.body.dataset.phase = "starting";
     if (ws) { ws.onclose = null; ws.close(); }
     term.reset();
@@ -385,13 +407,21 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
   async function poll() {
     let st;
-    try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "the demo server is not answering"; return; }
+    try { st = await (await fetch(u("api/state"), { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "the demo server is not answering"; return; }
     // This page's own connection decides "not connected": the runner's
     // phase can belong to another tab's session.
     let phase = st.phase;
     if (!connected && everConnected && phase !== "ended") phase = "lost";
     if (!connected && !everConnected) phase = "connecting";
     document.body.dataset.phase = phase;
+    // Hosted, a session that ended is over for good: let go of the
+    // container (no polling, no streams) so it can sleep; "Start again"
+    // asks for a new one.
+    if (SESSION && phase === "ended" && pollT) {
+      clearInterval(pollT); pollT = 0;
+      if (es) es.close();
+      if (ws) { ws.onclose = null; ws.close(); }
+    }
     if (phase !== "tour") ptr.classList.remove("on");
     const mins = Math.round(st.cap_s / 60);
     if (phase === "lost") {
@@ -417,7 +447,8 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       phase === "lost" ? "not connected" :
       phase === "starting" || phase === "idle" ? "starting mnml…" : "connecting…";
   }
-  poll(); setInterval(poll, 1000);
+  let pollT = setInterval(poll, 1000);
+  poll();
 })();
 </script>
 </body>
