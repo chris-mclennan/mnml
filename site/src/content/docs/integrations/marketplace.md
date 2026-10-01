@@ -80,6 +80,12 @@ does.
 When the index has a newer version of an integration you have, its row
 says *update available*. Installing it again replaces the old build.
 
+The index comes with each mnml release and lists the integrations built
+for that release, so a newer integration can reach you only with a
+newer mnml. When an integration fix ships alongside an mnml release —
+as Jira and Bitbucket 0.2.1 did with mnml 0.3.1 — update mnml first,
+then update the integration here.
+
 ## Rebuilding
 
 An integration built from a folder (a private source, or the Dev tab)
