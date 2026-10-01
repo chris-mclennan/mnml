@@ -2,7 +2,7 @@
 //! what a brand-new user sees and nothing you do reaches your real
 //! config, state or credentials.
 //!
-//! `mnml-zig --sandbox [WS]` makes a fresh `mnml-sandbox-XXXXXXXX`
+//! `mnml --sandbox [WS]` makes a fresh `mnml-sandbox-XXXXXXXX`
 //! directory under the temp root (`$TMPDIR`, else `/tmp`) and re-executes
 //! itself — the same pid, `execve` — with this environment on top of the
 //! one it was started with (everything else passes through unchanged):
@@ -236,7 +236,7 @@ fn getpid() i64 {
 pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_w: *Io.Writer, takes_value: *const fn ([]const u8) bool) !?u8 {
     if (!wanted(args)) return null;
     if (comptime !supported) {
-        try err_w.writeAll("mnml-zig: --sandbox is not supported on Windows (it re-executes itself, which Windows cannot);\n" ++
+        try err_w.writeAll("mnml: --sandbox is not supported on Windows (it re-executes itself, which Windows cannot);\n" ++
             "  set HOME, XDG_CONFIG_HOME and MNML_DATA_ROOT to a throwaway directory by hand instead\n");
         return 2;
     }
@@ -244,7 +244,7 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
     // The re-exec appends the demo's own workspace: only the first
     // entry can have been handed one.
     if (is_demo and demo.workspaceOf(env) == null and hasPositional(args, takes_value)) {
-        try err_w.writeAll("mnml-zig: --demo opens its own workspace; drop the path (or use --sandbox with it)\n");
+        try err_w.writeAll("mnml: --demo opens its own workspace; drop the path (or use --sandbox with it)\n");
         return 2;
     }
     if (alreadyInside(env)) {
@@ -252,7 +252,7 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
         // a home that already is throwaway has no workspace and no fakes
         // set up, so it is not half-run.
         if (is_demo and demo.workspaceOf(env) == null) {
-            try err_w.writeAll("mnml-zig: --demo cannot start inside a sandbox (HOME is already throwaway); run it from your own shell\n");
+            try err_w.writeAll("mnml: --demo cannot start inside a sandbox (HOME is already throwaway); run it from your own shell\n");
             return 2;
         }
         if (nonEmpty(env, env_var) == null) try env.put(env_var, env.get("HOME").?);
@@ -261,15 +261,15 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
     // The re-executed process is this pid: if it still is not inside, a
     // second exec would only loop.
     if (nonEmpty(env, owner_env)) |p| if (std.fmt.parseInt(i64, p, 10) catch -1 == getpid()) {
-        try err_w.writeAll("mnml-zig: --sandbox: the re-executed environment is still not a sandbox; refusing to loop\n");
+        try err_w.writeAll("mnml: --sandbox: the re-executed environment is still not a sandbox; refusing to loop\n");
         return 70;
     };
     const root = create(arena, io, os_path.tempDir(env, .posix), if (is_demo) demo.workspace_name else "workspace") catch |err| {
-        try err_w.print("mnml-zig: --sandbox: cannot create the sandbox under {s}: {s}\n", .{ os_path.tempDir(env, .posix), @errorName(err) });
+        try err_w.print("mnml: --sandbox: cannot create the sandbox under {s}: {s}\n", .{ os_path.tempDir(env, .posix), @errorName(err) });
         return 70;
     };
     const exe = std.process.executablePathAlloc(io, arena) catch |err| {
-        try err_w.print("mnml-zig: --sandbox: cannot find this binary: {s}\n", .{@errorName(err)});
+        try err_w.print("mnml: --sandbox: cannot find this binary: {s}\n", .{@errorName(err)});
         return 70;
     };
     const extra: Extra = if (is_demo) .{
@@ -282,10 +282,10 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
     for (p.unset) |k| _ = child_env.swapRemove(k);
     for (p.set) |kv| try child_env.put(kv[0], kv[1]);
     for (p.extra) |kv| try child_env.put(kv[0], kv[1]);
-    try err_w.print("mnml-zig: {s}: HOME={s} (removed on exit; --sandbox-keep keeps it)\n", .{ if (is_demo) demo.flag else flag, root });
+    try err_w.print("mnml: {s}: HOME={s} (removed on exit; --sandbox-keep keeps it)\n", .{ if (is_demo) demo.flag else flag, root });
     try err_w.flush();
     const err = std.process.replace(io, .{ .argv = p.argv, .environ_map = &child_env });
-    try err_w.print("mnml-zig: --sandbox: exec failed: {s}\n", .{@errorName(err)});
+    try err_w.print("mnml: --sandbox: exec failed: {s}\n", .{@errorName(err)});
     Io.Dir.cwd().deleteTree(io, root) catch {};
     return 70;
 }
@@ -306,14 +306,14 @@ pub fn owned(env: *const Map, pid: i64) ?[]const u8 {
 pub fn finish(io: Io, env: *const Map, args: []const []const u8, err_w: *Io.Writer) void {
     const root = owned(env, getpid()) orelse return;
     if (keep(args)) {
-        err_w.print("mnml-zig: sandbox kept at {s}\n", .{root}) catch {};
+        err_w.print("mnml: sandbox kept at {s}\n", .{root}) catch {};
     } else {
         Io.Dir.cwd().deleteTree(io, root) catch |err| {
-            err_w.print("mnml-zig: sandbox {s} not removed: {s}\n", .{ root, @errorName(err) }) catch {};
+            err_w.print("mnml: sandbox {s} not removed: {s}\n", .{ root, @errorName(err) }) catch {};
             err_w.flush() catch {};
             return;
         };
-        err_w.print("mnml-zig: sandbox {s} removed\n", .{root}) catch {};
+        err_w.print("mnml: sandbox {s} removed\n", .{root}) catch {};
     }
     err_w.flush() catch {};
 }

@@ -1,7 +1,7 @@
 //! `--demo`: a populated mnml you can try without touching anything of
 //! yours and without the network.
 //!
-//! `mnml-zig --demo` is `--sandbox` (`sandbox.zig`: a throwaway home,
+//! `mnml --demo` is `--sandbox` (`sandbox.zig`: a throwaway home,
 //! removed on exit) with a workspace in it. The re-exec that makes the
 //! sandbox also sets, on top of the sandbox's own variables:
 //!
