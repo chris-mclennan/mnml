@@ -25,11 +25,19 @@ your terminal it can do here. mnml finds both on your `PATH`.
 | `ai.codex` | `space a x` | Focus the running Codex session, or start one. |
 | `ai.codex_new` | `space a X` | A new Codex session. |
 | `ai.new_session_worktree` | — | A new Claude Code session in its own git worktree. |
+| `ai.claude_code_new_tab` / `ai.codex_new_tab` | — | A new session as a tab beside the current one, without a split. |
+| `ai.claude_code_new_page` / `ai.codex_new_page` | — | A new session on a tab page of its own. |
 
 The `space …` chords are the vim profile's leader; in the standard
 profile `ctrl+k` opens the same which-key menu, so `ctrl+k a c` starts a
 session. There are also `_left`, `_right`, `_top` and `_bottom`
 variants that open a session in that half of the screen.
+
+The same placements are on the Claude Code and Codex chips in the
+tab strip, which appear when mnml finds the program on your `PATH`
+(`ui.tab_bar_ai_icon` chooses which). Right-click a chip for a menu
+that opens a new session in any half of the screen, *in a new tab* or
+*in a new tab page*, and switches the layout between grid and tabs.
 
 By default (`ui.ai_layout_mode = .grid`), Claude Code sessions tile
 themselves: two sit side by side, the third makes a 2×2 grid, and the
@@ -40,6 +48,41 @@ to open each session as a tab instead.
 mnml starts each Claude Code session with a session id of its own
 choosing, so it knows which transcript belongs to which pane from the
 first frame.
+
+## Moving between sessions
+
+Once sessions are spread across splits, stacked tabs and other tab
+pages, two commands step through all of them in one ring:
+
+| Command | vim | standard |
+| ------- | --- | -------- |
+| `ai.focus_next_session` | `ctrl+alt+pagedown`, or `] a` in an editor | `ctrl+alt+pagedown` |
+| `ai.focus_prev_session` | `ctrl+alt+pageup`, or `[ a` in an editor | `ctrl+alt+pageup` |
+
+The ring holds every Claude Code and Codex pane, running or ended, in a
+fixed order: tab page by tab page, then left to right and top to bottom
+within a page, then each split's tabs in strip order, and last the
+sessions in the bottom dock. A step wraps at both ends, brings the tab
+page that holds the session on screen, and gives that session the keys.
+A docked session is shown in the dock rather than pulled back into the
+splits. From a pane that is not a session, *next* goes to the first
+session and *previous* to the last. A notice names where you landed,
+as in `session 3/7 · <name>`.
+
+In the vim profile, `] a` and `[ a` (typed `]a` and `[a`) take a count:
+`3]a` moves three sessions on. They are editor keys — a session pane is a terminal, so
+from inside one use the `ctrl+alt` chord, which works everywhere in
+both profiles.
+
+Two places show your position in the ring:
+
+- **The session's own tab strip** shows ` ‹ 3/7 › ` beside its mode
+  chip. Click `‹` or `›` to step from that session. A narrow strip
+  drops the number first, then the arrows.
+- **The statusline** carries a sessions chip while any session is open:
+  the number of sessions, or the focused session's place (`3/7`), with
+  arrows either side that step the same way. Click the chip itself to
+  open the SESSIONS section.
 
 ## Knowing which session needs you
 
@@ -101,6 +144,14 @@ Two agents editing the same checkout will trip over each other.
 worktree, with its tab labelled `@ <name>`. By default the worktrees go
 in a `<repo>-worktrees` folder beside your repository;
 `ai.default_worktree_root` moves them.
+
+To make it the rule rather than a one-off, set `worktree = true` on a
+launch profile (`ai.launch_profiles`): every session of that profile
+asks for a branch name and starts in a worktree of its own. That holds
+wherever the session was asked for — a split, *in a new tab* or *in a
+new tab page* from the chip menu — and the session opens there once you
+answer the prompt. A workspace you have not trusted cannot turn this on
+for you; see [Workspace trust](/docs/config#workspace-trust).
 
 When the session is done, the row commands finish the job:
 
