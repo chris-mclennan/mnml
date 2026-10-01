@@ -47,6 +47,10 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- Closing panes another tab page shows — `view.close_others` closes every
+  pane, not just this page's — no longer leaves that page pointing at them.
+  The next pane opened (the git status pane, say) was given a freed slot,
+  appeared on both pages, and mnml crashed the next time it was shown.
 - In the demo's shell, `claude` and `codex` are the stand-ins even where a
   login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
   `PATH`, so a real CLI installed there is not the one that answers.
