@@ -4,7 +4,8 @@ description: Open a project, answer the first-launch questions once, and find ev
 ---
 
 This page assumes mnml is [installed](/docs/install) and `mnml --version`
-prints a version.
+prints a version. To try mnml without it touching your own config first,
+see [Try It First](/docs/install/try).
 
 ## Opening a project
 
