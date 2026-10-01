@@ -118,6 +118,11 @@ pub const Driver = struct {
         /// never does, as it never runs the `startup` hook either.
         shutdown: *const fn (*anyopaque) void,
         deinit: *const fn (*anyopaque) void,
+        /// The layout invariant, broken: a sentence naming the pane
+        /// tabbed in two leaves of one page (or a tab for a closed
+        /// pane), or null when every page is well formed. The runner asks after every step. A driver with
+        /// no layout to inspect leaves it null.
+        layoutFault: ?*const fn (*anyopaque, Allocator) Error!?[]u8 = null,
     };
 
     pub fn open(d: Driver, path: []const u8) Error!void {
@@ -186,6 +191,11 @@ pub const Driver = struct {
     pub fn shutdown(d: Driver) void {
         d.vtable.shutdown(d.ptr);
     }
+    pub fn layoutFault(d: Driver, a: Allocator) Error!?[]u8 {
+        const f = d.vtable.layoutFault orelse return null;
+        return f(d.ptr, a);
+    }
+
     pub fn deinit(d: Driver) void {
         d.vtable.deinit(d.ptr);
     }

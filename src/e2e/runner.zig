@@ -534,6 +534,10 @@ const Run = struct {
                 self.noteQuit();
                 if (self.quit) continue;
                 if (self.renderCycle()) |msg| return self.failMsg(msg);
+                if (self.layoutFault()) |msg| {
+                    defer self.gpa.free(msg);
+                    return self.fail("line {d}: {s}", .{ line.ln, msg });
+                }
                 self.noteQuit();
             },
             .check => |check| {
@@ -560,6 +564,14 @@ const Run = struct {
         defer arena.deinit();
         const st = d.status(arena.allocator()) catch return;
         if (st.quit) self.quit = true;
+    }
+
+    /// The driver's layout invariant (`Driver.layoutFault`), checked
+    /// after every step: a pane in two leaves of one page fails the
+    /// file at the step that left it there, whatever the script expects.
+    fn layoutFault(self: *Run) ?[]u8 {
+        const d = self.driver orelse return null;
+        return d.layoutFault(self.gpa) catch |e| self.errMsg("layout: {s}", e);
     }
 
     fn failMsg(self: *Run, msg: []u8) Outcome {

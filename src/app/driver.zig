@@ -147,7 +147,13 @@ pub const AppDriver = struct {
         .requestQuit = vRequestQuit,
         .shutdown = vShutdown,
         .deinit = vDeinit,
+        .layoutFault = vLayoutFault,
     };
+
+    fn vLayoutFault(p: *anyopaque, a: Allocator) Error!?[]u8 {
+        const f = cast(p).app.layoutFault() orelse return null;
+        return try std.fmt.allocPrint(a, "{f}", .{f});
+    }
 
     fn vOpen(p: *anyopaque, path: []const u8) Error!void {
         const app = &cast(p).app;

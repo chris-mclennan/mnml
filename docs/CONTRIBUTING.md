@@ -122,6 +122,13 @@ then splits M: `content` runs evaluated the file's assertions,
 `structure-only` runs did not. `10 content` in a 30-run sweep means
 twenty of those thirty runs said nothing about what was on the screen.
 
+At every size the runner also checks the layout after each step: a pane
+is in at most one leaf of a tab page, and no tab names a closed pane
+(`App.layoutFault`). A break fails the file at the step that left it,
+whatever the script expects (`line 74: layout invariant: tab page 1 has
+a tab for pane 4, which is closed`). Debug builds check the same after
+every command, event and tick and panic there, naming the command.
+
 ### Writing a test that asserts AT a size
 
 Two ways, and they answer different questions.

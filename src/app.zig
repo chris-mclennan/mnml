@@ -1202,6 +1202,9 @@ pub const App = struct {
     /// Outlives `panes`: a pane's buffer releases its document here.
     docs: *DocStore,
     layouts: LayoutState,
+    /// `checkLayoutInvariant` runs (Debug builds). Off only in a test
+    /// that builds a broken layout on purpose.
+    layout_check: bool = true,
     tree: tree_mod.Tree,
     /// The sidebar's info view (`app/info_view.zig`).
     info_view: info_view_app.State = .{},
@@ -3070,6 +3073,12 @@ pub const App = struct {
         for (self.layouts.layouts.items) |*l| while (l.leafOf(id) != null) {
             _ = l.removePane(id);
         };
+        // So does the editor layout git mode put aside
+        // (`git_palette.enter`): it is in no page while the mode holds,
+        // and leaving the mode puts it back as it is — a closed pane's
+        // id with it, as a tab of nothing until a new pane takes the slot
+        // and is shown twice.
+        git_palette_app.forgetPane(self, id);
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
@@ -3308,7 +3317,46 @@ pub const App = struct {
 
     // ─── the loop's three entry points ───
 
+    /// The layout's invariant, broken: a pane tabbed in two leaves of
+    /// one page, or a tab naming a pane the store no longer has (its
+    /// slot is the next new pane's, which would then sit in two places).
+    pub const LayoutFault = struct {
+        page: usize,
+        pane: PaneId,
+        kind: enum { twice, dangling },
+
+        pub fn format(f: LayoutFault, w: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (f.kind) {
+                .twice => try w.print("layout invariant: pane {d} is tabbed in two leaves of tab page {d}", .{ f.pane, f.page + 1 }),
+                .dangling => try w.print("layout invariant: tab page {d} has a tab for pane {d}, which is closed", .{ f.page + 1, f.pane }),
+            }
+        }
+    };
+
+    /// The first `LayoutFault` over every tab page, or null.
+    pub fn layoutFault(self: *App) ?LayoutFault {
+        if (self.layouts.violation()) |v| return .{ .page = v.page, .pane = v.pane, .kind = .twice };
+        for (self.layouts.layouts.items, 0..) |*l, page| for (l.nodes.items) |n| switch (n) {
+            .leaf => |lf| for (lf.tabs.items) |tab| {
+                if (self.panes.get(tab) == null) return .{ .page = page, .pane = tab, .kind = .dangling };
+            },
+            else => {},
+        };
+        return null;
+    }
+
+    /// Debug builds: a broken layout (`layoutFault`) is a bug at
+    /// whatever just ran, so it stops there, naming `after`, rather than
+    /// surfacing later as a stray tab or a crash in the next walk over
+    /// the leaves. A test that builds a broken shape on purpose turns
+    /// `layout_check` off.
+    pub fn checkLayoutInvariant(self: *App, after: []const u8) void {
+        if (builtin.mode != .Debug or !self.layout_check) return;
+        if (self.layoutFault()) |f| std.debug.panic("{f} (after {s})", .{ f, after });
+    }
+
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
+        defer self.checkLayoutInvariant(@tagName(ev));
         script_task.startDeferred(self);
         // A wheel burst folds into one motion; anything else flushes
         // what is pending first so order is kept (`scroll.zig`). A
@@ -3497,6 +3545,7 @@ pub const App = struct {
 
     /// Timers: the chord chain, toast expiry, the deferred replays.
     pub fn tick(self: *App, now: i64) Allocator.Error!void {
+        defer self.checkLayoutInvariant("tick");
         script_task.startDeferred(self);
         self.now_ms = now;
         try self.pumpEvents();

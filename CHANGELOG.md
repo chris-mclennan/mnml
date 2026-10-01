@@ -54,6 +54,12 @@ the release ships one file), and one line per change a user can see.
   pane, not just this page's — no longer leaves that page pointing at them.
   The next pane opened (the git status pane, say) was given a freed slot,
   appeared on both pages, and mnml crashed the next time it was shown.
+- A pane closed while git mode was showing — the web demo's tour does this
+  between its git and terminal flows — stayed behind in the editor layout
+  the mode had put aside. Leaving the mode brought it back as a tab of
+  nothing, and the next pane opened took its slot and appeared in two
+  splits at once (`view.only` then crashed). Closing a pane now clears it
+  there too, and a split never shows a pane twice.
 - In the demo's shell, `claude` and `codex` are the stand-ins even where a
   login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
   `PATH`, so a real CLI installed there is not the one that answers.
