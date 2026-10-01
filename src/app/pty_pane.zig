@@ -1294,6 +1294,26 @@ pub fn linkAt(p: *PtyPane, x: u16, y: u16) ?[]const u8 {
     return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
 }
 
+/// The link under screen cell (`x`, `y`): an OSC 8 hyperlink the child
+/// printed (`linkAt`), else a plain `scheme://…` URL in the row's text —
+/// what `cat` of a log or a README leaves on screen. On `arena`.
+pub fn linkUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?[]const u8 {
+    if (linkAt(p, x, y)) |url| return try arena.dupe(u8, url);
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    const session = p.session orelse return null;
+    const screen = session.terminal().screens.active;
+    const pin = pinAt(p, x, y) orelse return null;
+    const line = screen.selectLine(.{ .pin = pin, .whitespace = null }) orelse return null;
+    const text = try screen.selectionString(arena, .{ .sel = line, .trim = false });
+    // The row's text starts at the pane's left edge; the column is a
+    // byte offset there for ASCII rows (a URL is ASCII).
+    const col: usize = x - b.x;
+    const left = line.topLeft(screen).x;
+    if (col < left) return null;
+    return @import("lsp_decor.zig").urlAt(text, col - left);
+}
+
 // ─── selection ──────────────────────────────────────────────────────────
 
 /// A cell rectangle on the screen.
@@ -2149,6 +2169,36 @@ test "paste in a terminal pane, both profiles: Ctrl+Shift+V and Shift+Insert pas
         try app.handle(.{ .key = Key.named(.enter) });
         try t.expect(try tickUntilScreen(&app, "▌PASTEDPASTED^Vq ", 5000));
     }
+}
+
+test "right-click on a link in a terminal pane: Copy link and Open link above Copy; Copy link puts the URL on the clipboard; off a link the menu starts at Copy" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'see https://example.com/a/b. here\n'; sleep 30" }, .label = "link" });
+    try t.expect(try tickUntilScreen(&app, "see https://example.com", 5000));
+    const p = app.panes.pty(id).?;
+    const b = p.body;
+    // Cell 10 is inside the URL; the trailing `.` is not part of it.
+    try app.handle(.{ .mouse = .{ .x = b.x + 10, .y = b.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    const its = app.overlay.menu.items;
+    try t.expectEqualStrings("Copy link", its[0].label);
+    try t.expectEqualStrings("https://example.com/a/b", its[0].action.copy_link);
+    try t.expectEqualStrings("Open link", its[1].label);
+    try t.expectEqualStrings("https://example.com/a/b", its[1].action.open_url);
+    try t.expectEqualStrings("Copy", its[2].label);
+    try @import("dispatch.zig").runMenuActionForTest(&app, its[0].action);
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("https://example.com/a/b", app.clipboard.text());
+    try t.expectEqualStrings("link copied", app.lastToast().?);
+    // On `see`: no link rows.
+    try app.handle(.{ .mouse = .{ .x = b.x + 1, .y = b.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Copy", app.overlay.menu.items[0].label);
 }
 
 test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader and Ctrl-W work and i returns; <C-x> too; a lone <C-\\> reaches the child" {

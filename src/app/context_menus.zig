@@ -1313,8 +1313,16 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
     const current: ?[]const u8 = if (app.panes.pty(pane)) |pt| pt.accent_color else null;
-    const rows = try items(app, &.{
-        .{ .label = "Copy", .action = .{ .command = .@"term.copy" } },
+    // A right-click on a link: copy it or open it, above the selection's
+    // Copy (a right-click makes no selection).
+    const link: ?[]const u8 = if (app.panes.pty(pane)) |pt| try pty_pane.linkUnder(mem.allocator(), pt, x, y) else null;
+    var all: std.ArrayList(MenuItem) = .empty;
+    if (link) |url| try all.appendSlice(mem.allocator(), &.{
+        .{ .label = "Copy link", .action = .{ .copy_link = url } },
+        .{ .label = "Open link", .action = .{ .open_url = url } },
+    });
+    try all.appendSlice(mem.allocator(), &.{
+        .{ .label = "Copy", .action = .{ .command = .@"term.copy" }, .separator_before = link != null },
         .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
         .{ .label = "Clear (Ctrl+L)", .action = .{ .command = .@"term.clear" } },
         .{ .label = "Restart", .action = .{ .command = .@"term.restart" } },
@@ -1331,6 +1339,7 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
         .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, current) },
         .{ .label = "Close pane", .action = .{ .command = .@"buffer.close" } },
     });
+    const rows = try items(app, all.items);
     errdefer app.gpa.free(rows);
     try app.openMenu(p.title(), rows, x, y);
     app.overlay.menu.mem = mem;

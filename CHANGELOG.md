@@ -49,6 +49,10 @@ the release ships one file), and one line per change a user can see.
 
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
+- Right-click on a link in a terminal or session pane offers "Copy link" and
+  "Open link" above "Copy" (a right-click selects nothing, so Copy had
+  nothing to copy); a hyperlink the program printed or a plain `https://…`
+  in the output both count.
 - Ctrl+Shift+V and Shift+Insert paste the clipboard into a terminal pane in
   both profiles (Shift+Insert used to send the program a raw key); plain
   Ctrl+V stays the program's (Claude Code's image paste).
