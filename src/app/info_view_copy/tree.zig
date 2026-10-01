@@ -183,7 +183,9 @@ pub fn node(app: *App, arena: Allocator, idx: u32) Allocator.Error!?Entry {
 
 pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
     if (r == 0) return .{
-        .title = "Workspace root",
+        // Beside other roots the header names only the folder; the
+        // hover names the whole path.
+        .title = try std.fmt.allocPrint(arena, "Workspace root: {s}", .{try tree_mod.wsLabel(app, arena)}),
         .body = "Names the folder the tree is rooted at — click to collapse or expand the whole tree, Alt+click to fold or open every directory. The chips on the row make a folder or a file, pull, fold every directory, and rescan. Right-click is the workspace menu: a new file or folder, add, switch or manage workspaces, copy the path, refresh.",
         .keys = &.{.{ .chord = "Alt+click", .label = "Fold / open every directory" }},
         .links = &.{ .{ .command = .{ .id = .@"view.add_workspace", .label = "Add a workspace root" } }, .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch workspace" } } },

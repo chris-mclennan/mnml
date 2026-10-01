@@ -44,6 +44,9 @@ the release ships one file), and one line per change a user can see.
   requests, counting that repo's hidden rows and showing that repo's when
   pressed. It used to be one row at the end of the tree, under the last
   repo's header, where it read as the last repo's.
+- With a second workspace root in the tree, the primary root's header names
+  its folder, as the added root's does, instead of its absolute path (cut to
+  `● /Use…` at the stock width); the path is the header's hover.
 
 ## v0.3.1
 
