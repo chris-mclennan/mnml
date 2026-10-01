@@ -8,8 +8,9 @@
 //! * a PR tab shows only the state it advertises (an Open tab never
 //!   leaks a merged row in through a mine-only peek);
 //! * a workspace tab keeps pull requests updated in the last 24 hours
-//!   and hides the rest behind a `Show more (N)` footer row,
-//!   which `show_all` lifts — up to twenty merged rows per repo;
+//!   and hides the rest behind a `Show more (N)` row under that repo's
+//!   pull requests, which lifts the fold for that repo (`show_all`
+//!   lifts every repo's) — up to twenty merged rows per repo;
 //! * a mine-only tab shows every open PR plus one merged peek.
 //!
 //! One list of `VisibleRow`, built once per frame, is what both the
@@ -109,6 +110,9 @@ pub const Expanded = struct {
     gpa: Allocator,
     repos: std.StringHashMapUnmanaged(void) = .empty,
     prs: std.StringHashMapUnmanaged(void) = .empty,
+    /// The repos whose `Show more (N)` was pressed: every row the
+    /// tab's window hid under that repo shows. A fetch folds them again.
+    more: std.StringHashMapUnmanaged(void) = .empty,
 
     pub fn init(gpa: Allocator) Expanded {
         return .{ .gpa = gpa };
@@ -117,6 +121,7 @@ pub const Expanded = struct {
     pub fn deinit(e: *Expanded) void {
         freeKeys(e.gpa, &e.repos);
         freeKeys(e.gpa, &e.prs);
+        freeKeys(e.gpa, &e.more);
         e.* = undefined;
     }
 
@@ -143,6 +148,28 @@ pub const Expanded = struct {
 
     pub fn toggleRepo(e: *Expanded, slug: []const u8) Allocator.Error!void {
         try e.setRepo(slug, !e.hasRepo(slug));
+    }
+
+    pub fn hasMore(e: *const Expanded, slug: []const u8) bool {
+        return e.more.contains(slug);
+    }
+
+    /// Lift (or put back) the window that folds `slug`'s older rows.
+    pub fn setMore(e: *Expanded, slug: []const u8, on: bool) Allocator.Error!void {
+        if (on) {
+            if (e.more.contains(slug)) return;
+            const k = try e.gpa.dupe(u8, slug);
+            errdefer e.gpa.free(k);
+            try e.more.put(e.gpa, k, {});
+        } else if (e.more.fetchRemove(slug)) |kv| {
+            e.gpa.free(kv.key);
+        }
+    }
+
+    pub fn clearMore(e: *Expanded) void {
+        var it = e.more.keyIterator();
+        while (it.next()) |k| e.gpa.free(k.*);
+        e.more.clearRetainingCapacity();
     }
 
     pub fn clearRepos(e: *Expanded) void {
@@ -203,8 +230,10 @@ pub const VisibleRow = union(enum) {
     build_note: struct { repo: usize, idx: usize, kind: NoteKind },
     /// A branch under an expanded repo of the pipelines tree.
     branch: struct { repo: usize, idx: usize },
-    /// `Show more (N)`, over the rows the cap hid.
-    show_more: struct { hidden: usize, merged: bool },
+    /// `Show more (N)`, over the rows the cap hid in repo `repo` — the
+    /// row after that repo's last pull request, so it reads as the
+    /// repo's and not as the next header's.
+    show_more: struct { repo: usize, hidden: usize, merged: bool },
     /// A row of a flat list.
     flat: usize,
 
@@ -322,12 +351,17 @@ pub fn visibleRows(arena: Allocator, c: VisibleCtx) Allocator.Error!View {
     const f = c.effective();
     switch (c.data) {
         .repo_pr_tree => |repos| {
-            var hidden: usize = 0;
             for (repos, 0..) |r, ri| {
                 try out.append(arena, .{ .repo_header = .{ .repo = ri } });
                 cells += 1;
                 if (!c.expanded.hasRepo(r.slug)) continue;
-                for (try visiblePrs(arena, c, r.prs, &hidden)) |pi| {
+                // Each repo folds its own older rows, and its own
+                // `Show more (N)` lifts them: one footer at the end of
+                // the tab read as the LAST repo's.
+                var rc = c;
+                rc.show_all = c.show_all or c.expanded.hasMore(r.slug);
+                var hidden: usize = 0;
+                for (try visiblePrs(arena, rc, r.prs, &hidden)) |pi| {
                     const pr = r.prs[pi];
                     // Every pull request folds out to its builds — an
                     // open one to the runs on its branch head, a merged
@@ -355,10 +389,10 @@ pub fn visibleRows(arena: Allocator, c: VisibleCtx) Allocator.Error!View {
                         }
                     }
                 }
-            }
-            if (!c.show_all and hidden > 0) {
-                try out.append(arena, .{ .show_more = .{ .hidden = hidden, .merged = c.spec.mine_only } });
-                cells += 1;
+                if (!rc.show_all and hidden > 0) {
+                    try out.append(arena, .{ .show_more = .{ .repo = ri, .hidden = hidden, .merged = c.spec.mine_only } });
+                    cells += 1;
+                }
             }
         },
         .repo_tree => |repos| {
@@ -473,6 +507,40 @@ test "a workspace Open tab drops merged rows even with a mine peek, and hides th
     try ex.setRepo("api", false);
     const closed = try visibleRows(a, .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now });
     try t.expectEqual(@as(usize, 1), closed.rows.len);
+}
+
+test "each repo's `Show more (N)` sits under that repo's pull requests, counts its own, and lifts its own" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var ex = Expanded.init(t.allocator);
+    defer ex.deinit();
+    try ex.setRepo("api", true);
+    try ex.setRepo("web", true);
+    const api = [_]model.PullRequest{ mkPr(1, "OPEN", fresh_iso), mkPr(2, "OPEN", stale_iso) };
+    const web = [_]model.PullRequest{ mkPr(7, "OPEN", fresh_iso), mkPr(8, "OPEN", stale_iso), mkPr(9, "OPEN", stale_iso) };
+    const repos = [_]model.RepoPrs{ .{ .slug = "api", .prs = &api }, .{ .slug = "web", .prs = &web } };
+    const spec: TabSpec = .{ .kind = .workspace_open_prs, .name = "Open", .workspace = "acme" };
+    const ctx: VisibleCtx = .{ .spec = spec, .data = .{ .repo_pr_tree = &repos }, .expanded = &ex, .show_all = false, .now_secs = now };
+    // api, #1, api's footer (1), web, #7, web's footer (2) — the footer
+    // that belongs to api is not after web's header.
+    var v = try visibleRows(a, ctx);
+    try t.expectEqual(@as(usize, 6), v.rows.len);
+    try t.expectEqual(@as(usize, 0), v.rows[2].show_more.repo);
+    try t.expectEqual(@as(usize, 1), v.rows[2].show_more.hidden);
+    try t.expectEqual(@as(usize, 1), v.rows[3].repo_header.repo);
+    try t.expectEqual(@as(usize, 1), v.rows[5].show_more.repo);
+    try t.expectEqual(@as(usize, 2), v.rows[5].show_more.hidden);
+    // Lifting api's leaves web's fold where it is.
+    try ex.setMore("api", true);
+    v = try visibleRows(a, ctx);
+    try t.expectEqual(@as(usize, 6), v.rows.len);
+    try t.expect(v.rows[1] == .pr and v.rows[2] == .pr);
+    try t.expectEqual(@as(usize, 1), v.rows[5].show_more.repo);
+    // A fetch folds every repo again.
+    ex.clearMore();
+    v = try visibleRows(a, ctx);
+    try t.expect(v.rows[2] == .show_more);
 }
 
 test "a mine tab shows every open PR and one merged peek; show_all caps merged at twenty" {

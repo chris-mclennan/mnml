@@ -16,8 +16,8 @@ is the inventory), painted in mnml-zig's own chrome.
 ▌  api                        2 PRs      Max Orr        bug/fix-login      2026-09-01   #1234 · Fix the login redirect
 ▌      #1234                   OPEN       Max Orr        bug/fix-login      2026-09-01   Fix the login redirect
 ▌      #1198                   OPEN       Dana R         dana/timeout       2026-08-31   Bump the client timeout to 30s
-▌  web                        1 PR       Max Orr        feature/empty-sta  2026-09-01   #820 · Redesign the empty state
 ▌                                                                                        ⋯  Show more (1)
+▌  web                        1 PR       Max Orr        feature/empty-sta  2026-09-01   #820 · Redesign the empty state
  Open + Draft · 2 repos, 5 PRs   ↓ move · Enter expand · o open on web · d detail · m open↔merged · r refresh · ? keys · q quit
 ```
 
@@ -163,7 +163,7 @@ can drift from what a key does. The keys are the reference's:
 | | |
 |---|---|
 | `j` `k` `↑` `↓` · `PgUp` `PgDn` · `g` `G` `Home` `End` | move |
-| `Enter` `Space` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` footer |
+| `Enter` `Space` | expand / collapse a repo; fold a pull request out to its builds; open a build's page; lift the `Show more (N)` row under a repo's pull requests (that repo's older rows) |
 | `→` `l` · `←` `h` | expand or step in · collapse or step up |
 | `E` `C` (or `e` `c`) | expand / collapse every repo — the integration tree convention, the same pair the Jira pane binds |
 | `x` `H` `s` `Alt+↑` `Alt+↓` | hide this repo · un-hide all · cycle the scope · reorder (all persist) |

@@ -94,7 +94,11 @@ expect color 113 2 bg #353b45
 expect screen contains "⋯  Show more ("
 # Pressing it lifts the window, and THEN the rows outrun the body: the
 # same bar, from the same `Painter.scrollbar`, as the tracker pane's.
+# The row is api's, under api's last shown pull request — above web's
+# header and its one row, so two rows up from the bottom.
 key G
+key k
+key k
 key enter
 expect screen lacks "Show more ("
 expect screen contains "█"

@@ -40,6 +40,10 @@ the release ships one file), and one line per change a user can see.
   menu says, and names the integration by its label (`Bitbucket PRs: shown
   on the top bar`), not its id; the first-party rows' menus say "Show on top
   bar" / "Hide from top bar" like the others.
+- Bitbucket PRs: a repo's `Show more (N)` is the row under that repo's pull
+  requests, counting that repo's hidden rows and showing that repo's when
+  pressed. It used to be one row at the end of the tree, under the last
+  repo's header, where it read as the last repo's.
 
 ## v0.3.1
 

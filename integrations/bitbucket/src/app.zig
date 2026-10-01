@@ -1348,7 +1348,7 @@ pub const App = struct {
             .repo_header => |h| try ts.expanded.toggleRepo(slugOf(ts, h.repo)),
             .pr => |p| try app.togglePrBuilds(ts.data.repo_pr_tree[p.repo].slug, ts.data.repo_pr_tree[p.repo].prs[p.idx]),
             .branch => {},
-            .show_more => ts.show_all = true,
+            .show_more => |m| try ts.expanded.setMore(slugOf(ts, m.repo), true),
             .build, .build_note, .flat => {
                 if (try app.focusedUrl(app.effect_arena.allocator(), rows)) |url| {
                     app.effect(.{ .open_url = url });
@@ -2603,6 +2603,7 @@ pub const App = struct {
                     // they were.
                     if (ts.fetched_at == 0 or (r.errored == 0 and !app.budget.isDry())) ts.fetched_at = app.now_secs;
                     ts.show_all = false;
+                    ts.expanded.clearMore();
                     ts.repos = r.repos;
                     ts.items = if (carried.items) |n| n else r.items;
                     ts.errored = r.errored;
@@ -3373,19 +3374,30 @@ test "startup prefetches every tab, opens the trees, and the keys walk the rows 
     for (r.app.tabs) |ts| try t.expect(ts.fetched);
     try t.expectEqualStrings("acct-max", r.app.me_account_id);
     try t.expectEqualStrings("Open + Draft · 2 repos, 3 PRs", r.app.tabs[0].status);
-    // Both repos open on the first fetch: api, #1234 (fresh), web, #820, and a footer for #1198 (30 h old).
+    // Both repos open on the first fetch: api, #1234 (fresh), api's
+    // footer for #1198 (30 h old) — under api, not after web — then
+    // web, #820.
     var rows = try r.rows();
     try t.expectEqual(@as(usize, 5), rows.len);
-    try t.expect(rows[4] == .show_more);
+    try t.expect(rows[2] == .show_more);
+    try t.expectEqual(@as(usize, 0), rows[2].show_more.repo);
+    try t.expectEqual(@as(usize, 1), rows[2].show_more.hidden);
+    try t.expect(rows[3] == .repo_header and rows[4] == .pr);
     _ = try r.key("j");
     try t.expectEqual(@as(usize, 1), r.app.tabs[0].selected);
     _ = try r.key("shift+g");
     try t.expectEqual(@as(usize, 4), r.app.tabs[0].selected);
-    // Enter on the footer lifts the filter: #1198 appears.
+    // Enter on api's footer lifts api's window: #1198 appears in its
+    // place, under #1234.
+    _ = try r.key("k");
+    _ = try r.key("k");
+    try t.expectEqual(@as(usize, 2), r.app.tabs[0].selected);
     _ = try r.key("enter");
     rows = try r.rows();
     try t.expectEqual(@as(usize, 5), rows.len);
-    try t.expect(rows[4] == .pr);
+    try t.expect(rows[2] == .pr);
+    try t.expectEqual(@as(i64, 1198), r.app.tabs[0].data.repo_pr_tree[0].prs[rows[2].pr.idx].id);
+    for (rows) |row| try t.expect(row != .show_more);
     // `c` collapses everything; `e` opens it again; `h` on a PR row steps up to its repo.
     _ = try r.key("c");
     try t.expectEqual(@as(usize, 2), (try r.rows()).len);
@@ -3610,7 +3622,9 @@ test "the detail follows the cursor, and `a` approves then withdraws on the fake
     try t.expect(std.mem.startsWith(u8, r.app.status.items, "approved acme/api#1234"));
     _ = try r.key("a");
     try t.expectEqual(server.State.Vote.none, r.srv.snapshot().voteFor(1234));
-    // Moving to web's #820 fetches that detail.
+    // Moving to web's #820 (past api's footer and web's header)
+    // fetches that detail.
+    _ = try r.key("j");
     _ = try r.key("j");
     _ = try r.key("j");
     rows = try r.rows();

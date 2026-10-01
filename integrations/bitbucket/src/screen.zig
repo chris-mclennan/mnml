@@ -1631,10 +1631,10 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     _ = try s.draw();
     var rows = try s.rig.rows();
 
-    // The tree is api(#1234), web(#820), `Show more (1)`.
+    // The tree is api(#1234, `Show more (1)`), web(#820).
     try t.expect(rows[0] == .repo_header);
     try t.expect(rows[1] == .pr);
-    try t.expect(rows[rows.len - 1] == .show_more);
+    try t.expect(rows[2] == .show_more);
 
     // A repo row: fold it, open it, copy it, hide it, move it.
     try rightClickRow(s, 0);
@@ -1660,7 +1660,7 @@ test "a right-click offers the actions of the row kind under it — every kind, 
     try s.key("d");
 
     // The `Show more (N)` footer lifts the window and nothing else.
-    try rightClickRow(s, rows.len - 1);
+    try rightClickRow(s, 2);
     try t.expectEqualSlices(app_mod.Action, &.{.activate}, menuItems(s));
     try s.key("esc");
 

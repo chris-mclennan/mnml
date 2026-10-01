@@ -79,8 +79,11 @@ expect screen contains "Open + Draft · 2 repos, 3 PRs"
 expect screen contains "Enter expand"
 expect screen contains "q quit"
 
-# The footer lifts the 24-hour window: the day-old #1198 appears.
-key G
+# api's `Show more (1)` is the row under api's #1234 — not after web —
+# and pressing it lifts api's 24-hour window: the day-old #1198 appears.
+key g
+key j
+key j
 key enter
 expect screen contains "#1198"
 expect screen contains "Bump the client"
