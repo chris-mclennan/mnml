@@ -26,6 +26,7 @@ format from is Python too.
 """
 
 import glob
+import html
 import json
 import os
 import re
@@ -541,8 +542,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         if u.path in ("/", "/index.html"):
-            with open(os.path.join(WEB, "index.html"), "rb") as f:
-                return self.send_body(200, f.read(), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+            with open(os.path.join(WEB, "index.html"), encoding="utf-8") as f:
+                page = f.read()
+            # The app's own start-page wordmark (src/ui/welcome.zig `logo`,
+            # extracted at image build into web/wordmark.txt).
+            try:
+                with open(os.path.join(WEB, "wordmark.txt"), encoding="utf-8") as f:
+                    mark = html.escape(f.read().rstrip("\n"))
+            except OSError:
+                mark = ""
+            page = page.replace("<!-- WORDMARK -->", mark, 1)
+            return self.send_body(200, page, "text/html; charset=utf-8", {"Cache-Control": "no-store"})
         if u.path == "/favicon.ico":
             return self.send_body(204, b"", "image/x-icon")
         if u.path.startswith("/vendor/"):

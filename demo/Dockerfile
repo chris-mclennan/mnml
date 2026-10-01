@@ -59,6 +59,12 @@ RUN if [ -x /prebuilt/bin/mnml-zig ]; then cp -a /prebuilt /out; \
     else zig build -Doptimize=ReleaseSafe -Dinstall-names -Dversion=${MNML_VERSION} --prefix /out \
       && rm -rf /src/.zig-cache /zig-global-cache/*; fi \
     && ls -la /out/bin /out/share/mnml/fonts
+# The wordmark the app paints on its start page (src/ui/welcome.zig,
+# `logo`), for the top of the demo page: taken from the source, so the
+# two cannot drift.
+RUN awk '/^pub const logo = \[_\]\[\]const u8\{/{f=1;next} f&&/^\};/{exit} \
+      f{sub(/^ *"/,"");sub(/",$/,"");gsub(/\\\\/,"\\");print}' src/ui/welcome.zig > /out/wordmark.txt \
+    && cat /out/wordmark.txt && test "$(wc -l < /out/wordmark.txt)" -ge 3
 
 # ── 2. the web fonts (JetBrains Mono, Symbols Nerd Font Mono, MnmlSymbols),
 #       ttyd, and the binaries stripped ──
@@ -122,6 +128,7 @@ COPY demo/flows /opt/mnml-demo/flows
 COPY demo/web /opt/mnml-demo/web
 COPY --from=fonts /fonts /opt/mnml-demo/web/fonts
 COPY --from=fonts /vendor /opt/mnml-demo/web/vendor
+COPY --from=build /out/wordmark.txt /opt/mnml-demo/web/wordmark.txt
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=xterm-256color COLORTERM=truecolor \
     SHELL=/bin/zsh MNML_IPC_DIR=/tmp/mnml-demo/ipc \
     MNML_DEMO_PORT=7681 MNML_DEMO_CAP_S=600 MNML_DEMO_IDLE_S=180

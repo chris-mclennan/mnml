@@ -87,6 +87,33 @@ body[data-phase="tour"] .banner { display: inline-flex; }
 .ended p { margin-bottom: 18px; }
 body[data-phase="ended"] .ended, body[data-phase="lost"] .ended { display: grid; }
 
+/* the app's start-page wordmark, above the window, in its accent blue */
+.wordmark {
+  flex: none; margin: 0 0 14px; color: #61afef; font-weight: 700;
+  font-family: "mnml mono", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; line-height: 1.05; white-space: pre; text-align: left;
+}
+.wordmark:empty { display: none; }
+
+/* Fit to window: the frame takes the whole viewport; the wordmark and
+   the controls go, and the controls come back over the bottom edge. */
+body.fit { padding: 0; }
+body.fit .wordmark, body.fit .note { display: none; }
+body.fit .controls {
+  position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); margin: 0; z-index: 10;
+  padding: 8px 12px; border-radius: 10px; background: rgba(22, 22, 26, 0.92); border: 1px solid var(--gray-3);
+  opacity: 0; pointer-events: none; transition: opacity .15s;
+}
+body.fit.show-controls .controls { opacity: 1; pointer-events: auto; }
+.hot-edge { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 14px; z-index: 9; }
+body.fit .hot-edge { display: block; }
+body.fit .window { border-radius: 0; }
+/* Full screen: the window is the screen; the grid sits centred under the bar. */
+.window:fullscreen { width: 100vw !important; height: 100vh; border: 0; border-radius: 0; display: flex; flex-direction: column; background: #1e222a; }
+.window:fullscreen .window-bar { flex: none; }
+.window:fullscreen .window-body { margin: auto; }
+.window-bar .lights li:nth-child(3) { cursor: pointer; }
+
 /* the controls under the window */
 .controls { flex: none; display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 14px; font-size: 14px; }
 button, select {
@@ -100,9 +127,10 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
 </style>
 </head>
 <body data-phase="idle">
+  <pre class="wordmark" id="wordmark" aria-label="mnml"><!-- WORDMARK --></pre>
   <section class="window" id="win" aria-label="mnml, live">
     <div class="window-bar">
-      <ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul>
+      <ul class="lights"><li aria-hidden="true"></li><li aria-hidden="true"></li><li id="green" title="Full screen" role="button" aria-label="Full screen"></li></ul>
       <svg class="proxy" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 2.2C1 1.5 1.5 1 2.2 1h3.6l1.4 1.5h6.6c.7 0 1.2.5 1.2 1.2V12c0 .7-.5 1.2-1.2 1.2H2.2C1.5 13.2 1 12.7 1 12z" fill="#53adda"/><path d="M1 4.2h14" stroke="#8ec9e5" stroke-width="1"/></svg>
       <span class="title">mnml — tour</span>
     </div>
@@ -120,9 +148,12 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       </div>
     </div>
   </section>
+  <div class="hot-edge" id="hot-edge"></div>
   <div class="controls" id="controls">
     <button id="replay">Replay tour</button>
     <select id="picker" aria-label="Play one part of the tour"><option value="">Play one part…</option></select>
+    <button id="fullscreen">Full screen</button>
+    <button id="fit" aria-pressed="false">Fit to window</button>
     <span class="status" id="status">connecting…</span>
   </div>
   <p class="note" id="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
@@ -151,10 +182,14 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
 
   // ── the font size: the largest at which 200x60 cells fit the window ──
   function space() {
+    const barH = win.querySelector(".window-bar").offsetHeight;
+    if (document.fullscreenElement === win) return { w: Math.floor(innerWidth), h: Math.floor(innerHeight - barH) };
+    if (document.body.classList.contains("fit")) return { w: Math.floor(innerWidth - 2), h: Math.floor(innerHeight - barH - 2) };
     const cs = getComputedStyle(document.body);
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    const bar = win.querySelector(".window-bar").offsetHeight + 2; // + the border
+    const mark = $("wordmark"); const above = mark.offsetHeight ? mark.offsetHeight + 14 : 0;
+    const bar = win.querySelector(".window-bar").offsetHeight + 2 + above; // + the border, the wordmark
     const below = $("controls").offsetHeight + 14 + $("note").offsetHeight + 10;
     return { w: Math.floor(innerWidth - padX - 2), h: Math.floor(innerHeight - padY - bar - below) };
   }
@@ -179,7 +214,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     const w = COLS * c.width, h = ROWS * c.height;
     host.style.width = w + "px"; host.style.height = h + "px";
     body.style.width = w + "px"; body.style.height = h + "px";
-    win.style.width = (w + 2) + "px";
+    win.style.width = document.fullscreenElement === win ? "" : (w + 2) + "px";
     trace("font " + size + "px, cell " + c.width + "x" + c.height + ", grid " + w + "x" + h + " in " + sp.w + "x" + sp.h);
   }
 
@@ -236,7 +271,48 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   }
 
   let rt = 0;
-  window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => term && fitFont(), 150); });
+  const refit = () => { clearTimeout(rt); rt = setTimeout(() => term && fitFont(), 150); };
+  window.addEventListener("resize", refit);
+  document.addEventListener("fullscreenchange", () => { $("fullscreen").textContent = document.fullscreenElement ? "Exit full screen" : "Full screen"; refit(); });
+
+  // Every pointer button over the terminal is mnml's: the browser's context
+  // menu, middle-click autoscroll / primary-selection paste and the like
+  // never fire there (xterm.js still reports the press to the app). The
+  // controls under the frame keep the browser's own menu.
+  for (const type of ["contextmenu", "auxclick"]) body.addEventListener(type, (e) => e.preventDefault());
+  body.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
+  body.addEventListener("mouseup", (e) => { if (e.button === 1) e.preventDefault(); });
+
+  // Full screen: the button, or the window's green light as on macOS.
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (win.requestFullscreen) win.requestFullscreen().catch(() => {});
+    focusTerm();
+  };
+  $("fullscreen").onclick = toggleFullscreen;
+  $("green").onclick = toggleFullscreen;
+
+  // Fit to window: on by default when the viewport is short. Esc belongs
+  // to mnml, so the hidden controls come back over the bottom edge rather
+  // than on a key.
+  let fitPref = null;
+  try { fitPref = localStorage.getItem("mnml-demo-fit"); } catch (_) {}
+  function setFit(on, save) {
+    document.body.classList.toggle("fit", on);
+    $("fit").setAttribute("aria-pressed", String(on));
+    $("fit").textContent = on ? "Show page" : "Fit to window";
+    if (save) { try { localStorage.setItem("mnml-demo-fit", on ? "1" : "0"); } catch (_) {} }
+    if (term) refit();
+  }
+  setFit(fitPref === null ? innerHeight < 900 : fitPref === "1", false);
+  $("fit").onclick = () => { setFit(!document.body.classList.contains("fit"), true); focusTerm(); };
+  let hideT = 0;
+  const showControls = () => { clearTimeout(hideT); document.body.classList.add("show-controls"); };
+  const hideControls = () => { clearTimeout(hideT); hideT = setTimeout(() => document.body.classList.remove("show-controls"), 1200); };
+  $("hot-edge").addEventListener("mouseenter", showControls);
+  $("controls").addEventListener("mouseenter", showControls);
+  $("controls").addEventListener("mouseleave", hideControls);
+  $("hot-edge").addEventListener("mouseleave", hideControls);
   start();
 
   // ── the controls and the runner's state ──
