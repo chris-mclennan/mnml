@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Users/chrismc…            │ 󰐕                                                                                                                                                  󱸀  󲀀    
+   │  ● …/tour-ws/ws/             │ 󰐕                                                                                                                                                  󱸀  󲀀    
 ▌ │▌    docs                         │
-   │   󱼅    notes.md                   │
+   │     󱼅  notes.md                   │
  󰍉 │     src                          │
-   │   󱼄    main.zig                   │
- 󰊢 │   󱼅    util.zig                 M │
+   │     󱼄  main.zig                   │
+ 󰊢 │     󱼅  util.zig                 M │
    │      .gitignore                   │
   │      CHANGELOG.md               ? │
    │     󰂺 README.md                    │
@@ -40,7 +40,7 @@
    │                                    │                                                                                   Ctrl+N         new file
    │                                    │                                                                                   Ctrl+Q         quit
    │                                    │
-   │                                    │                                                                   mnml 0.3.1-dev+gafb0650b
+   │                                    │                                                                   mnml 0.3.1-dev+g4fe8b14e
    │                                    │
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
  │            a → sessions                          ctrl+left → focus left                           ctrl+t → theme…                                    r → reveal in Finder / Explorer               │
@@ -56,5 +56,5 @@
  │       ctrl+l → toggle fold                    ctrl+shift+n → messages (toast log)                      p → copy path                                                                               │
  │  esc to cancel                                                                                                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  03:16  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  19:52  ws   —
 

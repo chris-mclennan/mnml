@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Users/chrismc…            │ 󱸀 Claude Usage 󰅖   󰐕                                                                                                                            󱸀  󲀀      
+   │  ● …/tour-ws/ws/             │ 󱸀 Claude Usage 󰅖   󰐕                                                                                                                            󱸀  󲀀      
 ▌ │▌    docs                         │▌ Claude usage · r refresh · a add · L claude login · R capture · esc close                                                                                  ⋯
-   │   󱼅    notes.md                   │▌
+   │     󱼅  notes.md                   │▌
  󰍉 │     src                          │▌ (active) personal  · sam@example.com · sam@example.com's Organization
-   │   󱼄    main.zig                   │▌
- 󰊢 │   󱼅    util.zig                 M │▌ Current session · in force
+   │     󱼄  main.zig                   │▌
+ 󰊢 │     󱼅  util.zig                 M │▌ Current session · in force
    │      .gitignore                   │▌                                                              95% used
   │      CHANGELOG.md               ? │▌   Resets 8:20pm
    │     󰂺 README.md                    │▌
@@ -56,5 +56,5 @@
    │                                    │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  03:17  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  19:52  ws   —
 

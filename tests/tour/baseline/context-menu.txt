@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Users/chrismc…            │  util.zig 󰅖   󰐕                                                                                                                                󱸀  󲀀      
+   │  ● …/tour-ws/ws/             │  util.zig 󰅖   󰐕                                                                                                                                󱸀  󲀀      
 ▌ │▌    docs                         │▌src › util.zig
-   │   󱼅    notes.md                   │▌  1 const std = @import("std");
+   │     󱼅  notes.md                   │▌  1 const std = @import("std");
  󰍉 │     src                          │▌  2
-   │   󱼄    main.zig                   │▌  3 /// Sum a slice of integers.
- 󰊢 │   󱼅    util.zig                 M │▌  4 pub fn sum(xs: []const i64) i64 {
+   │     󱼄  main.zig                   │▌  3 /// Sum a slice of integers.
+ 󰊢 │     󱼅  util.zig                 M │▌  4 pub fn sum(xs: []const i64) i64 {
    │      .gitignore                   │▌  5 │   var total: i64 = 0;
   │      CHANGELOG.md               ? │▌  6 │   for (xs) |x| total += x;
    │     󰂺 README.md                    │▌  7 │   return total;
@@ -56,5 +56,5 @@
    │ · [Ctrl+P] Files                   │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  03:17  ws   zig
+ EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  19:52  ws   zig
 
