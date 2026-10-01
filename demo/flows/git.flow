@@ -25,5 +25,5 @@ slowtype "Add util.max for the largest element" 12
 wait 300
 key enter
 wait 900
-run view.activity_git
+click-rect rail:git
 wait 1100

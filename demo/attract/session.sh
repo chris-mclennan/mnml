@@ -5,16 +5,25 @@
 # them when it exits — a quit, or the SIGHUP ttyd sends when the visitor
 # closes the tab. kiosk.zon turns on the file channel the attract runner
 # drives (input allowed, input reported, screen written). The session
-# marker's mtime tells the runner a new visitor arrived.
+# marker (this script's pid) tells the runner a new visitor arrived.
+#
+# Each session gets its own IPC directory (ipc-<pid>): when a reload ends
+# an older session, that mnml's last lines — its exit — land in its own
+# directory, not in the new session's.
 state=$(dirname "${MNML_IPC_DIR:-/tmp/mnml-demo/ipc}")
-mkdir -p "$state"
-rm -f "$state/ended" "$state/exited"
+MNML_IPC_DIR="$state/ipc-$$"
+export MNML_IPC_DIR
+mkdir -p "$MNML_IPC_DIR"
+rm -f "$state/ended"
 echo $$ > "$state/session"
 cd "$HOME" || exit 70
-mnml --demo --config /opt/mnml-demo/attract/kiosk.zon
+# stderr to a file: a panic's trace would otherwise scroll away with the
+# terminal; the runner logs it.
+mnml --demo --config /opt/mnml-demo/attract/kiosk.zon 2>"$state/stderr-$$"
 code=$?
 # The runner learns the app is gone even when it died without its exit line.
-echo "$code" > "$state/exited"
+echo "$$ $code" > "$state/exited"
+rm -rf "$MNML_IPC_DIR"
 if [ -f "$state/ended" ]; then
   # The session cap: the last screen, until the visitor starts again.
   printf '\033[?1049l\033[2J\033[H\033[?25l'

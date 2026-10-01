@@ -5,12 +5,12 @@ It does four things, all in this file, all stdlib:
 
   * starts ttyd on a private unix socket, one `session.sh` (a real
     `mnml --demo`) per websocket connection, one connection at a time;
-  * serves the page on MNML_DEMO_PORT: `/` (demo/web/index.html, the
-    window frame and the controls), `/term/` (ttyd's own page and client
-    script, with demo/web/term-head.html in its head: the web fonts),
-    `/fonts/*`, a small JSON API under `/api/`, and every other path
-    (`/term/token`, `/term/ws`) passed through to ttyd byte for byte —
-    the websocket included;
+  * serves the page on MNML_DEMO_PORT: `/` (demo/web/index.html: the
+    window frame, the controls, and the terminal — xterm.js speaking
+    ttyd's websocket protocol), `/vendor/*` (xterm.js), `/fonts/*`, a
+    small JSON API under `/api/`, and every other path (`/term/token`,
+    `/term/ws`) passed through to ttyd byte for byte — the websocket
+    included;
   * plays the tour: the flows in demo/flows/ (the site recorder's flow
     format) as lines appended to mnml's IPC `command` file;
   * watches mnml's `events.jsonl` for `{"event":"input"}` — written by
@@ -26,6 +26,7 @@ format from is Python too.
 """
 
 import glob
+import html
 import json
 import os
 import re
@@ -49,7 +50,9 @@ PORT = int(os.environ.get("MNML_DEMO_PORT", "7681"))
 CAP_S = float(os.environ.get("MNML_DEMO_CAP_S", "600"))
 IDLE_S = float(os.environ.get("MNML_DEMO_IDLE_S", "180"))
 IPC = os.environ.get("MNML_IPC_DIR", "/tmp/mnml-demo/ipc")
-STATE = os.path.dirname(IPC)  # /tmp/mnml-demo: the session marker, ttyd's socket
+# /tmp/mnml-demo: the session marker, ttyd's socket, and one IPC directory
+# per session (ipc-<session.sh pid>, made by session.sh).
+STATE = os.path.dirname(IPC)
 TTYD_SOCK = os.path.join(STATE, "ttyd.sock")
 # ttyd answers under this path: its page, /term/token, /term/ws.
 BASE = "/term"
@@ -127,13 +130,48 @@ class App:
         except (OSError, ValueError):
             return {}
 
+    def rects(self):
+        """Every hit rect the last frame registered (`rects.json`)."""
+        try:
+            with open(os.path.join(self.ipc, "rects.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return []
 
-def find_text(screen, text, row=None):
+
+class Pointer:
+    """The visible pointer's next move, for the page (`/api/pointer`, a
+    server-sent event stream). The page glides its arrow there in
+    POINTER_LEAD_MS, and only then does the runner send the click."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.seq = 0
+        self.last = None
+
+    def publish(self, ev):
+        with self.cond:
+            self.seq += 1
+            ev["seq"] = self.seq
+            self.last = ev
+            self.cond.notify_all()
+
+    def wait(self, seq, timeout):
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != seq, timeout=timeout)
+            return self.seq, self.last
+
+
+POINTER = Pointer()
+POINTER_LEAD_MS = 450
+
+
+def find_text(screen, text, row=None, maxcol=None):
     for y, line in enumerate(screen.split("\n")):
         if row is not None and y != row:
             continue
         x = line.find(text)
-        if x >= 0:
+        if x >= 0 and (maxcol is None or x < maxcol):
             return x, y
     return None
 
@@ -170,6 +208,37 @@ class Player:
             self.sleep(50)
         self.notes.append(f"`{text}` never appeared within {ms} ms")
         return False
+
+    def rect(self, label):
+        """The first hit rect named `label`, or whose label starts with
+        `label:` (`tab:0` finds `tab:0:0`)."""
+        for r in self.app.rects():
+            lab = r.get("label", "")
+            if lab == label or lab.startswith(label + ":"):
+                return r
+        return None
+
+    def mouse(self, kind, col, row, button="left", to=None):
+        """Show the visitor where the pointer goes, then do it: the page
+        glides its arrow to the cell (and pulses on a press) in
+        POINTER_LEAD_MS; the IPC line follows."""
+        ev = {"kind": kind, "col": col, "row": row, "button": button}
+        if to:
+            ev["to_col"], ev["to_row"] = to
+        POINTER.publish(ev)
+        self.sleep(POINTER_LEAD_MS)
+        if kind == "click":
+            self.app.send({"cmd": "click", "col": col, "row": row, "button": button})
+        elif kind == "move":
+            self.app.send({"cmd": "hover", "col": col, "row": row})
+        elif kind == "drag":
+            tc, tr = to
+            self.app.send({"cmd": "mouse_down", "col": col, "row": row, "button": "left"})
+            steps = max(1, abs(tc - col), abs(tr - row))
+            for i in range(1, steps + 1):
+                self.sleep(600 // steps)
+                self.app.send({"cmd": "mouse_move", "col": col + (tc - col) * i // steps, "row": row + (tr - row) * i // steps})
+            self.app.send({"cmd": "mouse_up", "col": tc, "row": tr, "button": "left"})
 
     def reset(self):
         """Back to the start surface (the tour's own `reset`): overlays
@@ -226,12 +295,38 @@ class Player:
                     break
                 app.send({"cmd": "key", "key": key})
                 self.until(good, 8000)
-        elif op == "find-click":
-            at = find_text(app.screen(), a[0], int(a[1]) if len(a) > 1 else None)
+        elif op in ("find-click", "find-point"):
+            # find-click TEXT [ROW] [row=N] [maxcol=N] [dx=N] [right]
+            pos, kw, flags = a[1:], {}, set()
+            for t in pos:
+                if "=" in t:
+                    k, v = t.split("=", 1)
+                    kw[k] = int(v)
+                elif t.isdigit():
+                    kw["row"] = int(t)
+                else:
+                    flags.add(t)
+            at = find_text(app.screen(), a[0], kw.get("row"), kw.get("maxcol"))
             if at:
-                app.send({"cmd": "click", "col": at[0], "row": at[1], "button": "left"})
+                self.mouse("move" if op == "find-point" else "click", at[0] + kw.get("dx", 0), at[1],
+                           "right" if "right" in flags else "left")
             else:
                 self.notes.append(f"`{a[0]}` not on screen to click")
+        elif op in ("click-rect", "point-rect", "drag-rect"):
+            # click-rect LABEL [right] [dx=N]; drag-rect LABEL DX [DY]
+            r = self.rect(a[0])
+            if r is None:
+                self.notes.append(f"no `{a[0]}` rect to {op.split('-')[0]}")
+            else:
+                col, row = r["x"] + min(r["w"] - 1, r["w"] // 2), r["y"] + min(r["h"] - 1, r["h"] // 2)
+                if op == "drag-rect":
+                    dx = int(a[1])
+                    dy = int(a[2]) if len(a) > 2 else 0
+                    self.mouse("drag", col, row, to=(col + dx, row + dy))
+                else:
+                    kw = dict(t.split("=", 1) for t in a[1:] if "=" in t)
+                    self.mouse("move" if op == "point-rect" else "click", col + int(kw.get("dx", 0)), row,
+                               "right" if "right" in a[1:] else "left")
         elif op == "slowtype":
             text = a[0].encode("utf-8").decode("unicode_escape")
             per = int(float(a[1])) if len(a) > 1 else 55
@@ -281,7 +376,7 @@ class Session:
 
     def __init__(self):
         self.flows = load_flows()
-        self.app = App(IPC)
+        self.app = App(IPC)  # replaced per session (new_session)
         self.lock = threading.RLock()
         self.phase = "idle"
         self.flow = None
@@ -381,6 +476,7 @@ class Session:
                 log(f"input ({how}) in the first {STARTUP_GRACE_S:.0f} s: ignored")
                 return
             log(f"input ({how}): tour stopped in {self.flow}")
+            POINTER.publish({"kind": "hide"})
             self.phase = "live"
             self.flow = None
             self.stop_player()
@@ -404,15 +500,19 @@ class Session:
             self.mark_mtime = m
             self.new_session()
         self.read_events()
-        if os.path.exists(EXITED_MARK) or not self.visitor_alive():
+        if self.session_exited() or not self.visitor_alive():
             with self.lock:
                 if self.phase not in ("ended", "idle"):
-                    try:
-                        code = open(EXITED_MARK).read().strip() or "?"
-                    except OSError:
-                        code = "?"
+                    code = self.session_exited() or "?"
                     log(f"session: mnml exited ({code}) in {self.flow or self.phase}" if code != "?" else
                         f"session: the visitor left (ttyd ended the session) in {self.flow or self.phase}")
+                    try:
+                        pid = open(SESSION_MARK).read().strip()
+                        err = open(os.path.join(STATE, f"stderr-{pid}"), errors="replace").read().strip()
+                        if err and code not in ("?", "0"):
+                            log("session: mnml's stderr:\n" + err[-4000:])
+                    except OSError:
+                        pass
                     self.stop_player()
                     self.phase = "idle"
                     self.flow = None
@@ -429,6 +529,16 @@ class Session:
             elif phase == "live" and now - self.last_input >= IDLE_S:
                 self.start_tour(why=f"idle {int(IDLE_S)} s")
 
+    def session_exited(self):
+        """The exit status session.sh wrote for the CURRENT session (an
+        older session hung up by a reload writes its own pid), or None."""
+        try:
+            pid, code = open(EXITED_MARK).read().split()
+            cur = open(SESSION_MARK).read().strip()
+        except (OSError, ValueError):
+            return None
+        return code if pid == cur else None
+
     def visitor_alive(self):
         """session.sh's pid is in the marker; ttyd ends it (SIGHUP) when the
         visitor's websocket closes."""
@@ -440,8 +550,22 @@ class Session:
             return False
 
     def new_session(self):
+        try:
+            pid = open(SESSION_MARK).read().strip()
+        except OSError:
+            pid = ""
+        # IPC directories of sessions that are gone (a hung-up session.sh
+        # cannot remove its own).
+        for d in glob.glob(os.path.join(STATE, "ipc-*")):
+            other = d.rsplit("-", 1)[-1]
+            if other != pid and other.isdigit():
+                try:
+                    os.kill(int(other), 0)
+                except OSError:
+                    shutil.rmtree(d, ignore_errors=True)
         with self.lock:
             self.stop_player()
+            self.app = App(os.path.join(STATE, f"ipc-{pid}"))
             self.phase = "starting"
             self.started = time.monotonic()
             self.last_input = self.started
@@ -451,7 +575,7 @@ class Session:
         log("session: a visitor connected; mnml --demo starting")
 
     def read_events(self):
-        p = os.path.join(IPC, "events.jsonl")
+        p = os.path.join(self.app.ipc, "events.jsonl")
         try:
             size = os.path.getsize(p)
         except OSError:
@@ -495,49 +619,8 @@ class Session:
 # ─── HTTP: the page, the fonts, the API, and ttyd behind them ────────────
 
 SESSION = None
-PAGE = {"term": None}
+LIVE_WS = {"lock": threading.Lock(), "pair": None}
 FONT_TYPES = {".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".txt": "text/plain"}
-
-
-def ttyd_index():
-    """ttyd's own page, fetched over its socket: its client script
-    (xterm.js and ttyd's websocket protocol) is used exactly as shipped."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5)
-    s.connect(TTYD_SOCK)
-    s.sendall(f"GET {BASE}/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n".encode())
-    buf = b""
-    while True:
-        b = s.recv(65536)
-        if not b:
-            break
-        buf += b
-    s.close()
-    head, _, body = buf.partition(b"\r\n\r\n")
-    if b"transfer-encoding: chunked" in head.lower():
-        out, rest = b"", body
-        while rest:
-            n, _, rest = rest.partition(b"\r\n")
-            k = int(n.split(b";")[0], 16)
-            if k == 0:
-                break
-            out += rest[:k]
-            rest = rest[k + 2:]
-        body = out
-    return body.decode("utf-8")
-
-
-def term_page():
-    """ttyd's page with demo/web/term-head.html (the web fonts, the cell
-    report to the outer page) put in its head, and its scripts made
-    `type="text/x-ttyd"` so term-head.html starts them once the fonts are
-    in: xterm.js measures its cell from the font it finds at start."""
-    with open(os.path.join(WEB, "term-head.html"), encoding="utf-8") as f:
-        extra = f.read()
-    t = ttyd_index()
-    t = re.sub(r'<script(\s+type="text/javascript")?(?=[\s>])', '<script type="text/x-ttyd"', t)
-    i = t.find("</head>")
-    return t[:i] + extra + t[i:] if i >= 0 else extra + t
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -568,12 +651,29 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         if u.path in ("/", "/index.html"):
-            with open(os.path.join(WEB, "index.html"), "rb") as f:
-                return self.send_body(200, f.read(), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
-        if u.path == BASE + "/":
-            if PAGE["term"] is None or os.environ.get("MNML_DEMO_DEV"):
-                PAGE["term"] = term_page()
-            return self.send_body(200, PAGE["term"], "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+            with open(os.path.join(WEB, "index.html"), encoding="utf-8") as f:
+                page = f.read()
+            # The app's own start-page wordmark (src/ui/welcome.zig `logo`,
+            # extracted at image build into web/wordmark.txt).
+            try:
+                with open(os.path.join(WEB, "wordmark.txt"), encoding="utf-8") as f:
+                    mark = html.escape(f.read().rstrip("\n"))
+            except OSError:
+                mark = ""
+            page = page.replace("<!-- WORDMARK -->", mark, 1)
+            return self.send_body(200, page, "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+        if u.path == "/favicon.ico":
+            return self.send_body(204, b"", "image/x-icon")
+        if u.path.startswith("/vendor/"):
+            # xterm.js and two of its addons, fetched at image build time.
+            name = os.path.basename(u.path)
+            p = os.path.join(WEB, "vendor", name)
+            if not os.path.isfile(p):
+                return self.send_body(404, "not here", "text/plain")
+            with open(p, "rb") as f:
+                data = f.read()
+            ctype = "text/css" if name.endswith(".css") else "text/javascript"
+            return self.send_body(200, data, ctype, {"Cache-Control": "public, max-age=86400"})
         if u.path.startswith("/fonts/"):
             name = os.path.basename(u.path)
             p = os.path.join(WEB, "fonts", name)
@@ -585,7 +685,32 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(200, data, ctype, {"Cache-Control": "public, max-age=86400"})
         if u.path == "/api/state":
             return self.json(SESSION.state())
+        if u.path == "/api/pointer":
+            return self.pointer_stream()
         return self.proxy()
+
+    def pointer_stream(self):
+        """Server-sent events: one `data:` line per pointer step, a
+        comment every 15 s to keep proxies from closing it."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        seq = POINTER.seq
+        try:
+            while True:
+                nseq, ev = POINTER.wait(seq, 15)
+                if nseq == seq:
+                    self.wfile.write(b": keepalive\n\n")
+                else:
+                    seq = nseq
+                    out = dict(ev, lead_ms=POINTER_LEAD_MS)
+                    self.wfile.write(f"data: {json.dumps(out)}\n\n".encode())
+                self.wfile.flush()
+        except OSError:
+            return
 
     def do_POST(self):
         u = urlparse(self.path)
@@ -633,6 +758,20 @@ class Handler(BaseHTTPRequestHandler):
             up.sendall(self.rfile.read(n))
         self.close_connection = True
         down = self.connection
+        if upgrade:
+            # One terminal per container, and the newest page wins: a
+            # reload (or a second tab) ends the older websocket, so ttyd
+            # hangs up the older session, instead of the new page waiting
+            # forever behind a full slot.
+            with LIVE_WS["lock"]:
+                old = LIVE_WS["pair"]
+                LIVE_WS["pair"] = (down, up)
+            if old:
+                for sk in old:
+                    try:
+                        sk.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
         sel = selectors.DefaultSelector()
         sel.register(down, selectors.EVENT_READ, up)
         sel.register(up, selectors.EVENT_READ, down)
@@ -670,18 +809,8 @@ def start_ttyd():
         os.unlink(TTYD_SOCK)
     except OSError:
         pass
-    opts = {
-        "fontFamily": "'JetBrains Mono', 'Symbols Nerd Font Mono', MnmlSymbols, monospace",
-        "fontSize": "13", "lineHeight": "1", "letterSpacing": "0",
-        "disableLeaveAlert": "true", "disableResizeOverlay": "true", "titleFixed": "mnml",
-        "cursorBlink": "false", "scrollback": "0", "customGlyphs": "true",
-        "drawBoldTextInBrightColors": "false", "rendererType": "canvas",
-        "theme": json.dumps({"background": "#1e222a"}),
-    }
-    argv = ["ttyd", "--interface", TTYD_SOCK, "--base-path", BASE, "--writable", "--max-clients", "1",
+    argv = ["ttyd", "--interface", TTYD_SOCK, "--base-path", BASE, "--writable",
             "--terminal-type", "xterm-256color", "--ping-interval", "20"]
-    for k, v in opts.items():
-        argv += ["-t", f"{k}={v}"]
     argv += [os.path.join(HERE, "session.sh")]
     log("ttyd: " + " ".join(shlex.quote(a) for a in argv))
     p = subprocess.Popen(argv, stdin=subprocess.DEVNULL)

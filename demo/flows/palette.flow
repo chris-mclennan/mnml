@@ -14,13 +14,15 @@ keys @150 down down
 wait 150
 key esc
 wait 300
-key ctrl+p
-wait 300
-slowtype "util" 80
-wait 500
-key enter
+# the file tree takes a click as well as Ctrl+P
+find-click "util.zig" maxcol=40
 until "pub fn sum"
-wait 900
+wait 700
+# the sidebar's divider has a menu of its own
+click-rect divider:4294967295 right
+wait 1700
+key esc
+wait 400
 key ctrl+shift+p
 wait 250
 slowtype "pick theme" 50
