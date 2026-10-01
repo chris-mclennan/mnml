@@ -6,7 +6,13 @@ reset
 open src/main.zig
 until "fn main"
 wait 200
-run term.shell
+# the launcher dock: rest the pointer on its grip (the `⋯` under the
+# statusline) until the strip shows, then New terminal opens a shell
+find-point "⋯" row=59
+wait 700
+find-point "⋯" row=59
+wait 600
+find-click "New terminal"
 until "tour %" 4000
 slowtype "ls -G src docs\n" 12
 wait 300
@@ -17,7 +23,7 @@ wait 700
 slowtype ":set number\n" 30
 wait 700
 slowtype ":q\n" 30
-wait 100
+wait 700
 slowtype "git diff --color --stat\n" 8
 wait 250
 slowtype "git diff --color src/util.zig\n" 10
