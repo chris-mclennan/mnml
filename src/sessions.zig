@@ -3137,6 +3137,21 @@ const Fixture = struct {
         return false;
     }
 
+    /// Ticks until the pane's cursor is at column `x`, row `y`, or `ms`
+    /// pass. Where an act leaves the cursor is the end of its output:
+    /// the bytes arrive in order, so every one before it is in too.
+    fn waitCursor(f: *Fixture, pid: app_mod.PaneId, x: u16, y: u16, ms: u32) !bool {
+        var waited: u32 = 0;
+        while (waited <= ms) : (waited += 10) {
+            try f.app.tick(App.nowMs(testing.io));
+            const p = f.app.panes.pty(pid) orelse return false;
+            if (p.session) |session| try p.grid.update(f.app.gpa, session.terminal());
+            if (p.grid.cursor()) |c| if (c.x == x and c.y == y) return true;
+            testing.io.sleep(.fromMilliseconds(10), .awake) catch {};
+        }
+        return false;
+    }
+
     /// A plain pty (no AI product on its command line) running `script`.
     fn openShell(f: *Fixture, script: []const u8) !app_mod.PaneId {
         return pty_pane.open(&f.app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "sh", .kind = .command, .placement = .tab });
@@ -3493,7 +3508,11 @@ test "needsYou: a pane whose screen asks is waiting, one that does not is not; a
     };
     try testing.expectEqual(@as(usize, 1), toasts);
     // The scan lists plain-2 as waiting: it needs you while the pane is
-    // quiet …
+    // quiet … — so the banner is all in first (the cursor under its last
+    // row). A byte pumped after the listing is the pane printing again:
+    // Linux's tty hands a write over in pieces, and on a loaded runner
+    // the banner's tail landed after the listing and voided it.
+    try testing.expect(try f.waitCursor(plain, 0, 3, 5000));
     const now = Io.Timestamp.now(testing.io, .real).toSeconds();
     try f.adopt(&.{wsItem(&f, "plain-2", .waiting, now, "run the tests")});
     try testing.expect(try f.waitNeedsYou(plain, true, 3000));
