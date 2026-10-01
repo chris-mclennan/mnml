@@ -1445,7 +1445,9 @@ so are the band and the grip: `always` carves it off the editor,
 `:` line stay exactly where they are with no dock at all. The `:`
 line's row is never the strip's or the grip's, so the two coexist — a
 line can be open while the strip is out, and the grip stays up while
-you type.
+you type. That row is also the panes' last, so the grip takes the blank
+cells nearest its middle rather than paint over text there, and steps
+aside when the row has none — the whole row still brings the strip up.
 
 Under `.outer` the strip, its band and its grip are the **screen's
 last row**, under the `:` line: everything else moves up one, and a

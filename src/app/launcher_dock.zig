@@ -2459,6 +2459,33 @@ test "the grip and the items are ONE row in each placement — hover, click and 
     try t.expectEqual(outer.grip, outer.keyboard);
 }
 
+test "an `.inner` grip never paints over the panes' text on its row: it takes the blank cells nearest the middle, and stands down when the row has none" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    // Every row full of text: no three blank cells on row 37.
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    for (0..60) |_| {
+        try text.appendNTimes(t.allocator, 'x', 200);
+        try text.append(t.allocator, '\n');
+    }
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    app.hover = .{ .x = 0, .y = 10 };
+    try app.render();
+    try t.expectEqual(@as(?u16, null), rowContaining(&app, edge_grip_glyph));
+    // The band is still the row, so the dwell still brings the strip up.
+    try t.expectEqual(@as(u16, 37), hover_zones.dockBand(&app, Rect.init(0, 0, 120, 40)).?.y);
+    // Short lines leave the middle blank: the grip is back, on row 37.
+    try app.activeEditor().?.buf.editor.setText("short\n");
+    try app.render();
+    try t.expectEqual(@as(?u16, 37), rowContaining(&app, edge_grip_glyph));
+}
+
 test "`.shared` wears no grip: the strip is always up, on the `:` line's row" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

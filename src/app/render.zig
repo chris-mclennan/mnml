@@ -929,12 +929,40 @@ fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
                 .left => .left,
                 .right => .right,
             };
-            if (edge_grip.place(band, e)) |cell| edge_grip.draw(ui, cell, e, .{
+            const at = if (e == .bottom and launcher_dock.placement(app) == .inner) blankRun(ui, band) else edge_grip.place(band, e);
+            if (at) |cell| edge_grip.draw(ui, cell, e, .{
                 .bg = bg,
                 .hit = .{ .button = @intFromEnum(Button.edge_grip_dock) },
             });
         }
     }
+}
+
+/// // changed (dock-grip-row): an `.inner` grip shares the panes' last
+/// row with whatever they paint there — a dormant pane's `[exited] —
+/// any key restarts`, a list's footer — so it takes the three blank
+/// cells nearest the row's middle rather than painting over text, and
+/// stands down when the row has none. The dwell band is the whole row
+/// either way, so the strip still comes up on this row.
+fn blankRun(ui: Ui, band: Rect) ?Rect {
+    const mid = edge_grip.place(band, .bottom) orelse return null;
+    const blank = struct {
+        fn at(u: Ui, x: u16, y: u16) bool {
+            const c = u.canvas.screen.readCell(x, y) orelse return false;
+            const g = c.char.grapheme;
+            return g.len == 0 or std.mem.eql(u8, g, " ");
+        }
+    }.at;
+    var step: u16 = 0;
+    while (step < band.w) : (step += 1) {
+        for ([_]i32{ -@as(i32, step), @as(i32, step) }) |d| {
+            const x = @as(i32, mid.x) + d;
+            if (x < band.x or x + edge_grip.len > band.right()) continue;
+            const ux: u16 = @intCast(x);
+            if (blank(ui, ux, mid.y) and blank(ui, ux + 1, mid.y) and blank(ui, ux + 2, mid.y)) return Rect.init(ux, mid.y, edge_grip.len, 1);
+        }
+    }
+    return null;
 }
 
 fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
