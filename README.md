@@ -1,20 +1,45 @@
 # mnml
 
-**NvChad meets VSCode — a terminal IDE, in Zig.**
+[![Latest release](https://img.shields.io/github/v/release/chris-mclennan/mnml?label=release)](https://github.com/chris-mclennan/mnml/releases/latest)
+[![CI](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Built with Zig](https://img.shields.io/badge/built%20with-Zig%200.16-f7a41d?logo=zig&logoColor=white)](https://ziglang.org)
 
-Vim *or* standard editing, both first-class, without `if vim {}` scattered
-through the codebase. NvChad's chrome — file tree, tabline, statusline,
-Nerd-Font devicons, tree-sitter highlighting — with VSCode's discoverability:
-command palette, right-click menus, mouse-first, a modeless keymap that hides
-nothing behind a modifier. LSP, DAP, git, terminal and AI panes, a baked-in
-HTTP client, and a headless `.test` harness — one static binary, no runtime.
+Everything you'd open a second terminal for, in one NvChad-style window:
+editor, git, agents, HTTP — written in Zig, on libghostty, scripted in Lua.
 
-This repository is mnml 0.3.0 and onward. mnml 0.2.x is the Rust build at
-[chris-mclennan/mnml](https://github.com/chris-mclennan/mnml), to be frozen
-at 0.2.22 (0.2.21 is its latest release; 0.2.22 is the planned last one); the
-two run side by side until cutover (`docs/DESIGN.md`, "Side-by-side
-mechanics"). Same commands, same `.test` corpus, same asset names minus the
-`-rs`.
+![mnml: the editor, an agent session beside it and a shell below it](site/public/media/hero.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="site/public/media/splits.png" alt="Splits and tab pages"><br>Split right and down, a file in each, tab pages on top.</td>
+    <td width="50%"><img src="site/public/media/sessions.png" alt="Agent sessions beside the editor"><br>Agent sessions in panes next to your code, listed in the SESSIONS rail.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="site/public/media/git.png" alt="Git status and diff"><br>Status, diff, stage and commit without leaving the editor.</td>
+    <td width="50%"><img src="site/public/media/jira.png" alt="Jira in a pane"><br>Jira as a tab, installed from the Marketplace (here an offline fake server).</td>
+  </tr>
+</table>
+
+<!-- Try it in your browser: https://mnml.sh/demo -->
+
+## What it is
+
+A terminal IDE. Vim *or* standard (VS Code-style) editing, as two complete
+keymap profiles picked with `--input`, without `if vim {}` scattered through
+the codebase. NvChad's chrome — file tree, tabline, statusline, Nerd Font
+devicons, tree-sitter highlighting — with a command palette, right-click
+menus and the mouse. LSP and a debugger (DAP); git status, diff, staging and
+commits; an HTTP client for `.http` / `.curl` files and request chains;
+terminal panes rendered by libghostty; Claude Code and Codex sessions in
+splits beside your code. Jira and Bitbucket install from the Marketplace,
+`docs/SDK.md` covers writing your own integration, and `init.lua` scripts
+the rest. Written in Zig — one binary per platform, no runtime to install.
+
+mnml 0.3.0 onward is this codebase. mnml 0.2.x was a Rust build, frozen at
+0.2.22 and archived at
+[chris-mclennan/mnml-rust](https://github.com/chris-mclennan/mnml-rust);
+the command ids and the `.test` corpus carry over.
 
 ## Install
 
