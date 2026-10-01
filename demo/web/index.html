@@ -77,6 +77,16 @@ body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; ali
 .banner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: .35; } }
 body[data-phase="tour"] .banner { display: inline-flex; }
+/* view only: the banner says what plays and does nothing on a click */
+body[data-control="view"] .banner, body[data-control="ask"]:not(.driving) .banner { cursor: default; }
+/* the notice "Take control" shows before input flows (ask mode) */
+.notice {
+  position: absolute; left: 50%; top: 4.5%; transform: translateX(-50%); z-index: 3;
+  display: none; max-width: 92%; padding: 8px 16px; border-radius: 8px; white-space: normal; text-align: center;
+  background: color-mix(in srgb, #1e222a 82%, transparent); backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--gray-9); font-size: 13.5px;
+}
+.notice.on { display: block; }
 
 /* The tour's pointer: a terminal has no arrow, so the page draws one.
    It glides to the cell the runner is about to click, pulses on the
@@ -119,6 +129,8 @@ body.fit .controls {
   opacity: 0; pointer-events: none; transition: opacity .15s;
 }
 body.fit.show-controls .controls { opacity: 1; pointer-events: auto; }
+/* ask mode: the Take control button stays in reach until it is pressed */
+body.fit[data-control="ask"]:not(.driving) .controls { opacity: 1; pointer-events: auto; }
 .hot-edge { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 14px; z-index: 9; }
 body.fit .hot-edge { display: block; }
 body.fit .window { border-radius: 0; }
@@ -155,6 +167,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       <div class="banner" id="banner" role="button" tabindex="0">
         <span class="dot"></span><span id="banner-text">Guided tour playing — press any key or click to take over</span>
       </div>
+      <div class="notice" id="notice" role="status"></div>
       <div class="ended" id="ended">
         <div>
           <h2 id="ended-title">That was ten minutes of mnml.</h2>
@@ -166,6 +179,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   </section>
   <div class="hot-edge" id="hot-edge"></div>
   <div class="controls" id="controls">
+    <button class="brand" id="take" hidden>Take control</button>
     <button id="replay">Replay tour</button>
     <select id="picker" aria-label="Play one part of the tour"><option value="">Play one part…</option></select>
     <button id="fullscreen">Full screen</button>
@@ -202,6 +216,13 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   // no `s`. Every path is relative, so the page also works under a route
   // prefix (`/demo/`).
   const SESSION = new URLSearchParams(location.search).get("s");
+  // Who may drive (the hosted Worker's meta tag; the local trial has none:
+  // open). "view": watch only — the terminal sends nothing, and the Worker
+  // drops input anyway. "ask": as view until "Take control". "open": any
+  // key or click takes over the tour.
+  const MODE = (document.querySelector('meta[name="mnml-demo-control"]') || {}).content || "open";
+  let canDrive = MODE === "open";
+  document.body.dataset.control = MODE;
   const u = (path) => {
     const url = new URL(path, location.href);
     if (SESSION) url.searchParams.set("s", SESSION);
@@ -266,7 +287,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       // The one size the pty is ever told.
       ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: COLS, rows: ROWS })));
       trace("pty size sent: " + COLS + "x" + ROWS);
-      term.focus();
+      if (canDrive) term.focus();
       poll();
     };
     ws.onmessage = (e) => {
@@ -290,6 +311,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       cols: COLS, rows: ROWS, fontFamily: FAMILY, fontSize: 13, lineHeight: 1, letterSpacing: 0,
       scrollback: 0, cursorBlink: false, allowProposedApi: true, customGlyphs: true,
       drawBoldTextInBrightColors: false, macOptionIsMeta: true, theme: { background: "#1e222a" },
+      disableStdin: !canDrive,
     });
     term.onResize((s) => trace("term resized to " + s.cols + "x" + s.rows + " (should never happen)"));
     term.loadAddon(new Unicode11Addon.Unicode11Addon());
@@ -383,14 +405,35 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   async function post(path) {
     try { const r = await fetch(u(path), { method: "POST" }); return await r.json(); } catch (_) { return null; }
   }
-  const focusTerm = () => term && term.focus();
+  const focusTerm = () => canDrive && term && term.focus();
   $("replay").onclick = async () => { await post("api/replay"); poll(); focusTerm(); };
   $("picker").onchange = async (e) => {
     const v = e.target.value; e.target.value = "";
     if (v) { await post("api/play?flow=" + encodeURIComponent(v)); poll(); }
     focusTerm();
   };
-  const takeOver = async () => { await post("api/stop"); poll(); focusTerm(); };
+  const takeOver = async () => {
+    if (!canDrive) return; // ask: the Take control button is the way in
+    await post("api/stop"); poll(); focusTerm();
+  };
+  // "ask": one press, a one-line notice, then input flows; the tour keeps
+  // playing until the first key or click, as in open mode.
+  let noticeT = 0;
+  async function takeControl() {
+    const r = await fetch(u("control/take"), { method: "POST" }).catch(() => null);
+    if (!r || !r.ok) return;
+    canDrive = true;
+    document.body.classList.add("driving");
+    term.options.disableStdin = false;
+    $("take").hidden = true;
+    const n = $("notice");
+    n.textContent = "You're driving a real mnml in a sandbox: Jira, Bitbucket and the Claude session are offline stand-ins, nothing leaves it, and it ends with the countdown below.";
+    n.classList.add("on");
+    clearTimeout(noticeT); noticeT = setTimeout(() => n.classList.remove("on"), 7000);
+    poll(); focusTerm();
+  }
+  $("take").hidden = MODE !== "ask";
+  $("take").onclick = takeControl;
   $("banner").onclick = takeOver;
   $("banner").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") takeOver(); };
   $("again").onclick = () => {
@@ -438,11 +481,13 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       flowsShown = true;
     }
     const cur = st.flows && st.flows.find((f) => f.name === st.flow);
-    $("banner-text").textContent = "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over";
+    $("banner-text").textContent = canDrive
+      ? "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over"
+      : "Guided tour" + (cur ? ": " + cur.title : "") + (MODE === "ask" ? " — Take control to drive it" : "");
     const left = fmt(st.remaining_s);
     $("status").textContent =
       phase === "tour" ? "tour playing · " + left + " left" :
-      phase === "live" ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " + left + " left" :
+      phase === "live" ? (canDrive ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " : "tour paused · it resumes in " + fmt(st.resume_in_s) + " · ") + left + " left" :
       phase === "ended" ? "session over" :
       phase === "lost" ? "not connected" :
       phase === "starting" || phase === "idle" ? "starting mnml…" : "connecting…";

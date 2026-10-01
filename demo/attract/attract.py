@@ -50,6 +50,7 @@ WEB = os.environ.get("MNML_DEMO_WEB", os.path.join(ROOT, "web"))
 PORT = int(os.environ.get("MNML_DEMO_PORT", "7681"))
 CAP_S = float(os.environ.get("MNML_DEMO_CAP_S", "600"))
 IDLE_S = float(os.environ.get("MNML_DEMO_IDLE_S", "180"))
+CONTROL = os.environ.get("MNML_DEMO_CONTROL", "open")
 IPC = os.environ.get("MNML_IPC_DIR", "/tmp/mnml-demo/ipc")
 # /tmp/mnml-demo: the session marker, ttyd's socket, and one IPC directory
 # per session (ipc-<session.sh pid>, made by session.sh).
@@ -456,7 +457,12 @@ class Session:
         self.unbanner()
 
     def banner(self, title):
-        text = f"▶ Guided tour: {title} — press any key or click to take over"
+        # MNML_DEMO_CONTROL (the hosted demo's mode for this session):
+        # open = any key takes over; ask = the page's Take control button;
+        # view = watch only.
+        tail = {"view": "", "ask": " — Take control below to drive it"}.get(
+            CONTROL, " — press any key or click to take over")
+        text = f"▶ Guided tour: {title}{tail}"
         self.app.send({"cmd": "statusline-set-segment", "id": self.BANNER_ID, "text": text,
                        "side": "left", "priority": 255, "max_width": len(text) + 2, "min_width": 10})
 

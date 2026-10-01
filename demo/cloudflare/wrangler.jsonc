@@ -50,6 +50,13 @@
 	],
 
 	"vars": {
+		// Who may drive the demo: "view" (watch only; the Worker drops the
+		// visitor's input), "ask" (a Take control button), "open" (any key
+		// takes over). A browser unlocked with ?control=<DEMO_CONTROL_SECRET>
+		// is always open; the secret is set with `wrangler secret put
+		// DEMO_CONTROL_SECRET`, never here. Changing this is an edit here and
+		// `wrangler deploy` (the image is unchanged, so nothing is rebuilt).
+		"DEMO_CONTROL": "view",
 		// The path the demo is served under; the Worker strips it before a
 		// request reaches the container, which serves at `/` (the local
 		// trial's paths). "" for a hostname of its own (demo.<zone>).

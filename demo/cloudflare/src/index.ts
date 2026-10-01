@@ -22,6 +22,7 @@
 // the browser makes for it (fonts, scripts, the stylesheet) carry it in
 // their Referer.
 import { Container } from "@cloudflare/containers";
+import { MODE_HEADER, type Mode, filterWebSocket, modeFor, unlock } from "./control";
 
 const PORT = 7681;
 // A session's container is stopped this long after its cap however it is
@@ -42,6 +43,8 @@ export class DemoSession extends Container<Env> {
 	// poll, the websocket) arrive together, and each would otherwise begin
 	// its own start-and-wait while the container is still coming up.
 	private starting?: Promise<void>;
+	// `ask` mode: the visitor pressed "Take control" in this session.
+	private granted = false;
 
 	constructor(ctx: DurableObjectState<{}>, env: Env) {
 		super(ctx, env);
@@ -64,23 +67,45 @@ export class DemoSession extends Container<Env> {
 			await this.expire();
 			return new Response("this demo session is over\n", { status: 410 });
 		}
+		// The mode the Worker decided for this request (missing = view).
+		const h = request.headers.get(MODE_HEADER);
+		const mode: Mode = h === "open" || h === "ask" ? h : "view";
+		this.granted = (await this.ctx.storage.get<boolean>("granted")) === true;
+		const path = new URL(request.url).pathname;
+		if (path === "/__mnml/control/take") {
+			if (mode === "ask") await this.ctx.storage.put("granted", (this.granted = true));
+			return new Response(null, { status: mode === "view" ? 403 : 204 });
+		}
+		// Taking over the tour is input too.
+		if (path === "/api/stop" && !this.inputAllowed(mode)) return new Response("view only\n", { status: 403 });
+
 		if (!this.ctx.container?.running || (await this.getState()).status !== "healthy") {
-			this.starting ??= this.startAndWaitForPorts().finally(() => (this.starting = undefined));
+			// The first request's mode (the page) is the session's: the runner
+			// words the in-app banner by it.
+			this.starting ??= this.startAndWaitForPorts({
+				startOptions: { envVars: { ...this.envVars, MNML_DEMO_CONTROL: mode } },
+			}).finally(() => (this.starting = undefined));
 			try {
 				await this.starting;
 			} catch (e) {
 				return new Response(`the demo container did not start: ${e}\n`, { status: 503 });
 			}
 		}
-		const res = await this.containerFetch(request);
+		let res = await this.containerFetch(request);
+		if (res.webSocket && mode !== "open") return filterWebSocket(res.webSocket, () => this.inputAllowed(mode), res.headers);
 		// A connection the container dropped before answering (the class
 		// answers 500 with its own text) is retried once when the request can be
 		// repeated: a GET has no body.
 		if (res.status === 500 && request.method === "GET" && /^(Error proxying request|Container suddenly disconnected)/.test(await res.clone().text())) {
 			await scheduler.wait(250);
-			return this.containerFetch(request);
+			res = await this.containerFetch(request);
+			if (res.webSocket && mode !== "open") return filterWebSocket(res.webSocket, () => this.inputAllowed(mode), res.headers);
 		}
 		return res;
+	}
+
+	private inputAllowed(mode: Mode): boolean {
+		return mode === "open" || (mode === "ask" && this.granted);
 	}
 
 	// The hard end of a session: stop the container (its websocket and
@@ -101,6 +126,10 @@ export default {
 		const url = new URL(request.url);
 		const base = (env.BASE_PATH || "").replace(/\/+$/, "");
 		let path = url.pathname;
+		// `?control=<secret>` on the demo's own page: maybe unlock this
+		// browser, then the same URL without it.
+		if (url.searchParams.has("control") && (path === base || path === `${base}/`))
+			return unlock(url, env, base || "/");
 		if (base) {
 			if (path === base) return redirect(`${base}/`);
 			if (!path.startsWith(`${base}/`)) return new Response("not found\n", { status: 404 });
@@ -108,6 +137,9 @@ export default {
 		}
 
 		if (path === "/healthz") return new Response("ok\n", { headers: { "cache-control": "no-store" } });
+
+		// The Durable Object's own paths are not the visitor's to call.
+		if (path.startsWith("/__mnml/")) return new Response("not found\n", { status: 404 });
 
 		const s = url.searchParams.get("s") ?? sessionFromReferer(request);
 		if (path === "/new" || (path === "/" && !s)) {
@@ -124,10 +156,14 @@ export default {
 			return new Response("no demo session\n", { status: 400 });
 		}
 
+		const mode = await modeFor(request, env);
 		const target = new URL(url);
-		target.pathname = path;
+		// "Take control" (ask mode) is the Durable Object's to record.
+		target.pathname = path === "/control/take" && request.method === "POST" ? "/__mnml/control/take" : path;
 		target.searchParams.delete("s");
-		const res = await env.DEMO.get(id).fetch(new Request(target, request));
+		const fwd = new Request(target, request);
+		fwd.headers.set(MODE_HEADER, mode);
+		const res = await env.DEMO.get(id).fetch(fwd);
 
 		if (path === "/") {
 			// An old link to a session that is over: a fresh one.
@@ -141,7 +177,11 @@ export default {
 			// The browser's own requests (fonts, scripts) must keep `?s=` in
 			// their Referer; same-origin keeps the whole URL.
 			h.set("referrer-policy", "same-origin");
-			return new Response(res.body, { status: res.status, headers: h });
+			// The page learns its mode from a meta tag (no tag: the local
+			// trial, open).
+			return new HTMLRewriter()
+				.on("head", { element: (e) => { e.append(`<meta name="mnml-demo-control" content="${mode}">`, { html: true }); } })
+				.transform(new Response(res.body, { status: res.status, headers: h }));
 		}
 		return res;
 	},
