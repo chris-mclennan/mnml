@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Users/chrismc…            │  Cheatsheet 󰅖   󰐕                                                                                                                              󱸀  󲀀      
+   │  ● …/tour-ws/ws/             │  Cheatsheet 󰅖   󰐕                                                                                                                              󱸀  󲀀      
 ▌ │▌    docs                         │▌ Cheatsheet · / filter · ↑↓ · C collapse · X all · Esc → back
-   │   󱼅    notes.md                   │▌ app (2)
+   │     󱼅  notes.md                   │▌ app (2)
  󰍉 │     src                          │▌  ctrl+q            Quit mnml                                                                                                                        app.quit
-   │   󱼄    main.zig                   │▌  ctrl+;            Open the `:` command line (any focus, either keymap profile)                                                             app.command_line
- 󰊢 │   󱼅    util.zig                 M │▌ view (86)
+   │     󱼄  main.zig                   │▌  ctrl+;            Open the `:` command line (any focus, either keymap profile)                                                             app.command_line
+ 󰊢 │     󱼅  util.zig                 M │▌ view (86)
    │      .gitignore                   │▌  space t e         Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)                                            view.toggle_tree
   │      CHANGELOG.md               ? │▌  ctrl+b            Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)                                            view.toggle_tree
    │     󰂺 README.md                    │▌  f1                Keybindings & help — help overlay (auto-generated keymap reference)                                                             view.help
@@ -56,5 +56,5 @@
    │                                    │▌  space ?           Open the cheatsheet pane (every chord → command)                                                                          view.cheatsheet
   │                                    │▌  ctrl+k ctrl+s     Open the cheatsheet pane (every chord → command)                                                                          view.cheatsheet
    │                                    │▌  space t t         Pick theme…                          ⋯                                                                                         theme.pick
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  03:17  ws   —
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  19:52  ws   —
 

@@ -1,10 +1,10 @@
  ❯_  mnml  File  Edit  Selection  View  Go  Run  Terminal  Window  Help              󰍉  ws                                                                                    󰐕  TABS  1 󰅖  ●━  󰅖
-   │  ● /Users/chrismc…            │  main.zig 󰅖   󰐕                                                                                                                                󱸀  󲀀      
+   │  ● …/tour-ws/ws/             │  main.zig 󰅖   󰐕                                                                                                                                󱸀  󲀀      
 ▌ │▌    docs                         │▌src › main.zig
-   │   󱼅    notes.md                   │▌  1 const std = @import("std");
+   │     󱼅  notes.md                   │▌  1 const std = @import("std");
  󰍉 │     src                          │▌  2 const util = @import("util.zig");
-   │   󱼄    main.zig                   │▌  3
- 󰊢 │   󱼅    util.zig                 M │▌  4 /// The entry point: add a few numbers and print the total.
+   │     󱼄  main.zig                   │▌  3
+ 󰊢 │     󱼅  util.zig                 M │▌  4 /// The entry point: add a few numbers and print the total.
    │      .gitignore                   │▌  5 pub fn main() !void {
   │      CHANGELOG.md               ? │▌  6     // TODO: read the numbers from the command line.
    │     󰂺 README.md                    │▌  7     const numbers = [_]i64{ 1, 2, 3, 4, 5 };
@@ -56,5 +56,5 @@
    │ · [Ctrl+P] Files                   │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- EDIT  dev   main  󰐙 1  󰛕 1   main.zig  › main                                                                     󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    03:16  ws   zig
+ EDIT  dev   main  󰐙 1  󰛕 1   main.zig  › main                                                                     󱸀 95% 52%  󱼀 󰐎  LSP?  455B  Ln 7/12 Col 45  Sel 179    19:51  ws   zig
 
