@@ -42,13 +42,15 @@ pub const table = .{
 /// `run` / `ex` line goes through (`command.runDyn`).
 pub fn fire(app: *App, line_in: []const u8) CommandError!void {
     const arena = app.frame.allocator();
-    const line = switch (try resolveTerm(app, arena, try launcher_template.expandFor(app, arena, line_in))) {
+    const written = try launcher_template.expandFor(app, arena, line_in);
+    const line = switch (try resolveTerm(app, arena, written)) {
         .run => |l| l,
         .missing => |prog| return app.diag.fail(arena, "{s} is not on PATH — {s}{s}", .{ prog, cmd_app.installHintPrefix(), prog }),
     };
     // A tool's `term` line keeps its own placement: the vim profile's
-    // `:term` takes the current window, a tool still opens below.
-    if (termArgs(line)) |args| return @import("cmd_term.zig").termTool(app, args);
+    // `:term` takes the current window, a tool still opens below. Its
+    // tab reads the line as written, not the path it was resolved to.
+    if (termArgs(line)) |args| return @import("cmd_term.zig").termToolAs(app, args, termArgs(written) orelse args);
     return app.runEx(line);
 }
 
@@ -261,6 +263,8 @@ test "resolveTerm: a term program linked into <data root>/bin runs by that path;
     try fire(&app, "term mnml-x --refresh");
     try t.expect(app.diag.msg == null);
     try t.expectEqual(@as(usize, 1), app.panes.count());
+    // Its tab reads the line as written, not the resolved path.
+    try t.expectEqualStrings("mnml-x --refresh", app.panes.get(app.active.?).?.title());
 }
 
 test "installFile: a good manifest lands in the data root and the list follows; a broken one is refused with its reason; add_local resolves a relative path" {

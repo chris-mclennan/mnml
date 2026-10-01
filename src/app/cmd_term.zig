@@ -197,26 +197,33 @@ fn scratchToggle(app: *App) CommandError!void {
 /// the standard profile splits it off below. Tools that fire a `term`
 /// line go through `termTool` instead, so this never moves them.
 pub fn termEx(app: *App, args: []const u8) CommandError!void {
-    return termLine(app, args, if (app.input_style == .vim) .tab else .below);
+    return termLine(app, args, if (app.input_style == .vim) .tab else .below, null);
 }
 
 /// A `term <prog>` line a launcher, an integration or a task fires
 /// (`launchers.fire`): below the active pane in either profile, where
 /// those tools have always opened.
 pub fn termTool(app: *App, args: []const u8) CommandError!void {
-    return termLine(app, args, .below);
+    return termLine(app, args, .below, null);
+}
+
+/// `termTool` with the tab labelled `label` rather than the line run —
+/// a launcher's line as written, when the program in it was resolved
+/// to a path (`launchers.resolveTerm`).
+pub fn termToolAs(app: *App, args: []const u8, label: []const u8) CommandError!void {
+    return termLine(app, args, .below, std.mem.trim(u8, label, " \t"));
 }
 
 /// An empty line opens the login shell; `<cmd…>` runs the line through
-/// the platform's shell (`sh -c`, `cmd /d /c`) with the line as the tab
-/// label.
-fn termLine(app: *App, args: []const u8, placement: pty_pane.Placement) CommandError!void {
+/// the platform's shell (`sh -c`, `cmd /d /c`) with the line (or
+/// `label`) as the tab label.
+fn termLine(app: *App, args: []const u8, placement: pty_pane.Placement, label: ?[]const u8) CommandError!void {
     const line = std.mem.trim(u8, args, " \t");
     if (line.len == 0) return shell(app, placement);
     var shell_buf: [4][]const u8 = undefined;
     _ = try pty_pane.open(app, .{
         .argv = pty.shellArgv(&shell_buf, &app.env, line),
-        .label = line,
+        .label = label orelse line,
         .placement = placement,
         .kind = .command,
     });
