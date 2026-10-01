@@ -1526,8 +1526,10 @@ pub fn parseTreeWidth(text: []const u8, cols: u16) TreeWidthAnswer {
     const pct = std.mem.endsWith(u8, s, "%");
     const digits = std.mem.trim(u8, if (pct) s[0 .. s.len - 1] else s, " \t");
     const n = std.fmt.parseInt(u32, digits, 10) catch return .junk;
-    if (pct and n > 100) return .junk;
-    const cells: u32 = if (pct) @as(u32, cols) * n / 100 else n;
+    // // changed (hunt5): a share over 100% is still a share — out of
+    // range, said in cells like any other, not "not a number".
+    const wide: u64 = if (pct) @as(u64, cols) * n / 100 else n;
+    const cells: u32 = @intCast(@min(wide, std.math.maxInt(u32)));
     if (cells < Config.tree_width_min or cells > Config.tree_width_max) return .{ .out_of_range = cells };
     return .{ .cells = @intCast(cells) };
 }
@@ -2786,6 +2788,8 @@ test "Set width… reads cells or a share, inside 10..80, and nothing else" {
     try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("", 200));
     try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("%", 200));
     try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("-5", 200));
-    try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("150%", 200));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 300 }, parseTreeWidth("150%", 200));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = 0 }, parseTreeWidth("0%", 200));
+    try t.expectEqual(TreeWidthAnswer{ .out_of_range = std.math.maxInt(u32) }, parseTreeWidth("4294967295%", 200));
     try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("3.5", 200));
 }

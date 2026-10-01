@@ -96,6 +96,10 @@ the release ships one file), and one line per change a user can see.
 - Vim `]a` / `[a` (with a count) now step through the Claude Code and Codex
   sessions from a terminal pane's T-NORMAL mode too, as they do from an
   editor; before, `]` was dropped and the `a` went back to TERMINAL.
+- Git mode's sidebar (a fifth of the window) now re-sizes when the window
+  does, instead of keeping the width it snapped to.
+- *Set width…* answers a share over 100% (`150%`) with the allowed range in
+  cells, as it does for any other width out of range.
 
 ## v0.3.1
 
