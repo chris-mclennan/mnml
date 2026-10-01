@@ -90,6 +90,9 @@ the release ships one file), and one line per change a user can see.
 - The sidebar divider's ticked *Auto-hide sidebar* row now unticks (back to
   always shown) instead of setting auto-hide again, and right-clicking the
   edge of a revealed auto-hide sidebar opens that same divider menu.
+- Esc in Settings now puts the sidebar back too: a width previewed on the
+  *Tree width* row no longer stays on screen after the cancel, and a width
+  set by hand comes back.
 
 ## v0.3.1
 
