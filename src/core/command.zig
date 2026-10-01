@@ -764,6 +764,11 @@ pub const MenuAction = union(enum) {
     /// A workspace header menu's *Switch to this workspace*: that root
     /// (0 the primary, i + 1 the i-th extra) becomes the active one.
     switch_workspace: u8,
+    /// The bell menu's *Needs input: …* rows: go to a session waiting
+    /// on you — `pane` when a pane here runs it, else the listing's
+    /// `id` (the menu's `mem` arena owns the bytes;
+    /// `app/session_attention.zig`).
+    session_focus: struct { pane: ?u32 = null, id: []const u8 = "" },
     none,
 };
 

@@ -70,6 +70,7 @@ const debug_panel = @import("debug_panel.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
+const session_attention = @import("session_attention.zig");
 const welcome_app = @import("welcome.zig");
 const dock = @import("dock.zig");
 const launcher_dock = @import("launcher_dock.zig");
@@ -1359,6 +1360,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     const text: ?[]const u8 = switch (action) {
         .copy_text, .copy_link, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
         .claude_account => |c| try app.frame.allocator().dupe(u8, c.name),
+        .session_focus => |f| try app.frame.allocator().dupe(u8, f.id),
         else => null,
     };
     closeOverlay(app);
@@ -1488,6 +1490,10 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .script_list_refresh => |id| if (script_list.find(app, id)) |l| try script_list.refresh(app, l),
         .script_section_show => |i| script_section.show(app, i, true),
         .switch_workspace => |root| try app.tree.switchTo(app, root),
+        .session_focus => |f| session_attention.focus(app, f.pane, if (text.?.len > 0) text.? else null) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .none => {},
     }
 }
@@ -2818,6 +2824,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // // changed (git-more2): a failed git op's toast: the
                     // click opens the command log at the child that failed.
                     const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, git_app.log_toast_id) else false;
+                    // A session waiting on you: the message is the
+                    // session, so the click goes to it (`Focus`).
+                    if (app.toasts.items[at].action) |action| if (action == .focus_session) {
+                        app.toasts.items[at].action = null;
+                        defer action.deinit(app.gpa);
+                        app.dismissToastAt(at);
+                        return app.runToastAction(action);
+                    };
                     app.dismissToastAt(at);
                     if (is_script) try script_diag.jump(app);
                     if (is_git_log) git_app.runToast(app, git_app.openCommandLog(app, null));

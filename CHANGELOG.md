@@ -45,6 +45,15 @@ the release ships one file), and one line per change a user can see.
   so a host replaying a script can tell when a person takes over. Off by
   default.
 
+### Sessions
+
+- The `session needs input: NAME` toast goes to the session when clicked
+  (or through its ` Focus ` button): its pane comes forward with the keys,
+  as a double-click on its SESSIONS card does; a session another terminal
+  runs is shown selected in the sessions table.
+- The bell's right-click menu leads with every session waiting on you right
+  now, one `Needs input: NAME` row each, and a row goes to that session.
+
 ### Fixes
 
 - The tree's connectors follow the Rust rule again: none under a top-level

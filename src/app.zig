@@ -1037,6 +1037,11 @@ pub const ToastAction = union(enum) {
     /// (`wire.ToastAction.url`), and the reason the merge that took
     /// the pull request off the list still has a door to it.
     open_url: struct { label: []u8, url: []u8 },
+    /// Go to a session that started waiting on you
+    /// (`app/session_attention.zig`): `pane` when a pane here runs it,
+    /// else the listing's `session_id`. The one offer the toast's body
+    /// click takes too — the message IS the session.
+    focus_session: struct { label: []u8, pane: ?PaneId = null, session_id: ?[]u8 = null },
 
     pub fn label(self: ToastAction) []const u8 {
         return switch (self) {
@@ -1053,6 +1058,7 @@ pub const ToastAction = union(enum) {
                     .marketplace => |m| gpa.free(m.id),
                     .command => |c| gpa.free(c.id),
                     .open_url => |u| gpa.free(u.url),
+                    .focus_session => |f| if (f.session_id) |sid| gpa.free(sid),
                     .restart => {},
                 }
             },
@@ -2253,6 +2259,13 @@ pub const App = struct {
             .open_url => |u| {
                 const url = try self.frame.allocator().dupe(u8, u.url);
                 @import("app/git.zig").openExternal(self, url);
+            },
+            .focus_session => |f| {
+                const sid: ?[]const u8 = if (f.session_id) |s| try self.frame.allocator().dupe(u8, s) else null;
+                @import("app/session_attention.zig").focus(self, f.pane, sid) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.toast("could not go to that session", .{}),
+                };
             },
         }
     }
@@ -3847,6 +3860,7 @@ test {
     _ = @import("app/ai.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
+    _ = @import("app/session_attention.zig");
     _ = @import("app/welcome.zig");
     _ = @import("app/cloud_agents.zig");
     _ = @import("ui/sessions_table_view.zig");

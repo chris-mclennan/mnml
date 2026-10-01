@@ -83,6 +83,11 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .keys = &.{.{ .command = .@"buffer.reopen", .label = "Reopen the last closed buffer" }},
         .links = &.{ .{ .command = .{ .id = .@"buffer.reopen", .label = "Reopen the last closed buffer" } }, .{ .command = .{ .id = .@"toast.dismiss_current", .label = "Dismiss" } } },
     };
+    if (@import("../session_attention.zig").isSessionToast(app, id)) return .{
+        .title = "A session needs input",
+        .body = "A Claude Code or Codex session stopped to ask you something — a permission, a choice, a question. Click the box (or its Focus button) to go to it: its pane comes on screen with the keys, the same as a double-click on its SESSIONS card; a session no pane here runs is shown selected in the sessions table instead. The bell's right-click lists every session waiting right now.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session that needs you" } }, .{ .command = .{ .id = .@"toast.dismiss_current", .label = "Dismiss" } }, ask },
+    };
     if (id >= toast_mod.button_base) return .{
         .title = "Toast",
         .body = "A message from something that just happened — a save, a git result, an error from a server — in the bottom-right corner, kept in the message history after it fades so the bell can find it again. Click dismisses this one; right-click offers dismiss, copy the text, dismiss all. A red toast is an error and its full text is in the history if the line was cut.",

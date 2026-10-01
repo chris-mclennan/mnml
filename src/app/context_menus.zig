@@ -326,14 +326,18 @@ pub fn openFileChipMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try openOwned(app, "Buffer", rows, x, y, mem);
 }
 
-/// The bell: the history picker and its clear.
+/// The bell: every session waiting on you first, each row going to it
+/// (`app/session_attention.zig`), then the history picker and its clear.
 pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
-    const rows = try items(app, &.{
-        .{ .label = "Show messages", .action = .{ .command = .@"messages.show" } },
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const waiting = try @import("session_attention.zig").bellRows(app, mem.allocator());
+    const rows = try std.mem.concat(app.gpa, MenuItem, &.{ waiting, &.{
+        .{ .label = "Show messages", .action = .{ .command = .@"messages.show" }, .separator_before = waiting.len > 0 },
         .{ .label = "Clear history", .action = .{ .command = .@"messages.clear" }, .separator_before = true },
-    });
+    } });
     errdefer app.gpa.free(rows);
-    try app.openMenu("Messages", rows, x, y);
+    try openOwned(app, "Messages", rows, x, y, mem);
 }
 
 /// A toast's right-click: `at` indexes `app.toasts` (oldest first) and
