@@ -121,6 +121,11 @@ installed from inside mnml; see [Integrations](/docs/integrations).
 launch. To build mnml yourself instead, see
 [Build from Source](/docs/install/build).
 
+To look around before mnml has any of your settings, run
+`mnml --sandbox` for a throwaway home, or `mnml --demo` for a ready-made
+sample project; [Try It First](/docs/install/try) explains both (macOS
+and Linux).
+
 ## Coming from mnml 0.2.x
 
 Configuration is `config.zon` now, and 0.3.0 does not read the old

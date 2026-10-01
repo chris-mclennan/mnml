@@ -67,6 +67,104 @@ for a moment; `view.fullscreen` (`space t f`) hides the chrome.
 
 <!-- video: splits -->
 
+### The file tree
+
+Below the top level, every row in the tree carries neo-tree's
+connectors, folders and files alike: a `│` down each level that still
+has entries to come, and at the row's own level a `│` while a sibling
+follows or a `└` on the last child. They are drawn in the theme's
+comment grey, so they guide the eye without competing with the names.
+A row nested too deep for the column folds its outer levels into `…`
+and keeps its name.
+
+With more than one workspace in the tree (`view.add_workspace`), each
+gets a header row, and a **workspace dot** after the header's chevron
+marks which one is active: `●` on the active workspace, `○` on every
+other. Click a `○` to switch to that workspace — it opens, the others
+fold, and the tree takes the keys. A click anywhere else on the header
+still folds or unfolds it. The same switch is *Switch to this
+workspace* on an extra workspace's right-click menu, and
+`view.switch_workspace` picks one from a list (`ctrl+k ctrl+o` in the
+standard profile). Removing the active workspace hands the dot back to
+the workspace mnml was opened on.
+
+The dots are on by default. *Show workspace dots* on the header's
+right-click menu, the *Workspace dots* row in the settings overlay, or
+`ui.show_workspace_dots = false` turns them off.
+
+### The sidebar's width and side
+
+The sidebar is a share of the window, not a fixed number of cells: a
+fifth of the width, never narrower than 30 cells or wider than 48. That
+is 30 cells up to a 150-column window, 40 at 200 columns, and 48 from
+240 columns on. It follows the window as you resize it.
+
+To fix the width instead, give `ui.tree_width` a number of cells (10 to
+80), in `config.zon` or the *Tree width* row of the settings overlay
+(one step below 10 reads `auto`, which is `0` in the file):
+
+```zig
+.{ .ui = .{ .tree_width = 36 } }   // 0, the default, is the share
+```
+
+Dragging the divider between the sidebar and the editor also sets the
+width, and that width wins over the config: it stays put through
+resizes and is saved with the session, so it is still there next time
+you open the workspace. Changing the *Tree width* row in the settings
+overlay drops a dragged width and applies the row's value. When mnml
+reads its configuration again while running — after you trust a
+workspace, for example — a dragged width survives, unless
+`ui.tree_width` itself changed; then the file's value takes over.
+
+Right-click the divider for its menu:
+
+| Row | What it does |
+| --- | ------------ |
+| *Reset width* | Drops a dragged or typed width and goes back to the config's: the share, or the number `ui.tree_width` names. |
+| *Set width…* | Asks for a width: a number of cells, or a share of the window such as `25%`. It must come to 10–80 cells. Like a drag, it lasts until *Reset width* and is saved with the session. |
+| *Hide sidebar* | Hides the column, as `ctrl+n` (vim) or `ctrl+b` (standard) does. |
+| *Auto-hide sidebar* | Keeps the sidebar out of sight until the pointer reaches the screen edge, then shows it over the editor without resizing anything (`ui.sidebar = .auto`). The row is ticked while it is on; `view.sidebar_mode_always` docks it again. |
+| *Move sidebar to the right* | Moves the sidebar to the other side of the editor (`ui.sidebar_side`). Read *Move sidebar to the left* once it is there. |
+
+Moving the sidebar moves every section that follows the default side —
+the file tree, git, sessions and the rest — and it moves the outline,
+which always takes the side opposite the sidebar. A section you moved
+by hand, or one `ui.section_side` places, stays where it is, and the
+problems list stays in the bottom dock. *Auto-hide* and *Move sidebar*
+are written to your home `config.zon`; *Set width…* and a drag are not.
+
+### The launcher dock
+
+The launcher dock is a strip of things you start — the `+` menu, your
+integrations, a terminal item, and any command you pin — centred along
+one edge of the editor. On the bottom edge it can sit in one of three
+places:
+
+| Placement | Where the strip goes |
+| --------- | -------------------- |
+| *above statusline* (`.inner`, the default) | The editor area's last row, above the statusline. |
+| *below command line* (`.outer`) | The screen's last row, under the `:` line. Everything else moves up a row. |
+| *on command line* (`.shared`) | The `:` line's own row. It takes no row of its own. |
+
+Choose with the *Launcher dock placement* row in the settings overlay,
+the *Place:* rows on the strip's right-click menu, or `:dock inner`,
+`:dock outer` and `:dock shared` (`ctrl+;` opens the `:` line in the
+standard profile). In `config.zon` it is `ui.dock.placement`:
+
+```zig
+.{ .ui = .{ .dock = .{ .placement = .shared } } }
+```
+
+On the command line's row the dock is always up: there is no grip to
+find it by and no extra row to reveal, so an auto-hide setting reads as
+always shown there (`hidden` still hides it). The items sit where
+`ui.dock.align` puts them and do not move while you type. Only when a
+long command would reach them does the strip step aside — it is not
+drawn while the command is that long, and it comes back as soon as the
+line closes or gets shorter. With the items aligned to the start of
+the row they step aside as soon as a line opens, so keep the default
+centred alignment, or `end`, to see them while you type.
+
 ## Editing
 
 - **Multiple cursors.** Every cursor types, deletes, selects and pastes.

@@ -8,6 +8,7 @@
       "children": [
         { "type": "link", "path": "/", "title": "Overview" },
         { "type": "link", "path": "/build", "title": "Build from Source" },
+        { "type": "link", "path": "/try", "title": "Try It First" },
         {
           "type": "folder",
           "path": "/release-notes",

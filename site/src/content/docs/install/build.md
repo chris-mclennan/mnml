@@ -51,6 +51,12 @@ Run it on a folder:
 ./zig-out/bin/mnml-zig ~/src/my-project
 ```
 
+A source build also puts the Jira and Bitbucket integrations and their
+offline test servers in `zig-out/bin`, so
+`./zig-out/bin/mnml-zig --demo` opens the complete demo — a sample
+project, a stand-in Claude Code session and offline Jira and Bitbucket
+panes, in a throwaway home. See [Try It First](/docs/install/try#--demo).
+
 ## Installing your build
 
 On macOS and Linux, `./run.sh install` builds ReleaseSafe and installs

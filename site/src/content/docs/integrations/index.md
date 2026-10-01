@@ -33,6 +33,25 @@ credentials for your account; each one's README has its setup:
 [Bitbucket](https://github.com/chris-mclennan/mnml/tree/main/integrations/bitbucket),
 [Sample](https://github.com/chris-mclennan/mnml/tree/main/integrations/sample).
 
+### Jira and Bitbucket 0.2.0 could not read their sites
+
+> [!WARNING]
+> Jira 0.2.0 and Bitbucket 0.2.0, the versions offered with mnml 0.3.0,
+> fail against a real site. Jira and Bitbucket compress their answers
+> whenever the client allows it, and 0.2.0 handed the compressed bytes
+> straight to the JSON parser: every Jira pane said *the search answer
+> was not JSON*, and the Bitbucket panes failed the same way.
+>
+> Version 0.2.1 of both reads the answer through its compression. To
+> get it, update mnml itself to 0.3.1 or later — the Marketplace lists
+> the integrations built for the mnml you are running — then open the
+> Marketplace tab, where an installed 0.2.0 reads *update available*,
+> and install it again. See [Updating](/docs/integrations/marketplace#updating).
+
+If a site still answers with something that is not JSON, 0.2.1's
+message says what arrived: the content-type, the size and the first
+bytes.
+
 ## Installing
 
 There are two ways, and both do the same thing underneath:
@@ -46,6 +65,27 @@ There are two ways, and both do the same thing underneath:
 
 Either way, mnml downloads the build for your platform, checks its
 sha256 before anything is written, and sets it up.
+
+## On the top bar
+
+An installed integration can put a chip on the top bar, in the run
+right of the right-panel toggle. The chips sit three cells apart — the
+toggle's own rhythm — and a click opens the integration.
+
+A newly installed integration starts **off** the top bar, however it
+was installed: from the Marketplace, a local folder, a launcher file,
+or `<binary> --install` in a shell. To put it there, right-click its row
+on the Installed tab (or its icon on the activity bar) and choose
+*Show on top bar*; *Hide from top bar* takes it off again.
+
+mnml remembers the choice in `integrations-top-bar.txt` in your data
+root (`~/.config/mnml` unless you moved it), one line per integration,
+`on <id>` or `off <id>`. A reinstall, an update or a rebuild keeps
+what you chose there, even though an integration's `--install` writes
+its manifest from scratch. Upgrading from an mnml that did not keep
+this file leaves every integration where it already was. The built-in
+chips are not integrations and keep their own defaults, so Browser
+keeps its chip.
 
 ## Private integrations
 
