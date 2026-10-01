@@ -49,6 +49,9 @@ the release ships one file), and one line per change a user can see.
 
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
+- A program that turns on both the kitty keyboard protocol and application
+  cursor keys gets arrows, Home and End as `CSI` sequences, as ghostty sends
+  them, instead of the `ESC O` form.
 - `:only` (`view.only`) no longer crashes when gathering the other splits
   empties one of them first — reachable when a pane was tabbed in two
   splits at once.

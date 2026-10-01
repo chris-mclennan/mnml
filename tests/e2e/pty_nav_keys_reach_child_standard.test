@@ -1,0 +1,25 @@
+# sizes: all
+# PageUp, PageDown, Home and End belong to the program in a terminal
+# pane (standard profile): they reach it in the bytes ghostty would send
+# (`ESC [ 5 ~`, `ESC [ 6 ~`, `ESC [ H`, `ESC [ F`), Ctrl+Home / Ctrl+End
+# too. Shift+ them is mnml's own scrollback and sends nothing. A
+# `cat -v` child prints exactly what it was sent.
+write a.txt "\n"
+command editor.use_standard
+command view.toggle_tree
+ex term sh -c 'stty -echo -icanon; echo ready; cat -v'
+wait 1200
+expect screen contains "ready"
+key pageup
+key pagedown
+key home
+key end
+key ctrl+home
+key ctrl+end
+key shift+pageup
+key shift+home
+key ctrl+left
+key alt+right
+key enter
+wait 600
+expect screen contains "^[[5~^[[6~^[[H^[[F^[[1;5H^[[1;5F^[[1;5D^[[1;3C"

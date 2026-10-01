@@ -1537,7 +1537,10 @@ fn encodeKeyInto(w: *Io.Writer, k: Key, enc: Encoding) Io.Writer.Error!void {
                 else => unreachable,
             };
             if (mp != 1) return w.print("\x1b[1;{d}{c}", .{ mp, final });
-            if (enc.cursor_keys_app) return w.print("\x1bO{c}", .{final});
+            // DECCKM's `ESC O` form is the legacy encoding's; under the
+            // kitty protocol an arrow, Home or End is always `CSI`
+            // (ghostty's `key_encode.kitty`), whatever DECCKM says.
+            if (enc.cursor_keys_app and !enc.kitty) return w.print("\x1bO{c}", .{final});
             try w.print("\x1b[{c}", .{final});
         },
         .insert, .delete, .page_up, .page_down => {
@@ -1658,6 +1661,42 @@ test "legacy key encoding: text, control bytes, alt prefix, arrows with and with
     try t.expectEqualStrings("\x1b[15~", encoded(Key.named(.{ .f = 5 }), .{}));
     try t.expectEqualStrings("\x1b[24;5~", encoded(.{ .code = .{ .f = 12 }, .mods = .{ .ctrl = true } }, .{}));
     try t.expectEqualStrings("", encoded(Key.named(.{ .f = 13 }), .{}));
+}
+
+test "the navigation keys reach the child as ghostty itself would send them, in every mode the child can ask for" {
+    // PageUp / PageDown / Home / End, the arrows, Insert / Delete, bare and
+    // with each modifier, against libghostty-vt's own encoder — the oracle
+    // for "what does this child expect". Legacy, DECCKM, and the kitty
+    // protocol with and without DECCKM (a child that turns both on gets
+    // `CSI H`, not `ESC O H`).
+    const gi = pty.vt.input;
+    const Pair = struct { m: key_mod.KeyCode, g: gi.Key };
+    const keys = [_]Pair{
+        .{ .m = .page_up, .g = .page_up }, .{ .m = .page_down, .g = .page_down }, .{ .m = .home, .g = .home },
+        .{ .m = .end, .g = .end },         .{ .m = .up, .g = .arrow_up },         .{ .m = .down, .g = .arrow_down },
+        .{ .m = .left, .g = .arrow_left }, .{ .m = .right, .g = .arrow_right },   .{ .m = .insert, .g = .insert },
+        .{ .m = .delete, .g = .delete },
+    };
+    const modsets = [_]key_mod.Mods{ .{}, .{ .shift = true }, .{ .ctrl = true }, .{ .alt = true }, .{ .ctrl = true, .shift = true }, .{ .ctrl = true, .alt = true } };
+    const Mode = struct { enc: Encoding, opts: gi.KeyEncodeOptions };
+    const modes = [_]Mode{
+        .{ .enc = .{}, .opts = .{} },
+        .{ .enc = .{ .cursor_keys_app = true }, .opts = .{ .cursor_key_application = true } },
+        .{ .enc = .{ .kitty = true }, .opts = .{ .kitty_flags = .{ .disambiguate = true } } },
+        .{ .enc = .{ .kitty = true, .cursor_keys_app = true }, .opts = .{ .cursor_key_application = true, .kitty_flags = .{ .disambiguate = true } } },
+        .{ .enc = .{ .kitty = true }, .opts = .{ .kitty_flags = .{ .disambiguate = true, .report_alternates = true, .report_all = true, .report_associated = true } } },
+    };
+    for (modes) |md| for (keys) |kp| for (modsets) |ms| {
+        var mine_buf: [16]u8 = undefined;
+        const mine = encodeKey(.{ .code = kp.m, .mods = ms }, md.enc, &mine_buf);
+        var theirs_buf: [64]u8 = undefined;
+        var w: Io.Writer = .fixed(&theirs_buf);
+        try gi.encodeKey(&w, .{ .key = kp.g, .mods = .{ .shift = ms.shift, .ctrl = ms.ctrl, .alt = ms.alt } }, md.opts);
+        t.expectEqualStrings(w.buffered(), mine) catch |err| {
+            std.debug.print("{t} {any} kitty={} decckm={}\n", .{ kp.m, ms, md.enc.kitty, md.enc.cursor_keys_app });
+            return err;
+        };
+    };
 }
 
 test "kitty key encoding: CSI u for modified and ambiguous keys, plain text stays text" {
@@ -1929,6 +1968,29 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
     try app.handle(.{ .key = Key.ctrl('d') });
     try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
     try t.expect(app.panes.pty(id).?.exit.?.ok());
+}
+
+test "PageUp / PageDown / Home / End and their Ctrl forms reach the child in both profiles; Shift+ them stay the pane's scrollback" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.tree.visible = false;
+        try app.setInputStyle(style);
+        _ = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon; echo ready; cat -v" }, .label = "catv" });
+        try t.expect(try tickUntilScreen(&app, "ready", 5000));
+        for ([_]Key{
+            Key.named(.page_up),                               Key.named(.page_down),
+            Key.named(.home),                                  Key.named(.end),
+            .{ .code = .home, .mods = .{ .ctrl = true } },     .{ .code = .end, .mods = .{ .ctrl = true } },
+            .{ .code = .page_up, .mods = .{ .shift = true } }, .{ .code = .home, .mods = .{ .shift = true } },
+        }) |k| try app.handle(.{ .key = k });
+        try app.handle(.{ .key = Key.named(.enter) });
+        // The Shift forms scrolled mnml's view and sent nothing.
+        try t.expect(try tickUntilScreen(&app, "▌^[[5~^[[6~^[[H^[[F^[[1;5H^[[1;5F ", 5000));
+    }
 }
 
 test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader and Ctrl-W work and i returns; <C-x> too; a lone <C-\\> reaches the child" {
