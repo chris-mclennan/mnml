@@ -755,10 +755,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     }
     // ── the edge grips ──
     // Last of the frame's chrome, so a grip's hit is the last word on
-    // its three cells: the dock's sits on the `:` line's row, whose
-    // own hit `drawCmdline` registered a moment ago, and a click there
-    // must pin the dock rather than open a command line
-    // (`ui/edge_grip.zig`). The overlays, the toasts and the menus all
+    // its three cells: the dock's sits on the row its strip paints —
+    // under `.outer` the `:` line's row, whose own hit `drawCmdline`
+    // registered a moment ago, and under `.inner` the editor's last
+    // row — and a click there must pin the dock rather than open a
+    // command line or move a cursor (`ui/edge_grip.zig`). The overlays, the toasts and the menus all
     // paint after this and still cover it.
     if (!app.zen) drawEdgeGrips(app, ui, fr, screenRect(screen));
     // The stack sits on the panes' last row, against the statusline, as
@@ -872,10 +873,11 @@ fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// and pins.
 ///
 /// It runs last of the frame's chrome for one reason: the dock's grip
-/// sits on the `:` line's row, whose whole-row hit `drawCmdline` has
-/// just registered, and `HitMap.at` scans back to front — so a click
-/// on those three cells pins the dock instead of opening a command
-/// line the user did not ask for.
+/// sits on its strip's row — the `:` line's under `.outer`, whose
+/// whole-row hit `drawCmdline` has just registered; the editor's last
+/// under `.inner` — and `HitMap.at` scans back to front, so a click on
+/// those three cells pins the dock instead of opening a command line
+/// (or moving a cursor) the user did not ask for.
 fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
     const bg = app.theme.bg.bg;
     const dock_band = hover_zones.dockBand(app, full);
@@ -3288,17 +3290,18 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
         // Each column's one-cell screen edge, vertically centred.
         .{ .x = 0, .y = 20, .id = .edge_grip_sidebar_left },
         .{ .x = 119, .y = 20, .id = .edge_grip_sidebar_right },
-        // The dock's band: the SCREEN's last row, in its middle.
-        .{ .x = 59, .y = 39, .id = .edge_grip_dock },
+        // The dock's band: the row its strip paints — under the
+        // default `.inner` the editor area's last, above the statusline.
+        .{ .x = 59, .y = 37, .id = .edge_grip_dock },
     };
     for (grips) |g| {
         const hit = app.hits.at(g.x, g.y) orelse return error.NoGripHere;
         try t.expectEqual(@intFromEnum(g.id), hit.button);
     }
-    // The dock's grip beat the `:` line's whole-row hit, which was
-    // registered a moment before it: a click there pins the dock
-    // rather than opening a command line.
+    // The `:` line's row is the line's own, middle and all: the
+    // grip is two rows up, with the strip it summons.
     try t.expectEqual(@intFromEnum(Button.cmdline_bar), app.hits.at(20, 39).?.button);
+    try t.expectEqual(@intFromEnum(Button.cmdline_bar), app.hits.at(59, 39).?.button);
     // The glyph really is on each grip's middle cell. (`⋯` and `⋮`
     // turn up elsewhere in the chrome — a fold mark, a row kebab — so
     // the CELL is the honest question, never the whole screen.)
@@ -3306,7 +3309,7 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
     // The run is rows 18..20; the glyph sits on the middle one.
     try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme);
     try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(119, 19).?.char.grapheme);
-    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme);
+    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(59, 37).?.char.grapheme);
 
     // A surface that is UP wears no grip — the pin chip at its end is
     // the handle then.
@@ -3332,7 +3335,7 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
         if (hit) |h| try t.expect(h != .button or h.button != @intFromEnum(g.id));
     }
     try t.expect(!std.mem.eql(u8, edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme));
-    try t.expect(!std.mem.eql(u8, edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme));
+    try t.expect(!std.mem.eql(u8, edge_grip.grip_h, app.screen.readCell(59, 37).?.char.grapheme));
     // The band itself never moved: the dwell still reveals.
     try t.expect(hover_zones.dockBand(&app, Rect.init(0, 0, 120, 40)) != null);
 }

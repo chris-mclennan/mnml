@@ -281,7 +281,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .edge_grip_dock => .{
             .title = "The launcher dock hides here",
-            .body = "The three dots at the middle of this edge mark the band that brings the launcher dock up: rest the pointer on it and the strip — integrations, terminals, launchers, pinned commands — paints over the editor's edge. Click reveals AND pins it for the session; right-click is the dock's menu — its mode, its edge, placement, labels, settings. A pinned dock shows no grip.",
+            .body = "The three dots at the middle of this edge mark the band that brings the launcher dock up: rest the pointer on it and the strip — integrations, terminals, launchers, pinned commands — comes up on this same row, over the editor's edge. Click reveals AND pins it for the session; right-click is the dock's menu — its mode, its edge, placement, labels, settings. A pinned dock shows no grip.",
             .links = &.{ .{ .command = .{ .id = .@"view.dock_pin", .label = "Reveal and pin the dock" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.edge_grips"), .label = "Edge grips" } } },
         },
         .session_prev => .{

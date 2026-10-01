@@ -1,15 +1,14 @@
 # width: 120
 # height: 40
-# The launcher dock's edge grip (src/ui/edge_grip.zig): `⋯` at the
-# middle of the SCREEN's last row — the `:` line's row, cells 58..60
-# with the glyph on 59 at 120 columns. The grip marks the EDGE, which
-# is where a hand goes to summon a thing, so it sits on that row under
-# both placements; under the default `ui.dock.placement = .inner` the
-# strip it summons paints two rows up, above the statusline, so the `:`
-# line's row keeps its own job while the strip is out.
+# The launcher dock's edge grip (src/ui/edge_grip.zig) under the default
+# `ui.dock.placement = .inner`: `⋯` at the middle of the row the strip
+# paints — the editor area's last row, above the statusline, cells
+# 58..60 with the glyph on 59 at 120 columns. The items appear where the
+# grip is, never apart from it: hover, click and keyboard all bring the
+# strip up on row 37, and the `:` line's row 39 keeps its own job.
 #
-# `edge_grip_dock_outer.test` is the other placement, where the strip
-# lands on the grip's own row and the `:` line has to take it back.
+# `edge_grip_dock_outer.test` is the other placement, where grip and
+# strip are both on the `:` line's row and the line has to take it back.
 #
 # The bar and the columns ship `.always`, so the only grip on this
 # screen is the dock's.
@@ -18,9 +17,16 @@ open a.txt
 # `auto_hide`, as mnml ships: nothing is drawn, and the grip says where.
 expect screen lacks "New terminal"
 expect screen contains "⋯"
-# Dwelling on it reveals the strip, because the grip is INSIDE the
-# dock's hover zone and not a second way in.
-hover 59 39
+# The `:` line's row is the line's, middle and all: a click on 59 39
+# opens it rather than pinning anything.
+click 59 39
+expect status contains "\"cmdline\":true"
+expect screen lacks "dock pinned"
+key esc
+expect status contains "\"cmdline\":false"
+# Dwelling on the grip reveals the strip, because the grip is INSIDE
+# the dock's hover zone and not a second way in.
+hover 59 37
 wait 600
 expect screen contains "New terminal"
 # Away: the strip goes and the grip comes back.
@@ -28,31 +34,21 @@ hover 60 10
 wait 800
 expect screen lacks "New terminal"
 expect screen contains "⋯"
-
-# ── the revealed strip lands on the EDITOR's last row, not this one ──
-# The `:` line's row goes on answering for itself while the strip is
-# out: a click there opens the line, which under `.outer` — where the
-# strip paints over that row — it cannot (`edge_grip_dock_outer.test`
-# has the other half of this pair).
-hover 30 39
+# Resting on the `:` line's row summons nothing now.
+hover 59 39
 wait 600
-expect screen contains "New terminal"
-click 110 39
-expect status contains "\"cmdline\":true"
-key esc
-hover 60 10
-wait 800
 expect screen lacks "New terminal"
+hover 60 10
+wait 300
 
-# ── an open `:` line takes the grip's cells back ──
-# The grip is on that row whichever placement is in force, so it stands
-# down rather than painting over what is being typed. The strip itself
-# is above the statusline and covers nothing of the line, so it is NOT
-# refused: the dwell still brings it out while the line takes keys.
+# ── an open `:` line leaves the grip alone ──
+# Grip and strip are above the statusline and cover nothing of the
+# line, so the grip stays up while the line takes keys, and the dwell
+# still brings the strip out.
 key ctrl+;
 expect status contains "\"cmdline\":true"
-expect screen lacks "⋯"
-hover 59 39
+expect screen contains "⋯"
+hover 59 37
 wait 600
 expect screen contains "New terminal"
 expect status contains "\"cmdline\":true"
@@ -64,15 +60,13 @@ expect screen lacks "New terminal"
 expect screen contains "⋯"
 
 # ── a click on the grip pins, and never opens the `:` line ──
-# The grip's hit is registered after the row's own and wins its cells.
-click 59 39
+click 59 37
 expect screen contains "dock pinned"
 expect status contains "\"cmdline\":false"
 expect screen contains "New terminal"
 expect screen lacks "⋯"
 
-# ── pinned, the strip is the editor area's last row and the `:` line
-#    is two rows below it ──
+# ── pinned, the strip is still row 37 and the `:` line two rows below ──
 # A click on row 39 opens the line; one on the strip's own row 37 does
 # not, which is the proof of where each of them is.
 click 110 39
@@ -88,3 +82,14 @@ hover 60 10
 wait 800
 expect screen lacks "New terminal"
 expect screen contains "⋯"
+
+# ── the keyboard: `view.focus_dock` brings it up on the same row ──
+# The `:` line's row still answers for itself while the keys are in the
+# strip, and a click on row 37 lands on the strip's own items (column
+# 78 is New terminal's word — `launcher_dock_always.test` has the
+# arithmetic): the proof that the items came up where the grip was.
+command view.focus_dock
+expect screen contains "New terminal"
+click 78 37
+wait 900
+expect pane Terminal

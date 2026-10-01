@@ -1427,24 +1427,26 @@ An `always` dock is carved out of the frame like any other chrome. An
 is re-laid-out, so no pane moves and no terminal is resized when the
 pointer brushes an edge.
 
-**The bottom dock's band is the screen's last row; where it PAINTS is
-`ui.dock.placement`.** The band — the row the dwell watches, and the
-cells the `⋯` grip marks — is the frame's outermost row in both
-placements, because the edge is where a hand goes to summon a thing.
-What the placement settles is where the strip itself lands.
+**The bottom dock's band is the row its strip paints, and
+`ui.dock.placement` picks that row.** The band — the row the dwell
+watches, and the cells the `⋯` grip marks — is always the row the
+strip comes up on, so hovering the grip, clicking it and
+`view.focus_dock` all bring the items up exactly where the grip was,
+never apart from it. The two places a bottom strip lives are *above the
+statusline* (`.inner`) and *on the command line* (`.shared`); `.outer`
+puts it under the `:` line.
 
-Under `.inner`, the default, it is the **editor area's last row**:
-`always` carves it off the editor, `auto_hide` paints it over that
-same row, and the statusline and the `:` line stay exactly where they
-are with no dock at all. The `:` line's row is then never the strip's,
-so the two coexist — a line can be open while the strip is out. The
-grip is still on that row, though, so an open line takes its three
-cells back rather than having a handle painted over what is being
-typed.
+Under `.inner`, the default, it is the **editor area's last row**, and
+so are the band and the grip: `always` carves it off the editor,
+`auto_hide` paints it over that same row, and the statusline and the
+`:` line stay exactly where they are with no dock at all. The `:`
+line's row is never the strip's or the grip's, so the two coexist — a
+line can be open while the strip is out, and the grip stays up while
+you type.
 
-Under `.outer` the strip is the **screen's last row**, under the `:`
-line: everything else moves up one, and a revealed strip paints over
-that row, covering the toast echo and the `⟳ … running…` chip while
+Under `.outer` the strip, its band and its grip are the **screen's
+last row**, under the `:` line: everything else moves up one, and a
+revealed strip paints over that row, covering the toast echo and the `⟳ … running…` chip while
 it is up. There the `:` line owns the row outright: while one is open
 the band is not watched at all, so the strip neither reveals nor
 stays, and its grip goes with it. Closing the line asks for a fresh

@@ -79,6 +79,10 @@ the release ships one file), and one line per change a user can see.
 - With a second workspace root in the tree, the primary root's header names
   its folder, as the added root's does, instead of its absolute path (cut to
   `● /Use…` at the stock width); the path is the header's hover.
+- An auto-hiding bottom dock above the statusline (the default placement)
+  showed its `⋯` grip on the screen's last row but brought its items up two
+  rows higher. The grip now sits on the row the items appear on — hover it,
+  click it or `view.focus_dock`, and the strip comes up right there.
 
 ## v0.3.1
 

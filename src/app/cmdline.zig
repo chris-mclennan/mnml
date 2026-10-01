@@ -303,16 +303,15 @@ test "a click off the bar closes an empty line; a half-typed one survives it" {
     _ = try app.openScratch();
 
     // The bottom row is the last one; a frame registers its hit.
-    // // changed (edge-grip): the launcher dock's grip takes the middle
-    // three cells of that row (38..40 at 80 columns) and its hit wins
-    // them, so the clicks below land at 60 — a cell the row still owns
-    // outright.
+    // // changed (dock-grip-row): under the default `.inner` the
+    // launcher dock's grip sits above the statusline, with the strip
+    // it summons, so the whole row — its middle too — is the line's.
     const bar_y: u16 = 23;
     try app.render();
     const under = app.hits.at(60, bar_y).?;
     try t.expect(under == .button);
     try t.expectEqual(@intFromEnum(render.Button.cmdline_bar), under.button);
-    try t.expectEqual(@intFromEnum(render.Button.edge_grip_dock), app.hits.at(39, bar_y).?.button);
+    try t.expectEqual(@intFromEnum(render.Button.cmdline_bar), app.hits.at(39, bar_y).?.button);
 
     const press = struct {
         fn at(a: *App, x: u16, y: u16) !void {

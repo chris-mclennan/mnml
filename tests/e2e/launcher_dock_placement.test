@@ -51,17 +51,20 @@ expect screen contains "dock: below the command line"
 ex dock inner
 expect screen contains "dock: above the statusline"
 
-# ── auto_hide + `.inner`: the dwell is still the SCREEN's bottom edge ──
-# The edge is where a hand goes to summon a thing, so the band does not
-# move with the strip — but the strip comes up ABOVE the statusline, so
-# the `:` line's own row is never covered and still answers a click.
+# ── auto_hide + `.inner`: the dwell is the strip's own row ──
+# The items appear where the grip is, never apart from it, so the band
+# moves with the strip: row 37, above the statusline. The `:` line's own
+# row is never covered and still answers a click.
 # (off the band first — the pointer is still on row 39 from the click
-# above, and a dwell there is exactly what `auto_hide` answers)
+# above)
 hover 60 10
 ex dock auto
 wait 600
 expect screen lacks "New terminal"
 hover 60 39
+wait 600
+expect screen lacks "New terminal"
+hover 60 37
 wait 600
 expect screen contains "New terminal"
 click 110 39
