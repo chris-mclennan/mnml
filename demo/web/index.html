@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mnml demo</title>
+<meta name="description" content="A real mnml, running in a container, in your browser.">
+<style>
+/* The site's window frame (site/src/styles/global.css, `.window`): a
+   macOS Ghostty window measured off a screenshot — a short title bar in
+   #24272d, three lights, the folder proxy icon and the title after them.
+   Inside it, not a recording: ttyd's terminal (an iframe at /term/),
+   200x60 cells like the recordings, scaled to the frame. */
+:root {
+  --gray-0: #0f0f11; --gray-2: #242428; --gray-3: #4c4c50; --gray-4: #828286;
+  --gray-5: #959597; --gray-7: #dbdbdc; --gray-9: #f0f0f4; --accent: #61afef;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--gray-0); color: var(--gray-5); font-family: var(--font-sans); }
+body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 16px; }
+.window {
+  --w: min(1700px, calc(100vw - 32px), calc((100dvh - 130px) * var(--arw) / var(--arh)));
+  width: var(--w); container-type: inline-size;
+  border: 1px solid #3f4146; border-radius: 9px; overflow: hidden; background: #24272d;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.window-bar {
+  display: flex; align-items: center; height: max(1.141cqw, 16px); padding: 0 0 0 max(0.311cqw, 5px);
+  background: #24272d; color: #a2a5ab;
+}
+.window-bar .lights { display: flex; gap: max(0.285cqw, 4px); list-style: none; }
+.window-bar .lights li { width: max(0.493cqw, 7px); height: max(0.493cqw, 7px); border-radius: 50%; }
+.window-bar .lights li:nth-child(1) { background: #fb5558; }
+.window-bar .lights li:nth-child(2) { background: #f8c135; }
+.window-bar .lights li:nth-child(3) { background: #39bf5a; }
+.window-bar .proxy { width: max(0.467cqw, 7px); height: auto; margin-left: max(0.467cqw, 7px); flex: none; }
+.window-bar .title {
+  margin-left: max(0.2cqw, 3px); font-size: max(0.53cqw, 8px); font-weight: 700; line-height: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.window-body { aspect-ratio: var(--ar); background: #1e222a; position: relative; overflow: hidden; }
+#term { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: #1e222a; }
+
+/* the banner: over the terminal's lower edge while the tour plays */
+.banner {
+  position: absolute; left: 50%; bottom: 4.5%; transform: translateX(-50%);
+  display: none; align-items: center; gap: 10px; z-index: 2;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, #1e222a 72%, transparent); backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--gray-9); font-size: 13.5px; white-space: nowrap; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
+.banner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+body[data-phase="tour"] .banner { display: inline-flex; }
+
+/* the end of the session */
+.ended {
+  position: absolute; inset: 0; z-index: 3; display: none; place-items: center; text-align: center;
+  background: color-mix(in srgb, #0f0f11 78%, transparent);
+}
+.ended h2 { color: var(--gray-9); font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+.ended p { margin-bottom: 18px; }
+body[data-phase="ended"] .ended { display: grid; }
+
+/* the controls under the window */
+.controls { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 14px; font-size: 14px; }
+button, select {
+  font: inherit; font-size: 14px; color: var(--gray-9); background: var(--gray-2);
+  border: 1px solid var(--gray-3); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--gray-4); }
+button.brand { background: var(--accent); color: #0f0f11; border-color: var(--accent); font-weight: 600; }
+.status { color: var(--gray-4); font-variant-numeric: tabular-nums; min-width: 22ch; }
+.note { color: var(--gray-4); font-size: 12.5px; margin-top: 10px; text-align: center; max-width: 90ch; line-height: 1.5; }
+</style>
+</head>
+<body data-phase="idle">
+  <section class="window" id="win" style="--ar:1600/1020;--arw:1600;--arh:1020" aria-label="mnml, live">
+    <div class="window-bar">
+      <ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul>
+      <svg class="proxy" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 2.2C1 1.5 1.5 1 2.2 1h3.6l1.4 1.5h6.6c.7 0 1.2.5 1.2 1.2V12c0 .7-.5 1.2-1.2 1.2H2.2C1.5 13.2 1 12.7 1 12z" fill="#53adda"/><path d="M1 4.2h14" stroke="#8ec9e5" stroke-width="1"/></svg>
+      <span class="title">mnml — tour</span>
+    </div>
+    <div class="window-body" id="body">
+      <iframe id="term" src="/term/" title="mnml terminal" allow="clipboard-read; clipboard-write"></iframe>
+      <div class="banner" id="banner" role="button" tabindex="0">
+        <span class="dot"></span><span id="banner-text">Guided tour playing — press any key or click to take over</span>
+      </div>
+      <div class="ended" id="ended">
+        <div>
+          <h2>That was ten minutes of mnml.</h2>
+          <p>Each session is a fresh sandbox, gone when it ends.</p>
+          <button class="brand" id="again">Start again</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div class="controls">
+    <button id="replay">Replay tour</button>
+    <select id="picker" aria-label="Play one part of the tour"><option value="">Play one part…</option></select>
+    <span class="status" id="status">connecting…</span>
+  </div>
+  <p class="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
+<script>
+(function () {
+  const COLS = 200, ROWS = 60;
+  const body = document.getElementById("body");
+  const frame = document.getElementById("term");
+  const $ = (id) => document.getElementById(id);
+  let cell = null; // {w, h}: the terminal's own cell, CSS px inside the iframe
+
+  // The terminal's font size is chosen so 200x60 of its cells fill the
+  // window, and the iframe is sized to exactly those cells. No CSS scale:
+  // xterm.js's mouse maths and its canvas both want 1:1 pixels.
+  function layout() {
+    if (!cell) return;
+    const win = document.getElementById("win");
+    const aw = Math.round(COLS * cell.w), ah = Math.round(ROWS * cell.h);
+    win.style.setProperty("--ar", aw + "/" + ah); win.style.setProperty("--arw", aw); win.style.setProperty("--arh", ah);
+    const w = (COLS + 0.5) * cell.w + cell.padX, h = (ROWS + 0.5) * cell.h + cell.padY;
+    const k = Math.min(body.clientWidth / (COLS * cell.w + cell.padX), body.clientHeight / (ROWS * cell.h + cell.padY));
+    const want = Math.max(6, Math.floor(cell.size * k * 4) / 4);
+    if (Math.abs(want - cell.size) >= 0.25 && tries < 8) {
+      tries++;
+      frame.contentWindow.postMessage({ type: "mnml-demo-font", size: want }, location.origin);
+    }
+    frame.style.width = w + "px"; frame.style.height = h + "px";
+    frame.style.left = Math.max(0, (body.clientWidth - COLS * cell.w - cell.padX) / 2) + "px";
+    frame.style.top = Math.max(0, (body.clientHeight - ROWS * cell.h - cell.padY) / 2) + "px";
+  }
+  let tries = 0;
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "mnml-demo-cell") return;
+    cell = { w: e.data.w, h: e.data.h, padX: e.data.padX || 0, padY: e.data.padY || 0, size: e.data.size || 13 };
+    layout();
+  });
+  new ResizeObserver(() => { tries = 0; layout(); }).observe(body);
+
+  function focusTerm() {
+    try { frame.contentWindow.focus(); const t = frame.contentWindow.term; if (t) t.focus(); } catch (_) {}
+  }
+  frame.addEventListener("load", focusTerm);
+
+  async function post(path) {
+    try { const r = await fetch(path, { method: "POST" }); return await r.json(); } catch (_) { return null; }
+  }
+  $("replay").onclick = async () => { await post("/api/replay"); poll(); focusTerm(); };
+  $("picker").onchange = async (e) => {
+    const v = e.target.value; e.target.value = "";
+    if (v) { await post("/api/play?flow=" + encodeURIComponent(v)); poll(); }
+    focusTerm();
+  };
+  const takeOver = async () => { await post("/api/stop"); poll(); focusTerm(); };
+  $("banner").onclick = takeOver;
+  $("banner").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") takeOver(); };
+  $("again").onclick = () => { document.body.dataset.phase = "starting"; cell = null; frame.src = "/term/?" + Date.now(); };
+
+  let flowsShown = false;
+  const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+  async function poll() {
+    let st;
+    try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "offline"; return; }
+    document.body.dataset.phase = st.phase;
+    if (!flowsShown && st.flows) {
+      for (const f of st.flows) { const o = document.createElement("option"); o.value = f.name; o.textContent = f.title; o.title = f.flow; $("picker").appendChild(o); }
+      flowsShown = true;
+    }
+    const cur = st.flows && st.flows.find((f) => f.name === st.flow);
+    $("banner-text").textContent = "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over";
+    const left = fmt(st.remaining_s);
+    $("status").textContent =
+      st.phase === "tour" ? "tour playing · " + left + " left" :
+      st.phase === "live" ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " + left + " left" :
+      st.phase === "ended" ? "session over" :
+      st.phase === "starting" ? "starting mnml…" : "connecting…";
+  }
+  poll(); setInterval(poll, 1000);
+})();
+</script>
+</body>
+</html>

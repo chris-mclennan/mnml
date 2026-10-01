@@ -1,0 +1,12 @@
+// The web demo's layer over `mnml --demo`'s own config (`--config` is
+// applied last). It only opens the file channel to the attract runner:
+// the runner types and clicks through it (allow_input), reads the screen
+// (write_screen), and learns from events.jsonl when the visitor presses
+// a key or clicks (report_input). Everything else is the demo as shipped.
+.{
+    .ipc = .{
+        .write_screen = true,
+        .allow_input = true,
+        .report_input = true,
+    },
+}

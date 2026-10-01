@@ -1,0 +1,34 @@
+title: Splits and tabs
+flow: Split the editor right and down, open a file in each split, then start a second tab page and jump back to the first.
+# From tools/site-record/flows/splits.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+open src/main.zig
+until "fn main"
+wait 150
+key "ctrl+\\"
+wait 600
+key ctrl+p
+wait 250
+slowtype "util" 70
+key enter
+until "pub fn sum"
+wait 800
+run view.split_down
+wait 600
+key ctrl+p
+wait 250
+slowtype "readme" 70
+key enter
+wait 1000
+run view.focus_left
+wait 500
+run tab.new
+wait 700
+key ctrl+p
+wait 250
+slowtype "changelog" 60
+key enter
+wait 1000
+key alt+1
+wait 1200

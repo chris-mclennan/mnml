@@ -1,0 +1,30 @@
+title: Scripting in Lua
+flow: A dozen lines of Lua add a palette command and a statusline chip; run the file from the palette and both appear at once.
+# From tools/site-record/flows/lua.flow, without the recorder's
+# `record` / `poster` marks; `reset` clears what the flow before left.
+reset
+copy assets/todos.lua todos.lua
+open todos.lua
+until "mnml.command"
+wait 300
+key ctrl+a
+wait 500
+# script.run_selection: the selected lines run in the script state
+key ctrl+shift+p
+wait 250
+slowtype "lua: run the selected" 40
+wait 500
+key enter
+wait 1000
+key ctrl+p
+wait 250
+slowtype "main.zig" 50
+key enter
+until "fn main"
+wait 1000
+key ctrl+shift+p
+wait 250
+slowtype "count the todo and fixme" 35
+wait 500
+key enter
+wait 1300
