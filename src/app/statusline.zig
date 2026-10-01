@@ -952,6 +952,10 @@ test "a --demo run paints ` demo ` where the sandbox chip goes; its hover and cl
     try testing.expect(std.mem.indexOf(u8, row, "sandbox") == null);
     const hover = (try discovery.describe(&b.app, b.app.frame.allocator(), .{ .statusline_seg = SegId.sandbox.raw() })).?;
     try testing.expect(std.mem.indexOf(u8, hover.title, "demo") != null);
+    // The info panel's copy says demo too, not the plain sandbox's.
+    const info = (try @import("info_view_copy/statusline.zig").entry(&b.app, b.app.frame.allocator(), SegId.sandbox.raw())).?;
+    try testing.expectEqualStrings("demo", info.title);
+    try testing.expect(std.mem.indexOf(u8, info.body, "`--demo`") != null);
     try b.click(38, SegId.sandbox.raw(), .left);
     try testing.expect(std.mem.startsWith(u8, b.app.lastToast().?, "demo — HOME "));
 

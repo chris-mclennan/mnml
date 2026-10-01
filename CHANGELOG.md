@@ -30,8 +30,31 @@ the release ships one file), and one line per change a user can see.
   as they do on a quit: the terminal is given back, the demo's servers
   stop, the throwaway home is removed, and the exit status is 128 + the
   signal (143 for SIGTERM).
+- A downloaded mnml opens the demo with its Jira and Bitbucket panes: the
+  macOS and Linux archives, the `.deb` and `.rpm`, the Homebrew formula and
+  the installer script now carry the demo's two offline servers
+  (`mnml-fake-jira`, `mnml-fake-bitbucket`) beside `mnml`, and the demo uses
+  the Jira and Bitbucket integrations the Marketplace installed. When either
+  is missing, the first frame's notice names the folders it looked in.
+  (Not on Windows, which has no `--demo`.)
+- `mnml --help` lists `--demo`, and the sandbox's and the demo's messages
+  begin `mnml:` like the rest of the command line.
 
 ### Fixes
+
+- In the demo's shell, `claude` and `codex` are the stand-ins even where a
+  login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
+  `PATH`, so a real CLI installed there is not the one that answers.
+- Hovering the ` demo ` chip describes the demo in the info panel, not a
+  plain `--sandbox`.
+- In `--demo`, a Jira ticket's merged pull request no longer shows
+  "BITBUCKET_ACCESS_TOKEN not set": the Jira pane reads its pipelines from
+  the offline Bitbucket with that server's own token.
+- `jira_work.refresh`, `bitbucket_prs.refresh` and any other `term` line of
+  an integration installed from the Marketplace, a local folder or the demo
+  said the program was "not on PATH": they looked only on PATH, while the
+  pane itself runs the copy linked into the data root. They now run that
+  copy too.
 
 - On Linux, a terminal pane whose command prints and exits at once
   (`:terminal printf hi`) could come up empty: the exit was noticed before

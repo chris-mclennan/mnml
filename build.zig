@@ -711,7 +711,9 @@ pub fn build(b: *std.Build) void {
     //
     // Completions and a man page would be installed here too; mnml-zig ships
     // neither yet, so the archives carry the binary, the licenses, the README
-    // and the CHANGELOG.
+    // and the CHANGELOG — and, but for Windows, `mnml-fake-jira` and
+    // `mnml-fake-bitbucket`, the offline servers `mnml --demo` starts
+    // (installed into `release-one` below, where the fakes are built).
     const version = b.option([]const u8, "version", "Version stamped into --version (default: build.zig.zon version + git SHA)") orelse deriveVersion(b);
     build_options.addOption([]const u8, "version", version);
 
@@ -985,6 +987,17 @@ pub fn build(b: *std.Build) void {
     corpus_run.step.dependOn(&fake_jira_install.step);
     unit_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fake_jira_mod, .filters = test_filters, .test_runner = test_runner })).step);
     gate_step.dependOn(&b.addInstallArtifact(fake_jira, .{ .dest_dir = .{ .override = gate_dir }, .dest_sub_path = fake_jira_exe_name }).step);
+
+    // `mnml --demo` starts the two fakes from beside the binary, so a
+    // release carries them there: `release-one` installs them next to
+    // `mnml` and `scripts/package.sh` refuses an archive without them.
+    // Not on Windows, where `--demo` is refused (it rides on
+    // `--sandbox`, which re-executes itself).
+    if (target.result.os.tag != .windows) {
+        for ([_]*std.Build.Step.Compile{ fake_jira, fake_bitbucket }) |fake| {
+            release_one.dependOn(&b.addInstallArtifact(fake, .{ .dest_dir = .{ .override = .{ .custom = b.fmt("release/{s}", .{triple}) } } }).step);
+        }
+    }
 
     // ── fake DAP adapter ──
     // `mnml-fake-dap` (tools/fake_dap/) is the deterministic debug adapter

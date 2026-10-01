@@ -5,6 +5,8 @@
 #   scripts/dist-check.sh v0.3.0 --min 17 --without-linux-packages
 #                                                      # release.yml's own check,
 #                                                      # before package-linux runs
+#   scripts/dist-check.sh v0.3.0 --local zig-out/dist  # a directory instead of
+#                                                      # the release, no gh
 #
 # Why: the Rust repo shipped two releases (v0.2.9, v0.2.18) whose workflow
 # was green and whose release carried one file. GitHub had scrubbed a
@@ -16,9 +18,14 @@
 # count is at least --min (default: the full set); and one archive really
 # holds share/mnml/lua/ — the curated Lua script set, without which the
 # SCRIPTS section's Marketplace tab is empty for everyone who installed
-# from a release rather than a checkout. Any miss is exit 1. Needs gh,
-# authenticated, with GH_REPO set or a git remote to infer from.
-# --names-only skips the download, for a quick name-and-count pass.
+# from a release rather than a checkout — and mnml-fake-jira and
+# mnml-fake-bitbucket beside the binary, without which `mnml --demo`
+# opens with nothing answering its Jira and Bitbucket panes. Any miss is
+# exit 1. Needs gh, authenticated, with GH_REPO set or a git remote to
+# infer from. --names-only skips the download, for a quick name-and-count
+# pass. --local DIR reads the names and the archive from DIR instead (a
+# `zig build dist` output, plus whatever the other workflows add) and
+# needs no gh.
 set -euo pipefail
 
 tag=${1:?usage: dist-check.sh vX.Y.Z [--min N] [--without-linux-packages]}
@@ -26,8 +33,10 @@ shift
 min=
 with_linux=1
 names_only=0
+local_dir=
 while [ $# -gt 0 ]; do
     case "$1" in
+        --local) local_dir=$2; shift 2 ;;
         --min) min=$2; shift 2 ;;
         --without-linux-packages) with_linux=0; shift ;;
         --names-only) names_only=1; shift ;;
@@ -51,12 +60,17 @@ if [ "$with_linux" = 1 ]; then
 fi
 min=${min:-${#expected[@]}}
 
-command -v gh >/dev/null 2>&1 || { echo "dist-check: gh is not installed" >&2; exit 1; }
-
-echo "── $tag ──"
-if ! names=$(gh release view "$tag" --json assets --jq '.assets[].name'); then
-    echo "dist-check: FAIL — no release $tag (or gh cannot see it)" >&2
-    exit 1
+if [ -n "$local_dir" ]; then
+    [ -d "$local_dir" ] || { echo "dist-check: FAIL — no directory $local_dir" >&2; exit 1; }
+    echo "── $tag (local: $local_dir) ──"
+    names=$(cd "$local_dir" && for f in *; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+else
+    command -v gh >/dev/null 2>&1 || { echo "dist-check: gh is not installed" >&2; exit 1; }
+    echo "── $tag ──"
+    if ! names=$(gh release view "$tag" --json assets --jq '.assets[].name'); then
+        echo "dist-check: FAIL — no release $tag (or gh cannot see it)" >&2
+        exit 1
+    fi
 fi
 count=$(printf '%s\n' "$names" | sed '/^$/d' | wc -l | tr -d ' ')
 echo "$count assets:"
@@ -87,16 +101,29 @@ if [ "$names_only" = 0 ]; then
     probe=mnml-x86_64-unknown-linux-gnu.tar.xz
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    if ! gh release download "$tag" --pattern "$probe" --dir "$tmp" >/dev/null 2>&1; then
+    if [ -n "$local_dir" ]; then
+        cp "$local_dir/$probe" "$tmp/$probe" || { echo "dist-check: FAIL — no $probe in $local_dir" >&2; exit 1; }
+    elif ! gh release download "$tag" --pattern "$probe" --dir "$tmp" >/dev/null 2>&1; then
         echo "dist-check: FAIL — could not download $probe" >&2
         exit 1
     fi
-    have=$(tar -tJf "$tmp/$probe" | grep -c 'share/mnml/lua/[^/]*/script\.zon$' || true)
+    listing=$(tar -tJf "$tmp/$probe")
+    have=$(printf '%s\n' "$listing" | grep -c 'share/mnml/lua/[^/]*/script\.zon$' || true)
     if [ "$have" -lt 1 ]; then
         echo "dist-check: FAIL — $probe carries no share/mnml/lua/<name>/script.zon" >&2
         echo "  the Marketplace tab would be empty on every install from this release." >&2
         exit 1
     fi
     echo "dist-check: $probe carries $have shipped script(s) under share/mnml/lua/"
+    # The demo's offline servers, beside the binary where `mnml --demo`
+    # looks. The Windows zip has none: Windows has no --demo.
+    for fake in mnml-fake-jira mnml-fake-bitbucket; do
+        if ! printf '%s\n' "$listing" | grep -qx "mnml-x86_64-unknown-linux-gnu/$fake"; then
+            echo "dist-check: FAIL — $probe carries no $fake beside mnml" >&2
+            echo "  mnml --demo would open with nothing answering its Jira and Bitbucket panes." >&2
+            exit 1
+        fi
+    done
+    echo "dist-check: $probe carries mnml-fake-jira and mnml-fake-bitbucket beside mnml"
 fi
 echo "dist-check: ok — $count assets, all ${#expected[@]} expected names present"

@@ -42,14 +42,51 @@ pub const table = .{
 /// `run` / `ex` line goes through (`command.runDyn`).
 pub fn fire(app: *App, line_in: []const u8) CommandError!void {
     const arena = app.frame.allocator();
-    const line = try launcher_template.expandFor(app, arena, line_in);
-    if (termProgram(line)) |prog| if (!cmd_app.onPath(app, prog)) {
-        return app.diag.fail(arena, "{s} is not on PATH — {s}{s}", .{ prog, cmd_app.installHintPrefix(), prog });
+    const written = try launcher_template.expandFor(app, arena, line_in);
+    const line = switch (try resolveTerm(app, arena, written)) {
+        .run => |l| l,
+        .missing => |prog| return app.diag.fail(arena, "{s} is not on PATH — {s}{s}", .{ prog, cmd_app.installHintPrefix(), prog }),
     };
     // A tool's `term` line keeps its own placement: the vim profile's
-    // `:term` takes the current window, a tool still opens below.
-    if (termArgs(line)) |args| return @import("cmd_term.zig").termTool(app, args);
+    // `:term` takes the current window, a tool still opens below. Its
+    // tab reads the line as written, not the path it was resolved to.
+    if (termArgs(line)) |args| return @import("cmd_term.zig").termToolAs(app, args, termArgs(written) orelse args);
     return app.runEx(line);
+}
+
+pub const Resolved = union(enum) {
+    /// The line to run.
+    run: []const u8,
+    /// The program of a `term` line found nowhere.
+    missing: []const u8,
+};
+
+/// The line `fire` runs. A `term <prog>` line runs the program an
+/// integration's pane would (`integrations.resolveBinary`): one linked
+/// into `<data root>/bin` — a Marketplace or local-folder install, the
+/// demo's — is named by that path, since the shell the pane starts
+/// does not look there; one only on PATH is left as it is. A program
+/// in neither place is `.missing`.
+pub fn resolveTerm(app: *App, arena: Allocator, line: []const u8) Allocator.Error!Resolved {
+    const prog = termProgram(line) orelse return .{ .run = line };
+    const path = integrations.resolveBinary(app, arena, prog) orelse return .{ .missing = prog };
+    if (app.data_root.len == 0) return .{ .run = line };
+    const bin_dir = try std.fs.path.join(arena, &.{ app.data_root, "bin" });
+    if (!std.mem.startsWith(u8, path, bin_dir) or path.len <= bin_dir.len or !std.fs.path.isSep(path[bin_dir.len])) return .{ .run = line };
+    const at = @intFromPtr(prog.ptr) - @intFromPtr(line.ptr);
+    return .{ .run = try std.mem.concat(arena, u8, &.{ line[0..at], try shellWord(arena, path), line[at + prog.len ..] }) };
+}
+
+/// `path` as one word of the line the platform's shell runs (`sh -c`,
+/// `cmd /d /c`): as it is when nothing in it needs quoting.
+fn shellWord(arena: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    const plain = for (path) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "/\\._-+:@,", c) != null)) break false;
+    } else true;
+    if (plain) return path;
+    if (builtin.os.tag == .windows) return std.fmt.allocPrint(arena, "\"{s}\"", .{path});
+    const inner = try std.mem.replaceOwned(u8, arena, path, "'", "'\\''");
+    return std.fmt.allocPrint(arena, "'{s}'", .{inner});
 }
 
 /// What follows the verb of a `term …` / `terminal …` line (empty for a
@@ -195,6 +232,39 @@ test "fire: a term line whose program is not on PATH toasts the install hint and
     app.diag.clear();
     try fire(&app, "echo from a {{workspace_name}} launcher");
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "from a ws launcher") != null);
+}
+
+test "resolveTerm: a term program linked into <data root>/bin runs by that path; one on PATH is left alone; one in neither is missing" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.createDirPath(t.io, "data/bin");
+    try tmp.dir.createDirPath(t.io, "path");
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "data/bin/mnml-x", .data = "#!/bin/sh\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "path/onpath-x", .data = "#!/bin/sh\n" });
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const data = try std.fs.path.join(arena, &.{ root, "data" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("PATH", try std.fs.path.join(arena, &.{ root, "path" }));
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = data, .cols = 60, .rows = 12, .env = &env });
+    defer app.deinit();
+    const want = try std.fmt.allocPrint(arena, "term {s}/bin/mnml-x --refresh --workspace /w", .{data});
+    try t.expectEqualStrings(want, (try resolveTerm(&app, arena, "term mnml-x --refresh --workspace /w")).run);
+    try t.expectEqualStrings(":term onpath-x -v", (try resolveTerm(&app, arena, ":term onpath-x -v")).run);
+    try t.expectEqualStrings("nosuch-x", (try resolveTerm(&app, arena, ":term nosuch-x")).missing);
+    try t.expectEqualStrings("echo hi", (try resolveTerm(&app, arena, "echo hi")).run);
+    try t.expectEqualStrings("'/a b/it'\\''s'", try shellWord(arena, "/a b/it's"));
+    // And `fire` takes it: the data root's program opens, not a toast.
+    try fire(&app, "term mnml-x --refresh");
+    try t.expect(app.diag.msg == null);
+    try t.expectEqual(@as(usize, 1), app.panes.count());
+    // Its tab reads the line as written, not the resolved path.
+    try t.expectEqualStrings("mnml-x --refresh", app.panes.get(app.active.?).?.title());
 }
 
 test "installFile: a good manifest lands in the data root and the list follows; a broken one is refused with its reason; add_local resolves a relative path" {

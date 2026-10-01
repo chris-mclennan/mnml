@@ -133,6 +133,22 @@ chmod 0755 "$install_dir/mnml.tmp.$$"
 mv -f "$install_dir/mnml.tmp.$$" "$install_dir/mnml"
 say "installed $("$install_dir/mnml" --version 2>/dev/null || echo mnml) to $install_dir/mnml"
 
+# ── the demo's offline servers ──
+# `mnml --demo` starts mnml-fake-jira and mnml-fake-bitbucket from the
+# binary's own directory, so they go beside it. A failure here costs the
+# demo its Jira and Bitbucket panes, not an install.
+for fake in mnml-fake-jira mnml-fake-bitbucket; do
+    src="$(dirname "$bin")/$fake"
+    [ -f "$src" ] || continue
+    if cp "$src" "$install_dir/$fake.tmp.$$" 2>/dev/null && chmod 0755 "$install_dir/$fake.tmp.$$" &&
+        mv -f "$install_dir/$fake.tmp.$$" "$install_dir/$fake"; then
+        say "installed $install_dir/$fake (the offline server mnml --demo starts)"
+    else
+        rm -f "$install_dir/$fake.tmp.$$" 2>/dev/null || true
+        say "could not install $fake beside mnml (mnml --demo will open without it)"
+    fi
+done
+
 # ── the curated Lua script set ──
 # The archive carries it as share/mnml/lua beside the binary; mnml also
 # looks one level up from its own directory, so ~/.local/bin/mnml finds

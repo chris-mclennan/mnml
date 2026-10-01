@@ -89,7 +89,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] [--demo] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -130,7 +130,7 @@ pub fn main(init: std.process.Init) !u8 {
         const exe_dir: ?[]u8 = std.process.executableDirPathAlloc(io, gpa) catch null;
         defer if (exe_dir) |d| gpa.free(d);
         if (config.demo.setup(gpa, io, env, exe_dir) catch |err| blk: {
-            err_w.print("mnml-zig: --demo: the setup failed: {s}\n", .{@errorName(err)}) catch {};
+            err_w.print("mnml: --demo: the setup failed: {s}\n", .{@errorName(err)}) catch {};
             err_w.flush() catch {};
             break :blk null;
         }) |s| {
@@ -139,7 +139,15 @@ pub fn main(init: std.process.Init) !u8 {
         }
     }
     defer if (demo_note) |n| gpa.free(n);
-    for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) return headlessSubcommand(gpa, io, env, args[1..], w);
+    for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) {
+        // Headless has no first frame to toast on: the demo's note,
+        // with what it skipped and where it looked, goes to stderr.
+        if (demo_note) |n| {
+            err_w.print("mnml: {s}\n", .{n}) catch {};
+            err_w.flush() catch {};
+        }
+        return headlessSubcommand(gpa, io, env, args[1..], w);
+    };
     return terminalMain(gpa, io, env, args[1..], w);
 }
 

@@ -1,7 +1,7 @@
 //! `--demo`: a populated mnml you can try without touching anything of
 //! yours and without the network.
 //!
-//! `mnml-zig --demo` is `--sandbox` (`sandbox.zig`: a throwaway home,
+//! `mnml --demo` is `--sandbox` (`sandbox.zig`: a throwaway home,
 //! removed on exit) with a workspace in it. The re-exec that makes the
 //! sandbox also sets, on top of the sandbox's own variables:
 //!
@@ -11,6 +11,8 @@
 //!   JIRA_BASE_URL         @<root>/demo/jira.url  — the offline Jira
 //!   BITBUCKET_BASE_URL    @<root>/demo/bb.url    — the offline Bitbucket
 //!   JIRA_API_TOKEN, BITBUCKET_API_TOKEN          — the fakes' own tokens
+//!   BITBUCKET_ACCESS_TOKEN  the Bitbucket fake's token again, for the
+//!                         Jira pane's linked pull requests
 //!   MNML_NO_UPDATE_CHECK  1     (no release probe)
 //!   MNML_OPEN_URL         none  (a link opens nothing)
 //!   MNML_AGENTS_PGID      a group nobody is in, so the agents scan sees
@@ -30,16 +32,20 @@
 //!     setup skipped), its `init.lua` (the first screen: `util.zig`, a
 //!     Claude Code session on the right, a shell under it), a zsh prompt,
 //!     three earlier agent transcripts, and the Jira / Bitbucket configs;
-//!   * links the integrations built beside this binary into the data
-//!     root and runs `mnml-jira --install` / `mnml-bitbucket --install`;
+//!   * finds `mnml-jira` and `mnml-bitbucket` (`locate`: beside this
+//!     binary, else where the Marketplace installed them in the data
+//!     root of the mnml that ran `--demo` — `MNML_DEMO_HOST_DATA_ROOT`),
+//!     links them into the sandbox's data root and runs each one's
+//!     `--install`;
 //!   * starts `mnml-fake-jira` and `mnml-fake-bitbucket` beside this
-//!     binary, each in a process group of its own and told to exit with
+//!     binary — a release archive and the Linux packages carry them
+//!     there — each in a process group of its own and told to exit with
 //!     this process (`--parent-pid`), and writes their URLs into the
 //!     workspace's `.mnml/env/dev.env` for the request files.
 //!
-//! A piece that is not there — no `git`, no integration or fake beside
-//! the binary — is skipped and named in the first frame's toast; the
-//! rest of the demo still opens. On exit the fakes are stopped, then the
+//! A piece that is not there — no `git`, no integration, no fake — is
+//! skipped and named in the first frame's toast, with the places that
+//! were looked in; the rest of the demo still opens. On exit the fakes are stopped, then the
 //! sandbox (workspace included) is removed.
 //!
 //! The fixture is embedded rather than read from the source tree, so an
@@ -56,7 +62,6 @@ const Map = std.process.Environ.Map;
 const Child = std.process.Child;
 const data = @import("data").demo;
 const data_root_mod = @import("data_root.zig");
-const seed_mod = @import("seed.zig");
 const child_os = @import("../core/child.zig");
 
 pub const flag = "--demo";
@@ -82,6 +87,10 @@ pub const bitbucket_basic = "bWVAZXhhbXBsZS5jb206Y29ycHVzLXJlYWQtdG9rZW4=";
 /// No process is in this group: the agents scan sees only what this
 /// mnml spawned (`app/agents.zig`, `MNML_AGENTS_PGID`).
 pub const agents_pgid = "2147483000";
+/// The data root of the mnml that ran `--demo`, before the sandbox
+/// replaced it — where the Marketplace installed the integrations.
+/// Set by the re-exec when there is one.
+pub const host_data_root_env = "MNML_DEMO_HOST_DATA_ROOT";
 
 /// Variables the re-exec drops: each would reach a real account.
 pub const unset = [_][]const u8{
@@ -108,13 +117,14 @@ pub fn workspaceOf(env: *const Map) ?[]const u8 {
 }
 
 /// What the re-exec sets on top of the sandbox's variables, for the
-/// sandbox at `root`. `path` is the current `PATH` (null: none).
-/// Allocated in `arena`.
-pub fn extraSet(arena: Allocator, root: []const u8, path: ?[]const u8) Allocator.Error![]const [2][]const u8 {
+/// sandbox at `root`. `path` is the current `PATH` (null: none);
+/// `host_data_root` the data root the sandbox is about to replace
+/// (null: none known). Allocated in `arena`.
+pub fn extraSet(arena: Allocator, root: []const u8, path: ?[]const u8, host_data_root: ?[]const u8) Allocator.Error![]const [2][]const u8 {
     const dir = try std.fs.path.join(arena, &.{ root, state_dir });
     const bin = try std.fs.path.join(arena, &.{ dir, "bin" });
     const new_path = if (path) |p| (if (p.len > 0) try std.fmt.allocPrint(arena, "{s}{c}{s}", .{ bin, std.fs.path.delimiter, p }) else bin) else bin;
-    const out = try arena.alloc([2][]const u8, 12);
+    const out = try arena.alloc([2][]const u8, if (host_data_root != null) 14 else 13);
     out[0] = .{ env_var, try std.fs.path.join(arena, &.{ root, workspace_name }) };
     out[1] = .{ "PATH", new_path };
     out[2] = .{ "JIRA_BASE_URL", try std.fmt.allocPrint(arena, "@{s}", .{try std.fs.path.join(arena, &.{ dir, "jira.url" })}) };
@@ -127,6 +137,12 @@ pub fn extraSet(arena: Allocator, root: []const u8, path: ?[]const u8) Allocator
     out[9] = .{ "MNML_OPEN_URL", "none" };
     out[10] = .{ "MNML_AGENTS_PGID", agents_pgid };
     out[11] = .{ "GIT_CEILING_DIRECTORIES", root };
+    // The Jira pane's linked pull requests ask the forge with the token
+    // its `bitbucket_token_env` names, `BITBUCKET_ACCESS_TOKEN` by
+    // default: the fake's token under that name too, in place of the
+    // real one `unset` drops (the forge is the fake, `BITBUCKET_BASE_URL`).
+    out[12] = .{ "BITBUCKET_ACCESS_TOKEN", bitbucket_token };
+    if (host_data_root) |d| out[13] = .{ host_data_root_env, d };
     return out;
 }
 
@@ -137,6 +153,8 @@ pub const Missing = struct {
     git: bool = false,
     integrations: bool = false,
     fakes: bool = false,
+    /// Where the integrations and the fakes were looked for.
+    places: Places = .{},
 
     pub fn any(m: Missing) bool {
         return m.git or m.integrations or m.fakes;
@@ -148,8 +166,13 @@ pub const Missing = struct {
         errdefer out.deinit(gpa);
         try out.appendSlice(gpa, "demo — a sample workspace, offline Jira and Bitbucket and a stand-in Claude, in a throwaway home removed on exit");
         if (m.git) try out.appendSlice(gpa, "; no `git`, so the workspace has no history");
-        if (m.integrations) try out.appendSlice(gpa, "; mnml-jira / mnml-bitbucket are not beside this binary, so their panes are not installed");
-        if (m.fakes) try out.appendSlice(gpa, "; mnml-fake-jira / mnml-fake-bitbucket are not beside this binary, so nothing answers those panes");
+        const beside_text = m.places.exe_dir orelse "(this binary's directory is unknown)";
+        if (m.integrations) {
+            try out.print(gpa, "; mnml-jira / mnml-bitbucket are not in {s}", .{beside_text});
+            if (m.places.host_data_root) |d| try out.print(gpa, " nor installed from the Marketplace in {s}", .{d});
+            try out.appendSlice(gpa, ", so their panes are not installed");
+        }
+        if (m.fakes) try out.print(gpa, "; mnml-fake-jira / mnml-fake-bitbucket are not in {s}, so nothing answers those panes", .{beside_text});
         return out.toOwnedSlice(gpa);
     }
 };
@@ -306,47 +329,107 @@ pub fn plantSessions(gpa: Allocator, io: Io, home: []const u8, ws: []const u8) !
     }
 }
 
+/// The stand-ins first on a login shell's PATH (`seedHome`).
+pub const zsh_path_line = "# mnml --demo: the stand-in claude and codex first, whatever the login profile did\n" ++
+    "typeset -U path; path=(\"$HOME/" ++ state_dir ++ "/bin\" $path)\n";
+pub const sh_path_line = "# mnml --demo: the stand-in claude and codex first, whatever the login profile did\n" ++
+    "PATH=\"$HOME/" ++ state_dir ++ "/bin:$PATH\"; export PATH\n";
+
 /// The throwaway home: `root` is HOME, `data_root` mnml's state in it.
 pub fn seedHome(io: Io, root: []const u8, data_root: []const u8) !void {
     try write(io, data_root, "config.zon", data.home_config);
     try write(io, data_root, "init.lua", data.init_lua);
     try write(io, data_root, "integrations/jira/config.zon", data.jira_config);
     try write(io, data_root, "integrations/bitbucket/config.zon", data.bitbucket_config);
-    try write(io, root, ".zshrc", data.zshrc);
+    // A login shell's profile (macOS's `path_helper`) puts the system's
+    // directories back in front of the stand-ins; the shell's own rc
+    // runs after it and puts them first again, so a real `claude` in
+    // `/usr/local/bin` never answers in the demo's shell.
+    try write(io, root, ".zshrc", data.zshrc ++ "\n" ++ zsh_path_line);
+    try write(io, root, ".bash_profile", sh_path_line);
+    try write(io, root, ".profile", sh_path_line);
     // The one-time ghost-text tip is not what a demo is about.
     try write(io, root, ".config/mnml/ghost-text-hint-shown", "");
     try writeExe(io, root, state_dir ++ "/bin/claude", data.claude_shim);
     try writeExe(io, root, state_dir ++ "/bin/codex", data.codex_shim);
 }
 
-pub const integration_bins = [_][]const u8{ "mnml-jira", "mnml-bitbucket" };
-pub const fake_bins = [_][]const u8{ "mnml-fake-jira", "mnml-fake-bitbucket" };
+/// A program `--demo` runs: the Marketplace id it installs under, and
+/// its file name (without `.exe`).
+pub const Tool = struct { id: []const u8, name: []const u8 };
+pub const integrations = [_]Tool{ .{ .id = "jira", .name = "mnml-jira" }, .{ .id = "bitbucket", .name = "mnml-bitbucket" } };
+pub const fakes = [_]Tool{ .{ .id = "jira", .name = "mnml-fake-jira" }, .{ .id = "bitbucket", .name = "mnml-fake-bitbucket" } };
+
+/// Where `locate` looks.
+pub const Places = struct {
+    /// The running binary's directory: a source build's `zig-out/bin`,
+    /// an unpacked release archive, a package's `bin`.
+    exe_dir: ?[]const u8 = null,
+    /// The data root of the mnml that ran `--demo` (`host_data_root_env`).
+    host_data_root: ?[]const u8 = null,
+};
 
 fn exeName(buf: []u8, name: []const u8) []const u8 {
     return if (builtin.os.tag == .windows) std.fmt.bufPrint(buf, "{s}.exe", .{name}) catch name else name;
 }
 
-fn beside(arena: Allocator, io: Io, exe_dir: []const u8, name: []const u8) ?[]const u8 {
+/// The paths `locate` tries for `tool`, in order: beside this binary;
+/// then, with `marketplace`, the link the Marketplace makes
+/// (`<host data root>/bin/<name>`) and the file it writes
+/// (`<host data root>/integrations/<id>/bin/<name>`,
+/// `app/marketplace_release.zig`). The fakes are never a Marketplace
+/// install, so they are looked for beside the binary only.
+pub fn candidates(arena: Allocator, places: Places, tool: Tool, marketplace: bool) Allocator.Error![]const []const u8 {
     var nb: [64]u8 = undefined;
-    const p = std.fs.path.join(arena, &.{ exe_dir, exeName(&nb, name) }) catch return null;
-    Io.Dir.cwd().access(io, p, .{}) catch return null;
-    return p;
+    const file = try arena.dupe(u8, exeName(&nb, tool.name));
+    var out: std.ArrayList([]const u8) = .empty;
+    if (places.exe_dir) |d| try out.append(arena, try std.fs.path.join(arena, &.{ d, file }));
+    if (marketplace) if (places.host_data_root) |r| {
+        try out.append(arena, try std.fs.path.join(arena, &.{ r, "bin", file }));
+        try out.append(arena, try std.fs.path.join(arena, &.{ r, "integrations", tool.id, "bin", file }));
+    };
+    return out.items;
 }
 
-/// Link the integrations built beside this binary into the data root
-/// and run each one's `--install` (its manifests into the data root).
-/// False when either is not there.
-pub fn installIntegrations(gpa: Allocator, io: Io, env: *const Map, exe_dir: []const u8, data_root: []const u8) !bool {
+/// The first of `candidates` that is there, or null.
+pub fn locate(arena: Allocator, io: Io, places: Places, tool: Tool, marketplace: bool) ?[]const u8 {
+    const list = candidates(arena, places, tool, marketplace) catch return null;
+    for (list) |p| {
+        Io.Dir.cwd().access(io, p, .{}) catch continue;
+        return p;
+    }
+    return null;
+}
+
+/// `<data_root>/bin/<file>` → `target`: where `integrations.resolveBinary`
+/// looks first. A copy where a link cannot be made.
+fn linkInto(arena: Allocator, io: Io, data_root: []const u8, target: []const u8) !void {
+    const bin = try std.fs.path.join(arena, &.{ data_root, "bin" });
+    try Io.Dir.cwd().createDirPath(io, bin);
+    const link = try std.fs.path.join(arena, &.{ bin, std.fs.path.basename(target) });
+    Io.Dir.cwd().deleteFile(io, link) catch {};
+    Io.Dir.cwd().symLink(io, target, link, .{}) catch {
+        try Io.Dir.cwd().copyFile(target, Io.Dir.cwd(), link, io, .{});
+    };
+}
+
+/// Find `mnml-jira` and `mnml-bitbucket` (`locate`), link them into the
+/// sandbox's data root and run each one's `--install` (its manifests into
+/// that data root). False when either is not found or will not install.
+pub fn installIntegrations(gpa: Allocator, io: Io, env: *const Map, places: Places, data_root: []const u8) !bool {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var bins: [integration_bins.len][]const u8 = undefined;
-    for (integration_bins, 0..) |name, i| bins[i] = beside(arena, io, exe_dir, name) orelse return false;
-    _ = try seed_mod.linkBeside(gpa, io, exe_dir, data_root);
+    var bins: [integrations.len][]const u8 = undefined;
+    for (integrations, 0..) |tool, i| bins[i] = locate(arena, io, places, tool, true) orelse return false;
     var ienv = try env.clone(arena);
     try ienv.put("MNML_DATA_ROOT", data_root);
     var ok = true;
     for (bins) |b| {
+        linkInto(arena, io, data_root, b) catch {
+            ok = false;
+            continue;
+        };
         const r = std.process.run(arena, io, .{ .argv = &.{ b, "--install" }, .environ_map = &ienv }) catch {
             ok = false;
             continue;
@@ -359,7 +442,7 @@ pub fn installIntegrations(gpa: Allocator, io: Io, env: *const Map, exe_dir: []c
 // ─── the fakes ───────────────────────────────────────────────────────────
 
 pub const Fakes = struct {
-    children: [fake_bins.len]?Child = .{ null, null },
+    children: [fakes.len]?Child = .{ null, null },
 
     pub fn running(self: *const Fakes) usize {
         var n: usize = 0;
@@ -386,7 +469,7 @@ fn getpid() i64 {
 /// Start the two fakes beside this binary, their URLs into
 /// `<root>/demo/{jira,bb}.url`; wait (a bounded while) for both, then
 /// write the workspace's `.mnml/env/dev.env` for the request files.
-pub fn startFakes(gpa: Allocator, io: Io, env: *const Map, root: []const u8, ws: []const u8, exe_dir: []const u8) !Fakes {
+pub fn startFakes(gpa: Allocator, io: Io, env: *const Map, root: []const u8, ws: []const u8, places: Places) !Fakes {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -394,17 +477,17 @@ pub fn startFakes(gpa: Allocator, io: Io, env: *const Map, root: []const u8, ws:
     try Io.Dir.cwd().createDirPath(io, dir);
     const pid = try std.fmt.allocPrint(arena, "{d}", .{getpid()});
     const urls = [_][]const u8{ try std.fs.path.join(arena, &.{ dir, "jira.url" }), try std.fs.path.join(arena, &.{ dir, "bb.url" }) };
-    var fakes: Fakes = .{};
+    var started: Fakes = .{};
     // A bound on each fake's life if this process is killed hard and
     // `--parent-pid` somehow misses it: half a day.
     const life = "43200";
-    for (fake_bins, 0..) |name, i| {
-        const bin = beside(arena, io, exe_dir, name) orelse continue;
+    for (fakes, 0..) |tool, i| {
+        const bin = locate(arena, io, places, tool, false) orelse continue;
         const argv: []const []const u8 = if (i == 0)
             &.{ bin, "--port", "0", "--url-file", urls[i], "--parent-pid", pid, "--life-secs", life, "--quiet" }
         else
             &.{ bin, "--port", "0", "--url-file", urls[i], "--parent-pid", pid, "--lifetime-secs", life };
-        fakes.children[i] = std.process.spawn(io, .{
+        started.children[i] = std.process.spawn(io, .{
             .argv = argv,
             .cwd = .{ .path = dir },
             .environ_map = env,
@@ -414,21 +497,21 @@ pub fn startFakes(gpa: Allocator, io: Io, env: *const Map, root: []const u8, ws:
             .pgid = if (builtin.os.tag == .windows) null else 0,
         }) catch null;
     }
-    if (fakes.running() == 0) return fakes;
+    if (started.running() == 0) return started;
     // Each writes its URL file once it listens.
     var got: [2]?[]const u8 = .{ null, null };
     var waited: u32 = 0;
     while (waited < 3000) : (waited += 20) {
-        for (urls, 0..) |u, i| if (got[i] == null and fakes.children[i] != null) {
+        for (urls, 0..) |u, i| if (got[i] == null and started.children[i] != null) {
             const text = Io.Dir.cwd().readFileAlloc(io, u, arena, .limited(4096)) catch continue;
             const url = std.mem.trim(u8, text, " \t\r\n");
             if (url.len > 0) got[i] = url;
         };
-        if ((got[0] != null or fakes.children[0] == null) and (got[1] != null or fakes.children[1] == null)) break;
+        if ((got[0] != null or started.children[0] == null) and (got[1] != null or started.children[1] == null)) break;
         io.sleep(.fromMilliseconds(20), .awake) catch break;
     }
     try writeEnv(io, ws, got[0], got[1]);
-    return fakes;
+    return started;
 }
 
 /// `.mnml/env/dev.env` — the request files' variables.
@@ -459,23 +542,25 @@ pub fn setup(gpa: Allocator, io: Io, env: *const Map, exe_dir: ?[]const u8) !?Se
     const root = @import("sandbox.zig").owned(env, getpid()) orelse return null;
     const data_root = try data_root_mod.dataRoot(gpa, io, .{ .vars = env, .exe_dir = exe_dir });
     defer gpa.free(data_root);
-    var missing: Missing = .{};
+    const places: Places = .{
+        .exe_dir = exe_dir,
+        .host_data_root = if (env.get(host_data_root_env)) |v| (if (v.len > 0) v else null) else null,
+    };
+    var missing: Missing = .{ .places = places };
     missing.git = !(try seedWorkspace(gpa, io, env, ws, root));
     try seedHome(io, root, data_root);
     try plantSessions(gpa, io, root, ws);
-    var fakes: Fakes = .{};
-    if (exe_dir) |d| {
-        missing.integrations = !(try installIntegrations(gpa, io, env, d, data_root));
-        fakes = try startFakes(gpa, io, env, root, ws, d);
-    } else missing.integrations = true;
-    missing.fakes = fakes.running() < fake_bins.len;
-    if (fakes.running() == 0) try writeEnv(io, ws, null, null);
-    return .{ .note = try missing.note(gpa), .fakes = fakes };
+    missing.integrations = !(try installIntegrations(gpa, io, env, places, data_root));
+    const started = try startFakes(gpa, io, env, root, ws, places);
+    missing.fakes = started.running() < fakes.len;
+    if (started.running() == 0) try writeEnv(io, ws, null, null);
+    return .{ .note = try missing.note(gpa), .fakes = started };
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
+const sdk_testing = @import("mnml_sdk").testing;
 
 test "demo: the re-exec's variables: the workspace, the shims first on PATH, the fakes' URL files and tokens, no update check, no browser, a private agents group" {
     // `--demo` rides on `--sandbox`, which Windows has not got; the paths
@@ -485,22 +570,26 @@ test "demo: the re-exec's variables: the workspace, the shims first on PATH, the
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const root = "/tmp/mnml-sandbox-abcdefgh";
-    const set = try extraSet(arena, root, "/usr/bin:/bin");
+    const set = try extraSet(arena, root, "/usr/bin:/bin", "/home/u/.config/mnml");
     var env: Map = .init(t.allocator);
     defer env.deinit();
     for (set) |kv| try env.put(kv[0], kv[1]);
     try t.expectEqualStrings(root ++ "/tour", workspaceOf(&env).?);
+    try t.expectEqualStrings("/home/u/.config/mnml", env.get(host_data_root_env).?);
     try t.expectEqualStrings(root ++ "/demo/bin:/usr/bin:/bin", env.get("PATH").?);
     try t.expectEqualStrings("@" ++ root ++ "/demo/jira.url", env.get("JIRA_BASE_URL").?);
     try t.expectEqualStrings("@" ++ root ++ "/demo/bb.url", env.get("BITBUCKET_BASE_URL").?);
     try t.expectEqualStrings(jira_token, env.get("JIRA_API_TOKEN").?);
     try t.expectEqualStrings(bitbucket_token, env.get("BITBUCKET_API_TOKEN").?);
+    // Jira's linked pull requests read this name: the fake's token, not a gap.
+    try t.expectEqualStrings(bitbucket_token, env.get("BITBUCKET_ACCESS_TOKEN").?);
     try t.expectEqualStrings("1", env.get("MNML_NO_UPDATE_CHECK").?);
     try t.expectEqualStrings("none", env.get("MNML_OPEN_URL").?);
     try t.expectEqualStrings(agents_pgid, env.get("MNML_AGENTS_PGID").?);
     // No PATH at all: the shims are the whole of it.
-    const bare = try extraSet(arena, root, null);
+    const bare = try extraSet(arena, root, null, null);
     try t.expectEqualStrings(root ++ "/demo/bin", bare[1][1]);
+    for (bare) |kv| try t.expect(!std.mem.eql(u8, kv[0], host_data_root_env));
     try t.expect(wanted(&.{ "mnml-zig", "--demo" }));
     try t.expect(!wanted(&.{ "mnml-zig", "--sandbox" }));
     // The keys that would reach a real account are dropped.
@@ -619,7 +708,7 @@ test "demo: the shim on PATH: the re-exec's PATH finds the stand-in claude, whic
     const root = try arena.dupe(u8, buf[0..n]);
     const dr = try std.fs.path.join(arena, &.{ root, "xdg", "mnml" });
     try seedHome(t.io, root, dr);
-    const set = try extraSet(arena, root, "/usr/bin:/bin");
+    const set = try extraSet(arena, root, "/usr/bin:/bin", null);
     var env: Map = .init(t.allocator);
     defer env.deinit();
     for (set) |kv| try env.put(kv[0], kv[1]);
@@ -637,16 +726,107 @@ test "demo: the shim on PATH: the re-exec's PATH finds the stand-in claude, whic
     try t.expect(std.mem.indexOf(u8, out.stdout, "no model runs") != null);
 }
 
-test "demo: the first toast names what was skipped, and only that" {
+fn shellAvailable(name: []const u8) bool {
+    const r = std.process.run(t.allocator, t.io, .{ .argv = &.{ "/bin/sh", "-c", "command -v \"$0\"", name } }) catch return false;
+    t.allocator.free(r.stdout);
+    t.allocator.free(r.stderr);
+    return r.term == .exited and r.term.exited == 0;
+}
+
+test "demo: a login shell in the demo finds the stand-in claude even when its profile puts the system's directories first" {
+    if (comptime !supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const root = try arena.dupe(u8, buf[0..n]);
+    try seedHome(t.io, root, try std.fs.path.join(arena, &.{ root, "xdg", "mnml" }));
+    // A "real" claude in a system directory, ahead of the stand-ins — the
+    // order macOS's path_helper leaves a login shell with.
+    try writeExe(t.io, root, "usr-local-bin/claude", "#!/bin/sh\necho real\n");
+    const sys = try std.fs.path.join(arena, &.{ root, "usr-local-bin" });
+    const shims = try std.fs.path.join(arena, &.{ root, state_dir, "bin" });
+    var env: Map = .init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", root);
+    try env.put("PATH", try std.fmt.allocPrint(arena, "{s}:/usr/bin:/bin:{s}", .{ sys, shims }));
+    const want = try std.fmt.allocPrint(arena, "{s}/claude\n", .{shims});
+    var ran: usize = 0;
+    // zsh reads ~/.zshrc after the login profile; bash a login ~/.bash_profile.
+    for ([_][]const []const u8{ &.{ "zsh", "-f", "-c", "source ~/.zshrc; command -v claude" }, &.{ "bash", "--noprofile", "--norc", "-c", ". ~/.bash_profile; command -v claude" }, &.{ "sh", "-c", ". ~/.profile; command -v claude" } }) |argv| {
+        if (!shellAvailable(argv[0])) continue;
+        const r = try std.process.run(arena, t.io, .{ .argv = argv, .environ_map = &env, .cwd = .{ .path = root } });
+        try t.expectEqualStrings(want, r.stdout);
+        ran += 1;
+    }
+    if (ran == 0) return error.SkipZigTest;
+}
+
+test "demo: the first toast names what was skipped, and only that, and where it looked" {
     const all = try (Missing{}).note(t.allocator);
     defer t.allocator.free(all);
     try t.expect(std.mem.startsWith(u8, all, "demo — "));
-    try t.expect(std.mem.indexOf(u8, all, "not beside") == null);
-    const some = try (Missing{ .fakes = true, .git = true }).note(t.allocator);
+    try t.expect(std.mem.indexOf(u8, all, "are not in") == null);
+    const some = try (Missing{ .fakes = true, .git = true, .places = .{ .exe_dir = "/opt/mnml" } }).note(t.allocator);
     defer t.allocator.free(some);
-    try t.expect(std.mem.indexOf(u8, some, "mnml-fake-jira") != null);
+    try t.expect(std.mem.indexOf(u8, some, "mnml-fake-jira / mnml-fake-bitbucket are not in /opt/mnml,") != null);
     try t.expect(std.mem.indexOf(u8, some, "no `git`") != null);
     try t.expect(std.mem.indexOf(u8, some, "mnml-jira /") == null);
+    const ints = try (Missing{ .integrations = true, .places = .{ .exe_dir = "/opt/mnml", .host_data_root = "/home/u/.config/mnml" } }).note(t.allocator);
+    defer t.allocator.free(ints);
+    try t.expect(std.mem.indexOf(u8, ints, "mnml-jira / mnml-bitbucket are not in /opt/mnml nor installed from the Marketplace in /home/u/.config/mnml, so their panes are not installed") != null);
+}
+
+fn touchExe(dir: []const u8, rel: []const u8) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ dir, rel });
+    if (std.fs.path.dirname(path)) |d| try Io.Dir.cwd().createDirPath(t.io, d);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = path, .data = "#!/bin/sh\n" });
+}
+
+test "demo: locate: beside the binary first, then the Marketplace's link, then the file it installed; the fakes only beside" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const top = try arena.dupe(u8, buf[0..n]);
+    const exe_dir = try std.fs.path.join(arena, &.{ top, "bin" });
+    const host = try std.fs.path.join(arena, &.{ top, "data" });
+    const places: Places = .{ .exe_dir = exe_dir, .host_data_root = host };
+    var nb: [64]u8 = undefined;
+    const jira = integrations[0];
+    const file = exeName(&nb, jira.name);
+    const beside_path = try std.fs.path.join(arena, &.{ exe_dir, file });
+    const link_path = try std.fs.path.join(arena, &.{ host, "bin", file });
+    const installed_path = try std.fs.path.join(arena, &.{ host, "integrations", "jira", "bin", file });
+
+    // Nothing anywhere: not found.
+    try t.expect(locate(arena, t.io, places, jira, true) == null);
+    // Only the Marketplace's own install: found there.
+    try touchExe(host, try std.fmt.allocPrint(arena, "integrations/jira/bin/{s}", .{file}));
+    try sdk_testing.expectPath(installed_path, locate(arena, t.io, places, jira, true).?);
+    // Its link in `<data root>/bin` comes before it.
+    try touchExe(host, try std.fmt.allocPrint(arena, "bin/{s}", .{file}));
+    try sdk_testing.expectPath(link_path, locate(arena, t.io, places, jira, true).?);
+    // And beside the binary before both: a source build drives what it built.
+    try touchExe(exe_dir, file);
+    try sdk_testing.expectPath(beside_path, locate(arena, t.io, places, jira, true).?);
+    // No host data root known: beside the binary is the only place.
+    try t.expectEqual(@as(usize, 1), (try candidates(arena, .{ .exe_dir = exe_dir }, jira, true)).len);
+
+    // A fake is never a Marketplace install: one in the data root is not used.
+    const fake = fakes[0];
+    const fake_file = exeName(&nb, fake.name);
+    try touchExe(host, try std.fmt.allocPrint(arena, "bin/{s}", .{fake_file}));
+    try t.expect(locate(arena, t.io, places, fake, false) == null);
+    try touchExe(exe_dir, fake_file);
+    try sdk_testing.expectPath(try std.fs.path.join(arena, &.{ exe_dir, fake_file }), locate(arena, t.io, places, fake, false).?);
 }
 
 test "demo: the env file: the fakes' URLs and the masked credential" {

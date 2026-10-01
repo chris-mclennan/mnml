@@ -114,7 +114,7 @@ fn fakesRunning(arena: Allocator, root: []const u8) !usize {
     var lines = std.mem.splitScalar(u8, r.stdout, '\n');
     while (lines.next()) |l| {
         if (std.mem.indexOf(u8, l, root) == null) continue;
-        for (demo.fake_bins) |b| if (std.mem.indexOf(u8, l, b) != null) {
+        for (demo.fakes) |f| if (std.mem.indexOf(u8, l, f.name) != null) {
             n += 1;
             break;
         };
@@ -166,7 +166,7 @@ var demo_root: []const u8 = "";
 
 fn fakesUp(f: *Fixture) !void {
     demo_root = try f.sandboxRoot();
-    try t.expectEqual(@as(usize, demo.fake_bins.len), try fakesRunning(f.arena_state.allocator(), demo_root));
+    try t.expectEqual(@as(usize, demo.fakes.len), try fakesRunning(f.arena_state.allocator(), demo_root));
 }
 
 test "a signal: `--demo --headless` exits 143 on SIGTERM, its fake servers are stopped and the sandbox directory is gone" {

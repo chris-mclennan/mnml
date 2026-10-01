@@ -210,8 +210,10 @@ step() {
 
 # ── install ────────────────────────────────────────────────────────────
 # The binaries an install carries: the host as `mnml`, plus one per
-# folder under integrations/ named by its manifest's `.binary` line. The
-# test fakes (mnml-fake-*) are not integrations and never install; the
+# folder under integrations/ named by its manifest's `.binary` line, plus
+# the two offline servers `mnml --demo` starts from beside the binary
+# (`demo_fakes`, as a release archive carries them). The other test fakes
+# (mnml-fake-lsp, -dap, …) never install, no fake is an integration; the
 # SDK sample is a fixture, so it ships as a binary (the SDK docs run it)
 # but its manifest is not registered — a "Sample" chip is not something
 # an install should put on your rail. The same set is listed in
@@ -228,6 +230,12 @@ shipped_integrations() {
     [ -n "$bin" ] || continue
     printf '%s %s %s\n' "$id" "$bin" "${cat:-integration}"
   done
+}
+
+# mnml-fake-jira and mnml-fake-bitbucket: copied beside the installed
+# mnml, never registered (src/config/demo.zig looks for them there).
+demo_fakes() {
+  printf '%s\n' mnml-fake-jira mnml-fake-bitbucket
 }
 
 # Is `$1` an mnml-zig? (`--version` says so; the Rust mnml and anything
@@ -312,6 +320,9 @@ do_install() {
   done <<EOF2
 $(shipped_integrations)
 EOF2
+  for bin in $(demo_fakes); do
+    install_one "$dry" "$REPO/zig-out/bin/$bin" "$prefix/bin/$bin" || return 1
+  done
   # share/: MnmlSymbols.ttf, data/marketplace.zon (the INTEGRATIONS
   # section's Marketplace default source — an installed mnml probes
   # <exe dir>/../share/mnml/marketplace.zon for it) and whatever else
