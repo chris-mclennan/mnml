@@ -1,0 +1,39 @@
+# width: 120
+# height: 40
+# Switching the workspace (src/app/workspace_switch.zig — Rust's
+# promote_to_primary_workspace) switches what the app works on, not only
+# the tree: the switched-to root becomes the workspace, so the top bar and
+# the statusline name it and Ctrl+P walks its files; the old workspace
+# keeps its section, folded, and switching back restores it
+# (hunt5-switch-workspace-tree-only: before, only the `●` moved and
+# Ctrl+P kept offering the old workspace's files).
+write only_primary.txt "p\n"
+write extra/only_extra.txt "e\n"
+command tree.refresh
+command view.add_workspace
+type extra
+key enter
+expect screen contains "workspace added: extra"
+command view.switch_workspace
+type extra
+key enter
+expect screen contains "workspace opened: extra"
+expect screen contains "󰍉  extra"
+# Ctrl+P is the new workspace's: its own file, workspace-relative, and
+# none of the old workspace's.
+key ctrl+p
+type only_
+expect screen contains "only_extra.txt"
+expect screen lacks "only_primary.txt"
+expect screen lacks "extra/only_extra.txt"
+key esc
+# Back: the old workspace is the second row of the switcher.
+command view.switch_workspace
+key down
+key enter
+expect screen lacks "󰍉  extra"
+key ctrl+p
+type only_primary
+expect screen contains "only_primary.txt"
+expect screen lacks "(no matches)"
+key esc
