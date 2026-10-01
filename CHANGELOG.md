@@ -60,6 +60,8 @@ the release ships one file), and one line per change a user can see.
   nothing, and the next pane opened took its slot and appeared in two
   splits at once (`view.only` then crashed). Closing a pane now clears it
   there too, and a split never shows a pane twice.
+- Closing a search (grep) pane, or re-running its query, while the search
+  was still running leaked the hits it had found but not yet shown.
 - In the demo's shell, `claude` and `codex` are the stand-ins even where a
   login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
   `PATH`, so a real CLI installed there is not the one that answers.
