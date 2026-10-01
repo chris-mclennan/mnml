@@ -152,6 +152,13 @@ pub fn clipStr(ui: Ui, s: []const u8, max: u16) []const u8 {
     return ui.canvas.clipCells(ui.arena, s, max, ui.ellipsis()) catch s;
 }
 
+/// `clipStr` for a path: cut from the LEFT, at a separator when one is
+/// in reach (`clip.clipPathLeft`), so the end — the name — survives.
+pub fn clipPathLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
+    if (ui.fitsIn(s, max)) return s;
+    return clip.clipPathLeft(ui.arena, s, max, .{ .method = ui.canvas.widthMethod(), .ellipsis = ui.ellipsis() }) catch s;
+}
+
 /// `std.fmt` onto the frame arena; OOM yields an empty string.
 pub fn fmt(ui: Ui, comptime f: []const u8, args: anytype) []const u8 {
     return std.fmt.allocPrint(ui.arena, f, args) catch "";

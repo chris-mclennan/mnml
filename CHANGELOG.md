@@ -100,6 +100,10 @@ the release ships one file), and one line per change a user can see.
 - With a second workspace root in the tree, the primary root's header names
   its folder, as the added root's does, instead of its absolute path (cut to
   `● /Use…` at the stock width); the path is the header's hover.
+- A workspace root alone in the tree names its path cut from the left —
+  `● …/mnml-zig-worktrees/sidecar/`, or `● …car/` at the stock width — so
+  the folder's name is what survives, not `● /Use…`. A root switched to
+  names its folder beside the others, like any added root.
 - An auto-hiding bottom dock above the statusline (the default placement)
   showed its `⋯` grip on the screen's last row but brought its items up two
   rows higher. The grip now sits on the row the items appear on — hover it,

@@ -10,6 +10,10 @@
 write only_primary.txt "p\n"
 write extra/only_extra.txt "e\n"
 command tree.refresh
+# Alone, the root's header names its path, cut from the LEFT at the
+# stock width so its folder survives — never `● /var…` / `● /Use…`.
+expect screen contains " ● …"
+expect screen lacks " ● /"
 command view.add_workspace
 type extra
 key enter
@@ -19,6 +23,10 @@ type extra
 key enter
 expect screen contains "workspace opened: extra"
 expect screen contains "󰍉  extra"
+# The switched-to root's `●` header names its folder, beside the old
+# workspace's `○` section — not its clipped absolute path.
+expect screen contains " ● extra"
+expect screen lacks " ● /"
 # Ctrl+P is the new workspace's: its own file, workspace-relative, and
 # none of the old workspace's.
 key ctrl+p

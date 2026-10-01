@@ -120,6 +120,88 @@ pub fn clipCells(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options)
     return out;
 }
 
+/// `clipCells` from the other end: the ellipsis, then as many TRAILING
+/// graphemes as fit beside it — for a path, whose end (the file, the
+/// folder) is the part worth keeping. `s` copied when it fits.
+pub fn clipCellsLeft(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options) Allocator.Error![]u8 {
+    if (fits(s, max_cells, opts.method)) return alloc.dupe(u8, s);
+    if (max_cells == 0) return alloc.alloc(u8, 0);
+    const ell = opts.ellipsis.text();
+    const ell_w = opts.ellipsis.cells();
+    if (ell_w >= max_cells) {
+        const take: usize = if (opts.ellipsis == .ascii) max_cells else ell.len;
+        return alloc.dupe(u8, ell[0..take]);
+    }
+    const start = tailStart(s, max_cells - ell_w, opts.method);
+    const out = try alloc.alloc(u8, ell.len + s.len - start);
+    @memcpy(out[0..ell.len], ell);
+    @memcpy(out[ell.len..], s[start..]);
+    return out;
+}
+
+/// `clipCellsLeft` for a path: the cut lands on a separator when one is
+/// in reach, so what is left reads `…/parent/name` rather than a torn
+/// `…ent/name`. A last component wider than the budget is cut mid-name,
+/// as `clipCellsLeft` would. A trailing `/` (a directory's spelling) is
+/// part of the name, not a cut point.
+pub fn clipPathLeft(alloc: Allocator, s: []const u8, max_cells: u16, opts: Options) Allocator.Error![]u8 {
+    if (fits(s, max_cells, opts.method)) return alloc.dupe(u8, s);
+    const ell_w = opts.ellipsis.cells();
+    if (ell_w < max_cells) {
+        const start = tailStart(s, max_cells - ell_w, opts.method);
+        const body = std.mem.trimEnd(u8, s, "/\\");
+        if (start < body.len) {
+            if (std.mem.indexOfAnyPos(u8, s, start, "/\\")) |sep| if (sep < body.len) {
+                const ell = opts.ellipsis.text();
+                const out = try alloc.alloc(u8, ell.len + s.len - sep);
+                @memcpy(out[0..ell.len], ell);
+                @memcpy(out[ell.len..], s[sep..]);
+                return out;
+            };
+        }
+    }
+    return clipCellsLeft(alloc, s, max_cells, opts);
+}
+
+/// The byte where the longest grapheme SUFFIX of `s` that fits in
+/// `budget` cells starts.
+fn tailStart(s: []const u8, budget: u16, method: Method) usize {
+    // Grapheme starts, walked once forward; then the suffix is grown
+    // from the end until the next grapheme would not fit.
+    var starts: [512]usize = undefined;
+    var n: usize = 0;
+    var it = utf8.graphemeIterator(s);
+    var start: usize = s.len;
+    var overflowed = false;
+    while (it.next()) |g| {
+        if (n == starts.len) {
+            overflowed = true;
+            break;
+        }
+        starts[n] = g.start;
+        n += 1;
+    }
+    if (overflowed) {
+        // A very long string: keep the last `budget` bytes' worth as a
+        // bound, then measure within it (a byte is at most one cell).
+        const lo = s.len -| @as(usize, budget) * 4;
+        var j = lo;
+        while (j < s.len and (s[j] & 0xC0) == 0x80) j += 1;
+        return j + tailStart(s[j..], budget, method);
+    }
+    var used: u16 = 0;
+    var i = n;
+    while (i > 0) {
+        i -= 1;
+        const end = if (i + 1 < n) starts[i + 1] else s.len;
+        const w = width(s[starts[i]..end], method);
+        if (used + w > budget) break;
+        used += w;
+        start = starts[i];
+    }
+    return start;
+}
+
 /// Byte length of the longest grapheme prefix of `s` that fits in
 /// `max_cells` — no ellipsis, never past `s.len`. The wrap primitive:
 /// `clipCells` marks a cut with "…", which can make the clipped form
@@ -220,4 +302,34 @@ test "width helper agrees with vaxis" {
     try std.testing.expectEqual(@as(u16, 4), width("漢字", .unicode));
     try std.testing.expectEqual(@as(u16, 1), width("…", .unicode));
     try std.testing.expectEqual(@as(u16, 3), width("...", .unicode));
+}
+
+test "clipCellsLeft keeps the end; clipPathLeft cuts at a separator, keeps a trailing slash, and falls back mid-name" {
+    const a = std.testing.allocator;
+    const o: Options = .{};
+    const c1 = try clipCellsLeft(a, "abcdefgh", 5, o);
+    defer a.free(c1);
+    try std.testing.expectEqualStrings("…efgh", c1);
+    const c2 = try clipCellsLeft(a, "abc", 5, o);
+    defer a.free(c2);
+    try std.testing.expectEqualStrings("abc", c2);
+    const c3 = try clipCellsLeft(a, "漢字漢字", 6, o);
+    defer a.free(c3);
+    try std.testing.expectEqualStrings("…漢字", c3);
+    const p1 = try clipPathLeft(a, "/Users/me/Projects/mnml-zig-worktrees/sidecar", 30, o);
+    defer a.free(p1);
+    try std.testing.expectEqualStrings("…/mnml-zig-worktrees/sidecar", p1);
+    const p2 = try clipPathLeft(a, "~/Projects/mnml-zig-worktrees/sidecar/", 20, o);
+    defer a.free(p2);
+    try std.testing.expectEqualStrings("…/sidecar/", p2);
+    // The name alone is wider than the budget: cut inside it.
+    const p3 = try clipPathLeft(a, "/var/folders/a-very-long-folder-name", 10, o);
+    defer a.free(p3);
+    try std.testing.expectEqualStrings("…lder-name", p3);
+    const p4 = try clipPathLeft(a, "/var/x", 10, o);
+    defer a.free(p4);
+    try std.testing.expectEqualStrings("/var/x", p4);
+    const p5 = try clipPathLeft(a, "/var/folders/xy/T/mnml-e2e-bac773/", 14, .{ .ellipsis = .ascii });
+    defer a.free(p5);
+    try std.testing.expectEqualStrings("...e2e-bac773/", p5);
 }
