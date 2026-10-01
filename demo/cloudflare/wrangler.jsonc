@@ -1,0 +1,68 @@
+// The hosted web demo, at mnml.sh/demo: a Worker owns the URL, and every visitor's
+// session is a Durable Object (DemoSession, src/index.ts) that starts ONE
+// container from ./Dockerfile. See README.md.
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "mnml-demo",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-30",
+	"observability": { "enabled": true },
+
+	// The demo lives at mnml.sh/demo; the rest of mnml.sh stays the site
+	// (Cloudflare Pages). A Worker route on the zone wins over Pages for the
+	// paths it matches, and only those: `/demo` and everything under
+	// `/demo/` — not `/demo*`, which would also take a page such as
+	// `/demos`. No workers.dev URL: the route is the only way in.
+	"routes": [
+		{ "pattern": "mnml.sh/demo", "zone_name": "mnml.sh" },
+		{ "pattern": "mnml.sh/demo/*", "zone_name": "mnml.sh" }
+	],
+	"workers_dev": false,
+	"preview_urls": false,
+
+	"containers": [
+		{
+			"class_name": "DemoSession",
+			// demo/Dockerfile's image for linux/amd64 (./build-image.sh), plus
+			// the runner on TCP 7681.
+			"image": "./Dockerfile",
+			// 1/4 vCPU, 1 GiB, 4 GB disk. A session measured 99 MiB peak memory
+			// over the whole tour, twice round; the image is 108 MB compressed,
+			// 460 MB unpacked (README.md, "Sizing").
+			"instance_type": "basic",
+			// The ceiling on concurrent visitors (each one is an instance).
+			// A visitor past it gets the "busy" page.
+			"max_instances": 20
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "DEMO", "class_name": "DemoSession" }]
+	},
+	// A new application declares its Durable Object class here (SQLite
+	// storage); the legacy `migrations` array cannot be combined with it.
+	"exports": {
+		"DemoSession": { "type": "durable-object", "storage": "sqlite" }
+	},
+
+	// New sessions per visitor IP: 6 a minute.
+	"ratelimits": [
+		{ "name": "NEW_SESSIONS", "namespace_id": "4101", "simple": { "limit": 6, "period": 60 } }
+	],
+
+	"vars": {
+		// Who may drive the demo: "view" (watch only; the Worker drops the
+		// visitor's input), "ask" (a Take control button), "open" (any key
+		// takes over). A browser unlocked with ?control=<DEMO_CONTROL_SECRET>
+		// is always open; the secret is set with `wrangler secret put
+		// DEMO_CONTROL_SECRET`, never here. Changing this is an edit here and
+		// `wrangler deploy` (the image is unchanged, so nothing is rebuilt).
+		"DEMO_CONTROL": "view",
+		// The path the demo is served under; the Worker strips it before a
+		// request reaches the container, which serves at `/` (the local
+		// trial's paths). "" for a hostname of its own (demo.<zone>).
+		"BASE_PATH": "/demo",
+		// the container's own cap and idle-resume (demo/attract/attract.py)
+		"CAP_S": "600",
+		"IDLE_S": "180"
+	}
+}

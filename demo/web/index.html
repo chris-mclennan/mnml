@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mnml demo</title>
 <meta name="description" content="A real mnml, running in a container, in your browser.">
-<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="vendor/xterm.css">
 <style>
 /* The terminal's font is one family built from three files by
    unicode-range — JetBrains Mono for text, Symbols Nerd Font Mono for the
@@ -14,14 +14,14 @@
    families: the canvas renderer drew the Nerd Font's supplementary-plane
    icons (the Material Design set) as boxes through the ranged face. No
    weight ranges on the symbol faces: Chrome never matched them with one. */
-@font-face { font-family: "mnml mono"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; unicode-range: U+E000-F8FF, U+F0000-F1AFF, U+F2100-FFFFD; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; unicode-range: U+F1B00-F20FF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Regular.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Bold.woff2) format("woff2"); font-weight: 700; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-Italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml mono"; src: url(/fonts/JetBrainsMono-BoldItalic.woff2) format("woff2"); font-weight: 700; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
-@font-face { font-family: "mnml nf"; src: url(/fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; }
-@font-face { font-family: "mnml marks"; src: url(/fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; }
+@font-face { font-family: "mnml mono"; src: url(fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; unicode-range: U+E000-F8FF, U+F0000-F1AFF, U+F2100-FFFFD; }
+@font-face { font-family: "mnml mono"; src: url(fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; unicode-range: U+F1B00-F20FF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Regular.woff2) format("woff2"); font-weight: 400; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Bold.woff2) format("woff2"); font-weight: 700; font-style: normal; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-Italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml mono"; src: url(fonts/JetBrainsMono-BoldItalic.woff2) format("woff2"); font-weight: 700; font-style: italic; font-display: block; unicode-range: U+0000-DFFF, U+F900-FFFF, U+10000-EFFFF; }
+@font-face { font-family: "mnml nf"; src: url(fonts/SymbolsNerdFontMono-Regular.woff2) format("woff2"); font-display: block; }
+@font-face { font-family: "mnml marks"; src: url(fonts/MnmlSymbols.woff2) format("woff2"); font-display: block; }
 /* The site's window frame (site/src/styles/global.css, `.window`): a
    macOS Ghostty window measured off a screenshot — a short title bar in
    #24272d, three lights, the folder proxy icon and the title after them.
@@ -77,6 +77,16 @@ body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; ali
 .banner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: .35; } }
 body[data-phase="tour"] .banner { display: inline-flex; }
+/* view only: the banner says what plays and does nothing on a click */
+body[data-control="view"] .banner, body[data-control="ask"]:not(.driving) .banner { cursor: default; }
+/* the notice "Take control" shows before input flows (ask mode) */
+.notice {
+  position: absolute; left: 50%; top: 4.5%; transform: translateX(-50%); z-index: 3;
+  display: none; max-width: 92%; padding: 8px 16px; border-radius: 8px; white-space: normal; text-align: center;
+  background: color-mix(in srgb, #1e222a 82%, transparent); backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--gray-9); font-size: 13.5px;
+}
+.notice.on { display: block; }
 
 /* The tour's pointer: a terminal has no arrow, so the page draws one.
    It glides to the cell the runner is about to click, pulses on the
@@ -119,6 +129,8 @@ body.fit .controls {
   opacity: 0; pointer-events: none; transition: opacity .15s;
 }
 body.fit.show-controls .controls { opacity: 1; pointer-events: auto; }
+/* ask mode: the Take control button stays in reach until it is pressed */
+body.fit[data-control="ask"]:not(.driving) .controls { opacity: 1; pointer-events: auto; }
 .hot-edge { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 14px; z-index: 9; }
 body.fit .hot-edge { display: block; }
 body.fit .window { border-radius: 0; }
@@ -155,6 +167,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       <div class="banner" id="banner" role="button" tabindex="0">
         <span class="dot"></span><span id="banner-text">Guided tour playing — press any key or click to take over</span>
       </div>
+      <div class="notice" id="notice" role="status"></div>
       <div class="ended" id="ended">
         <div>
           <h2 id="ended-title">That was ten minutes of mnml.</h2>
@@ -166,6 +179,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   </section>
   <div class="hot-edge" id="hot-edge"></div>
   <div class="controls" id="controls">
+    <button class="brand" id="take" hidden>Take control</button>
     <button id="replay">Replay tour</button>
     <select id="picker" aria-label="Play one part of the tour"><option value="">Play one part…</option></select>
     <button id="fullscreen">Full screen</button>
@@ -173,9 +187,9 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     <span class="status" id="status">connecting…</span>
   </div>
   <p class="note" id="note">A real mnml in a sandbox: Jira and Bitbucket are offline stand-ins and the Claude Code session is a recording stand-in — no model runs and nothing leaves the container.</p>
-<script src="/vendor/xterm.js"></script>
-<script src="/vendor/addon-canvas.js"></script>
-<script src="/vendor/addon-unicode11.js"></script>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-canvas.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
 <script>
 // The terminal: xterm.js and ttyd's websocket protocol, here rather than
 // ttyd's own client, because ttyd's client fits the terminal to its page
@@ -195,6 +209,25 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   const T0 = performance.now();
   const trace = (msg) => { (window.mnmlDemoTrace = window.mnmlDemoTrace || []).push(Math.round(performance.now() - T0) + "ms " + msg); };
   let term = null, ws = null, connected = false, everConnected = false;
+
+  // Behind the hosted demo's Worker (demo/cloudflare/) the page is
+  // `?s=<session>`: every container is one visitor's, and each request
+  // names its own, so two tabs are two containers. The local trial has
+  // no `s`. Every path is relative, so the page also works under a route
+  // prefix (`/demo/`).
+  const SESSION = new URLSearchParams(location.search).get("s");
+  // Who may drive (the hosted Worker's meta tag; the local trial has none:
+  // open). "view": watch only — the terminal sends nothing, and the Worker
+  // drops input anyway. "ask": as view until "Take control". "open": any
+  // key or click takes over the tour.
+  const MODE = (document.querySelector('meta[name="mnml-demo-control"]') || {}).content || "open";
+  let canDrive = MODE === "open";
+  document.body.dataset.control = MODE;
+  const u = (path) => {
+    const url = new URL(path, location.href);
+    if (SESSION) url.searchParams.set("s", SESSION);
+    return url.toString();
+  };
 
   // ── the font size: the largest at which 200x60 cells fit the window ──
   function space() {
@@ -243,24 +276,30 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     buf[0] = prefix.charCodeAt(0); buf.set(bytes, 1);
     ws.send(buf);
   }
+  let tries = 0;
   async function connect() {
     let token = "";
-    try { token = (await (await fetch("/term/token", { cache: "no-store" })).json()).token || ""; } catch (_) {}
-    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/term/ws", ["tty"]);
+    try { token = (await (await fetch(u("term/token"), { cache: "no-store" })).json()).token || ""; } catch (_) {}
+    ws = new WebSocket(u("term/ws").replace(/^http/, "ws"), ["tty"]);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       connected = everConnected = true;
       // The one size the pty is ever told.
       ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: COLS, rows: ROWS })));
       trace("pty size sent: " + COLS + "x" + ROWS);
-      term.focus();
+      if (canDrive) term.focus();
       poll();
     };
     ws.onmessage = (e) => {
       const d = new Uint8Array(e.data);
       if (d[0] === 0x30) term.write(d.subarray(1));
     };
-    ws.onclose = () => { connected = false; trace("websocket closed"); poll(); };
+    ws.onclose = () => {
+      connected = false; trace("websocket closed"); poll();
+      // A first connection can fail while the sandbox is still starting
+      // (hosted, the container comes up with this page): try again.
+      if (!everConnected && ++tries < 20) setTimeout(connect, 500 * Math.min(tries, 4));
+    };
   }
 
   async function start() {
@@ -272,6 +311,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       cols: COLS, rows: ROWS, fontFamily: FAMILY, fontSize: 13, lineHeight: 1, letterSpacing: 0,
       scrollback: 0, cursorBlink: false, allowProposedApi: true, customGlyphs: true,
       drawBoldTextInBrightColors: false, macOptionIsMeta: true, theme: { background: "#1e222a" },
+      disableStdin: !canDrive,
     });
     term.onResize((s) => trace("term resized to " + s.cols + "x" + s.rows + " (should never happen)"));
     term.loadAddon(new Unicode11Addon.Unicode11Addon());
@@ -355,26 +395,51 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     if (ev.kind === "drag") setTimeout(() => { press(p, "left"); ptr.classList.add("drag"); place(ev.to_col, ev.to_row); }, lead - 60);
     ptrHide = setTimeout(() => ptr.classList.remove("on"), 4000);
   }
+  let es = null;
   try {
-    const es = new EventSource("/api/pointer");
+    es = new EventSource(u("api/pointer"));
     es.onmessage = (m) => { try { onPointer(JSON.parse(m.data)); } catch (_) {} };
   } catch (_) {}
 
   // ── the controls and the runner's state ──
   async function post(path) {
-    try { const r = await fetch(path, { method: "POST" }); return await r.json(); } catch (_) { return null; }
+    try { const r = await fetch(u(path), { method: "POST" }); return await r.json(); } catch (_) { return null; }
   }
-  const focusTerm = () => term && term.focus();
-  $("replay").onclick = async () => { await post("/api/replay"); poll(); focusTerm(); };
+  const focusTerm = () => canDrive && term && term.focus();
+  $("replay").onclick = async () => { await post("api/replay"); poll(); focusTerm(); };
   $("picker").onchange = async (e) => {
     const v = e.target.value; e.target.value = "";
-    if (v) { await post("/api/play?flow=" + encodeURIComponent(v)); poll(); }
+    if (v) { await post("api/play?flow=" + encodeURIComponent(v)); poll(); }
     focusTerm();
   };
-  const takeOver = async () => { await post("/api/stop"); poll(); focusTerm(); };
+  const takeOver = async () => {
+    if (!canDrive) return; // ask: the Take control button is the way in
+    await post("api/stop"); poll(); focusTerm();
+  };
+  // "ask": one press, a one-line notice, then input flows; the tour keeps
+  // playing until the first key or click, as in open mode.
+  let noticeT = 0;
+  async function takeControl() {
+    const r = await fetch(u("control/take"), { method: "POST" }).catch(() => null);
+    if (!r || !r.ok) return;
+    canDrive = true;
+    document.body.classList.add("driving");
+    term.options.disableStdin = false;
+    $("take").hidden = true;
+    const n = $("notice");
+    n.textContent = "You're driving a real mnml in a sandbox: Jira, Bitbucket and the Claude session are offline stand-ins, nothing leaves it, and it ends with the countdown below.";
+    n.classList.add("on");
+    clearTimeout(noticeT); noticeT = setTimeout(() => n.classList.remove("on"), 7000);
+    poll(); focusTerm();
+  }
+  $("take").hidden = MODE !== "ask";
+  $("take").onclick = takeControl;
   $("banner").onclick = takeOver;
   $("banner").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") takeOver(); };
   $("again").onclick = () => {
+    // Hosted: a new container (the Worker's `new` mints a session); the
+    // old one is left to sleep.
+    if (SESSION) { location.assign(new URL("new", location.href).pathname); return; }
     document.body.dataset.phase = "starting";
     if (ws) { ws.onclose = null; ws.close(); }
     term.reset();
@@ -385,13 +450,21 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
   async function poll() {
     let st;
-    try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "the demo server is not answering"; return; }
+    try { st = await (await fetch(u("api/state"), { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "the demo server is not answering"; return; }
     // This page's own connection decides "not connected": the runner's
     // phase can belong to another tab's session.
     let phase = st.phase;
     if (!connected && everConnected && phase !== "ended") phase = "lost";
     if (!connected && !everConnected) phase = "connecting";
     document.body.dataset.phase = phase;
+    // Hosted, a session that ended is over for good: let go of the
+    // container (no polling, no streams) so it can sleep; "Start again"
+    // asks for a new one.
+    if (SESSION && phase === "ended" && pollT) {
+      clearInterval(pollT); pollT = 0;
+      if (es) es.close();
+      if (ws) { ws.onclose = null; ws.close(); }
+    }
     if (phase !== "tour") ptr.classList.remove("on");
     const mins = Math.round(st.cap_s / 60);
     if (phase === "lost") {
@@ -408,16 +481,19 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       flowsShown = true;
     }
     const cur = st.flows && st.flows.find((f) => f.name === st.flow);
-    $("banner-text").textContent = "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over";
+    $("banner-text").textContent = canDrive
+      ? "Guided tour playing" + (cur ? ": " + cur.title : "") + " — press any key or click to take over"
+      : "Guided tour" + (cur ? ": " + cur.title : "") + (MODE === "ask" ? " — Take control to drive it" : "");
     const left = fmt(st.remaining_s);
     $("status").textContent =
       phase === "tour" ? "tour playing · " + left + " left" :
-      phase === "live" ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " + left + " left" :
+      phase === "live" ? (canDrive ? "yours · the tour resumes after " + fmt(st.resume_in_s) + " idle · " : "tour paused · it resumes in " + fmt(st.resume_in_s) + " · ") + left + " left" :
       phase === "ended" ? "session over" :
       phase === "lost" ? "not connected" :
       phase === "starting" || phase === "idle" ? "starting mnml…" : "connecting…";
   }
-  poll(); setInterval(poll, 1000);
+  let pollT = setInterval(poll, 1000);
+  poll();
 })();
 </script>
 </body>

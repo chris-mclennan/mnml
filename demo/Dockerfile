@@ -18,9 +18,15 @@ ARG DEBIAN=debian:trixie-slim
 ARG BUILDER=debian:trixie-slim
 FROM ${BUILDER} AS build
 ARG ZIG_VERSION=0.16.0
-RUN command -v zig >/dev/null || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+# demo/build.sh --cross builds the Linux binaries on the host instead (Zig
+# cross-compiles) and sends them as demo-prebuilt/; then this stage
+# installs nothing, fetches nothing and only copies — no network for Zig,
+# no compile space on docker's disk.
+COPY demo-prebuilt /prebuilt
+RUN [ -x /prebuilt/bin/mnml-zig ] || command -v zig >/dev/null || { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl xz-utils && rm -rf /var/lib/apt/lists/*; }
 RUN set -eux; \
+    if [ -x /prebuilt/bin/mnml-zig ]; then echo "prebuilt binaries: no Zig"; exit 0; fi; \
     if command -v zig >/dev/null; then zig version; exit 0; fi; \
     ZARCH=$(uname -m); \
     curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZARCH}-linux-${ZIG_VERSION}.tar.xz"; \
@@ -33,13 +39,8 @@ WORKDIR /src
 # build.zig.zon (or the checkout's zig-pkg/, which demo/build.sh sends
 # when it has one — it may be empty) changes, so editing a source file
 # does not re-download ~800 MB. A stub build.zig is enough for `--fetch`.
-#
-# demo/build.sh --cross builds the Linux binaries on the host instead (Zig
-# cross-compiles) and sends them as demo-prebuilt/; then both RUNs below
-# only copy, and the image build needs no compile space of its own.
 COPY build.zig.zon /src/
 COPY zig-pkg /src/zig-pkg
-COPY demo-prebuilt /prebuilt
 RUN if [ -x /prebuilt/bin/mnml-zig ]; then echo "prebuilt binaries: no fetch"; exit 0; fi; \
     printf 'pub fn build(_: *@import("std").Build) void {}\n' > build.zig \
     && zig build --fetch && rm build.zig

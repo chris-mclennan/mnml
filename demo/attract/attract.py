@@ -35,6 +35,7 @@ import shlex
 import shutil
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
@@ -49,6 +50,7 @@ WEB = os.environ.get("MNML_DEMO_WEB", os.path.join(ROOT, "web"))
 PORT = int(os.environ.get("MNML_DEMO_PORT", "7681"))
 CAP_S = float(os.environ.get("MNML_DEMO_CAP_S", "600"))
 IDLE_S = float(os.environ.get("MNML_DEMO_IDLE_S", "180"))
+CONTROL = os.environ.get("MNML_DEMO_CONTROL", "open")
 IPC = os.environ.get("MNML_IPC_DIR", "/tmp/mnml-demo/ipc")
 # /tmp/mnml-demo: the session marker, ttyd's socket, and one IPC directory
 # per session (ipc-<session.sh pid>, made by session.sh).
@@ -455,7 +457,12 @@ class Session:
         self.unbanner()
 
     def banner(self, title):
-        text = f"▶ Guided tour: {title} — press any key or click to take over"
+        # MNML_DEMO_CONTROL (the hosted demo's mode for this session):
+        # open = any key takes over; ask = the page's Take control button;
+        # view = watch only.
+        tail = {"view": "", "ask": " — Take control below to drive it"}.get(
+            CONTROL, " — press any key or click to take over")
+        text = f"▶ Guided tour: {title}{tail}"
         self.app.send({"cmd": "statusline-set-segment", "id": self.BANNER_ID, "text": text,
                        "side": "left", "priority": 255, "max_width": len(text) + 2, "min_width": 10})
 
@@ -789,8 +796,24 @@ class Handler(BaseHTTPRequestHandler):
             up.close()
 
 
+class TCPHTTPServer(ThreadingHTTPServer):
+    """TCP, without HTTPServer's `getfqdn()` at bind: a Cloudflare
+    container's hostname is 64 characters, one more than a DNS label
+    allows, and the lookup raises (`label too long`) before serving."""
+    allow_reuse_address = True
+    # A page's first load opens a dozen connections at once (fonts,
+    # scripts, the state poll, the pointer stream, the websocket); the
+    # default backlog of 5 resets some of them.
+    request_queue_size = 128
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
+
+
 class UnixHTTPServer(ThreadingHTTPServer):
     address_family = socket.AF_UNIX
+    request_queue_size = 128
 
     def server_bind(self):
         self.socket.bind(self.server_address)
@@ -838,9 +861,13 @@ def main():
     signal.signal(signal.SIGTERM, bye)
     signal.signal(signal.SIGINT, bye)
     threading.Thread(target=SESSION.watch, daemon=True).start()
+    # Where the page is served:
+    #   unix:/path      a socket, for relay.py (demo/run-local.sh: `--network none`)
+    #   tcp:HOST:PORT   a TCP port (Cloudflare: the Durable Object reaches
+    #                   the container on its port; nothing else can)
+    #   (unset)         TCP on 0.0.0.0:MNML_DEMO_PORT
     listen = os.environ.get("MNML_DEMO_LISTEN", "")
     if listen.startswith("unix:"):
-        # `--network none` (demo/run-local.sh): a socket for relay.py.
         path = listen[len("unix:"):]
         try:
             os.unlink(path)
@@ -850,8 +877,14 @@ def main():
         os.chmod(path, 0o666)
         where = path
     else:
-        srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-        where = f":{PORT}"
+        host, port = "0.0.0.0", PORT
+        if listen.startswith("tcp:"):
+            host, _, p = listen[len("tcp:"):].rpartition(":")
+            host, port = host or "0.0.0.0", int(p)
+        elif listen:
+            sys.exit(f"MNML_DEMO_LISTEN={listen!r}: want unix:/path or tcp:HOST:PORT")
+        srv = TCPHTTPServer((host, port), Handler)
+        where = f"{host}:{port}"
     srv.daemon_threads = True
     log(f"web demo on {where}: cap {int(CAP_S)} s, idle {int(IDLE_S)} s, {len(SESSION.flows)} flows")
     srv.serve_forever()
