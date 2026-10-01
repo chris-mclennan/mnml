@@ -103,6 +103,11 @@ written there — or the file's own `# width:` / `# height:` when it names
 one. At every OTHER rung of a sweep the checks are evaluated and their
 verdict ignored, because a string that fits at 120 columns legitimately
 reflows at 80 and a file that asserted on it would fail for no reason.
+A plain `expect` is looked at once there; an `expect within <ms>` is
+still waited on, to its own budget, because it is also the script's sync
+point — the `key` or `shell` after it assumes the rows loaded or the git
+job landed (`sessions_changes.test` staged nothing at 200x60, and its
+`shell git diff --cached` failed, while every `within` was skipped).
 
 What a non-asserting rung *does* prove: the App started at that size,
 nothing panicked, nothing leaked, no hit rect overlaps another and no

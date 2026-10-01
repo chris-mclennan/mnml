@@ -62,6 +62,10 @@ the release ships one file), and one line per change a user can see.
   there too, and a split never shows a pane twice.
 - Closing a search (grep) pane, or re-running its query, while the search
   was still running leaked the hits it had found but not yet shown.
+- `mnml test --sizes`: at a size a file was not written at, an `expect
+  within <ms>` is waited on again (its verdict still ignored), so the steps
+  after it run against the state they expect. A `shell` step after one could
+  fail at 200x60 alone (`sessions_changes.test`).
 - In the demo's shell, `claude` and `codex` are the stand-ins even where a
   login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
   `PATH`, so a real CLI installed there is not the one that answers.
