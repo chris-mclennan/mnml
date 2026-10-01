@@ -16,8 +16,12 @@
 //! The bottom dock's hosted panes (`bottom.zig`) are out of every
 //! page's tree but still on screen, so the ring takes them too, after
 //! the pages, in the dock strip's order; a step to one shows it in the
-//! dock rather than pulling it back into the splits. Any other pane in
-//! no page's tree is not in the ring.
+//! dock rather than pulling it back into the splits. Last come the
+//! sessions in no tree at all, in the order they were opened: a split
+//! closed with `view.close_split` leaves its tabs alive in the
+//! background, and a session there is still a card in SESSIONS — the
+//! ring once skipped it, so a strip read ` ‹ 1/1 › ` beside a rail of
+//! eight. A step to one shows it in the focused leaf, as its card does.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -44,7 +48,9 @@ pub fn isSession(app: *App, id: PaneId) bool {
 
 /// Every session pane, in ring order: page by page, each page's leaves
 /// in tree order, each leaf's tabs in strip order; then the bottom
-/// dock's, in its strip's order. On `arena`.
+/// dock's, in its strip's order; then the ones in no tree, by pane id.
+/// On `arena`. The same set SESSIONS lists as cards (`sessions.refilter`
+/// walks the pane store), so the two counts agree.
 pub fn list(app: *App, arena: Allocator) Allocator.Error![]PaneId {
     var out: std.ArrayListUnmanaged(PaneId) = .empty;
     for (app.layouts.layouts.items) |*layout| {
@@ -54,6 +60,7 @@ pub fn list(app: *App, arena: Allocator) Allocator.Error![]PaneId {
         }
     }
     for (app.bottom.panes.items) |id| try addSession(app, arena, &out, id);
+    for (app.panes.slots.items, 0..) |slot, i| if (slot != null) try addSession(app, arena, &out, @intCast(i));
     return out.items;
 }
 
@@ -68,8 +75,7 @@ fn addSession(app: *App, arena: Allocator, out: *std.ArrayListUnmanaged(PaneId),
 /// Where a session sits in the ring: `index` counts from zero.
 pub const Position = struct { index: usize, count: usize };
 
-/// `id`'s place in the ring, or null when it is not a session in any
-/// page's tree.
+/// `id`'s place in the ring, or null when it is not a session.
 pub fn position(app: *App, arena: Allocator, id: PaneId) Allocator.Error!?Position {
     const ring = try list(app, arena);
     const at = std.mem.indexOfScalar(PaneId, ring, id) orelse return null;
@@ -460,6 +466,34 @@ test "a session in the bottom dock stays in the ring: its strip and the statusli
     try t.expect(bottom.hosts(app, s2));
     try t.expect(app.layouts.current().leafOf(s2) == null);
     try t.expectEqualStrings("session 2/2", app.lastToast().?[0.."session 2/2".len]);
+}
+
+test "a session left in the background is still in the ring: its split closed, the count matches SESSIONS' cards, and a step brings it back into the focused leaf" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(200, 40);
+    defer f.deinit();
+    const app = &f.app;
+    const s1 = try f.run(.@"ai.claude_code_new_right");
+    const s2 = try f.run(.@"ai.claude_code_new_right");
+    const s3 = try f.run(.@"ai.claude_code_new_right");
+    // `view.close_split` drops s3's leaf; its tab lives on in the
+    // background, in no page's tree.
+    try command.run(app, .{ .static = .@"view.close_split" });
+    try t.expect(app.panes.get(s3) != null);
+    try t.expect(app.layouts.pageOf(s3) == null);
+    try t.expectEqualSlices(PaneId, &.{ s1, s2, s3 }, try list(app, app.frame.allocator()));
+    // The strip's count and the rail's are one number.
+    try @import("../sessions.zig").refilter(app);
+    try t.expectEqual(app.sessions.cards.items.len, (try position(app, app.frame.allocator(), s1)).?.count);
+    const text = try f.screenText();
+    try t.expect(std.mem.indexOf(u8, text, "\u{2039} 1/3 \u{203A}") != null);
+    // From s2 the next is s3: shown in s2's leaf, with the keys.
+    f.focus(s2);
+    const lid = app.layouts.current().leafOf(s2).?;
+    try command.run(app, .{ .static = .@"ai.focus_next_session" });
+    try t.expectEqual(s3, app.active.?);
+    try t.expectEqual(lid, app.layouts.current().leafOf(s3).?);
+    try t.expect(app.layoutFault() == null);
 }
 
 test "the statusline's sessions chip narrows in order: the whole ` ‹ ▣ 2/2 › `, then ` ‹ ▣ › `, then ` ▣ ` — never back to a wider form on a narrower row" {
