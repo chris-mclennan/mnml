@@ -1,0 +1,21 @@
+# width: 200
+# height: 45
+# The Env chip never claims an env that is not on disk: with no env file
+# it reads `no env`, and its picker offers `+ New env…`, which opens the
+# new-env prompt; a created env is what the chip shows next.
+write probe.http "GET http://127.0.0.1:9/probe\n"
+open probe.http
+expect screen contains "no env ▾"
+expect screen lacks " dev ▾"
+command http.pick_env
+expect screen contains "Pick env · none yet"
+expect screen contains "+ New env…"
+key enter
+expect screen contains "New env name"
+type "qa"
+key enter
+wait 300
+expect screen contains "env: created"
+open probe.http
+expect screen contains "qa ▾"
+expect screen lacks "no env ▾"

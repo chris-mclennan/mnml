@@ -109,6 +109,11 @@ the release ships one file), and one line per change a user can see.
   does, instead of keeping the width it snapped to.
 - *Set width…* answers a share over 100% (`150%`) with the allowed range in
   cells, as it does for any other width out of range.
+- HTTP: the request pane's Env chip reads `no env` when the workspace has no
+  env file, instead of claiming `dev`, and its picker offers `+ New env…`.
+  A selection whose file is gone — `[http] default_env`, `default_env=` in
+  `.rqst/config`, `$MNML_ENV`, or a pick whose file was deleted — is dropped
+  rather than shown.
 
 ## v0.3.1
 

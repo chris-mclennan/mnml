@@ -584,7 +584,7 @@ fn drawTopBar(ui: Ui, pane: PaneId, z: Zones, m: Model) ?Caret {
         // under a session override.
         const inner = box(ui, Rect.init(x, y, env_w, r.h), "Env");
         if (!inner.isEmpty()) {
-            const name = m.env_name orelse "none";
+            const name = m.env_name orelse "no env";
             const short = if (ui.width(name) > 6) ui.fmt("{s}\u{2026}", .{ui.clipStr(name, 5)}) else name;
             const text = ui.fmt(" {s} \u{25BE} ", .{short});
             const color = if (m.urlUnresolved()) p.yellow else if (m.env_name == null) p.comment else if (m.env_override) p.cyan else p.fg;
@@ -1313,7 +1313,7 @@ pub fn drawVarTip(ui: Ui, screen: Rect, anchor: Rect, name: []const u8, value: ?
     const text = if (value) |v|
         ui.fmt(" {{{{{s}}}}} = {s} ", .{ name, std.mem.sliceTo(v, '\n') })
     else
-        ui.fmt(" {{{{{s}}}}} \u{2014} not defined in env {s} ", .{ name, env_name orelse "?" });
+        (if (env_name) |e| ui.fmt(" {{{{{s}}}}} \u{2014} not defined in env {s} ", .{ name, e }) else ui.fmt(" {{{{{s}}}}} \u{2014} no env defines it ", .{name}));
     const w: u16 = @min(ui.width(text), screen.w);
     if (w == 0) return;
     var x = anchor.x;
@@ -2095,6 +2095,13 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     try wide.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ "\u{2500}" ** 38 ++ "\u{2510}\u{250C} Env \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}\u{250C} Save \u{2500}\u{2500}\u{2510}\u{250C} Clear \u{2500}\u{2500}\u{2510}\u{250C} Copy as\u{2026} \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
     try wide.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ " " ** 19 ++ "\u{2502}\u{2502}   dev \u{25BE}    \u{2502}\u{2502} \u{25B6} Send \u{2502}\u{2502} \u{2398} Save \u{2502}\u{2502} \u{2715} Clear \u{2502}\u{2502} </> Copy as\u{2026} \u{2502}");
     try testing.expectEqual(hit_env, wide.hits.at(60, 2).?.script_hit.id);
+    // No env file in the workspace: the chip says so, dim, and claims none.
+    m.env_name = null;
+    _ = draw(wui, 3, wui.canvas.full(), m);
+    try testing.expect(std.mem.indexOf(u8, try wide.text(), "\u{2502}\u{2502}  no env \u{25BE}  \u{2502}\u{2502}") != null);
+    try testing.expect(wide.fgEql(62, 2, .{ .fg = wide.theme.palette.comment }));
+    m.env_name = "dev";
+    _ = draw(wui, 3, wui.canvas.full(), m);
     // Method 0..13, URL 14..58, Env 59..72, Send 73..82, Save 83..92,
     // Clear 93..103, Copy as… 104..119.
     try testing.expectEqual(hit_send, wide.hits.at(77, 2).?.script_hit.id);
@@ -2119,6 +2126,8 @@ test "the var tip lands under its anchor" {
     drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "NOPE", null, "dev");
     const txt2 = try fx.text();
     try testing.expect(std.mem.indexOf(u8, txt2, "{{NOPE}} \u{2014} not defined in env dev") != null);
+    drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "jira", null, null);
+    try testing.expect(std.mem.indexOf(u8, try fx.text(), "{{jira}} \u{2014} no env defines it") != null);
 }
 
 test "the Headers table: rows in cells with their `{{VAR}}` spans, the draft's caret for the popup, the `?` tip under the cursor row" {

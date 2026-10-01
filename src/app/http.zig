@@ -487,7 +487,15 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     if (stamp == w.digest) return;
     w.digest = stamp;
     if (app.http_panel.scanned_once) try @import("http_panel.zig").refresh(app);
-    app.toast("env: {s} reloaded", .{name});
+    // A session pick whose file was just deleted is let go, out loud.
+    if (app.http.env_override) |o| if (!env_mod.exists(app.io, app.workspace, o)) {
+        app.toast("env: {s}.env is gone \u{2014} the pick is dropped", .{o});
+        app.gpa.free(o);
+        app.http.env_override = null;
+        app.needs_render = true;
+        return;
+    };
+    if (try envName(app, a)) |n| app.toast("env: {s} reloaded", .{n}) else app.toast("env: no env file \u{2014} none is active", .{});
     app.needs_render = true;
 }
 
@@ -503,37 +511,53 @@ pub fn restampEnvWatch(app: *App) void {
     w.digest = env_mod.digest(app.io, app.workspace, name);
 }
 
-/// The active env's name (`dev` when nothing chose one).
+/// The active env's name: the first selection (`envSelection`'s
+/// order) whose file is on disk — `dev` only when `dev.env` is. Null
+/// when the workspace has no env file at all, so nothing — the Env
+/// chip, a send, the Vars tab — claims one that is not there. A
+/// selection whose file is gone is dropped here, wherever it was kept:
+/// the session pick (`State.env_override`, in memory), `[http]
+/// default_env` in the config, `default_env=` in `<ws>/.rqst/config`,
+/// or `$MNML_ENV`.
 pub fn envName(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
-    const sel = try envSelection(app, arena);
+    const sel = (try env_mod.selectExisting(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env)) orelse return null;
     return sel.name;
 }
 
+/// The env a WRITE lands in (a new key, an edited value): the selection
+/// as named, `dev` when nothing chose one, whether or not its file
+/// exists yet — the write creates it.
 pub fn envSelection(app: *App, arena: Allocator) Allocator.Error!env_mod.Selection {
     return env_mod.select(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env);
 }
 
-/// The env `rp` resolves against: its pin (a history re-fire), else
-/// the active one.
+/// The env `rp` resolves against: its pin (a history re-fire, the env
+/// the history line recorded) while that env's file exists, else the
+/// active one.
 pub fn paneEnvName(app: *App, rp: *const RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
-    if (rp.env_pin) |p| return p;
+    if (livePin(app, rp)) |p| return p;
     return envName(app, arena);
+}
+
+fn livePin(app: *App, rp: *const RequestPane) ?[]const u8 {
+    const pin = rp.env_pin orelse return null;
+    return if (env_mod.exists(app.io, app.workspace, pin)) pin else null;
 }
 
 /// `loadEnv` for `rp`: its pinned env when it has one.
 pub fn loadEnvFor(app: *App, gpa: Allocator, rp: *const RequestPane) Allocator.Error!env_mod.EnvSet {
-    const pin = rp.env_pin orelse return loadEnv(app, gpa);
+    const pin = livePin(app, rp) orelse return loadEnv(app, gpa);
     var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, pin);
     set.process = &app.env;
     return set;
 }
 
-/// The active env, loaded. `gpa` may be an arena.
+/// The active env, loaded. `gpa` may be an arena. With no env file
+/// the set is empty and unnamed; the process environment still answers.
 pub fn loadEnv(app: *App, gpa: Allocator) Allocator.Error!env_mod.EnvSet {
     var scratch = std.heap.ArenaAllocator.init(app.gpa);
     defer scratch.deinit();
-    const name = (try envName(app, scratch.allocator())) orelse env_mod.fallback_name;
-    var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, name);
+    var set = if (try envName(app, scratch.allocator())) |name| try env_mod.EnvSet.load(gpa, app.io, app.workspace, name) else env_mod.EnvSet.empty(gpa);
     set.process = &app.env;
     return set;
 }
@@ -3597,4 +3621,45 @@ test "description and tags: the prompts write the directives, the block keeps th
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expectEqualStrings("tags: cleared", app.lastToast().?);
     try testing.expectEqualStrings("# @description List the users", rp.request.script.?);
+}
+
+test "env chip: no env file claims no env; a pick whose file is gone is dropped; the picker offers + New env" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expect((try envName(&app, a)) == null);
+    // A write still has somewhere to go: `dev`, which it creates.
+    try testing.expectEqualStrings("dev", (try envSelection(&app, a)).name);
+    const set = try loadEnv(&app, a);
+    try testing.expect(set.name == null);
+    // The chip's picker: `+ New env…` even with nothing to pick, and
+    // picking it opens the new-env prompt.
+    const cmd_http = @import("cmd_http.zig");
+    try cmd_http.pickEnvCmd(&app);
+    try testing.expect(app.overlay == .picker);
+    const labels = app.overlay.picker.labels;
+    try testing.expectEqual(@as(usize, 1), labels.len);
+    try testing.expectEqualStrings(cmd_http.new_env_row, labels[0]);
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, cmd_http.new_env_row);
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.http.env_override == null);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Files present: the chip shows the pick, as before.
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = "A=1\n" });
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try testing.expectEqualStrings("staging", (try envName(&app, a)).?);
+    // The file goes: the env watch lets the pick go and the chip stops claiming it.
+    try tick(&app, 0);
+    try tmp.dir.deleteFile(testing.io, ".mnml/env/staging.env");
+    try testing.expect((try envName(&app, a)) == null);
+    try tick(&app, 0);
+    try testing.expect(app.http.env_override == null);
 }

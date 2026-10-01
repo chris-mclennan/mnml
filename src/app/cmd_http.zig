@@ -367,19 +367,23 @@ fn editEnvCmd(app: *App) CommandError!void {
     try cmd_picker.openPickerWith(app, title, .http_env_vars, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0), try details.toOwnedSlice(gpa), &.{});
 }
 
+/// The env picker's last row: a workspace with no env file gets a way
+/// to make one from the chip that said `no env`.
+pub const new_env_row = "+ New env\u{2026}";
+
 pub fn pickEnvCmd(app: *App) CommandError!void {
     const gpa = app.gpa;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const names = try env_mod.listNames(arena.allocator(), app.io, app.workspace);
-    if (names.len == 0) return app.diag.fail(app.frame.allocator(), "http.pick_env: no env files in .mnml/env or .rqst/env (:http.new_env creates one)", .{});
     var labels: std.ArrayListUnmanaged([]u8) = .empty;
     errdefer {
         for (labels.items) |l| gpa.free(l);
         labels.deinit(gpa);
     }
     for (names) |n| try labels.append(gpa, try gpa.dupe(u8, n));
-    try cmd_picker.openPicker(app, "Pick env", .http_env_pick, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
+    try labels.append(gpa, try gpa.dupe(u8, new_env_row));
+    try cmd_picker.openPicker(app, if (names.len == 0) "Pick env \u{00B7} none yet" else "Pick env", .http_env_pick, try labels.toOwnedSlice(gpa), try gpa.alloc(PaneId, 0));
 }
 
 fn resetEnvCmd(app: *App) CommandError!void {
@@ -1380,6 +1384,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             app.toast("env: {s} {s}", .{ label, if (gone) "deleted" else "not found" });
         },
         .http_env_pick => {
+            if (std.mem.eql(u8, label, new_env_row)) return openPrompt(app, "New env name (writes .mnml/env/<name>.env)", .http_new_env);
             if (app.http.env_override) |e| app.gpa.free(e);
             app.http.env_override = try app.gpa.dupe(u8, label);
             // An explicit pick is for every pane, a re-fired one too.
@@ -1730,10 +1735,12 @@ test "hooks: http_request rewrites the wire after the directives; http_response 
     try testing.expectEqualStrings("GET", rp.request.method);
     try testing.expect(std.mem.indexOf(u8, rp.headers_text.items, "X-Hook") == null);
     // The payloads, in order; the response hook came after the capture
-    // row landed (Zig subscribers run before Lua's, same emit).
+    // row landed (Zig subscribers run before Lua's, same emit). No env
+    // file existed when the request went out, so none is named (the
+    // capture then creates dev.env, the write's default).
     try lua.runString(
         \\assert(#log == 2, #log)
-        \\assert(log[1] == "req GET yes application/json env=dev body=nil", log[1])
+        \\assert(log[1] == "req GET yes application/json env=nil body=nil", log[1])
         \\assert(log[2] == 'resp 200 req-7 {"id":7} false http_response', log[2])
     );
     try testing.expectEqual(@as(u32, 1), HookProbe.responses);

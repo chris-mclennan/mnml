@@ -196,6 +196,33 @@ pub fn select(arena: Allocator, io: Io, workspace: []const u8, explicit: ?[]cons
     return .{ .name = fallback_name, .is_fallback = true };
 }
 
+/// Whether `<ws>/.mnml/env/<name>.env` or `<ws>/.rqst/env/<name>.env`
+/// is on disk — an env is a file, not a name.
+pub fn exists(io: Io, workspace: []const u8, name: []const u8) bool {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (subdirs) |sub| {
+        const path = std.fmt.bufPrint(&buf, "{s}/{s}/env/{s}.env", .{ workspace, sub, name }) catch continue;
+        _ = Io.Dir.cwd().statFile(io, path, .{}) catch continue;
+        return true;
+    }
+    return false;
+}
+
+/// `select` over the envs that exist: each source in `select`'s order
+/// is skipped when its file is gone (a `default_env` naming a deleted
+/// env, a session pick whose file was removed), and `dev` stands in
+/// only when `dev.env` is there. Null when none is — the workspace has
+/// no env, and nothing claims one.
+pub fn selectExisting(arena: Allocator, io: Io, workspace: []const u8, explicit: ?[]const u8, env_var: ?[]const u8, config_default: ?[]const u8) Allocator.Error!?Selection {
+    const rqst = try rqstConfigDefault(arena, io, workspace);
+    for ([_]?[]const u8{ explicit, env_var, config_default, rqst }) |c| {
+        const n = c orelse continue;
+        if (n.len > 0 and exists(io, workspace, n)) return .{ .name = n, .is_fallback = false };
+    }
+    if (exists(io, workspace, fallback_name)) return .{ .name = fallback_name, .is_fallback = true };
+    return null;
+}
+
 /// `default_env=<name>` from `<ws>/.rqst/config` (rqst's KEY=VALUE file).
 pub fn rqstConfigDefault(arena: Allocator, io: Io, workspace: []const u8) Allocator.Error!?[]const u8 {
     const path = try std.fs.path.join(arena, &.{ workspace, ".rqst", "config" });
@@ -713,4 +740,36 @@ test "digest: an edit, a new file and a removed one each move the stamp; a missi
     try testing.expect(d3 != d2);
     try tmp.dir.deleteFile(testing.io, ".mnml/env/prod.env");
     try testing.expectEqual(d2, digest(testing.io, ws, "dev"));
+}
+
+test "selectExisting: a source whose file is gone is skipped; no env file means no env" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &pbuf);
+    const ws = pbuf[0..n];
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Nothing on disk: `select` still answers `dev`; this does not.
+    try testing.expectEqualStrings("dev", (try select(a, testing.io, ws, null, null, null)).name);
+    try testing.expect((try selectExisting(a, testing.io, ws, null, null, null)) == null);
+    try testing.expect((try selectExisting(a, testing.io, ws, "prod", "ci", "staging")) == null);
+    try testing.expect(!exists(testing.io, ws, "dev"));
+    // A persisted `default_env=staging` whose file is gone falls to the
+    // one that is there.
+    try tmp.dir.createDirPath(testing.io, ".rqst");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".rqst/config", .data = "default_env=staging\n" });
+    try tmp.dir.createDirPath(testing.io, ".rqst/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".rqst/env/prod.env", .data = "A=1\n" });
+    try testing.expect(exists(testing.io, ws, "prod"));
+    try testing.expect((try selectExisting(a, testing.io, ws, null, null, null)) == null);
+    try testing.expectEqualStrings("prod", (try selectExisting(a, testing.io, ws, "gone", null, "prod")).?.name);
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "A=2\n" });
+    const dev = (try selectExisting(a, testing.io, ws, "gone", null, null)).?;
+    try testing.expectEqualStrings("dev", dev.name);
+    try testing.expect(dev.is_fallback);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = "A=3\n" });
+    try testing.expectEqualStrings("staging", (try selectExisting(a, testing.io, ws, null, null, null)).?.name);
 }
