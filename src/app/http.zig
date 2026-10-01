@@ -487,7 +487,15 @@ pub fn tick(app: *App, now: i64) Allocator.Error!void {
     if (stamp == w.digest) return;
     w.digest = stamp;
     if (app.http_panel.scanned_once) try @import("http_panel.zig").refresh(app);
-    app.toast("env: {s} reloaded", .{name});
+    // A session pick whose file was just deleted is let go, out loud.
+    if (app.http.env_override) |o| if (!env_mod.exists(app.io, app.workspace, o)) {
+        app.toast("env: {s}.env is gone \u{2014} the pick is dropped", .{o});
+        app.gpa.free(o);
+        app.http.env_override = null;
+        app.needs_render = true;
+        return;
+    };
+    if (try envName(app, a)) |n| app.toast("env: {s} reloaded", .{n}) else app.toast("env: no env file \u{2014} none is active", .{});
     app.needs_render = true;
 }
 
@@ -503,37 +511,53 @@ pub fn restampEnvWatch(app: *App) void {
     w.digest = env_mod.digest(app.io, app.workspace, name);
 }
 
-/// The active env's name (`dev` when nothing chose one).
+/// The active env's name: the first selection (`envSelection`'s
+/// order) whose file is on disk — `dev` only when `dev.env` is. Null
+/// when the workspace has no env file at all, so nothing — the Env
+/// chip, a send, the Vars tab — claims one that is not there. A
+/// selection whose file is gone is dropped here, wherever it was kept:
+/// the session pick (`State.env_override`, in memory), `[http]
+/// default_env` in the config, `default_env=` in `<ws>/.rqst/config`,
+/// or `$MNML_ENV`.
 pub fn envName(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
-    const sel = try envSelection(app, arena);
+    const sel = (try env_mod.selectExisting(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env)) orelse return null;
     return sel.name;
 }
 
+/// The env a WRITE lands in (a new key, an edited value): the selection
+/// as named, `dev` when nothing chose one, whether or not its file
+/// exists yet — the write creates it.
 pub fn envSelection(app: *App, arena: Allocator) Allocator.Error!env_mod.Selection {
     return env_mod.select(arena, app.io, app.workspace, app.http.env_override, app.env.get("MNML_ENV"), app.cfg.http.default_env);
 }
 
-/// The env `rp` resolves against: its pin (a history re-fire), else
-/// the active one.
+/// The env `rp` resolves against: its pin (a history re-fire, the env
+/// the history line recorded) while that env's file exists, else the
+/// active one.
 pub fn paneEnvName(app: *App, rp: *const RequestPane, arena: Allocator) Allocator.Error!?[]const u8 {
-    if (rp.env_pin) |p| return p;
+    if (livePin(app, rp)) |p| return p;
     return envName(app, arena);
+}
+
+fn livePin(app: *App, rp: *const RequestPane) ?[]const u8 {
+    const pin = rp.env_pin orelse return null;
+    return if (env_mod.exists(app.io, app.workspace, pin)) pin else null;
 }
 
 /// `loadEnv` for `rp`: its pinned env when it has one.
 pub fn loadEnvFor(app: *App, gpa: Allocator, rp: *const RequestPane) Allocator.Error!env_mod.EnvSet {
-    const pin = rp.env_pin orelse return loadEnv(app, gpa);
+    const pin = livePin(app, rp) orelse return loadEnv(app, gpa);
     var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, pin);
     set.process = &app.env;
     return set;
 }
 
-/// The active env, loaded. `gpa` may be an arena.
+/// The active env, loaded. `gpa` may be an arena. With no env file
+/// the set is empty and unnamed; the process environment still answers.
 pub fn loadEnv(app: *App, gpa: Allocator) Allocator.Error!env_mod.EnvSet {
     var scratch = std.heap.ArenaAllocator.init(app.gpa);
     defer scratch.deinit();
-    const name = (try envName(app, scratch.allocator())) orelse env_mod.fallback_name;
-    var set = try env_mod.EnvSet.load(gpa, app.io, app.workspace, name);
+    var set = if (try envName(app, scratch.allocator())) |name| try env_mod.EnvSet.load(gpa, app.io, app.workspace, name) else env_mod.EnvSet.empty(gpa);
     set.process = &app.env;
     return set;
 }
@@ -918,6 +942,21 @@ pub fn expandWith(gpa: Allocator, io: Io, req: *const Request, set: *const env_m
         out.body = nb;
     }
     return out;
+}
+
+/// Every name `req` templates that `set` cannot resolve, deduplicated:
+/// the URL after its `# @path` values land (a value may name a var),
+/// each header value, the body (its form / multipart rows included —
+/// they are body text until the encoder runs) — exactly what
+/// `expandWith` expands. A name an env value names counts too
+/// (`BASE=http://{{HOST}}` with no HOST).
+pub fn unresolvedIn(arena: Allocator, req: *const Request, set: *const env_mod.EnvSet) Allocator.Error![]const []const u8 {
+    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+    const url = try parse.substitutePath(arena, req.url, try parse.pathParams(arena, req));
+    for (try env_mod.unresolved(arena, url, set)) |m| try seen.put(arena, m, {});
+    for (req.headers.items) |h| for (try env_mod.unresolved(arena, h.value, set)) |m| try seen.put(arena, m, {});
+    if (req.body) |b| for (try env_mod.unresolved(arena, b, set)) |m| try seen.put(arena, m, {});
+    return seen.keys();
 }
 
 // ─── panes ──────────────────────────────────────────────────────────────
@@ -1362,13 +1401,18 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var staged = try rp.request.clone(a);
     const script = try script_mod.parse(a, rp.request.script orelse "");
     try script_mod.applyPre(a, &staged, &set, script);
-    // The URL, the headers and the body — a `{{VAR}}` an env value
-    // names counts too (`BASE=http://{{HOST}}` with no HOST).
-    var missing: std.ArrayListUnmanaged([]const u8) = .empty;
-    try missing.appendSlice(a, try env_mod.unresolved(a, staged.url, &set));
-    for (staged.headers.items) |h| try missing.appendSlice(a, try env_mod.unresolved(a, h.value, &set));
-    if (staged.body) |b| try missing.appendSlice(a, try env_mod.unresolved(a, b, &set));
-    if (missing.items.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing.items[0], set.name orelse "?" });
+    // A `{{VAR}}` nothing defines never reaches the wire: the literal
+    // braces would go out as written (`GET {{jira}}/…` fails in the URL
+    // parser as `InvalidFormat`, a header leaks the template). The pane
+    // says which names and where to define them, and does not send.
+    const missing = try unresolvedIn(a, &staged, &set);
+    if (missing.len > 0) {
+        const msg = try env_mod.unresolvedMessage(a, missing, set.name);
+        try rp.setRefused(msg);
+        app.toast("http: {s}", .{msg});
+        app.needs_render = true;
+        return;
+    }
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
@@ -3597,4 +3641,114 @@ test "description and tags: the prompts write the directives, the block keeps th
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expectEqualStrings("tags: cleared", app.lastToast().?);
     try testing.expectEqualStrings("# @description List the users", rp.request.script.?);
+}
+
+test "send: an unresolved {{VAR}} is refused before the wire, naming it and where to define it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    // The user's report: no env file at all, a Jira call templated on one.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "me.http", .data = "GET {{jira}}/rest/api/3/myself\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "me.http" });
+    defer testing.allocator.free(path);
+    const id = try openFile(&app, path, false);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try fire(&app, id);
+    try testing.expect(rp.state == .failed and rp.refused);
+    try testing.expectEqualStrings("unresolved {{jira}} \u{2014} no env defines it; add it to .mnml/env/<env>.env or pick an env", rp.state.failed);
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
+    try testing.expectEqual(@as(usize, 0), app.http.handles.count());
+    try testing.expect(std.mem.endsWith(u8, app.toasts.items[app.toasts.items.len - 1].text, rp.state.failed));
+    // A header and a `# @path` value template too; an env that defines
+    // the URL's name but not theirs names only theirs.
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "jira=http://127.0.0.1:9\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "two.http", .data = "# @path id = {{ISSUE}}\nGET {{jira}}/issue/:id\nAuthorization: Bearer {{TOKEN}}\n" });
+    const two = try std.fs.path.join(testing.allocator, &.{ root, "two.http" });
+    defer testing.allocator.free(two);
+    const id2 = try openFile(&app, two, false);
+    const rp2 = app.panes.get(id2).?.asRequest().?;
+    try fire(&app, id2);
+    try testing.expect(rp2.state == .failed and rp2.refused);
+    try testing.expectEqualStrings("unresolved {{ISSUE}} {{TOKEN}} \u{2014} not defined in env dev; add them to .mnml/env/dev.env or pick an env", rp2.state.failed);
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
+}
+
+test "env chip: no env file claims no env; a pick whose file is gone is dropped; the picker offers + New env" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expect((try envName(&app, a)) == null);
+    // A write still has somewhere to go: `dev`, which it creates.
+    try testing.expectEqualStrings("dev", (try envSelection(&app, a)).name);
+    const set = try loadEnv(&app, a);
+    try testing.expect(set.name == null);
+    // The chip's picker: `+ New env…` even with nothing to pick, and
+    // picking it opens the new-env prompt.
+    const cmd_http = @import("cmd_http.zig");
+    try cmd_http.pickEnvCmd(&app);
+    try testing.expect(app.overlay == .picker);
+    const labels = app.overlay.picker.labels;
+    try testing.expectEqual(@as(usize, 1), labels.len);
+    try testing.expectEqualStrings(cmd_http.new_env_row, labels[0]);
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, cmd_http.new_env_row);
+    try testing.expect(app.overlay == .prompt);
+    try testing.expect(app.http.env_override == null);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Files present: the chip shows the pick, as before.
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = "A=1\n" });
+    try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
+    try testing.expectEqualStrings("staging", (try envName(&app, a)).?);
+    // The file goes: the env watch lets the pick go and the chip stops claiming it.
+    try tick(&app, 0);
+    try tmp.dir.deleteFile(testing.io, ".mnml/env/staging.env");
+    try testing.expect((try envName(&app, a)) == null);
+    try tick(&app, 0);
+    try testing.expect(app.http.env_override == null);
+}
+
+test "response bar: a press at the foot of the shared bar's track lands the Response view on the body's end" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const id = try openBlank(&app);
+    const rp = app.panes.get(id).?.asRequest().?;
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(testing.allocator);
+    try body.appendSlice(testing.allocator, "{");
+    var k: usize = 1;
+    while (k < 43) : (k += 1) try body.print(testing.allocator, "\n  \"k{d}\": {d},", .{ k, k });
+    try body.appendSlice(testing.allocator, "\n}");
+    const g = testing.allocator;
+    try rp.setResponse(.{ .status = 200, .status_text = try g.dupe(u8, "OK"), .final_url = try g.dupe(u8, "http://x/"), .headers = try g.alloc(client.Header, 0), .body = try g.dupe(u8, body.items) });
+    try app.render();
+    // The bar the frame painted is the one the pane recorded.
+    var track: ?@import("../ui/rect.zig") = null;
+    for (app.hits.items.items) |h| if (h.target == .scrollbar) {
+        const sb = h.target.scrollbar;
+        if (sb.owner == .pane and sb.owner.pane == id and h.rect.x == rp.resp_bar.x and h.rect.y == rp.resp_bar.y) track = h.rect;
+    };
+    try testing.expect(rp.resp_bar.shown);
+    try testing.expect(track != null);
+    try testing.expectEqual(@as(u32, 0), rp.resp_view.scroll_line);
+    const dispatch = @import("dispatch.zig");
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.bottom() - 1, .kind = .press, .button = .left }, 1);
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.bottom() - 1, .kind = .release, .button = .left }, 1);
+    try testing.expectEqual(@as(u32, @intCast(rp.resp_bar.total - rp.resp_bar.h)), rp.resp_view.scroll_line);
+    try dispatch.mouse(&app, .{ .x = track.?.x, .y = track.?.y, .kind = .press, .button = .left }, 1);
+    try testing.expectEqual(@as(u32, 0), rp.resp_view.scroll_line);
 }

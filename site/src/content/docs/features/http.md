@@ -61,8 +61,11 @@ workspace. `http.pick_env` chooses one; `http.default_env` in
 disk reloads on its own.
 
 A name that no environment defines falls back to the process
-environment, and a name nothing defines is sent as written, so a
-missing variable is visible instead of silently empty.
+environment. A request that still names something nothing defines is
+not sent: the Response box says `not sent` and names each missing
+variable and the env file to add it to. With no env file in the
+workspace, the pane's Env chip reads `no env`, and its picker's
+`+ New env…` creates one.
 
 ## Checking and chaining
 

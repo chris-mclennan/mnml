@@ -209,6 +209,9 @@ pub const RequestPane = struct {
     /// `METHOD  url` for the tab; rebuilt when either changes.
     title_buf: []u8,
     state: RunState = .idle,
+    /// The `.failed` state is a refusal before the wire (an unresolved
+    /// `{{VAR}}`), not a send that failed.
+    refused: bool = false,
     /// The Done response before the current one (`http.diff_last_two`).
     prev: ?Response = null,
     /// `METHOD url` as last sent (post-expansion). Owned.
@@ -245,6 +248,8 @@ pub const RequestPane = struct {
     header_help: bool = false,
     row_cursor: usize = 0,
     edit_scroll: usize = 0,
+    /// The Response box's bar as the last frame painted it.
+    resp_bar: view.BarGeom = .{},
     response_tab: ResponseTab = .body,
     resp_view: editor_view.ViewState = .{},
     /// The response search (`/`, Ctrl+F with the Response block
@@ -565,7 +570,15 @@ pub const RequestPane = struct {
         self.resp_pretty = null;
         self.state.deinit(self.gpa);
         self.state = .{ .failed = copy };
+        self.refused = false;
         if (!self.moved_since_send) self.block = .response;
+    }
+
+    /// The send was refused before it went out; `msg` says why. The
+    /// response area shows it as a failure would, titled `not sent`.
+    pub fn setRefused(self: *RequestPane, msg: []const u8) Allocator.Error!void {
+        try self.setFailed(msg);
+        self.refused = true;
     }
 
     pub fn setSentLine(self: *RequestPane, method: []const u8, url: []const u8) Allocator.Error!void {
@@ -1864,11 +1877,13 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         // shows what has arrived (`.stream`), not a spinner over it.
         .sending = rp.state == .sending,
         .failed = if (rp.state == .failed) rp.state.failed else null,
+        .not_sent = rp.state == .failed and rp.refused,
         .response = resp_model,
         .stream = stream_info,
         .sent_line = rp.sent_line,
         .response_tab = rp.response_tab,
         .resp_view = &rp.resp_view,
+        .resp_bar = &rp.resp_bar,
         .body_wrap = rp.body_wrap,
         .focused = focused,
         .editing = rp.editing,

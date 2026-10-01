@@ -109,6 +109,21 @@ the release ships one file), and one line per change a user can see.
   does, instead of keeping the width it snapped to.
 - *Set width…* answers a share over 100% (`150%`) with the allowed range in
   cells, as it does for any other width out of range.
+- HTTP: a request whose URL, headers or body name a `{{VAR}}` no env
+  defines is no longer sent. The Response box (titled `✗ not sent`) and a
+  toast name each variable and where to define it — `unresolved {{jira}} —
+  no env defines it; add it to .mnml/env/<env>.env or pick an env` — where
+  the literal braces used to reach the URL parser and fail as
+  `InvalidFormat`. `mnml run` and `chain run` warn in the same words.
+- HTTP: the request pane's Env chip reads `no env` when the workspace has no
+  env file, instead of claiming `dev`, and its picker offers `+ New env…`.
+  A selection whose file is gone — `[http] default_env`, `default_env=` in
+  `.rqst/config`, `$MNML_ENV`, or a pick whose file was deleted — is dropped
+  rather than shown.
+- HTTP: the Response box's Body, Headers and Timeline tabs, and the request
+  Body editor, show the shared scrollbar when their rows overflow, on their
+  own column beside the text; a press on the Response bar's track jumps
+  there.
 
 ## v0.3.1
 
