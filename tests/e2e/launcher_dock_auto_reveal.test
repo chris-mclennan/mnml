@@ -1,12 +1,11 @@
 # width: 120
 # `ui.dock.mode = .auto_hide`, the shipped default: nothing is drawn
-# until the pointer has rested on the SCREEN's last row — the `:`
-# line's row, row 39 at 120x40 — for `ui.dock.reveal_ms` (250 ms), and
-# the strip goes again `ui.dock.hide_ms` (400 ms) after the pointer
-# leaves. The edge a hand reaches for is the frame's own whichever
-# placement is in force; under the default `.inner` the strip then
-# PAINTS two rows up, over the editor area's last row, leaving the
-# statusline and the `:` line alone (`launcher_dock_placement.test`).
+# until the pointer has rested on the strip's own row — under the
+# default `.inner` the editor area's last row, row 37 at 120x40, above
+# the statusline — for `ui.dock.reveal_ms` (250 ms), and the strip goes
+# again `ui.dock.hide_ms` (400 ms) after the pointer leaves. The strip
+# paints on the row the pointer rested on, leaving the statusline and
+# the `:` line alone (`launcher_dock_placement.test`).
 #
 # It draws OVER the editor — it never re-lays-out, the rule
 # `app/sidebar_auto.zig` already lives by — so the marker at column 95
@@ -18,14 +17,14 @@ open wide.txt
 command view.toggle_tree
 expect screen contains "ENDMARK"
 expect screen lacks "New terminal"
-# The dwell: the pointer rests on row 39.
-hover 60 39
+# The dwell: the pointer rests on row 37.
+hover 60 37
 wait 600
 expect screen contains "New terminal"
 expect screen contains "ENDMARK"
 # Resting on the strip itself keeps it up — the painter registers it as
 # the second piece of its own hover zone.
-hover 20 39
+hover 20 37
 wait 600
 expect screen contains "New terminal"
 # Away: gone after the hide dwell.
@@ -34,7 +33,7 @@ wait 800
 expect screen lacks "New terminal"
 # The pin keeps it: a pinned strip docks and stays wherever the pointer
 # goes, and unpinning hands it back to `ui.dock.mode`.
-hover 60 39
+hover 60 37
 wait 600
 expect screen contains "New terminal"
 command view.dock_pin

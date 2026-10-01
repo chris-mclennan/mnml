@@ -55,6 +55,6 @@
    │ opens the selection. Ctrl+Shift+P  │▌                                                                                                         │
    │ opens the palette.                 │▌                                                                                                         │
   │                                    │▌                                                                                                         │   Commit    AI Message    Clear
-   │                                    │▌                                                                                                         │  Click textarea to type · c commit · C AI message
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    16:56  ws   —
-                                                                                                   ⋯
+   │                                    │▌                                                         ⋯                                               │  Click textarea to type · c commit · C AI message
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    03:16  ws   —
+

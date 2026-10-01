@@ -360,6 +360,10 @@ pub const Chrome = struct {
     bottom: ?u16 = null,
     /// Whether the activity bar paints (`activity_bar.shown`).
     rail: bool = true,
+    /// // changed (sidebar-side-width): which column carries the rail —
+    /// the sidebar's (`ui.sidebar_side`). On the right it sits at the
+    /// column's outer edge, mirroring the left.
+    rail_side: Config.ColumnSide = .left,
     /// // changed (launcher-dock): which edge the launcher dock claims
     /// this frame, or null when it is hidden or only revealed as an
     /// overlay (`launcher_dock.docked`).
@@ -385,10 +389,11 @@ pub fn chrome(app: *const App) Chrome {
     return .{
         // A narrow terminal (`ui.sidebar_auto_below`) is in the auto-hide
         // regime too, through `sidebar_auto.mode`: one rule.
-        .sidebar = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) app.tree.width else null,
-        .right = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
+        .sidebar = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) side_mod.size(app, .left) else null,
+        .right = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) side_mod.size(app, .right) else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
+        .rail_side = app.cfg.ui.sidebar_side,
         // // changed (side-band): the dock's BAND is carved, which on a
         // side edge means for as long as the dock lives there — so the
         // strip fills a band that is already its own and a reveal
@@ -504,7 +509,7 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         const cols = fr.upper.splitLeft(w);
         const div = cols.rest.splitLeft(1);
         var side = cols.left;
-        if (ch.rail) {
+        if (ch.rail and ch.rail_side == .left) {
             const bar_w: u16 = @min(rail_mod.width, side.w);
             const rs = side.splitLeft(bar_w);
             fr.rail = rs.left;
@@ -527,6 +532,20 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         fr.body = div.left;
         fr.right_divider = div.rest;
         fr.right = cols.rest;
+        // // changed (sidebar-side-width): the sidebar moved right takes
+        // its rail with it, at the column's outer edge, the border
+        // column between the rail and the section.
+        if (ch.rail and ch.rail_side == .right) {
+            const bar_w: u16 = @min(rail_mod.width, fr.right.w);
+            const rs = fr.right.splitRight(bar_w);
+            fr.rail = rs.rest;
+            fr.right = rs.left;
+            if (w > bar_w + 2) {
+                const bs = fr.right.splitRight(1);
+                fr.rail_border = bs.rest;
+                fr.right = bs.left;
+            }
+        }
     };
     return fr;
 }
@@ -633,23 +652,24 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawPaletteBar(app, ui, fr.bar);
     // The info view says where it is when it paints (the corridor).
     app.info_view.rect = null;
+    // ── rail ──
+    // The activity bar down the sidebar's outer edge, and the `│`
+    // between it and the section — `t.line` on the rail's ground, as
+    // Rust paints it, so no panel fill butts against the icons. It is
+    // carved in whichever column holds the sidebar (`Chrome.rail_side`).
+    if (!fr.rail.isEmpty()) {
+        rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
+        // An `auto` rail stays up while the pointer rests on it —
+        // the rail's own zone, for the next frame.
+        hover_zones.register(app, .{ .rect = fr.rail, .id = .rail_left, .priority = hover_zones.prio_rail });
+    }
+    if (!fr.rail_border.isEmpty()) {
+        const pal = app.theme.palette;
+        const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
+        ui.canvas.fill(fr.rail_border, line);
+        ui.vrule(fr.rail_border.x, fr.rail_border.y, fr.rail_border.h, line);
+    }
     if (!fr.sidebar.isEmpty()) {
-        // ── rail ──
-        // The activity bar down the sidebar's left edge, and the `│`
-        // between it and the tree — `t.line` on the rail's ground, as
-        // Rust paints it, so no panel fill butts against the icons.
-        if (!fr.rail.isEmpty()) {
-            rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
-            // An `auto` rail stays up while the pointer rests on it —
-            // the rail's own zone, for the next frame.
-            hover_zones.register(app, .{ .rect = fr.rail, .id = .rail_left, .priority = hover_zones.prio_rail });
-        }
-        if (!fr.rail_border.isEmpty()) {
-            const pal = app.theme.palette;
-            const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
-            ui.canvas.fill(fr.rail_border, line);
-            ui.vrule(fr.rail_border.x, fr.rail_border.y, fr.rail_border.h, line);
-        }
         // ── left column ──
         // `ui.hover_help`: the column's bottom `hover_help_height` rows
         // are the info view, clamped so the section above keeps six
@@ -755,10 +775,11 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     }
     // ── the edge grips ──
     // Last of the frame's chrome, so a grip's hit is the last word on
-    // its three cells: the dock's sits on the `:` line's row, whose
-    // own hit `drawCmdline` registered a moment ago, and a click there
-    // must pin the dock rather than open a command line
-    // (`ui/edge_grip.zig`). The overlays, the toasts and the menus all
+    // its three cells: the dock's sits on the row its strip paints —
+    // under `.outer` the `:` line's row, whose own hit `drawCmdline`
+    // registered a moment ago, and under `.inner` the editor's last
+    // row — and a click there must pin the dock rather than open a
+    // command line or move a cursor (`ui/edge_grip.zig`). The overlays, the toasts and the menus all
     // paint after this and still cover it.
     if (!app.zen) drawEdgeGrips(app, ui, fr, screenRect(screen));
     // The stack sits on the panes' last row, against the statusline, as
@@ -872,10 +893,11 @@ fn drawFullscreenMark(app: *App, ui: Ui, body: Rect) Allocator.Error!void {
 /// and pins.
 ///
 /// It runs last of the frame's chrome for one reason: the dock's grip
-/// sits on the `:` line's row, whose whole-row hit `drawCmdline` has
-/// just registered, and `HitMap.at` scans back to front — so a click
-/// on those three cells pins the dock instead of opening a command
-/// line the user did not ask for.
+/// sits on its strip's row — the `:` line's under `.outer`, whose
+/// whole-row hit `drawCmdline` has just registered; the editor's last
+/// under `.inner` — and `HitMap.at` scans back to front, so a click on
+/// those three cells pins the dock instead of opening a command line
+/// (or moving a cursor) the user did not ask for.
 fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
     const bg = app.theme.bg.bg;
     const dock_band = hover_zones.dockBand(app, full);
@@ -907,12 +929,40 @@ fn drawEdgeGrips(app: *App, ui: Ui, fr: FrameRects, full: Rect) void {
                 .left => .left,
                 .right => .right,
             };
-            if (edge_grip.place(band, e)) |cell| edge_grip.draw(ui, cell, e, .{
+            const at = if (e == .bottom and launcher_dock.placement(app) == .inner) blankRun(ui, band) else edge_grip.place(band, e);
+            if (at) |cell| edge_grip.draw(ui, cell, e, .{
                 .bg = bg,
                 .hit = .{ .button = @intFromEnum(Button.edge_grip_dock) },
             });
         }
     }
+}
+
+/// // changed (dock-grip-row): an `.inner` grip shares the panes' last
+/// row with whatever they paint there — a dormant pane's `[exited] —
+/// any key restarts`, a list's footer — so it takes the three blank
+/// cells nearest the row's middle rather than painting over text, and
+/// stands down when the row has none. The dwell band is the whole row
+/// either way, so the strip still comes up on this row.
+fn blankRun(ui: Ui, band: Rect) ?Rect {
+    const mid = edge_grip.place(band, .bottom) orelse return null;
+    const blank = struct {
+        fn at(u: Ui, x: u16, y: u16) bool {
+            const c = u.canvas.screen.readCell(x, y) orelse return false;
+            const g = c.char.grapheme;
+            return g.len == 0 or std.mem.eql(u8, g, " ");
+        }
+    }.at;
+    var step: u16 = 0;
+    while (step < band.w) : (step += 1) {
+        for ([_]i32{ -@as(i32, step), @as(i32, step) }) |d| {
+            const x = @as(i32, mid.x) + d;
+            if (x < band.x or x + edge_grip.len > band.right()) continue;
+            const ux: u16 = @intCast(x);
+            if (blank(ui, ux, mid.y) and blank(ui, ux + 1, mid.y) and blank(ui, ux + 2, mid.y)) return Rect.init(ux, mid.y, edge_grip.len, 1);
+        }
+    }
+    return null;
 }
 
 fn drawPaletteBar(app: *App, ui: Ui, bar: Rect) Allocator.Error!void {
@@ -1248,14 +1298,27 @@ pub fn overlayRects(app: *const App, upper: Rect, s: sidebar_auto.ColumnSide) Ov
             rest = e.rest;
         }
     }
-    // The rail: the left column's only, as the docked carve is.
-    if (s == .left and app.cfg.ui.activity_bar != .hidden and rest.w > rail_mod.width + 2) {
-        const rs = rest.splitLeft(rail_mod.width);
-        out.rail = rs.left;
-        rest = rs.rest;
-        const bs = rest.splitLeft(1);
-        out.rail_border = bs.left;
-        rest = bs.rest;
+    // The rail: the sidebar's column only, as the docked carve is, at
+    // its outer edge.
+    // // changed (sidebar-side-width): was the left column's only, so a
+    // sidebar moved right left the rail behind with nothing to hang on.
+    const rail_here = @intFromEnum(s) == @intFromEnum(app.cfg.ui.sidebar_side);
+    if (rail_here and app.cfg.ui.activity_bar != .hidden and rest.w > rail_mod.width + 2) {
+        if (s == .left) {
+            const rs = rest.splitLeft(rail_mod.width);
+            out.rail = rs.left;
+            rest = rs.rest;
+            const bs = rest.splitLeft(1);
+            out.rail_border = bs.left;
+            rest = bs.rest;
+        } else {
+            const rs = rest.splitRight(rail_mod.width);
+            out.rail = rs.rest;
+            rest = rs.left;
+            const bs = rest.splitRight(1);
+            out.rail_border = bs.rest;
+            rest = bs.left;
+        }
     }
     if (rest.h >= 3) {
         const ss = rest.splitTop(1);
@@ -3288,17 +3351,18 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
         // Each column's one-cell screen edge, vertically centred.
         .{ .x = 0, .y = 20, .id = .edge_grip_sidebar_left },
         .{ .x = 119, .y = 20, .id = .edge_grip_sidebar_right },
-        // The dock's band: the SCREEN's last row, in its middle.
-        .{ .x = 59, .y = 39, .id = .edge_grip_dock },
+        // The dock's band: the row its strip paints — under the
+        // default `.inner` the editor area's last, above the statusline.
+        .{ .x = 59, .y = 37, .id = .edge_grip_dock },
     };
     for (grips) |g| {
         const hit = app.hits.at(g.x, g.y) orelse return error.NoGripHere;
         try t.expectEqual(@intFromEnum(g.id), hit.button);
     }
-    // The dock's grip beat the `:` line's whole-row hit, which was
-    // registered a moment before it: a click there pins the dock
-    // rather than opening a command line.
+    // The `:` line's row is the line's own, middle and all: the
+    // grip is two rows up, with the strip it summons.
     try t.expectEqual(@intFromEnum(Button.cmdline_bar), app.hits.at(20, 39).?.button);
+    try t.expectEqual(@intFromEnum(Button.cmdline_bar), app.hits.at(59, 39).?.button);
     // The glyph really is on each grip's middle cell. (`⋯` and `⋮`
     // turn up elsewhere in the chrome — a fold mark, a row kebab — so
     // the CELL is the honest question, never the whole screen.)
@@ -3306,7 +3370,7 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
     // The run is rows 18..20; the glyph sits on the middle one.
     try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme);
     try t.expectEqualStrings(edge_grip.grip_v, app.screen.readCell(119, 19).?.char.grapheme);
-    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme);
+    try t.expectEqualStrings(edge_grip.grip_h, app.screen.readCell(59, 37).?.char.grapheme);
 
     // A surface that is UP wears no grip — the pin chip at its end is
     // the handle then.
@@ -3332,7 +3396,7 @@ test "the edge grips: one per hidden slide-in, each on its own zone's cells, eac
         if (hit) |h| try t.expect(h != .button or h.button != @intFromEnum(g.id));
     }
     try t.expect(!std.mem.eql(u8, edge_grip.grip_v, app.screen.readCell(0, 19).?.char.grapheme));
-    try t.expect(!std.mem.eql(u8, edge_grip.grip_h, app.screen.readCell(59, 39).?.char.grapheme));
+    try t.expect(!std.mem.eql(u8, edge_grip.grip_h, app.screen.readCell(59, 37).?.char.grapheme));
     // The band itself never moved: the dwell still reveals.
     try t.expect(hover_zones.dockBand(&app, Rect.init(0, 0, 120, 40)) != null);
 }

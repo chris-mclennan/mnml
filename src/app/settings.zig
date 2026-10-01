@@ -606,12 +606,37 @@ const FileSnapshot = struct {
     }
 };
 
+/// The live sizes a Settings row can move while it previews.
+pub const Live = struct {
+    tree_width: u16 = 0,
+    tree_pinned: bool = false,
+    right_width: u16 = 0,
+    bottom_height: u16 = 0,
+
+    fn of(app: *const App) Live {
+        return .{ .tree_width = app.tree.width, .tree_pinned = app.side.tree_pinned, .right_width = app.side.right_width, .bottom_height = app.side.bottom_height };
+    }
+
+    fn restore(l: Live, app: *App) void {
+        app.tree.width = l.tree_width;
+        app.side.tree_pinned = l.tree_pinned;
+        app.side.right_width = l.right_width;
+        app.side.bottom_height = l.bottom_height;
+        app.needs_render = true;
+    }
+};
+
 pub const State = struct {
     ui: ui_settings.State = .{},
     /// The config as it was when the overlay opened; Esc restores it.
     before: Config,
     /// The ghost-text override when the overlay opened (the row writes it).
     before_suggest: ?suggest.Backend = null,
+    /// // changed (hunt5): the live layout the size rows preview into
+    /// — the columns' and the dock's sizes, and whether the sidebar's
+    /// width was set by hand. Esc puts these back with the config, so
+    /// a previewed width does not outlive the cancel.
+    before_live: Live = .{},
     files: std.EnumArray(Scope, FileSnapshot) = .initFill(.{}),
     /// Per row: a layer loaded AFTER the row's own file that sets the
     /// same key — the workspace's `.mnml/config.zon` over a home row,
@@ -634,7 +659,7 @@ pub const State = struct {
 /// `view.settings`: snapshot, then open.
 pub fn open(app: *App) Allocator.Error!void {
     const gpa = app.gpa;
-    var st: State = .{ .before = app.cfg, .before_suggest = app.ai.backend_override };
+    var st: State = .{ .before = app.cfg, .before_suggest = app.ai.backend_override, .before_live = .of(app) };
     errdefer st.deinit(gpa);
     inline for (comptime std.enums.values(Scope)) |scope| {
         const snap = st.files.getPtr(scope);
@@ -1083,6 +1108,13 @@ pub fn cancel(app: *App) Allocator.Error!void {
     const style = App.styleOf(app.cfg.editor.input_style);
     if (style != app.input_style) try app.setInputStyle(style);
     try app.applyTheme();
+    // The rows that preview into the layout: the columns that were
+    // opened or closed follow the restored config, and the sizes go
+    // back to what they were — the config alone left a previewed
+    // sidebar width standing until the next resize.
+    try applyDerived(app, "ui.right_panel_visible");
+    try applyDerived(app, "ui.bottom_panel_visible");
+    st.before_live.restore(app);
     close(app);
 }
 
@@ -1503,6 +1535,44 @@ test "number rows: → steps the right panel width, writes it, and the config se
     defer t.allocator.free(screen);
     try t.expect(std.mem.indexOf(u8, screen, "Right panel width:") != null);
     try t.expect(std.mem.indexOf(u8, screen, "‹ [30] ›") != null);
+}
+
+test "Esc puts the live sidebar back too: a width the tree width row previewed does not outlive the cancel, and a hand-set width comes back pinned" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = root, .cols = 200, .rows = 80 });
+    defer app.deinit();
+    const Probe = struct {
+        fn stepTreeWidth(a: *App, times: usize) !void {
+            try open(a);
+            for (try items(a, a.frame.allocator()), 0..) |it, i| if (it == .row and std.mem.eql(u8, it.row.label, "Tree width")) {
+                a.overlay.settings.ui.cursor = i;
+            };
+            for (0..times) |_| try a.handle(.{ .key = Key.named(.right) });
+        }
+    };
+    // Auto: 40 at 200, previewed to 50, Esc → 40 again, still auto.
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    try Probe.stepTreeWidth(&app, 5);
+    try t.expectEqual(@as(u16, 50), app.tree.width);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expectEqual(@as(u16, 0), app.cfg.ui.tree_width);
+    try t.expectEqual(@as(u16, 40), app.tree.width);
+    try t.expect(!app.side.tree_pinned);
+    // A width set by hand: the preview unpins it; Esc pins it back.
+    side.pinTreeWidth(&app, 55);
+    try Probe.stepTreeWidth(&app, 1);
+    try t.expect(!app.side.tree_pinned);
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expectEqual(@as(u16, 55), app.tree.width);
+    try t.expect(app.side.tree_pinned);
 }
 
 test "the tree width row: `auto` by default; a step off it starts from the share; a step below 10 is auto again; the drag's pin gives way" {

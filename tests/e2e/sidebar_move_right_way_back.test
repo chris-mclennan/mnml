@@ -1,0 +1,39 @@
+# width: 120
+# height: 40
+# *Move sidebar to the right* on the sidebar's divider menu moves the
+# sidebar — the activity rail, its width and its divider's menu with it.
+write a.txt "alpha\n"
+open a.txt
+# Pin the sidebar at 52 by hand first.
+rightclick 30 10
+key down
+key enter
+type "52"
+key enter
+expect screen contains "sidebar width: 52"
+rightclick 52 10
+expect screen contains "Move sidebar to the right"
+key end
+key enter
+expect screen contains "sidebar: right side"
+# The rail went with it, to the screen's right edge: its Search row
+# (column 118, row 4) still switches the section.
+click 118 4
+expect screen contains "SEARCH"
+expect screen contains "type to search"
+key esc
+# The moved sidebar's divider kept the pinned 52 (column 67 at 120
+# wide) and its menu, which now offers the way back.
+rightclick 67 10
+expect screen contains "Reset width"
+expect screen contains "Hide sidebar"
+expect screen contains "Move sidebar to the left"
+key end
+key enter
+expect screen contains "sidebar: left side"
+# Back on the left at the same 52, the rail with it.
+rightclick 52 10
+expect screen contains "Move sidebar to the right"
+key esc
+click 1 4
+expect screen contains "SEARCH"

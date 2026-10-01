@@ -55,6 +55,6 @@
    │                                    │▌
    │                                    │▌
   │                                    │▌
-   │                                    │ Assigned · 3 issues                                t transition · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  16:57  ws   —
-                                                                                                   ⋯
+   │                                    │ Assigned · 3 issues                                t tra ⋯ tion · a assignee · S select · f fix version · d detail · . actions · / filter · r refresh · ? keys
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                        󰌃 3  󱸀 ▇▂! →W  󱼀 󰐎  LSP?   2  03:17  ws   —
+

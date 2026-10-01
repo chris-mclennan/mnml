@@ -2645,10 +2645,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             else => {},
         },
         .divider => |id| {
-            // The sidebar's divider has a menu: its width, hiding it, its side.
-            if (m.kind == .press and m.button == .right and id == render.tree_divider_id) {
+            // A column's divider has a menu: the sidebar's says its width,
+            // hiding it and its side; the other column's how to hide it
+            // or bring the sidebar over — wherever each one lives.
+            if (m.kind == .press and m.button == .right and (id == render.tree_divider_id or id == render.right_divider_id)) {
                 if (app.overlay != .none) closeOverlay(app);
-                return context_menus.openTreeDividerMenu(app, m.x, m.y);
+                return context_menus.openColumnDividerMenu(app, if (id == render.tree_divider_id) .left else .right, m.x, m.y);
             }
             if (m.kind != .press or m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
@@ -2935,7 +2937,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     };
                 },
                 .edge_grip_dock => try runCmd(app, .@"view.dock_pin"),
-                .sidebar_overlay => if (m.button == .right) try context_menus.openSidebarModeMenu(app, m.x, m.y),
+                // // changed (hunt5): the revealed panel's edge rule is its
+                // divider, so a right-click there is the divider's menu
+                // (width, auto-hide, side) — the rest of the panel keeps
+                // the mode menu.
+                .sidebar_overlay => if (m.button == .right) {
+                    if (overlayEdgeSide(app, m.x, m.y)) |s| return context_menus.openColumnDividerMenu(app, s, m.x, m.y);
+                    try context_menus.openSidebarModeMenu(app, m.x, m.y);
+                },
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
@@ -3530,6 +3539,17 @@ fn menuWheel(app: *App, menu_id: u32, down: bool, count: u16) void {
     app.needs_render = true;
 }
 
+/// The column whose revealed (auto-hide) panel has its edge rule under
+/// `x, y`, or null.
+fn overlayEdgeSide(app: *App, x: u16, y: u16) ?side.Side {
+    const open = app.sidebar_auto.open orelse return null;
+    const full = Rect.init(0, 0, @intCast(app.screen.width), @intCast(app.screen.height));
+    const upper = render.frameRects(full, render.chrome(app)).upper;
+    const geo = render.overlayRects(app, upper, open);
+    if (!geo.edge.contains(x, y)) return null;
+    return if (open == .left) .left else .right;
+}
+
 // ── gestures ──
 
 fn beginDividerDrag(app: *App, id: u32) Allocator.Error!void {
@@ -3680,10 +3700,10 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         },
         .tree_divider => if (m.kind == .drag) {
             const upper_w = app.screen.width;
-            side.pinTreeWidth(app, std.math.clamp(m.x, 8, upper_w -| 22));
+            side.dragColumn(app, .left, std.math.clamp(m.x, 8, upper_w -| 22));
         },
         .right_divider => if (m.kind == .drag) {
-            app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
+            side.dragColumn(app, .right, std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22));
         },
         // // changed (bottom-dock): the pointer's row is the divider's,
         // so the dock keeps every row under it. `frameRects` clamps the

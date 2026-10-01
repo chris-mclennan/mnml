@@ -26,6 +26,13 @@ key enter
 type "wide"
 key enter
 expect screen contains "sidebar width: a number of cells or a share like 25%"
+# A share over 100% is out of range, said in cells (150% of 120).
+rightclick 48 10
+key down
+key enter
+type "150%"
+key enter
+expect screen contains "sidebar width: 10…80 cells, not 180"
 rightclick 48 10
 expect screen contains "Reset width"
 # Reset width: back to the share — the divider at 30 again.

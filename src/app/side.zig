@@ -222,14 +222,17 @@ pub fn defaultTreeWidth(app: *const App) u16 {
 /// Put the left column back on the config's width when nothing pinned
 /// it — at start, on a resize, on a config reload. Under git mode's
 /// snap the width the mode gives back is the one that moves.
+/// // changed (hunt5): and the snap itself follows too — git mode's
+/// column is "a fifth of the screen", so a resize re-snaps it, pinned
+/// or not; only the width given back on leaving keeps a pin.
 pub fn syncTreeWidth(app: *App) void {
-    if (app.side.tree_pinned) return;
-    const w = defaultTreeWidth(app);
-    if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (ps.side == .left) {
-        ps.n = w;
+    if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (isSidebarColumn(app, ps.side)) {
+        if (!app.side.tree_pinned) ps.n = defaultTreeWidth(app);
+        snapGit(app);
         return;
     };
-    app.tree.width = w;
+    if (app.side.tree_pinned) return;
+    app.tree.width = defaultTreeWidth(app);
 }
 
 /// A width set by hand: the live column takes it and keeps it through
@@ -250,20 +253,42 @@ pub fn resetTreeWidth(app: *App) void {
 
 /// A host's own measure: the columns in cells across, the dock in rows
 /// down. // changed (bottom-dock): was `width` / `setWidth`.
+/// // changed (sidebar-side-width): the SIDEBAR's width (`tree.width`,
+/// `ui.tree_width`, the divider's pin) belongs to whichever column
+/// `ui.sidebar_side` puts the sidebar in, and `right_width` to the other
+/// one — so moving the sidebar keeps its width instead of trading it for
+/// the right column's.
 pub fn size(app: *const App, side: Side) u16 {
     return switch (side) {
-        .left => app.tree.width,
-        .right => app.side.right_width,
+        .left, .right => if (isSidebarColumn(app, side)) app.tree.width else app.side.right_width,
         .bottom => app.side.bottom_height,
     };
 }
 
 pub fn setSize(app: *App, side: Side, n: u16) void {
     switch (side) {
-        .left => app.tree.width = n,
-        .right => app.side.right_width = n,
+        .left, .right => if (isSidebarColumn(app, side)) {
+            app.tree.width = n;
+        } else {
+            app.side.right_width = n;
+        },
         .bottom => app.side.bottom_height = std.math.clamp(n, Config.bottom_panel_height_min, Config.bottom_panel_height_max),
     }
+}
+
+/// // changed (sidebar-side-width): whether `side` is the sidebar's
+/// column — the one `ui.sidebar_side` names, which carries the rail,
+/// the sidebar's width and its divider's menu.
+pub fn isSidebarColumn(app: *const App, side: Side) bool {
+    return side == column(app.cfg.ui.sidebar_side);
+}
+
+/// A divider drag on `side`'s column: the sidebar's column pins its
+/// width (as *Set width…* does), the other column just takes it.
+pub fn dragColumn(app: *App, side: Side, n: u16) void {
+    if (isSidebarColumn(app, side)) return pinTreeWidth(app, n);
+    app.side.right_width = n;
+    app.needs_render = true;
 }
 
 /// How a side reads in a toast: the dock is a dock, not a "bottom side".
@@ -1110,4 +1135,27 @@ test "the left column: the share at start and on a resize; an explicit number ho
         resetTreeWidth(&app);
         try t.expectEqual(@as(u16, 36), app.tree.width);
     }
+}
+
+test "git mode's snap follows a resize — a fifth of the new width — and leaving gives back the width the window now asks for" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 200, .rows = 60 });
+    defer app.deinit();
+    try std.testing.expectEqual(@as(u16, 40), app.tree.width);
+    // Git mode's entry, as `git_palette.enter` stashes and snaps.
+    app.git_palette.pre_size = .{ .side = .left, .n = size(&app, .left) };
+    app.git_palette.active = true;
+    snapGit(&app);
+    try std.testing.expectEqual(@as(u16, 40), app.tree.width);
+    try app.resize(120, 40);
+    try std.testing.expectEqual(@as(u16, 24), app.tree.width);
+    try std.testing.expectEqual(@as(u16, 30), app.git_palette.pre_size.?.n);
+    // A pinned width is kept for the way out, and the snap still moves.
+    pinTreeWidth(&app, 52);
+    app.git_palette.pre_size.?.n = 52;
+    snapGit(&app);
+    try app.resize(160, 40);
+    try std.testing.expectEqual(@as(u16, 32), app.tree.width);
+    try std.testing.expectEqual(@as(u16, 52), app.git_palette.pre_size.?.n);
+    app.git_palette.active = false;
+    app.git_palette.pre_size = null;
 }

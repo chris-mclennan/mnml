@@ -1,0 +1,30 @@
+# width: 120
+# height: 40
+# Esc in Settings cancels — the config AND the live layout go back to
+# how they were when the box opened. The Tree width row previews into
+# the sidebar as it steps, so a cancelled step must not leave the
+# sidebar at the previewed width (the divider is at column 30 at 120
+# wide, the auto share).
+write a.txt "alpha\n"
+open a.txt
+command view.settings
+key /
+type "Tree width"
+key enter
+expect screen contains "Tree width:"
+key right
+key right
+key right
+key right
+key right
+expect screen contains "‹ [40] ›  *"
+# Esc takes the filter query first, then the box.
+key esc
+key esc
+expect screen lacks "Tree width:"
+# The divider is back at 30: its menu opens there, and not at 40.
+rightclick 40 10
+expect screen lacks "Sidebar divider"
+key esc
+rightclick 30 10
+expect screen contains "Sidebar divider"

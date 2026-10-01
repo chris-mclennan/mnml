@@ -55,6 +55,6 @@
    │                                    │▌  f6                Cycle focus (tree ⇄ editor)                                                                                                   focus.cycle
    │                                    │▌  space ?           Open the cheatsheet pane (every chord → command)                                                                          view.cheatsheet
   │                                    │▌  ctrl+k ctrl+s     Open the cheatsheet pane (every chord → command)                                                                          view.cheatsheet
-   │                                    │▌  space t t         Pick theme…                                                                                                                    theme.pick
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  16:57  ws   —
-                                                                                                   ⋯
+   │                                    │▌  space t t         Pick theme…                          ⋯                                                                                         theme.pick
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  03:17  ws   —
+

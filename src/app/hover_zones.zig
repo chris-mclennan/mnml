@@ -124,7 +124,10 @@ fn registerGeometric(app: *App, full: Rect) void {
     if (cfg.menu_bar == .auto) if (barRow(full)) |row| add(app, .{ .rect = row, .id = .menu_bar_top, .priority = prio_menu_bar });
     // The rail's reveal cell is column 0, whatever the row — the rule
     // `activity_bar.shown` shipped with.
-    if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
+    // // changed (sidebar-side-width): the rail lives in the sidebar's
+    // column, so a sidebar moved right reveals its rail at that edge.
+    const rail_x = if (cfg.sidebar_side == .left) full.x else full.right() -| 1;
+    if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(rail_x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
     // // changed (launcher-dock): the dock's edge, and the outer-band
     // rule it imposes on a side column that wants the same screen edge.
     // // changed (edge-grip): a bottom strip reveals over the `:` line's
@@ -189,13 +192,17 @@ pub fn dockSide(app: *const App, full: Rect) ?Config.ColumnSide {
 /// The one-cell band the launcher dock reveals through, or null when
 /// it is `hidden` (or zen, where no chrome shows).
 ///
-/// // changed (edge-grip): the BOTTOM band is the SCREEN's last row —
-/// the `:` line's row while the strip is down, and the strip's own
-/// once it is up, because an `always` dock is carved from that same
-/// row (`render.frameRects`). The dock is the frame's outermost edge
-/// in every mode, which is what a user reaching past the statusline
-/// for it expects; it used to be the editor area's last row, two rows
-/// in, where nothing marked it. A side band is still the bare `upper`
+/// // changed (edge-grip): the BOTTOM band is the row the strip
+/// itself takes — under `.outer` the SCREEN's last row (the `:` line's
+/// row while the strip is down, and the strip's own once it is up,
+/// because an `always` dock is carved from that same row in
+/// `render.frameRects`).
+/// // changed (dock-grip-row): under `.inner` (the default) it is the
+/// editor area's last row, above the statusline — where the strip
+/// paints, carved or revealed. The items appear where the grip is,
+/// never apart from it: a band on the screen's last row with the strip
+/// two rows up sent the hand to one place and the items to another.
+/// The grip marks the band, so nothing about it is unmarked. A side band is still the bare `upper`
 /// `frameRects` would hand out with no columns and no dock at all —
 /// never the top row, which is the menu bar's.
 /// // changed (side-band): a SIDE band is the strip's own three
@@ -212,6 +219,10 @@ pub fn dockBand(app: *const App, full: Rect) ?Rect {
     const dock = @import("launcher_dock.zig");
     if (app.cfg.ui.dock.edge == .bottom) {
         if (full.h < render.dock_bottom_min_height) return null;
+        // // changed (dock-grip-row): an `.inner` strip paints on the
+        // editor area's last row, so that row is its band — the grip,
+        // the dwell, the click and the strip are all one row.
+        if (app.cfg.ui.dock.placement == .inner) return dock.innerRow(full);
         return Rect.init(full.x, full.bottom() -| 1, full.w, 1);
     }
     const upper = render.frameRects(full, .{}).upper;

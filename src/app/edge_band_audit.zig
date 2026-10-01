@@ -34,9 +34,10 @@
 //!
 //!   A. **Grip exclusivity.** No cell of a grip's run carries any other
 //!      surface's hit. The one exception is written down below, not
-//!      waved through: the bottom dock's grip shares the screen's last
-//!      row with the `:` line, the one band mnml deliberately shares,
-//!      and `launcher_dock.gripBlocked` is what governs it.
+//!      waved through: under `.outer` the bottom dock's grip shares
+//!      the screen's last row with the `:` line, the one band mnml
+//!      deliberately shares, and `launcher_dock.gripBlocked` is what
+//!      governs it.
 //!   B. **Control integrity.** Every cell of a scrollbar, an activity
 //!      bar row and a launcher-dock item still answers as that control
 //!      — the whole painted extent, not most of it.

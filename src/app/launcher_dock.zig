@@ -250,13 +250,17 @@ pub fn gripShown(app: *App) bool {
         !app.launcher_dock.open and !gripBlocked(app);
 }
 
-/// // changed (dock-placement): the grip sits on the SCREEN's last row
-/// whichever placement is in force — the edge is where a hand goes to
-/// summon a thing — so an open `:` line takes those cells back from it
-/// in BOTH placements, even under `.inner`, where the strip itself
-/// covers nothing of that row and `cmdlineBlocks` is false.
+/// // changed (dock-grip-row): the grip sits on the row the strip
+/// paints (`hover_zones.dockBand`), so it stands down for an open `:`
+/// line only where that row IS the line's — `.outer`, exactly when
+/// `cmdlineBlocks` refuses the strip. Under `.inner` the grip is above
+/// the statusline and covers nothing being typed — but that row is the
+/// panes' last, which flash's cue and the Undo chip borrow while they
+/// are up, so the grip stands down for them there instead.
 pub fn gripBlocked(app: *App) bool {
-    return edge(app) == .bottom and mode(app) != .always and @import("cmdline.zig").anyOpen(app);
+    if (cmdlineBlocks(app)) return true;
+    return edge(app) == .bottom and placement(app) == .inner and mode(app) != .always and
+        (app.flash != null or app.undo_chip != null);
 }
 
 /// The frame needs this many columns before a side dock is worth
@@ -272,16 +276,16 @@ pub const side_min_width: u16 = width + 21;
 /// line refuses the reveal outright (`cmdlineBlocks`), so the one
 /// thing that row can be mid-use is never covered.
 /// // changed (dock-placement): that is `.outer`. Under `.inner` the
-/// band the pointer reaches for is still the screen's last row, but
-/// the strip PAINTS on the editor area's last row — above the
-/// statusline, exactly the row an `always` + `.inner` dock is carved
-/// from, so the strip is in the same place whichever mode it is in.
+/// strip PAINTS on the editor area's last row — above the statusline,
+/// exactly the row an `always` + `.inner` dock is carved from, so the
+/// strip is in the same place whichever mode it is in.
+/// // changed (dock-grip-row): and the band is that row too, so the
+/// strip lands on the grip's own row in both placements.
 pub fn overlayRect(app: *const App, full: Rect) Rect {
     const band = hover_zones.dockBand(app, full) orelse return .empty;
     return switch (edge(app)) {
         .bottom => switch (placement(app)) {
-            .outer => band,
-            .inner => innerRow(full) orelse .empty,
+            .outer, .inner => band,
             // // changed (dock-shared): the `:` line's row, which the
             // band already is when nothing is carved under it. Only a
             // `hidden` strip's one-shot reveal (`view.dock_toggle`)
@@ -1954,13 +1958,11 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     app.cfg.ui.dock.hide_ms = 400;
     const full = Rect.init(0, 0, 120, 40);
     const band = hover_zones.dockBand(&app, full).?;
-    // // changed (edge-grip): the bottom band is the SCREEN's last row
-    // — the `:` line's row while the strip is down — so the edge a
-    // hand reaches for is the frame's own, in every mode.
-    // // changed (dock-placement): the BAND stays that row whichever
-    // placement is in force; only where the strip paints moves.
-    try t.expectEqual(full.bottom() - 1, band.y);
-    try t.expectEqual(@as(u16, 39), band.y);
+    // // changed (dock-grip-row): the bottom band is the row the strip
+    // paints — under the default `.inner` the editor area's last row,
+    // above the statusline — so the hand and the items meet.
+    try t.expectEqual(innerRow(full).?, band);
+    try t.expectEqual(@as(u16, 37), band.y);
     try t.expectEqual(full.w, band.w);
 
     app.now_ms = 1000;
@@ -2363,37 +2365,146 @@ test "`ui.dock.placement`: `.inner` is the default and the strip is the EDITOR A
     try t.expect(std.mem.indexOf(u8, text, ".placement = .inner,") != null);
 }
 
-test "the reveal band is the SCREEN's last row in both placements — an `.inner` dwell there brings the strip up above the statusline" {
+/// The rows a bottom strip's grip and items are on, read off the
+/// painted screen: the grip's `⋯` while the strip is down, then the
+/// `New terminal` item after a hover dwell on the grip, after a click
+/// on it (the pin) and after `view.focus_dock` (the keyboard).
+const GripRows = struct { grip: ?u16, hover: ?u16, click: ?u16, keyboard: ?u16 };
+
+fn rowContaining(app: *App, needle: []const u8) ?u16 {
+    var buf: [4096]u8 = undefined;
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        const text = @import("../ui/canvas.zig").rowText(&app.screen, y, &buf);
+        if (std.mem.indexOf(u8, text, needle) != null) return y;
+    }
+    return null;
+}
+
+fn gripAndItemRows(app: *App) !GripRows {
+    const dispatch = @import("dispatch.zig");
+    var out: GripRows = .{ .grip = null, .hover = null, .click = null, .keyboard = null };
+    app.cfg.ui.dock.reveal_ms = 250;
+    app.cfg.ui.dock.hide_ms = 300;
+    app.hover = .{ .x = 0, .y = 10 };
+    app.now_ms = 1000;
+    try app.render();
+    out.grip = rowContaining(app, edge_grip_glyph);
+    const gy = out.grip orelse return out;
+    const gx: u16 = @intCast(app.screen.width / 2);
+    // Hover: rest on the grip for the dwell.
+    app.hover = .{ .x = gx, .y = gy };
+    app.now_ms = 2000;
+    try app.render();
+    app.now_ms = 2300;
+    try app.render();
+    if (revealed(app)) out.hover = rowContaining(app, "New terminal");
+    // Away, and wait out the hide clock.
+    app.hover = .{ .x = 0, .y = 10 };
+    app.now_ms = 3000;
+    try app.render();
+    app.now_ms = 3400;
+    try app.render();
+    try t.expect(!revealed(app));
+    // Click: a press on the grip pins the strip.
+    try dispatch.mouse(app, .{ .x = gx, .y = gy, .kind = .press, .button = .left }, 1);
+    try dispatch.mouse(app, .{ .x = gx, .y = gy, .kind = .release, .button = .left }, 1);
+    app.hover = .{ .x = 0, .y = 10 };
+    try app.render();
+    if (app.launcher_dock.pinned) {
+        out.click = rowContaining(app, "New terminal");
+        try pinCmd(app);
+    }
+    try t.expect(!app.launcher_dock.pinned);
+    app.now_ms = 4000;
+    try app.render();
+    // Keyboard: `view.focus_dock`.
+    try focusCmd(app);
+    try app.render();
+    if (shown(app)) out.keyboard = rowContaining(app, "New terminal");
+    leave(app);
+    return out;
+}
+
+const edge_grip_glyph = "\u{22EF}";
+
+test "the grip and the items are ONE row in each placement — hover, click and keyboard all bring the strip up on the grip's own row" {
+    // // changed (dock-grip-row): the user's rule — the items appear
+    // where the grip is, never apart from it. Under the default
+    // `.inner` the grip used to sit on the screen's last row while
+    // the strip painted two rows up, above the statusline.
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     var app = try testApp(&tmp, &buf);
     defer app.deinit();
-    app.cfg.ui.dock.reveal_ms = 250;
+    _ = try app.openScratch();
     const full = Rect.init(0, 0, 120, 40);
-    // The edge is where a hand goes to summon a thing, so the band does
-    // not move with the strip.
-    const band = hover_zones.dockBand(&app, full).?;
-    try t.expectEqual(@as(u16, 39), band.y);
-    try setPlacement(&app, .outer);
-    try t.expectEqual(band, hover_zones.dockBand(&app, full).?);
-    try setPlacement(&app, .inner);
+    try t.expectEqual(Placement.inner, placement(&app));
 
-    // Dwelling on the screen's last row reveals a strip that paints two
-    // rows up, above the statusline.
-    app.now_ms = 1000;
-    app.hover = .{ .x = 60, .y = band.y };
-    hover_zones.begin(&app, full, 1000);
-    tick(&app, 1000);
-    try t.expect(!revealed(&app));
-    app.now_ms = 1250;
-    hover_zones.begin(&app, full, 1250);
-    tick(&app, 1250);
-    try t.expect(revealed(&app));
-    try t.expectEqual(@as(u16, 37), overlayRect(&app, full).y);
+    // `.inner`: above the statusline — the editor area's last row.
+    const inner = try gripAndItemRows(&app);
+    try t.expectEqual(@as(?u16, 37), inner.grip);
+    try t.expectEqual(inner.grip, inner.hover);
+    try t.expectEqual(inner.grip, inner.click);
+    try t.expectEqual(inner.grip, inner.keyboard);
+    try t.expectEqual(innerRow(full).?, hover_zones.dockBand(&app, full).?);
+
+    // `.outer`: the screen's last row, under the `:` line.
+    try setPlacement(&app, .outer);
+    const outer = try gripAndItemRows(&app);
+    try t.expectEqual(@as(?u16, 39), outer.grip);
+    try t.expectEqual(outer.grip, outer.hover);
+    try t.expectEqual(outer.grip, outer.click);
+    try t.expectEqual(outer.grip, outer.keyboard);
 }
 
-test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s alone, but the grip on the line's own row stands down in both" {
+test "an `.inner` grip never paints over the panes' text on its row: it takes the blank cells nearest the middle, and stands down when the row has none" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.tree.visible = false;
+    _ = try app.openScratch();
+    // Every row full of text: no three blank cells on row 37.
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    for (0..60) |_| {
+        try text.appendNTimes(t.allocator, 'x', 200);
+        try text.append(t.allocator, '\n');
+    }
+    try app.activeEditor().?.buf.editor.setText(text.items);
+    app.hover = .{ .x = 0, .y = 10 };
+    try app.render();
+    try t.expectEqual(@as(?u16, null), rowContaining(&app, edge_grip_glyph));
+    // The band is still the row, so the dwell still brings the strip up.
+    try t.expectEqual(@as(u16, 37), hover_zones.dockBand(&app, Rect.init(0, 0, 120, 40)).?.y);
+    // Short lines leave the middle blank: the grip is back, on row 37.
+    try app.activeEditor().?.buf.editor.setText("short\n");
+    try app.render();
+    try t.expectEqual(@as(?u16, 37), rowContaining(&app, edge_grip_glyph));
+}
+
+test "`.shared` wears no grip: the strip is always up, on the `:` line's row" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    _ = try app.openScratch();
+    try setPlacement(&app, .shared);
+    try app.render();
+    try t.expect(!gripShown(&app));
+    try t.expectEqual(@as(?u16, null), rowContaining(&app, edge_grip_glyph));
+    try t.expectEqual(@as(?u16, 39), rowContaining(&app, "New terminal"));
+    try focusCmd(&app);
+    try app.render();
+    try t.expectEqual(@as(?u16, 39), rowContaining(&app, "New terminal"));
+    leave(&app);
+}
+
+test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s alone, and only the `.outer` grip — the one on the line's own row — stands down" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -2404,10 +2515,10 @@ test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s 
     const full = Rect.init(0, 0, 120, 40);
     try t.expect(app.cfg.ui.edge_grips);
 
-    // The grip: three cells at the middle of the SCREEN's last row,
-    // whichever placement is in force.
+    // The grip: three cells at the middle of the strip's own row —
+    // the editor area's last under `.inner`, the screen's under `.outer`.
     try t.expect(gripShown(&app));
-    try t.expectEqual(Rect.init(58, 39, 3, 1), edge_grip.place(hover_zones.dockBand(&app, full).?, .bottom).?);
+    try t.expectEqual(Rect.init(58, 37, 3, 1), edge_grip.place(hover_zones.dockBand(&app, full).?, .bottom).?);
     try setPlacement(&app, .outer);
     try t.expectEqual(Rect.init(58, 39, 3, 1), edge_grip.place(hover_zones.dockBand(&app, full).?, .bottom).?);
 
@@ -2418,18 +2529,17 @@ test "the `:` line and an `.inner` strip coexist: the line's rule is `.outer`'s 
     try t.expect(!gripShown(&app));
     cmdline.close(&app);
 
-    // Under `.inner` the strip covers none of that row, so the line's
-    // rule does not apply to it — but the grip IS on that row, so it
-    // still stands down rather than painting over what is being typed.
+    // Under `.inner` the strip and its grip cover none of that row, so
+    // the line's rule does not apply to either: the grip stays up.
     try setPlacement(&app, .inner);
     cmdline.open(&app);
     try t.expect(!cmdlineBlocks(&app));
-    try t.expect(gripBlocked(&app));
-    try t.expect(!gripShown(&app));
+    try t.expect(!gripBlocked(&app));
+    try t.expect(gripShown(&app));
     // And the band goes on being watched, so a dwell still reveals.
     app.cfg.ui.dock.reveal_ms = 250;
     app.now_ms = 3000;
-    app.hover = .{ .x = 60, .y = 39 };
+    app.hover = .{ .x = 60, .y = 37 };
     hover_zones.begin(&app, full, 3000);
     tick(&app, 3000);
     app.now_ms = 3300;

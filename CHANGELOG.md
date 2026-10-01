@@ -79,6 +79,27 @@ the release ships one file), and one line per change a user can see.
 - With a second workspace root in the tree, the primary root's header names
   its folder, as the added root's does, instead of its absolute path (cut to
   `● /Use…` at the stock width); the path is the header's hover.
+- An auto-hiding bottom dock above the statusline (the default placement)
+  showed its `⋯` grip on the screen's last row but brought its items up two
+  rows higher. The grip now sits on the row the items appear on — hover it,
+  click it or `view.focus_dock`, and the strip comes up right there.
+- *Move sidebar to the right* left the activity rail behind and dropped a
+  width set by hand, and the moved sidebar's divider had no menu to move it
+  back. The rail and the width now go with the sidebar, and either column's
+  divider has a menu — the sidebar's offers *Move sidebar to the left*.
+- The sidebar divider's ticked *Auto-hide sidebar* row now unticks (back to
+  always shown) instead of setting auto-hide again, and right-clicking the
+  edge of a revealed auto-hide sidebar opens that same divider menu.
+- Esc in Settings now puts the sidebar back too: a width previewed on the
+  *Tree width* row no longer stays on screen after the cancel, and a width
+  set by hand comes back.
+- Vim `]a` / `[a` (with a count) now step through the Claude Code and Codex
+  sessions from a terminal pane's T-NORMAL mode too, as they do from an
+  editor; before, `]` was dropped and the `a` went back to TERMINAL.
+- Git mode's sidebar (a fifth of the window) now re-sizes when the window
+  does, instead of keeping the width it snapped to.
+- *Set width…* answers a share over 100% (`150%`) with the allowed range in
+  cells, as it does for any other width out of range.
 
 ## v0.3.1
 

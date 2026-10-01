@@ -1,0 +1,27 @@
+# width: 120
+# height: 40
+# The sidebar divider's *Auto-hide sidebar* row is a checkbox: ticked,
+# it unticks — the sidebar goes back to `always` — instead of setting
+# auto again. The revealed panel's edge rule is its divider, so its
+# right-click is the same menu.
+write a.txt "alpha\n"
+open a.txt
+rightclick 30 10
+expect screen contains "Auto-hide sidebar"
+key down
+key down
+key down
+key enter
+expect screen contains "sidebar: auto"
+# Reveal it from the keyboard; its edge rule (column 29) is the divider.
+command view.toggle_tree
+wait 300
+rightclick 29 10
+expect screen contains "Sidebar divider"
+expect screen contains "✓ Auto-hide sidebar"
+expect screen contains "Set width…"
+key down
+key down
+key down
+key enter
+expect screen contains "sidebar: always"
