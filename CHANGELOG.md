@@ -49,6 +49,9 @@ the release ships one file), and one line per change a user can see.
 
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
+- Ctrl+Shift+V and Shift+Insert paste the clipboard into a terminal pane in
+  both profiles (Shift+Insert used to send the program a raw key); plain
+  Ctrl+V stays the program's (Claude Code's image paste).
 - Ctrl+C over a selection in a terminal or session pane no longer reaches the
   program too: the selection was already copied, so Ctrl+C only clears it and
   the program hears nothing. With nothing selected Ctrl+C is still the

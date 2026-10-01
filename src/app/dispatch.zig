@@ -707,6 +707,7 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
     }
     if (pty_pane.escapeKey(app, p, k)) return;
     if (try pty_pane.selectionCopyKey(app, p, k)) return;
+    if (try pty_pane.pasteKey(app, p, k)) return;
     if (modified and !pty_pane.childOwned(k)) {
         if (try pty_search.findChord(app, id, p, k)) return;
         const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;

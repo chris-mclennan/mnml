@@ -1423,6 +1423,27 @@ pub fn selectRelease(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!voi
     if (app.cfg.ui.copy_on_select) _ = try copySelection(app, p);
 }
 
+/// Ctrl+Shift+V and Shift+Insert paste the clipboard into the child, as
+/// ghostty, xterm and VS Code's terminal do; Ctrl+V stays the child's
+/// (^V — Claude Code's image paste, the shell's literal-next). True when
+/// it took the key.
+pub fn pasteKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
+    if (k.mods.alt or k.mods.super) return false;
+    const is_paste = switch (k.code) {
+        .insert => k.mods.shift and !k.mods.ctrl,
+        .char => |c| k.mods.ctrl and ((k.mods.shift and (c == 'v' or c == 'V')) or (!k.mods.shift and c == 'V')),
+        else => false,
+    };
+    if (!is_paste) return false;
+    const text = app.clipboard.text();
+    if (text.len == 0) {
+        app.toast("the clipboard is empty", .{});
+        return true;
+    }
+    try paste(app, p, text);
+    return true;
+}
+
 /// Ctrl+C (or Ctrl+Shift+C) over a selection is the selection's, never
 /// the child's: it copies — unless `ui.copy_on_select` already did on
 /// the release (Ctrl+Shift+C, the explicit copy, copies either way) —
@@ -2101,6 +2122,32 @@ test "Ctrl+C over a selection, copy on select OFF: the release only selects, Ctr
         try app.handle(.{ .key = Key.char('b') });
         try app.handle(.{ .key = Key.named(.enter) });
         try t.expect(try tickUntilScreen(&app, "▌a^Cb ", 5000));
+    }
+}
+
+test "paste in a terminal pane, both profiles: Ctrl+Shift+V and Shift+Insert paste the clipboard, Ctrl+V is the child's ^V" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.tree.visible = false;
+        try app.setInputStyle(style);
+        // -iexten: the tty's literal-next would eat the ^V.
+        const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon -isig -iexten; echo ready; cat -v" }, .label = "paste" });
+        try t.expect(try tickUntilScreen(&app, "ready", 5000));
+        const p = app.panes.pty(id).?;
+        try app.clipboard.setYank("PASTED", false);
+        try app.handle(.{ .key = .{ .code = .{ .char = 'v' }, .mods = .{ .ctrl = true, .shift = true } } });
+        try drained(&app, p);
+        try app.handle(.{ .key = .{ .code = .insert, .mods = .{ .shift = true } } });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('v') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('q') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        try t.expect(try tickUntilScreen(&app, "▌PASTEDPASTED^Vq ", 5000));
     }
 }
 
