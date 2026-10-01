@@ -17,7 +17,9 @@ mkdir -p "$MNML_IPC_DIR"
 rm -f "$state/ended"
 echo $$ > "$state/session"
 cd "$HOME" || exit 70
-mnml --demo --config /opt/mnml-demo/attract/kiosk.zon
+# stderr to a file: a panic's trace would otherwise scroll away with the
+# terminal; the runner logs it.
+mnml --demo --config /opt/mnml-demo/attract/kiosk.zon 2>"$state/stderr-$$"
 code=$?
 # The runner learns the app is gone even when it died without its exit line.
 echo "$$ $code" > "$state/exited"

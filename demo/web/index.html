@@ -74,9 +74,23 @@ body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; ali
   border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
   color: var(--gray-9); font-size: 13.5px; white-space: nowrap; box-shadow: 0 6px 24px rgba(0,0,0,.4);
 }
-.banner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
-@keyframes pulse { 50% { opacity: .35; } }
+.banner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: blink 1.4s infinite; }
+@keyframes blink { 50% { opacity: .35; } }
 body[data-phase="tour"] .banner { display: inline-flex; }
+
+/* The tour's pointer: a terminal has no arrow, so the page draws one.
+   It glides to the cell the runner is about to click, pulses on the
+   press, and then the click happens. */
+.pointer { position: absolute; left: 0; top: 0; width: 22px; height: 22px; z-index: 4; pointer-events: none;
+  opacity: 0; transition: left .35s cubic-bezier(.3,.7,.2,1), top .35s cubic-bezier(.3,.7,.2,1), opacity .2s;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+.pointer.on { opacity: 1; }
+.pointer.drag { transition-duration: .6s, .6s, .2s; transition-timing-function: linear; }
+.pulse { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; z-index: 4;
+  pointer-events: none; border: 2px solid #61afef; opacity: 0; }
+.pulse.right { border-color: #e5c07b; }
+.pulse.go { animation: pulse .5s ease-out; }
+@keyframes pulse { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
 
 /* the end of the session */
 .ended {
@@ -136,6 +150,8 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     </div>
     <div class="window-body" id="body">
       <div id="term" aria-label="mnml terminal"></div>
+      <svg class="pointer" id="pointer" viewBox="0 0 22 22" aria-hidden="true"><path d="M3 2v16.5l4.6-4.2 3.3 7 3-1.4-3.2-6.8h6.3z" fill="#fff" stroke="#14161a" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      <div class="pulse" id="pulse" aria-hidden="true"></div>
       <div class="banner" id="banner" role="button" tabindex="0">
         <span class="dot"></span><span id="banner-text">Guided tour playing — press any key or click to take over</span>
       </div>
@@ -315,6 +331,35 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
   $("hot-edge").addEventListener("mouseleave", hideControls);
   start();
 
+  // ── the tour's pointer (server-sent events from the runner) ──
+  const ptr = $("pointer"), pulse = $("pulse");
+  let ptrHide = 0;
+  function cellPx(col, row) {
+    const c = cellOf();
+    return { x: (col + 0.5) * c.width, y: (row + 0.5) * c.height };
+  }
+  function place(col, row) { const p = cellPx(col, row); ptr.style.left = (p.x - 3) + "px"; ptr.style.top = (p.y - 2) + "px"; return p; }
+  function press(p, button) {
+    pulse.className = "pulse" + (button === "right" ? " right" : "");
+    pulse.style.left = p.x + "px"; pulse.style.top = p.y + "px";
+    void pulse.offsetWidth; pulse.classList.add("go");
+  }
+  function onPointer(ev) {
+    clearTimeout(ptrHide);
+    if (ev.kind === "hide" || !term || document.body.dataset.phase === "live") { ptr.classList.remove("on"); return; }
+    ptr.classList.remove("drag");
+    ptr.classList.add("on");
+    const p = place(ev.col, ev.row);
+    const lead = ev.lead_ms || 450;
+    if (ev.kind === "click") setTimeout(() => press(p, ev.button), lead - 90);
+    if (ev.kind === "drag") setTimeout(() => { press(p, "left"); ptr.classList.add("drag"); place(ev.to_col, ev.to_row); }, lead - 60);
+    ptrHide = setTimeout(() => ptr.classList.remove("on"), 4000);
+  }
+  try {
+    const es = new EventSource("/api/pointer");
+    es.onmessage = (m) => { try { onPointer(JSON.parse(m.data)); } catch (_) {} };
+  } catch (_) {}
+
   // ── the controls and the runner's state ──
   async function post(path) {
     try { const r = await fetch(path, { method: "POST" }); return await r.json(); } catch (_) { return null; }
@@ -347,6 +392,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     if (!connected && everConnected && phase !== "ended") phase = "lost";
     if (!connected && !everConnected) phase = "connecting";
     document.body.dataset.phase = phase;
+    if (phase !== "tour") ptr.classList.remove("on");
     const mins = Math.round(st.cap_s / 60);
     if (phase === "lost") {
       $("ended-title").textContent = "This page is not connected to mnml.";

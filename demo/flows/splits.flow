@@ -16,12 +16,18 @@ until "pub fn sum"
 wait 800
 run view.split_down
 wait 600
+# drag the sidebar's divider wider, and back
+drag-rect divider:4294967295 14
+wait 700
+drag-rect divider:4294967295 -14
+wait 500
 key ctrl+p
 wait 250
 slowtype "readme" 70
 key enter
 wait 1000
-run view.focus_left
+# a click on a tab focuses its split
+find-click "main.zig" 1
 wait 500
 run tab.new
 wait 700
@@ -32,9 +38,8 @@ key enter
 wait 1000
 key alt+1
 wait 1200
-# Back to one tab page (demo only): the git status pane opened while a
-# second page exists panics this build (App.showPane, `unreachable`).
-# tab.only toasts "tab 1/1"; the toast is not part of the tour.
+# Back to one tab page (demo only), so the next flow starts where the
+# recorder's did; tab.only toasts "tab 1/1", which is not part of the tour.
 run tab.only
 wait 200
 run toast.dismiss_all

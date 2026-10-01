@@ -130,13 +130,48 @@ class App:
         except (OSError, ValueError):
             return {}
 
+    def rects(self):
+        """Every hit rect the last frame registered (`rects.json`)."""
+        try:
+            with open(os.path.join(self.ipc, "rects.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return []
 
-def find_text(screen, text, row=None):
+
+class Pointer:
+    """The visible pointer's next move, for the page (`/api/pointer`, a
+    server-sent event stream). The page glides its arrow there in
+    POINTER_LEAD_MS, and only then does the runner send the click."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.seq = 0
+        self.last = None
+
+    def publish(self, ev):
+        with self.cond:
+            self.seq += 1
+            ev["seq"] = self.seq
+            self.last = ev
+            self.cond.notify_all()
+
+    def wait(self, seq, timeout):
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != seq, timeout=timeout)
+            return self.seq, self.last
+
+
+POINTER = Pointer()
+POINTER_LEAD_MS = 450
+
+
+def find_text(screen, text, row=None, maxcol=None):
     for y, line in enumerate(screen.split("\n")):
         if row is not None and y != row:
             continue
         x = line.find(text)
-        if x >= 0:
+        if x >= 0 and (maxcol is None or x < maxcol):
             return x, y
     return None
 
@@ -173,6 +208,37 @@ class Player:
             self.sleep(50)
         self.notes.append(f"`{text}` never appeared within {ms} ms")
         return False
+
+    def rect(self, label):
+        """The first hit rect named `label`, or whose label starts with
+        `label:` (`tab:0` finds `tab:0:0`)."""
+        for r in self.app.rects():
+            lab = r.get("label", "")
+            if lab == label or lab.startswith(label + ":"):
+                return r
+        return None
+
+    def mouse(self, kind, col, row, button="left", to=None):
+        """Show the visitor where the pointer goes, then do it: the page
+        glides its arrow to the cell (and pulses on a press) in
+        POINTER_LEAD_MS; the IPC line follows."""
+        ev = {"kind": kind, "col": col, "row": row, "button": button}
+        if to:
+            ev["to_col"], ev["to_row"] = to
+        POINTER.publish(ev)
+        self.sleep(POINTER_LEAD_MS)
+        if kind == "click":
+            self.app.send({"cmd": "click", "col": col, "row": row, "button": button})
+        elif kind == "move":
+            self.app.send({"cmd": "hover", "col": col, "row": row})
+        elif kind == "drag":
+            tc, tr = to
+            self.app.send({"cmd": "mouse_down", "col": col, "row": row, "button": "left"})
+            steps = max(1, abs(tc - col), abs(tr - row))
+            for i in range(1, steps + 1):
+                self.sleep(600 // steps)
+                self.app.send({"cmd": "mouse_move", "col": col + (tc - col) * i // steps, "row": row + (tr - row) * i // steps})
+            self.app.send({"cmd": "mouse_up", "col": tc, "row": tr, "button": "left"})
 
     def reset(self):
         """Back to the start surface (the tour's own `reset`): overlays
@@ -229,12 +295,38 @@ class Player:
                     break
                 app.send({"cmd": "key", "key": key})
                 self.until(good, 8000)
-        elif op == "find-click":
-            at = find_text(app.screen(), a[0], int(a[1]) if len(a) > 1 else None)
+        elif op in ("find-click", "find-point"):
+            # find-click TEXT [ROW] [row=N] [maxcol=N] [dx=N] [right]
+            pos, kw, flags = a[1:], {}, set()
+            for t in pos:
+                if "=" in t:
+                    k, v = t.split("=", 1)
+                    kw[k] = int(v)
+                elif t.isdigit():
+                    kw["row"] = int(t)
+                else:
+                    flags.add(t)
+            at = find_text(app.screen(), a[0], kw.get("row"), kw.get("maxcol"))
             if at:
-                app.send({"cmd": "click", "col": at[0], "row": at[1], "button": "left"})
+                self.mouse("move" if op == "find-point" else "click", at[0] + kw.get("dx", 0), at[1],
+                           "right" if "right" in flags else "left")
             else:
                 self.notes.append(f"`{a[0]}` not on screen to click")
+        elif op in ("click-rect", "point-rect", "drag-rect"):
+            # click-rect LABEL [right] [dx=N]; drag-rect LABEL DX [DY]
+            r = self.rect(a[0])
+            if r is None:
+                self.notes.append(f"no `{a[0]}` rect to {op.split('-')[0]}")
+            else:
+                col, row = r["x"] + min(r["w"] - 1, r["w"] // 2), r["y"] + min(r["h"] - 1, r["h"] // 2)
+                if op == "drag-rect":
+                    dx = int(a[1])
+                    dy = int(a[2]) if len(a) > 2 else 0
+                    self.mouse("drag", col, row, to=(col + dx, row + dy))
+                else:
+                    kw = dict(t.split("=", 1) for t in a[1:] if "=" in t)
+                    self.mouse("move" if op == "point-rect" else "click", col + int(kw.get("dx", 0)), row,
+                               "right" if "right" in a[1:] else "left")
         elif op == "slowtype":
             text = a[0].encode("utf-8").decode("unicode_escape")
             per = int(float(a[1])) if len(a) > 1 else 55
@@ -384,6 +476,7 @@ class Session:
                 log(f"input ({how}) in the first {STARTUP_GRACE_S:.0f} s: ignored")
                 return
             log(f"input ({how}): tour stopped in {self.flow}")
+            POINTER.publish({"kind": "hide"})
             self.phase = "live"
             self.flow = None
             self.stop_player()
@@ -413,6 +506,13 @@ class Session:
                     code = self.session_exited() or "?"
                     log(f"session: mnml exited ({code}) in {self.flow or self.phase}" if code != "?" else
                         f"session: the visitor left (ttyd ended the session) in {self.flow or self.phase}")
+                    try:
+                        pid = open(SESSION_MARK).read().strip()
+                        err = open(os.path.join(STATE, f"stderr-{pid}"), errors="replace").read().strip()
+                        if err and code not in ("?", "0"):
+                            log("session: mnml's stderr:\n" + err[-4000:])
+                    except OSError:
+                        pass
                     self.stop_player()
                     self.phase = "idle"
                     self.flow = None
@@ -454,6 +554,15 @@ class Session:
             pid = open(SESSION_MARK).read().strip()
         except OSError:
             pid = ""
+        # IPC directories of sessions that are gone (a hung-up session.sh
+        # cannot remove its own).
+        for d in glob.glob(os.path.join(STATE, "ipc-*")):
+            other = d.rsplit("-", 1)[-1]
+            if other != pid and other.isdigit():
+                try:
+                    os.kill(int(other), 0)
+                except OSError:
+                    shutil.rmtree(d, ignore_errors=True)
         with self.lock:
             self.stop_player()
             self.app = App(os.path.join(STATE, f"ipc-{pid}"))
@@ -576,7 +685,32 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_body(200, data, ctype, {"Cache-Control": "public, max-age=86400"})
         if u.path == "/api/state":
             return self.json(SESSION.state())
+        if u.path == "/api/pointer":
+            return self.pointer_stream()
         return self.proxy()
+
+    def pointer_stream(self):
+        """Server-sent events: one `data:` line per pointer step, a
+        comment every 15 s to keep proxies from closing it."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        seq = POINTER.seq
+        try:
+            while True:
+                nseq, ev = POINTER.wait(seq, 15)
+                if nseq == seq:
+                    self.wfile.write(b": keepalive\n\n")
+                else:
+                    seq = nseq
+                    out = dict(ev, lead_ms=POINTER_LEAD_MS)
+                    self.wfile.write(f"data: {json.dumps(out)}\n\n".encode())
+                self.wfile.flush()
+        except OSError:
+            return
 
     def do_POST(self):
         u = urlparse(self.path)

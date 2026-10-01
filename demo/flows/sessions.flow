@@ -6,7 +6,7 @@ reset
 open src/main.zig
 until "fn main"
 wait 200
-run view.activity_sessions
+click-rect rail:sessions
 wait 600
 run ai.claude_code_new_right
 until "agent session" 4000

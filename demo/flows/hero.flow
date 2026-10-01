@@ -22,7 +22,7 @@ wait 1800
 key esc
 wait 700
 # the palette, from the editor: a new session is one query away
-run view.focus_left
+find-click "const std"
 wait 300
 key ctrl+shift+p
 wait 250
