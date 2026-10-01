@@ -163,6 +163,9 @@ otherwise. Copy what you need; leave the rest out.
         // `lsp.diagnostics` as a pane under the editor). Every section
         // has a side (SEARCH and DEBUG are columns too). The session
         // keeps the sides a user moved; these are the starting point.
+        // The sidebar's column carries the activity rail (at its outer
+        // edge), `tree_width` and the sidebar's divider menu, so moving
+        // the sidebar moves all three.
         .sidebar_side = .left, // .left | .right (the Settings row "Default sidebar side")
         .section_side = .{ // per section, null = the default above
             .explorer = null, // .left | .right | .bottom

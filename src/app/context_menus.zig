@@ -1470,12 +1470,27 @@ pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "Reset width", .action = .{ .command = .@"view.reset_tree_width" } },
         .{ .label = "Set width…", .action = .{ .command = .@"view.set_tree_width" } },
-        .{ .label = "Hide sidebar", .action = .{ .command = .@"view.toggle_tree" }, .separator_before = true },
+        .{ .label = "Hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar_side == .left) .@"view.toggle_tree" else .@"view.toggle_right_panel" }, .separator_before = true },
         .{ .label = "Auto-hide sidebar", .action = .{ .command = .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto },
         .{ .label = if (app.cfg.ui.sidebar_side == .left) "Move sidebar to the right" else "Move sidebar to the left", .action = .{ .command = .@"view.flip_sidebar_side" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Sidebar divider", rows, x, y);
+}
+
+/// A right-click on either column's divider. The sidebar's column —
+/// left or right, per `ui.sidebar_side` — gets the sidebar's menu, so
+/// *Move sidebar to the …* undoes itself from where the sidebar went.
+/// The other column's divider hides that column, or brings the sidebar
+/// over to its side.
+pub fn openColumnDividerMenu(app: *App, which: side.Side, x: u16, y: u16) Allocator.Error!void {
+    if (side.isSidebarColumn(app, which)) return openTreeDividerMenu(app, x, y);
+    const rows = try items(app, &.{
+        .{ .label = if (which == .left) "Hide left column" else "Hide right column", .action = .{ .command = if (which == .left) .@"view.toggle_tree" else .@"view.toggle_right_panel" } },
+        .{ .label = if (which == .left) "Move sidebar to the left" else "Move sidebar to the right", .action = .{ .command = .@"view.flip_sidebar_side" }, .separator_before = true },
+    });
+    errdefer app.gpa.free(rows);
+    try app.openMenu(if (which == .left) "Left column divider" else "Right column divider", rows, x, y);
 }
 
 /// `view.set_tree_width`: the prompt *Set width…* opens, seeded with
@@ -2670,6 +2685,55 @@ test "the sidebar divider's move row: the default sections swap columns, a secti
     const text = try std.Io.Dir.cwd().readFileAlloc(t.io, home, t.allocator, .unlimited);
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".sidebar_side = .left") != null);
+}
+
+test "moving the sidebar right takes its rail, its width and its divider menu with it, and the right divider offers the way back" {
+    // hunt5: the rail was the LEFT column's only, the width the left
+    // column's, and only the left divider had a menu — so the move left
+    // the rail behind, traded a pinned 52 for the right column's 33 and
+    // could not be undone from the divider it moved to.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const render = @import("render.zig");
+    const full = @import("../ui/rect.zig").init(0, 0, 120, 40);
+    side.pinTreeWidth(&app, 52);
+    try app.render();
+    const before = render.frameRects(full, render.chrome(&app));
+    try t.expectEqual(@as(u16, 0), before.rail.x);
+    try command.run(&app, .{ .static = .@"view.flip_sidebar_side" });
+    try app.render();
+    try t.expectEqual(side.Section.explorer, side.shown(&app, .right).?);
+    const fr = render.frameRects(full, render.chrome(&app));
+    // The rail: at the screen's right edge, the border inside it.
+    try t.expect(!fr.rail.isEmpty());
+    try t.expectEqual(@as(u16, 120), fr.rail.right());
+    try t.expectEqual(fr.rail.x - 1, fr.rail_border.x);
+    // The width: the pinned 52, rail included, as on the left.
+    try t.expectEqual(@as(u16, 52), side.size(&app, .right));
+    try t.expectEqual(@as(u16, 52), fr.right.w + fr.rail.w + fr.rail_border.w);
+    // The right divider: the sidebar's menu now, the way back on it.
+    const dx = fr.right_divider.x;
+    try app.handle(.{ .mouse = .{ .x = dx, .y = 10, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Sidebar divider", app.overlay.menu.title);
+    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[4].label);
+    try t.expectEqual(command.CommandId.@"view.toggle_right_panel", app.overlay.menu.items[2].action.command);
+    closeMenu(&app);
+    // A drag on it pins the sidebar's own width.
+    try app.handle(.{ .mouse = .{ .x = dx, .y = 10, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = dx + 4, .y = 10, .kind = .drag, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = dx + 4, .y = 10, .kind = .release, .button = .left } });
+    try t.expectEqual(@as(u16, 48), app.tree.width);
+    // The way back keeps it too.
+    try command.run(&app, .{ .static = .@"view.flip_sidebar_side" });
+    try t.expectEqual(@as(u16, 48), side.size(&app, .left));
+    try app.render();
+    try t.expectEqual(@as(u16, 0), render.frameRects(full, render.chrome(&app)).rail.x);
 }
 
 test "Set width… reads cells or a share, inside 10..80, and nothing else" {

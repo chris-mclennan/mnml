@@ -83,6 +83,10 @@ the release ships one file), and one line per change a user can see.
   showed its `⋯` grip on the screen's last row but brought its items up two
   rows higher. The grip now sits on the row the items appear on — hover it,
   click it or `view.focus_dock`, and the strip comes up right there.
+- *Move sidebar to the right* left the activity rail behind and dropped a
+  width set by hand, and the moved sidebar's divider had no menu to move it
+  back. The rail and the width now go with the sidebar, and either column's
+  divider has a menu — the sidebar's offers *Move sidebar to the left*.
 
 ## v0.3.1
 

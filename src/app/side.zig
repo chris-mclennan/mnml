@@ -225,7 +225,7 @@ pub fn defaultTreeWidth(app: *const App) u16 {
 pub fn syncTreeWidth(app: *App) void {
     if (app.side.tree_pinned) return;
     const w = defaultTreeWidth(app);
-    if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (ps.side == .left) {
+    if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (isSidebarColumn(app, ps.side)) {
         ps.n = w;
         return;
     };
@@ -250,20 +250,42 @@ pub fn resetTreeWidth(app: *App) void {
 
 /// A host's own measure: the columns in cells across, the dock in rows
 /// down. // changed (bottom-dock): was `width` / `setWidth`.
+/// // changed (sidebar-side-width): the SIDEBAR's width (`tree.width`,
+/// `ui.tree_width`, the divider's pin) belongs to whichever column
+/// `ui.sidebar_side` puts the sidebar in, and `right_width` to the other
+/// one — so moving the sidebar keeps its width instead of trading it for
+/// the right column's.
 pub fn size(app: *const App, side: Side) u16 {
     return switch (side) {
-        .left => app.tree.width,
-        .right => app.side.right_width,
+        .left, .right => if (isSidebarColumn(app, side)) app.tree.width else app.side.right_width,
         .bottom => app.side.bottom_height,
     };
 }
 
 pub fn setSize(app: *App, side: Side, n: u16) void {
     switch (side) {
-        .left => app.tree.width = n,
-        .right => app.side.right_width = n,
+        .left, .right => if (isSidebarColumn(app, side)) {
+            app.tree.width = n;
+        } else {
+            app.side.right_width = n;
+        },
         .bottom => app.side.bottom_height = std.math.clamp(n, Config.bottom_panel_height_min, Config.bottom_panel_height_max),
     }
+}
+
+/// // changed (sidebar-side-width): whether `side` is the sidebar's
+/// column — the one `ui.sidebar_side` names, which carries the rail,
+/// the sidebar's width and its divider's menu.
+pub fn isSidebarColumn(app: *const App, side: Side) bool {
+    return side == column(app.cfg.ui.sidebar_side);
+}
+
+/// A divider drag on `side`'s column: the sidebar's column pins its
+/// width (as *Set width…* does), the other column just takes it.
+pub fn dragColumn(app: *App, side: Side, n: u16) void {
+    if (isSidebarColumn(app, side)) return pinTreeWidth(app, n);
+    app.side.right_width = n;
+    app.needs_render = true;
 }
 
 /// How a side reads in a toast: the dock is a dock, not a "bottom side".

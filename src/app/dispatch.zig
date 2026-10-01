@@ -2645,10 +2645,12 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             else => {},
         },
         .divider => |id| {
-            // The sidebar's divider has a menu: its width, hiding it, its side.
-            if (m.kind == .press and m.button == .right and id == render.tree_divider_id) {
+            // A column's divider has a menu: the sidebar's says its width,
+            // hiding it and its side; the other column's how to hide it
+            // or bring the sidebar over — wherever each one lives.
+            if (m.kind == .press and m.button == .right and (id == render.tree_divider_id or id == render.right_divider_id)) {
                 if (app.overlay != .none) closeOverlay(app);
-                return context_menus.openTreeDividerMenu(app, m.x, m.y);
+                return context_menus.openColumnDividerMenu(app, if (id == render.tree_divider_id) .left else .right, m.x, m.y);
             }
             if (m.kind != .press or m.button != .left) return;
             if (app.overlay != .none) closeOverlay(app);
@@ -3680,10 +3682,10 @@ fn continueDrag(app: *App, m: Mouse) Allocator.Error!void {
         },
         .tree_divider => if (m.kind == .drag) {
             const upper_w = app.screen.width;
-            side.pinTreeWidth(app, std.math.clamp(m.x, 8, upper_w -| 22));
+            side.dragColumn(app, .left, std.math.clamp(m.x, 8, upper_w -| 22));
         },
         .right_divider => if (m.kind == .drag) {
-            app.side.right_width = std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22);
+            side.dragColumn(app, .right, std.math.clamp(app.screen.width -| (m.x + 1), 8, app.screen.width -| 22));
         },
         // // changed (bottom-dock): the pointer's row is the divider's,
         // so the dock keeps every row under it. `frameRects` clamps the

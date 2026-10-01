@@ -124,7 +124,10 @@ fn registerGeometric(app: *App, full: Rect) void {
     if (cfg.menu_bar == .auto) if (barRow(full)) |row| add(app, .{ .rect = row, .id = .menu_bar_top, .priority = prio_menu_bar });
     // The rail's reveal cell is column 0, whatever the row — the rule
     // `activity_bar.shown` shipped with.
-    if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(full.x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
+    // // changed (sidebar-side-width): the rail lives in the sidebar's
+    // column, so a sidebar moved right reveals its rail at that edge.
+    const rail_x = if (cfg.sidebar_side == .left) full.x else full.right() -| 1;
+    if (cfg.activity_bar == .auto) add(app, .{ .rect = Rect.init(rail_x, full.y, 1, full.h), .id = .rail_left, .priority = prio_rail });
     // // changed (launcher-dock): the dock's edge, and the outer-band
     // rule it imposes on a side column that wants the same screen edge.
     // // changed (edge-grip): a bottom strip reveals over the `:` line's

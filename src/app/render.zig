@@ -360,6 +360,10 @@ pub const Chrome = struct {
     bottom: ?u16 = null,
     /// Whether the activity bar paints (`activity_bar.shown`).
     rail: bool = true,
+    /// // changed (sidebar-side-width): which column carries the rail —
+    /// the sidebar's (`ui.sidebar_side`). On the right it sits at the
+    /// column's outer edge, mirroring the left.
+    rail_side: Config.ColumnSide = .left,
     /// // changed (launcher-dock): which edge the launcher dock claims
     /// this frame, or null when it is hidden or only revealed as an
     /// overlay (`launcher_dock.docked`).
@@ -385,10 +389,11 @@ pub fn chrome(app: *const App) Chrome {
     return .{
         // A narrow terminal (`ui.sidebar_auto_below`) is in the auto-hide
         // regime too, through `sidebar_auto.mode`: one rule.
-        .sidebar = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) app.tree.width else null,
-        .right = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) app.side.right_width else null,
+        .sidebar = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .left) != null) side_mod.size(app, .left) else null,
+        .right = if (!app.zen and !sidebar_auto.autoHiding(app) and side_mod.shown(app, .right) != null) side_mod.size(app, .right) else null,
         .bottom = if (!app.zen and bottom_mod.open(app)) app.side.bottom_height else null,
         .rail = activity_bar.shown(app),
+        .rail_side = app.cfg.ui.sidebar_side,
         // // changed (side-band): the dock's BAND is carved, which on a
         // side edge means for as long as the dock lives there — so the
         // strip fills a band that is already its own and a reveal
@@ -504,7 +509,7 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         const cols = fr.upper.splitLeft(w);
         const div = cols.rest.splitLeft(1);
         var side = cols.left;
-        if (ch.rail) {
+        if (ch.rail and ch.rail_side == .left) {
             const bar_w: u16 = @min(rail_mod.width, side.w);
             const rs = side.splitLeft(bar_w);
             fr.rail = rs.left;
@@ -527,6 +532,20 @@ pub fn frameRects(full: Rect, ch: Chrome) FrameRects {
         fr.body = div.left;
         fr.right_divider = div.rest;
         fr.right = cols.rest;
+        // // changed (sidebar-side-width): the sidebar moved right takes
+        // its rail with it, at the column's outer edge, the border
+        // column between the rail and the section.
+        if (ch.rail and ch.rail_side == .right) {
+            const bar_w: u16 = @min(rail_mod.width, fr.right.w);
+            const rs = fr.right.splitRight(bar_w);
+            fr.rail = rs.rest;
+            fr.right = rs.left;
+            if (w > bar_w + 2) {
+                const bs = fr.right.splitRight(1);
+                fr.rail_border = bs.rest;
+                fr.right = bs.left;
+            }
+        }
     };
     return fr;
 }
@@ -633,23 +652,24 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     try drawPaletteBar(app, ui, fr.bar);
     // The info view says where it is when it paints (the corridor).
     app.info_view.rect = null;
+    // ── rail ──
+    // The activity bar down the sidebar's outer edge, and the `│`
+    // between it and the section — `t.line` on the rail's ground, as
+    // Rust paints it, so no panel fill butts against the icons. It is
+    // carved in whichever column holds the sidebar (`Chrome.rail_side`).
+    if (!fr.rail.isEmpty()) {
+        rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
+        // An `auto` rail stays up while the pointer rests on it —
+        // the rail's own zone, for the next frame.
+        hover_zones.register(app, .{ .rect = fr.rail, .id = .rail_left, .priority = hover_zones.prio_rail });
+    }
+    if (!fr.rail_border.isEmpty()) {
+        const pal = app.theme.palette;
+        const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
+        ui.canvas.fill(fr.rail_border, line);
+        ui.vrule(fr.rail_border.x, fr.rail_border.y, fr.rail_border.h, line);
+    }
     if (!fr.sidebar.isEmpty()) {
-        // ── rail ──
-        // The activity bar down the sidebar's left edge, and the `│`
-        // between it and the tree — `t.line` on the rail's ground, as
-        // Rust paints it, so no panel fill butts against the icons.
-        if (!fr.rail.isEmpty()) {
-            rail_mod.draw(ui, fr.rail, try activity_bar.props(app, ui.arena));
-            // An `auto` rail stays up while the pointer rests on it —
-            // the rail's own zone, for the next frame.
-            hover_zones.register(app, .{ .rect = fr.rail, .id = .rail_left, .priority = hover_zones.prio_rail });
-        }
-        if (!fr.rail_border.isEmpty()) {
-            const pal = app.theme.palette;
-            const line = Theme.withFg(Theme.onBg(app.theme.border, pal.bg_darker), pal.line);
-            ui.canvas.fill(fr.rail_border, line);
-            ui.vrule(fr.rail_border.x, fr.rail_border.y, fr.rail_border.h, line);
-        }
         // ── left column ──
         // `ui.hover_help`: the column's bottom `hover_help_height` rows
         // are the info view, clamped so the section above keeps six
@@ -1250,14 +1270,27 @@ pub fn overlayRects(app: *const App, upper: Rect, s: sidebar_auto.ColumnSide) Ov
             rest = e.rest;
         }
     }
-    // The rail: the left column's only, as the docked carve is.
-    if (s == .left and app.cfg.ui.activity_bar != .hidden and rest.w > rail_mod.width + 2) {
-        const rs = rest.splitLeft(rail_mod.width);
-        out.rail = rs.left;
-        rest = rs.rest;
-        const bs = rest.splitLeft(1);
-        out.rail_border = bs.left;
-        rest = bs.rest;
+    // The rail: the sidebar's column only, as the docked carve is, at
+    // its outer edge.
+    // // changed (sidebar-side-width): was the left column's only, so a
+    // sidebar moved right left the rail behind with nothing to hang on.
+    const rail_here = @intFromEnum(s) == @intFromEnum(app.cfg.ui.sidebar_side);
+    if (rail_here and app.cfg.ui.activity_bar != .hidden and rest.w > rail_mod.width + 2) {
+        if (s == .left) {
+            const rs = rest.splitLeft(rail_mod.width);
+            out.rail = rs.left;
+            rest = rs.rest;
+            const bs = rest.splitLeft(1);
+            out.rail_border = bs.left;
+            rest = bs.rest;
+        } else {
+            const rs = rest.splitRight(rail_mod.width);
+            out.rail = rs.rest;
+            rest = rs.left;
+            const bs = rest.splitRight(1);
+            out.rail_border = bs.rest;
+            rest = bs.left;
+        }
     }
     if (rest.h >= 3) {
         const ss = rest.splitTop(1);
