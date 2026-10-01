@@ -703,7 +703,10 @@ fn only(app: *App) CommandError!void {
     if (leaves.len < 2) return;
     for (leaves) |l| {
         if (l == mine) continue;
-        const tabs = try arena.dupe(PaneId, layout.leaf(l).?.tabs.items);
+        // Closing a twin below can empty a leaf and collapse it, so a leaf
+        // listed before the loop may be gone by the time it comes up.
+        const leaf = layout.leaf(l) orelse continue;
+        const tabs = try arena.dupe(PaneId, leaf.tabs.items);
         for (tabs) |tab| {
             if (hasTwin(app, tab)) {
                 try app.forceClosePane(tab);
