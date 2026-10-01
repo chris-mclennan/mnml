@@ -33,6 +33,10 @@ class Mnml < Formula
 
   def install
     bin.install "mnml"
+    # The offline Jira and Bitbucket `mnml --demo` starts from the
+    # binary's own directory, so they go in `bin` beside it.
+    bin.install "mnml-fake-jira" if File.exist?("mnml-fake-jira")
+    bin.install "mnml-fake-bitbucket" if File.exist?("mnml-fake-bitbucket")
     # The curated Lua script set the archive carries as share/mnml/lua.
     # `bin` is <prefix>/bin and `pkgshare` is <prefix>/share/mnml, so the
     # installed binary finds it as `<exe dir>/../share/mnml/lua` — the

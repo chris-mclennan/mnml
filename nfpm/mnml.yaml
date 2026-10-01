@@ -17,6 +17,16 @@ contents:
     dst: /usr/bin/mnml
     file_info:
       mode: 0755
+  # The offline Jira and Bitbucket `mnml --demo` starts from the
+  # binary's own directory — so beside it, as the archive has them.
+  - src: staging/mnml-fake-jira
+    dst: /usr/bin/mnml-fake-jira
+    file_info:
+      mode: 0755
+  - src: staging/mnml-fake-bitbucket
+    dst: /usr/bin/mnml-fake-bitbucket
+    file_info:
+      mode: 0755
   # The curated Lua script set, laid where `shippedRoot` looks first on
   # a system install: the binary is `/usr/bin/mnml`, so
   # `<exe dir>/../share/mnml/lua` is this. Staged out of the release

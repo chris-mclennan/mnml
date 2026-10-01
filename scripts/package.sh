@@ -19,8 +19,11 @@
 # an unpacked archive lists the five official scripts in the SCRIPTS
 # section's Marketplace tab with no config; package-linux re-lays the same
 # tree at /usr/share/mnml/lua — plus share/mnml/fonts/MnmlSymbols.ttf, the
-# face mnml's own marks are drawn from (`zig build font`). No completions
-# or man page yet; when they exist, stage them here.
+# face mnml's own marks are drawn from (`zig build font`). Beside the
+# binary, too, on every target but Windows: mnml-fake-jira and
+# mnml-fake-bitbucket, the offline servers `mnml --demo` starts from its
+# own directory (Windows has no --demo). No completions or man page yet;
+# when they exist, stage them here.
 #
 # With --macos-app, every *-apple-darwin binary is also wrapped as an
 # app bundle (dist/macos/build-app.sh) and shipped as
@@ -63,6 +66,9 @@ sha256() {
 
 rm -rf "$out"
 mkdir -p "$out"
+# Absolute: the zip below runs from the staging directory, where a
+# relative --out (`zig build dist --prefix some/dir`) names nothing.
+out=$(cd "$out" && pwd)
 stage=$(mktemp -d "${TMPDIR:-/tmp}/mnml-dist.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 
@@ -79,6 +85,20 @@ for dir in "$release_dir"/*/; do
     mkdir -p "$stage/$pkg"
     cp "$dir/$bin" "$stage/$pkg/$bin"
     chmod 0755 "$stage/$pkg/$bin"
+    # The demo's offline Jira and Bitbucket, beside the binary where
+    # `mnml --demo` looks for them (`zig build release-one` puts them
+    # there). Without them a downloaded mnml opens the demo with no one
+    # answering its Jira and Bitbucket panes, so this is fatal.
+    case "$triple" in
+        *-windows-*) ;;
+        *)
+            for fake in mnml-fake-jira mnml-fake-bitbucket; do
+                [ -f "$dir/$fake" ] || { echo "package.sh: $dir has no $fake (run \`zig build release\`)" >&2; exit 1; }
+                cp "$dir/$fake" "$stage/$pkg/$fake"
+                chmod 0755 "$stage/$pkg/$fake"
+            done
+            ;;
+    esac
     for extra in LICENSE-MIT LICENSE-APACHE README.md CHANGELOG.md; do
         [ -f "$repo/$extra" ] && cp "$repo/$extra" "$stage/$pkg/$extra"
     done

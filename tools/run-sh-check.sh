@@ -272,6 +272,7 @@ out=$(cd "$FAKE" && PREFIX="$PREFIX_DRY" ./run.sh install --dry-run 2>&1); rc=$?
 check "install --dry-run: exit 0" '[ $rc -eq 0 ]' "$out"
 check "install --dry-run: names the host copy" 'echo "$out" | grep -q "would copy   zig-out/bin/mnml-zig → $PREFIX_DRY/bin/mnml"' "$out"
 check "install --dry-run: names the integration copy" 'echo "$out" | grep -q "would copy   zig-out/bin/mnml-jira → $PREFIX_DRY/bin/mnml-jira"' "$out"
+check "install --dry-run: names the demo's fakes beside mnml" 'echo "$out" | grep -q "would copy   zig-out/bin/mnml-fake-jira → $PREFIX_DRY/bin/mnml-fake-jira" && echo "$out" | grep -q "would copy   zig-out/bin/mnml-fake-bitbucket → $PREFIX_DRY/bin/mnml-fake-bitbucket"' "$out"
 check "install --dry-run: names the manifest write into the stable data root" 'echo "$out" | grep -q "would run    MNML_PROFILE=stable MNML_DATA_ROOT=$MNML_DATA_ROOT $PREFIX_DRY/bin/mnml-jira --install"' "$out"
 check "install --dry-run: names the relink" 'echo "$out" | grep -q "would link   $MNML_DATA_ROOT/bin/mnml-jira → $PREFIX_DRY/bin/mnml-jira"' "$out"
 check "install --dry-run: the sample is a fixture, not a chip" 'echo "$out" | grep -q "would skip   mnml-sample --install"' "$out"
@@ -303,6 +304,7 @@ check "install: verified the build before copying" 'echo "$out" | grep -qE "veri
 check "install: the host landed as PREFIX/bin/mnml" '[ -x "$PREFIX_OK/bin/mnml" ]'
 check "install: PREFIX/bin/mnml --version says what it is" '"$PREFIX_OK/bin/mnml" --version | grep -qE "^mnml(-zig)? .*\((stable|dev) profile\)"' "$("$PREFIX_OK/bin/mnml" --version 2>&1)"
 check "install: the integration landed too" '[ -x "$PREFIX_OK/bin/mnml-jira" ]'
+check "install: the demo's fakes landed beside mnml, unregistered" '[ -x "$PREFIX_OK/bin/mnml-fake-jira" ] && [ -x "$PREFIX_OK/bin/mnml-fake-bitbucket" ] && [ ! -e "$MNML_DATA_ROOT/bin/mnml-fake-jira" ]' "$(ls "$PREFIX_OK/bin" 2>&1)"
 check "install: the font came with it" '[ -f "$PREFIX_OK/share/mnml/fonts/MnmlSymbols.ttf" ]'
 # The Marketplace tab's default source rides in share/ beside the font:
 # without it an installed mnml lists no integrations at all.

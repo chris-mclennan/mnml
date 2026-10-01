@@ -71,6 +71,16 @@ jobs:
           mkdir -p staging
           cp "mnml-$TRIPLE/mnml" staging/mnml
           chmod +x staging/mnml
+          # The offline Jira and Bitbucket `mnml --demo` starts: beside
+          # the binary in the archive, beside it at /usr/bin here.
+          for fake in mnml-fake-jira mnml-fake-bitbucket; do
+              test -f "mnml-$TRIPLE/$fake" || {
+                  echo "the tarball has no $fake — scripts/package.sh did not stage it" >&2
+                  exit 1
+              }
+              cp "mnml-$TRIPLE/$fake" "staging/$fake"
+              chmod +x "staging/$fake"
+          done
           # The curated Lua script set rides in the archive as
           # share/mnml/lua; nfpm lays it at /usr/share/mnml/lua, which is
           # where a /usr/bin binary looks for it.
