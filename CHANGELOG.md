@@ -47,6 +47,9 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- `:only` (`view.only`) no longer crashes when gathering the other splits
+  empties one of them first — reachable when a pane was tabbed in two
+  splits at once.
 - Closing panes another tab page shows — `view.close_others` closes every
   pane, not just this page's — no longer leaves that page pointing at them.
   The next pane opened (the git status pane, say) was given a freed slot,

@@ -703,8 +703,9 @@ fn only(app: *App) CommandError!void {
     if (leaves.len < 2) return;
     for (leaves) |l| {
         if (l == mine) continue;
-        // Closing a twin below can empty a leaf and collapse it, so a leaf
-        // listed before the loop may be gone by the time it comes up.
+        // Moving or closing a tab below can empty a leaf listed later and
+        // free its node (a pane tabbed in two leaves moves out of the one
+        // `leafOf` names), so a leaf may be gone by the time it comes up.
         const leaf = layout.leaf(l) orelse continue;
         const tabs = try arena.dupe(PaneId, leaf.tabs.items);
         for (tabs) |tab| {
@@ -1314,6 +1315,41 @@ test "focus_prev_split is focus_next_split backwards: three splits wrap both way
     try t.expect(app.focus == .tree);
     try command.run(&app, .{ .static = .@"view.focus_prev_split" });
     try t.expect(app.focus == .pane and app.active.? == c);
+}
+
+test "view.only: a leaf emptied while it runs is skipped, not dereferenced" {
+    // The shape the web demo's tour left behind (splits → git → sessions,
+    // then `:only` from the hero flow's reset): a pane tabbed in two
+    // leaves at once. Tree order L0, L2, L1; `a` sits in L1 alone and is
+    // also a tab of L2. `only` visits L2 first; moving `a` out of the
+    // leaf `leafOf` names (L1, the lower id) empties L1 and frees its
+    // node — and then the loop came to L1 and dereferenced it.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
+    defer app.deinit();
+    const c = try app.openScratch();
+    const a = try app.openScratch();
+    const b = try app.openScratch();
+    const layout = app.layouts.current();
+    app.setActive(c);
+    try splitWith(&app, .horizontal, a); // L0(c) | L1(a)
+    app.setActive(c);
+    try splitWith(&app, .vertical, b); // (L0(c) / L2(b)) | L1(a)
+    const l1 = layout.leafOf(a).?;
+    const l2 = layout.leafOf(b).?;
+    try t.expect(l1 < l2);
+    try layout.leaf(l2).?.tabs.append(layout.gpa, a);
+    const order = try layout.leaves(app.frame.allocator());
+    try t.expectEqual(@as(usize, 3), order.len);
+    try t.expectEqual(l2, order[1]);
+    try t.expectEqual(l1, order[2]);
+    app.setActive(c);
+    try command.run(&app, .{ .static = .@"view.only" });
+    // No panic; c keeps the focus and both panes stay in the layout. The
+    // stale second tab of `a` can leave L2 standing — the pane-in-two-
+    // leaves state is the upstream bug, this guard only stops the crash.
+    try t.expectEqual(c, app.active.?);
+    try t.expect(layout.leafOf(a) != null and layout.leafOf(b) != null);
+    try t.expect((try layout.leaves(app.frame.allocator())).len <= 2);
 }
 
 test "view.only keeps this window and its tabs; the other leaves' panes become background tabs here, a twin window closes" {
