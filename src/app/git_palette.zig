@@ -582,6 +582,15 @@ pub fn selectRepo(app: *App, idx: usize) CommandError!void {
     showRepoTab(app, idx);
 }
 
+/// After a workspace switch (`workspace_switch.zig`): in git mode the
+/// tabs are rebuilt for the new repo list and the active repo's graph
+/// comes to the front. Nothing outside the mode.
+pub fn followActiveRepo(app: *App) CommandError!void {
+    if (!app.git_palette.active) return;
+    try rebuildTabs(app);
+    if (app.git.active) |i| showRepoTab(app, i);
+}
+
 /// The graph tab of repo `idx` comes to the front, when it is open.
 fn showRepoTab(app: *App, idx: usize) void {
     const gs = &app.git;

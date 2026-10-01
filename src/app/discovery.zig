@@ -167,8 +167,8 @@ pub fn describe(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!
             .detail = if (root == 0) "click folds the tree · alt-click folds or opens every directory" else "click opens or folds this workspace's tree",
         },
         .tree_root_dot => |root| .{
-            .title = if (app.tree.active_root == root) "Active workspace" else "Workspace",
-            .detail = "click makes this the active workspace · right-click: the workspace menu",
+            .title = if (root == 0) "Active workspace" else "Workspace",
+            .detail = if (root == 0) "the workspace mnml works on · right-click: the workspace menu" else "click switches to this workspace · right-click: the workspace menu",
         },
         .tree_empty => .{ .title = "Workspace", .detail = "click focuses the tree · right-click: the workspace menu" },
         .tree_chip => |c| .{

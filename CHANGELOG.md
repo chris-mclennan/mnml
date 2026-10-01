@@ -65,6 +65,12 @@ the release ships one file), and one line per change a user can see.
   pane itself runs the copy linked into the data root. They now run that
   copy too.
 
+- Switching the workspace — a root's `○`, *Switch to this workspace*, or
+  `view.switch_workspace` — now switches what mnml works on, not only the
+  tree: the title, the statusline's folder and branch, git mode and `Ctrl+P`
+  follow the root, and an HTTP env picked for the old workspace is dropped.
+  The sections keep their order (only the `●` moves) and the old workspace's
+  `○` switches back. The session is saved in the workspace switched to.
 - On Linux, a terminal pane whose command prints and exits at once
   (`:terminal printf hi`) could come up empty: the exit was noticed before
   the command's last output was read. The exit now waits for that output.

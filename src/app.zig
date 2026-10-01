@@ -46,6 +46,7 @@ const image = @import("image/root.zig");
 const image_pane = @import("app/image_pane.zig");
 const whichkey = @import("app/whichkey.zig");
 const tree_mod = @import("app/tree.zig");
+const workspace_switch = @import("app/workspace_switch.zig");
 const info_view_app = @import("app/info_view.zig");
 const ex = @import("app/ex.zig");
 const ex_verbs = @import("app/ex_verbs.zig");
@@ -1159,8 +1160,20 @@ pub const App = struct {
     /// place the two are reconciled (`setInputStyle` keeps them level).
     input_style: input.Style,
     theme: theme_mod = theme_mod.default,
-    /// Absolute. Owned.
+    /// Absolute. Owned. The workspace the app works on — the tree's
+    /// primary section, the title, git, `Ctrl+P` — which a switch to
+    /// another root (`app/workspace_switch.zig`) replaces.
     workspace: []u8,
+    /// The workspace mnml was launched on: where the file-IPC channel
+    /// listens and what `owns_workspace` removes. Borrows `workspace`
+    /// or a `retired_workspaces` entry, never freed before `deinit`.
+    launch_workspace: []const u8,
+    /// Every `workspace` string a switch replaced, kept until `deinit`:
+    /// workers started before the switch still borrow them.
+    retired_workspaces: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The launch workspace's trust, saved by the first switch away
+    /// from it so a switch back restores it (`workspace_switch.zig`).
+    launch_trusted: ?bool = null,
     /// `workspace` is the scratch folder `initWith` made for this App
     /// (`scratch_workspace`); `deinit` removes it.
     owns_workspace: bool = false,
@@ -1610,6 +1623,7 @@ pub const App = struct {
             .loaded = opts.loaded,
             .input_style = style,
             .workspace = ws,
+            .launch_workspace = ws,
             .data_root = dr,
             .env = env,
             .panes = PaneStore.init(gpa, io),
@@ -1793,6 +1807,12 @@ pub const App = struct {
         errdefer km.deinit();
         const was_trusted = self.workspace_trusted;
         self.workspace_trusted = fresh.workspace_trusted;
+        // The layers are the launch workspace's; after a switch to
+        // another root the trust is that root's own.
+        if (!std.mem.eql(u8, self.workspace, self.launch_workspace)) {
+            self.launch_trusted = fresh.workspace_trusted;
+            self.workspace_trusted = try workspace_switch.trustOf(self, self.workspace);
+        }
         const old_tree_width = self.cfg.ui.tree_width;
         self.cfg = fresh.config;
         old.deinit();
@@ -2096,8 +2116,10 @@ pub const App = struct {
         self.frame.deinit();
         self.env.deinit();
         gpa.free(self.data_root);
-        if (self.owns_workspace) test_workspace.remove(self.io, self.workspace);
+        if (self.owns_workspace) test_workspace.remove(self.io, self.launch_workspace);
         gpa.free(self.workspace);
+        for (self.retired_workspaces.items) |w| gpa.free(w);
+        self.retired_workspaces.deinit(gpa);
         // Last: `cfg` borrowed from it until here.
         if (self.loaded) |*l| l.deinit();
     }
@@ -3683,6 +3705,7 @@ test {
     _ = @import("app/image_pane.zig");
     _ = @import("app/discovery.zig");
     _ = @import("app/workspace_trust.zig");
+    _ = @import("app/workspace_switch.zig");
     _ = @import("image/root.zig");
     _ = @import("image/kitty.zig");
     _ = @import("image/iterm2.zig");

@@ -2563,11 +2563,26 @@ test "right-click: an extra root's *Switch to this workspace* switches to that r
     const row = app.overlay.menu.items[0];
     try t.expectEqualStrings("Switch to this workspace", row.label);
     try t.expectEqual(@as(u8, 1), row.action.switch_workspace);
+    const launch = try t.allocator.dupe(u8, app.workspace);
+    defer t.allocator.free(launch);
     try @import("dispatch.zig").runMenuActionForTest(&app, row.action);
     try t.expect(app.overlay == .none);
-    try t.expectEqual(@as(u8, 1), app.tree.active_root);
-    try t.expect(app.tree.roots.items[0].expanded);
-    try t.expect(!app.tree.primary_expanded);
+    // The root is the workspace now, open; the old workspace is the
+    // extra root, folded.
+    try t.expectEqualStrings(extra, app.workspace);
+    try t.expectEqualStrings(launch, app.tree.roots.items[0].path);
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(!app.tree.roots.items[0].expanded);
+    // Each header's *Copy path* copies that header's own path.
+    for ([_]struct { root: u8, want: []const u8 }{ .{ .root = 0, .want = extra }, .{ .root = 1, .want = launch } }) |c| {
+        try openWorkspaceHeaderMenu(&app, c.root, 3, 3);
+        var copied: ?[]const u8 = null;
+        for (app.overlay.menu.items) |item| if (std.mem.eql(u8, item.label, "Copy path")) {
+            copied = item.action.copy_text;
+        };
+        try t.expectEqualStrings(c.want, copied orelse return error.TestExpectedEqual);
+        app.overlay.deinit(app.gpa);
+    }
 }
 
 test "the sidebar divider: a right-click opens its menu — reset, set, hide, auto-hide, move — and each row does what it says" {

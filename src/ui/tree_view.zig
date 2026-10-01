@@ -148,8 +148,8 @@ pub const Section = struct {
     italic: bool = false,
     /// Every directory closed: the toggle chip shows expand-all.
     fully_collapsed: bool = false,
-    /// The active workspace (`Tree.active_root`): its dot is the green
-    /// `●`, every other section's the grey `○`.
+    /// The active workspace — the primary; a switch makes a root that —
+    /// has the green `●`, every other section the grey `○`.
     active: bool = false,
 };
 
@@ -199,22 +199,22 @@ pub const Layout = struct {
     overflow: bool = false,
 };
 
-/// The items a scrollbar counts: the primary section — its header and
-/// its entries. Rust scrolls the primary's file list alone; the extra
-/// sections below it and the `Add workspace` row paint when they fit.
+/// The items a scrollbar counts: everything through the end of the
+/// primary section — its header and its entries, and the sections above
+/// it when a switch left it lower down (`Tree.primary_slot`). Rust
+/// scrolls the primary's file list alone; the sections below it and the
+/// `Add workspace` row paint when they fit.
 pub fn contentLen(items: []const Item) usize {
-    var n: usize = 0;
-    for (items) |it| switch (it) {
-        .section => |s| if (s.root != 0) break,
+    var in_primary = false;
+    for (items, 0..) |it, i| switch (it) {
+        .section => |s| {
+            if (in_primary) return i;
+            in_primary = s.root == 0;
+        },
         .entry => {},
-        else => break,
-    } else return items.len;
-    for (items) |it| {
-        if (it == .blank or it == .add_workspace) break;
-        if (it == .section and it.section.root != 0) break;
-        n += 1;
-    }
-    return n;
+        .blank, .add_workspace => if (in_primary) return i,
+    };
+    return items.len;
 }
 
 pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
@@ -692,6 +692,20 @@ test "scroll and overflow: the rows from `scroll`, a scrollbar in the last colum
     try testing.expectEqual(Chip.add_workspace, g.hits.at(24, 11).?.tree_chip);
     try testing.expect(g.hits.at(25, 11) == null);
     try testing.expectEqual(@as(usize, 12), contentLen(&items) + 2);
+}
+
+test "contentLen: a switch can leave the primary below an extra root — the scroll counts through the end of the primary's section" {
+    const e: Item = .{ .entry = .{ .idx = 0, .name = "f", .depth = 0, .is_dir = false } };
+    // The launch order: the primary's header and entries.
+    const first = [_]Item{ section(0, "/w/", true), e, e, .blank, section(1, "x", false), .blank, .add_workspace };
+    try testing.expectEqual(@as(usize, 3), contentLen(&first));
+    // After a switch to the root below: the old primary's folded section
+    // sits on top and is counted with the primary's.
+    const lower = [_]Item{ section(1, "w", false), .blank, section(0, "/x/", true), e, e, e, .blank, .add_workspace };
+    try testing.expectEqual(@as(usize, 6), contentLen(&lower));
+    // The primary alone, no headers: everything.
+    const alone = [_]Item{ section(0, "/w/", true), e };
+    try testing.expectEqual(@as(usize, 2), contentLen(&alone));
 }
 
 test "sections: the cursor bar on a focused header, the triangle indicator, the dots, and an ascii twin for every glyph" {

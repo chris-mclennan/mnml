@@ -212,10 +212,12 @@ pub const EnvPair = struct { name: []const u8, value: []const u8 };
 var next_id: u32 = 0;
 
 /// Where the file-IPC channel is for this app: `MNML_IPC_DIR`, else
-/// `<workspace>/.mnml/<the profile's mailbox>`. On the frame arena.
+/// `<workspace>/.mnml/<the profile's mailbox>`. On the frame arena. The
+/// LAUNCH workspace's: the channel listens there for the whole run, so
+/// a switch to another root (`workspace_switch.zig`) does not move it.
 pub fn ipcDir(app: *App) Allocator.Error![]const u8 {
     if (app.env.get("MNML_IPC_DIR")) |d| if (d.len > 0) return d;
-    return std.fs.path.join(app.frame.allocator(), &.{ app.workspace, ".mnml", profile.ipcSubdir(app.profile()) });
+    return std.fs.path.join(app.frame.allocator(), &.{ app.launch_workspace, ".mnml", profile.ipcSubdir(app.profile()) });
 }
 
 /// `ipcDir`, made to exist: it is the directory an integration is told
