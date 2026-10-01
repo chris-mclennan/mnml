@@ -1189,8 +1189,9 @@ test "acquire says what it waited on: nothing, an empty bucket, then a 429's coo
     const path = try std.fs.path.join(t.allocator, &.{ dir, "jira-ratelimit.json" });
     defer t.allocator.free(path);
     // Two tokens, and a refill slow enough that the third is a real
-    // wait rather than a race with the clock.
-    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 2.0, .rate = 0.05, .max_block_secs = 0.3 });
+    // wait rather than a race with the clock: a second's stall between
+    // two draws (a loaded runner) refills 0.01 of a token.
+    var l = try Limiter.init(t.allocator, t.io, path, .{ .capacity = 2.0, .rate = 0.01, .min_rate = 0.01, .max_block_secs = 0.3 });
     defer l.deinit();
 
     // A token in hand: no wait, and the count left is what the next
@@ -1214,10 +1215,12 @@ test "acquire says what it waited on: nothing, an empty bucket, then a 429's coo
     // goes out, having really waited, and the wait is blamed on the
     // tokens rather than on anything else.
     // On a bucket of its own: the refill rate lives in the FILE, so a
-    // limiter pointed at the one above would inherit its 0.05.
+    // limiter pointed at the one above would inherit its 0.01. One
+    // token a second: a runner that stalls between the two draws for
+    // less than that still finds the bucket empty.
     const quick_path = try std.fs.path.join(t.allocator, &.{ dir, "quick-ratelimit.json" });
     defer t.allocator.free(quick_path);
-    var quick = try Limiter.init(t.allocator, t.io, quick_path, .{ .capacity = 1.0, .rate = 20.0, .max_block_secs = 5.0 });
+    var quick = try Limiter.init(t.allocator, t.io, quick_path, .{ .capacity = 1.0, .rate = 1.0, .max_block_secs = 5.0 });
     defer quick.deinit();
     try t.expect(quick.acquire());
     const waited = quick.acquireDetailed();
@@ -1232,7 +1235,10 @@ test "acquire says what it waited on: nothing, an empty bucket, then a 429's coo
     var parked = try Limiter.init(t.allocator, t.io, parked_path, .{ .capacity = 4.0, .rate = 20.0, .max_block_secs = 5.0 });
     defer parked.deinit();
     try t.expect(parked.acquire());
-    parked.penalize(0.05);
+    // A second's cooldown: the first look has to land inside it, and a
+    // 50 ms one expired before it on a loaded Debug runner (the look
+    // then found the cut bucket refilling, and blamed the tokens).
+    parked.penalize(1.0);
     const after_429 = parked.acquireDetailed();
     try t.expect(after_429.ok);
     try t.expectEqual(Wait.cooldown, after_429.waited_for);
