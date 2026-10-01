@@ -254,6 +254,50 @@ test "the ring is page order then layout order — splits, stacked tabs, a page 
     try t.expectEqual(stacked, app.active.?);
 }
 
+test "vim terminal-normal: `]a` / `[a` step the ring as in an editor, with a count, and an unknown second key cancels the pair rather than leaving T-NORMAL" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(120, 40);
+    defer f.deinit();
+    const app = &f.app;
+    try app.setInputStyle(.vim);
+    const a = try f.run(.@"ai.claude_code_new_right");
+    const b = try f.run(.@"ai.codex_new_tab");
+    const c = try f.run(.@"ai.claude_code_new_page");
+    try t.expectEqualSlices(PaneId, &.{ a, b, c }, try list(app, app.frame.allocator()));
+    const Key = @import("../core/key.zig").Key;
+    const pty = @import("pty_pane.zig");
+    const Probe = struct {
+        fn tnormal(ap: *App) !*pty.PtyPane {
+            try ap.handle(.{ .key = Key.ctrl('x') });
+            const p = ap.panes.pty(ap.active.?).?;
+            try t.expect(p.term_normal);
+            return p;
+        }
+    };
+    f.focus(b);
+    // `]a`: one step on, from T-NORMAL.
+    _ = try Probe.tnormal(app);
+    try app.handle(.{ .key = Key.char(']') });
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expectEqual(c, app.active.?);
+    // `2[a`: two steps back, wrapping.
+    _ = try Probe.tnormal(app);
+    try app.handle(.{ .key = Key.char('2') });
+    try app.handle(.{ .key = Key.char('[') });
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expectEqual(a, app.active.?);
+    // `]x` is no pair: nothing steps and the pane stays in T-NORMAL;
+    // the `a` after it is terminal-normal's own again.
+    const p = try Probe.tnormal(app);
+    try app.handle(.{ .key = Key.char(']') });
+    try app.handle(.{ .key = Key.char('x') });
+    try t.expectEqual(a, app.active.?);
+    try t.expect(p.term_normal);
+    try app.handle(.{ .key = Key.char('a') });
+    try t.expect(!p.term_normal);
+    try t.expectEqual(a, app.active.?);
+}
+
 test "no session open: the step toasts so and leaves the focus where it was" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 20 });
     defer app.deinit();

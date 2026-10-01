@@ -184,6 +184,12 @@ pub const PtyPane = struct {
     ctrl_backslash_pending: bool = false,
     /// `Ctrl-W` in terminal-normal: the next key names the window verb.
     ctrl_w_pending: bool = false,
+    /// // changed (hunt5): `]` / `[` in terminal-normal, waiting for the
+    /// key that completes the pair (`]a` / `[a` step the session ring,
+    /// as in an editor's normal mode). `true` is `]`.
+    bracket_pending: ?bool = null,
+    /// A count typed in terminal-normal (`2]a`), consumed by the pair.
+    tn_count: u32 = 0,
     /// // changed (colors): the identity strip's colour — a palette name
     /// (`ui/accent_color.zig`): the user's pick, or the auto slot a new
     /// Claude session takes (Rust `PtySession.accent_color`). Owned;
@@ -1063,6 +1069,8 @@ pub fn escapeKey(app: *App, p: *PtyPane, k: Key) bool {
 fn enterTermNormal(app: *App, p: *PtyPane) void {
     p.term_normal = true;
     p.ctrl_w_pending = false;
+    p.bracket_pending = null;
+    p.tn_count = 0;
     app.needs_render = true;
 }
 
@@ -1082,7 +1090,46 @@ pub fn termNormalKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
         p.ctrl_w_pending = true;
         return true;
     }
-    if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    // `]a` / `[a` (with a count): the session ring, as an editor's
+    // normal mode has it. The bracket waits for its second key; any
+    // other second key cancels the pair, as Neovim does, rather than
+    // being read on its own (`a` would leave terminal-normal).
+    if (p.bracket_pending) |forward| {
+        p.bracket_pending = null;
+        const n = @max(p.tn_count, 1);
+        p.tn_count = 0;
+        const plain = !(k.mods.ctrl or k.mods.alt or k.mods.super);
+        if (plain and k.code == .char and k.code.char == 'a') {
+            const session_cycle = @import("session_cycle.zig");
+            var i: u32 = 0;
+            while (i < n) : (i += 1) session_cycle.step(app, if (forward) .next else .prev) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => break,
+            };
+        }
+        app.needs_render = true;
+        return true;
+    }
+    if (k.mods.ctrl or k.mods.alt or k.mods.super) {
+        p.tn_count = 0;
+        return false;
+    }
+    if (k.code == .char) switch (k.code.char) {
+        '1'...'9' => |d| {
+            p.tn_count = p.tn_count *| 10 +| (d - '0');
+            return true;
+        },
+        '0' => if (p.tn_count > 0) {
+            p.tn_count = p.tn_count *| 10;
+            return true;
+        },
+        ']', '[' => |c| {
+            p.bracket_pending = c == ']';
+            return true;
+        },
+        else => {},
+    };
+    p.tn_count = 0;
     switch (k.code) {
         .char => |c| switch (c) {
             'i', 'a', 'I', 'A' => {

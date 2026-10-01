@@ -93,6 +93,9 @@ the release ships one file), and one line per change a user can see.
 - Esc in Settings now puts the sidebar back too: a width previewed on the
   *Tree width* row no longer stays on screen after the cancel, and a width
   set by hand comes back.
+- Vim `]a` / `[a` (with a count) now step through the Claude Code and Codex
+  sessions from a terminal pane's T-NORMAL mode too, as they do from an
+  editor; before, `]` was dropped and the `a` went back to TERMINAL.
 
 ## v0.3.1
 
