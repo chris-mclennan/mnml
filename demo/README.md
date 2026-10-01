@@ -122,8 +122,8 @@ tarball at ~70 KB/s during this work.
   tour.
 - **An app bug the tour found:** opening the git status pane while a
   second tab page exists panics this build (`App.showPane`, reached
-  unreachable code, from `git.status_pane`). The runner's `reset` runs
-  `tab.only` first to stay clear of it; a visitor can still hit it.
+  unreachable code, from `git.status_pane`). The demo's `splits.flow` ends
+  with `tab.only` to stay clear of it; a visitor can still hit it.
 
 ## Rollback
 

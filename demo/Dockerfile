@@ -50,7 +50,8 @@ COPY vendor /src/vendor
 COPY lua /src/lua
 ARG MNML_VERSION=demo
 RUN zig build -Doptimize=ReleaseSafe -Dinstall-names -Dversion=${MNML_VERSION} --prefix /out \
-    && ls -la /out/bin /out/share/mnml/fonts
+    && ls -la /out/bin /out/share/mnml/fonts \
+    && rm -rf /src/.zig-cache /zig-global-cache/*
 
 # ── 2. the web fonts (JetBrains Mono, Symbols Nerd Font Mono, MnmlSymbols),
 #       ttyd, and the binaries stripped ──

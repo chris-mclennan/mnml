@@ -175,10 +175,6 @@ class Player:
         """Back to the start surface (the tour's own `reset`): overlays
         shut, every split and buffer closed, the explorer showing."""
         self.app.send({"cmd": "key", "key": "esc"}, {"cmd": "key", "key": "esc"})
-        # One tab page: the splits flow leaves a second, and the git status
-        # pane opened with two pages panics this build (App.showPane,
-        # `unreachable`) — reported with the trial; the reset dodges it.
-        self.app.send({"cmd": "run-command", "id": "tab.only"})
         self.sleep(150)
         for _ in range(8):
             if not self.app.status().get("panes"):

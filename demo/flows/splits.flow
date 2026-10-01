@@ -32,3 +32,9 @@ key enter
 wait 1000
 key alt+1
 wait 1200
+# Back to one tab page (demo only): the git status pane opened while a
+# second page exists panics this build (App.showPane, `unreachable`).
+# tab.only toasts "tab 1/1"; the toast is not part of the tour.
+run tab.only
+wait 200
+run toast.dismiss_all
