@@ -87,6 +87,9 @@ the release ships one file), and one line per change a user can see.
   width set by hand, and the moved sidebar's divider had no menu to move it
   back. The rail and the width now go with the sidebar, and either column's
   divider has a menu — the sidebar's offers *Move sidebar to the left*.
+- The sidebar divider's ticked *Auto-hide sidebar* row now unticks (back to
+  always shown) instead of setting auto-hide again, and right-clicking the
+  edge of a revealed auto-hide sidebar opens that same divider menu.
 
 ## v0.3.1
 

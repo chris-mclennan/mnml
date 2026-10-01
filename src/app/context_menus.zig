@@ -1471,7 +1471,9 @@ pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Reset width", .action = .{ .command = .@"view.reset_tree_width" } },
         .{ .label = "Set width…", .action = .{ .command = .@"view.set_tree_width" } },
         .{ .label = "Hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar_side == .left) .@"view.toggle_tree" else .@"view.toggle_right_panel" }, .separator_before = true },
-        .{ .label = "Auto-hide sidebar", .action = .{ .command = .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto },
+        // A ticked row unticks: checked, it puts the sidebar back to
+        // `always` rather than setting `auto` again.
+        .{ .label = "Auto-hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar == .auto) .@"view.sidebar_mode_always" else .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto },
         .{ .label = if (app.cfg.ui.sidebar_side == .left) "Move sidebar to the right" else "Move sidebar to the left", .action = .{ .command = .@"view.flip_sidebar_side" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -2734,6 +2736,39 @@ test "moving the sidebar right takes its rail, its width and its divider menu wi
     try t.expectEqual(@as(u16, 48), side.size(&app, .left));
     try app.render();
     try t.expectEqual(@as(u16, 0), render.frameRects(full, render.chrome(&app)).rail.x);
+}
+
+test "the divider menu's ticked Auto-hide row unticks, and a revealed auto-hide panel's edge opens that same divider menu" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.render();
+    try openTreeDividerMenu(&app, 5, 5);
+    try t.expect(!app.overlay.menu.items[3].checked);
+    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[3].action);
+    try t.expectEqual(Config.Sidebar.auto, app.cfg.ui.sidebar);
+    if (app.overlay == .menu) closeMenu(&app);
+    // Revealed, the panel's edge rule is its divider: a right-click
+    // there is the divider's menu, not the panel's mode menu.
+    const sidebar_auto = @import("sidebar_auto.zig");
+    sidebar_auto.reveal(&app, .left, true);
+    try app.render();
+    try app.render();
+    const render = @import("render.zig");
+    const full = @import("../ui/rect.zig").init(0, 0, 120, 40);
+    const geo = render.overlayRects(&app, render.frameRects(full, render.chrome(&app)).upper, .left);
+    try t.expect(!geo.edge.isEmpty());
+    try app.handle(.{ .mouse = .{ .x = geo.edge.x, .y = 10, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Sidebar divider", app.overlay.menu.title);
+    // The tick is on, and the ticked row puts the sidebar back.
+    try t.expect(app.overlay.menu.items[3].checked);
+    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[3].action);
+    try t.expectEqual(Config.Sidebar.always, app.cfg.ui.sidebar);
 }
 
 test "Set width… reads cells or a share, inside 10..80, and nothing else" {

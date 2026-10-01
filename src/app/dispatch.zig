@@ -2937,7 +2937,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     };
                 },
                 .edge_grip_dock => try runCmd(app, .@"view.dock_pin"),
-                .sidebar_overlay => if (m.button == .right) try context_menus.openSidebarModeMenu(app, m.x, m.y),
+                // // changed (hunt5): the revealed panel's edge rule is its
+                // divider, so a right-click there is the divider's menu
+                // (width, auto-hide, side) — the rest of the panel keeps
+                // the mode menu.
+                .sidebar_overlay => if (m.button == .right) {
+                    if (overlayEdgeSide(app, m.x, m.y)) |s| return context_menus.openColumnDividerMenu(app, s, m.x, m.y);
+                    try context_menus.openSidebarModeMenu(app, m.x, m.y);
+                },
                 .back => try runCmd(app, .@"buffer.prev"),
                 .forward => try runCmd(app, .@"buffer.next"),
                 .dropdown => try runCmd(app, .@"picker.recent"),
@@ -3530,6 +3537,17 @@ fn menuWheel(app: *App, menu_id: u32, down: bool, count: u16) void {
         },
     }
     app.needs_render = true;
+}
+
+/// The column whose revealed (auto-hide) panel has its edge rule under
+/// `x, y`, or null.
+fn overlayEdgeSide(app: *App, x: u16, y: u16) ?side.Side {
+    const open = app.sidebar_auto.open orelse return null;
+    const full = Rect.init(0, 0, @intCast(app.screen.width), @intCast(app.screen.height));
+    const upper = render.frameRects(full, render.chrome(app)).upper;
+    const geo = render.overlayRects(app, upper, open);
+    if (!geo.edge.contains(x, y)) return null;
+    return if (open == .left) .left else .right;
 }
 
 // ── gestures ──
