@@ -13,16 +13,22 @@
 //!
 //! An entry is ` ` + indent + connectors + chevron + icon + name, the
 //! git badge right-aligned (a cell of air between it, or a long name,
-//! and the scrollbar). The connectors are neo-tree's: every row below
-//! the top level, folder or file, carries two cells a level — for each
-//! ancestor level `│ ` while that ancestor has siblings still to come,
-//! else blank, and at its own level, under the parent's chevron, `│ `
-//! when a sibling follows or `└ ` on the last child. A file has no
-//! chevron; its slot is blank. The connectors are mnml's
+//! and the scrollbar). The connectors follow the Rust tree
+//! (`tree_connectors.rs`): two cells a level, and level one — the
+//! column under the top-level folders' chevrons — is always blank: no
+//! line drops from a top-level folder's chevron. From level two an ancestor
+//! level carries `│ ` while that ancestor has siblings still to come,
+//! else blank, and the row's own level carries `│ `. A file below the
+//! top level takes the line down from its parent's icon in its chevron
+//! slot: `│ ` while a sibling follows, `└ ` on the last child; a
+//! top-level file's slot is blank. A row too deep for the column folds
+//! its outermost levels into a `…` (`<` in ASCII), so the chevron, the
+//! icon and ~10 cells of name always fit. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
 //! shifted right so they meet the chevron above), painted in the
-//! trace colour (the palette's `comment` grey), the chevrons
-//! `expander.zig`'s pair in its colour, the file icons `icons.zig`.
+//! chevrons' colour (`expander.style`, `theme.muted.fg`) in every
+//! theme; ASCII draws `| ` and has no chevron slot. The chevrons are
+//! `expander.zig`'s pair, the file icons `icons.zig`.
 //! Every glyph has its `ui.ascii_icons` twin beside it. The cursor row
 //! carries the list panels' marker (`▌`, the accent when the tree has
 //! the keys, muted otherwise) in its leading cell — the cell that
@@ -371,15 +377,24 @@ pub fn isLastChild(items: []const Item, i: usize) bool {
     return !hasLaterSibling(items, i, items[i].entry.depth);
 }
 
+/// The two cells the entry at `i` paints at indent `level` (1 up to its
+/// depth) — the Rust tree's `compute_prefixes`. Level one is always
+/// blank: the top level draws no line. From level two an ancestor
+/// level carries `cont` while that ancestor has siblings still to come,
+/// and the row's own level always carries `cont` — never the corner;
+/// a file's corner is its chevron slot's.
+fn levelCells(items: []const Item, i: usize, level: u16, cont: []const u8) []const u8 {
+    if (level < 2) return "  ";
+    if (level >= items[i].entry.depth) return cont;
+    return if (hasLaterSibling(items, i, @intCast(level))) cont else "  ";
+}
+
 fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry, is_cursor: bool, p: Props) void {
     const t = ui.theme;
     const pal = t.palette;
     const rail_bg = pal.bg_darker;
     const lit = is_cursor and p.focused;
     const bg = if (is_cursor) (if (p.focused) pal.bg2 else pal.bg) else rail_bg;
-    // The comment grey, not bg2: at bg2 on the rail the lines sat at
-    // ~1.3:1 contrast (Rust's colour) and the user could not see them.
-    const trace = pal.comment;
     const w = r.w -| sb_w;
     ui.hit(Rect.init(r.x, r.y, w, 1), .{ .tree_node = e.idx });
     // The leading cell keeps the rail's ground so the highlight never
@@ -387,7 +402,8 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     ui.fill(Rect.init(r.x + 1, r.y, w -| 1, 1), Theme.onBg(t.fg, bg));
     var x = r.x + 1;
     const right = r.x + w;
-    const trace_style = Theme.onBg(Theme.withFg(t.fg, trace), bg);
+    // The lines take the chevrons' colour, so the two read as one trace.
+    const trace_style = expander.style(ui, Theme.onBg(t.fg, bg));
     const cont: []const u8 = if (ui.ascii) cont_ascii ++ " " else cont_glyph ++ " ";
     const corner: []const u8 = if (ui.ascii) corner_ascii ++ " " else corner_glyph ++ " ";
     // Indent: two cells under the root, then the ancestor levels. A row
@@ -398,22 +414,24 @@ fn drawEntry(ui: Ui, r: Rect, sb_w: u16, items: []const Item, i: usize, e: Entry
     const keep_levels: u8 = @intCast(@min(255, ((right -| x) -| (2 + 4 + 10)) / 2));
     const skip: u8 = e.depth -| keep_levels;
     x += ui.putStr(x, r.y, right -| x, if (skip > 0) (if (ui.ascii) "< " else "\u{2026} ") else "  ", trace_style);
-    // Every row below the top level carries its connectors (neo-tree's
-    // rule): a bar down each ancestor level whose folder has siblings
-    // still to come, then at the row's own level — under the parent's
-    // chevron — a bar when a sibling follows, the corner on the last.
+    // The Rust rule: blank at level one, a bar down each deeper
+    // ancestor level whose folder has siblings to come, a bar at the
+    // row's own level from level two. The row's own level is painted
+    // even when every outer level folded into the `…`.
     var level: u16 = @as(u16, skip) + 1;
     while (level < e.depth) : (level += 1) {
-        x += ui.putStr(x, r.y, right -| x, if (hasLaterSibling(items, i, @intCast(level))) cont else "  ", trace_style);
+        x += ui.putStr(x, r.y, right -| x, levelCells(items, i, level, cont), trace_style);
     }
-    if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, if (isLastChild(items, i)) corner else cont, trace_style);
-    // The chevron slot: a folder's expander in its own colour; a file
-    // has none, its connector already drawn.
+    if (e.depth >= 1) x += ui.putStr(x, r.y, right -| x, levelCells(items, i, e.depth, cont), trace_style);
+    // The chevron slot: a folder's expander; a file below the top level
+    // takes the line down from its parent's icon — `│` while a sibling
+    // follows, `└` on the last child. ASCII has no chevron slot.
     if (!ui.ascii) {
         if (e.is_dir) {
-            x += ui.putStr(x, r.y, right -| x, expander.slot(ui, e.expanded), expander.style(ui, Theme.onBg(t.fg, bg)));
+            x += ui.putStr(x, r.y, right -| x, expander.slot(ui, e.expanded), trace_style);
         } else {
-            x += ui.putStr(x, r.y, right -| x, "  ", trace_style);
+            const slot: []const u8 = if (e.depth >= 1) (if (isLastChild(items, i)) corner else cont) else "  ";
+            x += ui.putStr(x, r.y, right -| x, slot, trace_style);
         }
     }
     // The icon.
@@ -485,7 +503,7 @@ test "the spec's rows at 26 columns: header, chips at 17/20/23/26, icons, connec
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 1, .focused = true });
     try f.expectRow(0, " \u{F47C} /pri…      \u{EA80}  \u{EA7F}  \u{EB40}  \u{EB37}");
     try f.expectRow(1, "\u{258c}  \u{F47C} \u{F07C} src");
-    try f.expectRow(2, "   \u{F1F05}   \u{E68B} main.rs");
+    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
     try f.expectRow(3, "     \u{E702} .gitignore       ?");
     try f.expectRow(4, "     \u{E71E} package.json");
     try f.expectRow(5, "     \u{F00BA} README.md");
@@ -572,7 +590,69 @@ test "the label truncates to what the cluster leaves: five cells at 26, and neve
     try h.expectRow(1, " \u{F460} a-very-long-workspace…");
 }
 
-test "connectors: every row below the top level, folders and files alike — a bar down each ancestor level with siblings to come, a bar or the corner at its own level under the parent's chevron" {
+/// Test-only: a row's indent prefix, every level from one to its depth —
+/// the Rust tree's `compute_prefixes` output for that row.
+fn prefixOf(items: []const Item, i: usize, ascii: bool, buf: []u8) []const u8 {
+    const cont: []const u8 = if (ascii) cont_ascii ++ " " else cont_glyph ++ " ";
+    var n: usize = 0;
+    var level: u16 = 1;
+    while (level <= items[i].entry.depth) : (level += 1) {
+        const c = levelCells(items, i, level, cont);
+        @memcpy(buf[n..][0..c.len], c);
+        n += c.len;
+    }
+    return buf[0..n];
+}
+
+fn expectPrefixes(items: []const Item, ascii: bool, want: []const []const u8) !void {
+    for (want, 0..) |w, i| {
+        var buf: [64]u8 = undefined;
+        try testing.expectEqualStrings(w, prefixOf(items, i, ascii, &buf));
+    }
+}
+
+test "connectors, the Rust cases: no prefix at the root; level one blank, a lone child or siblings alike" {
+    try expectPrefixes(&.{ entry(0, "a", 0, false, false), entry(1, "b", 0, false, false) }, false, &.{ "", "" });
+    try expectPrefixes(&.{ entry(0, "parent", 0, true, true), entry(1, "only", 1, false, false) }, false, &.{ "", "  " });
+    try expectPrefixes(&.{ entry(0, "parent", 0, true, true), entry(1, "first", 1, false, false), entry(2, "second", 1, false, false) }, false, &.{ "", "  ", "  " });
+    // ASCII changes nothing at level one.
+    try expectPrefixes(&.{ entry(0, "parent", 0, true, true), entry(1, "first", 1, false, false), entry(2, "last", 1, false, false) }, true, &.{ "", "  ", "  " });
+}
+
+test "connectors, the Rust cases: depth two carries the bar at its own level, the last child too; the width is two cells a level" {
+    try expectPrefixes(&.{
+        entry(0, "parent", 0, true, true),
+        entry(1, "child", 1, true, true),
+        entry(2, "grand-a", 2, false, false),
+        entry(3, "grand-b", 2, false, false),
+    }, false, &.{ "", "  ", "  \u{F1F04} ", "  \u{F1F04} " });
+    const deep = [_]Item{
+        entry(0, "a", 0, true, true),
+        entry(1, "b", 1, true, true),
+        entry(2, "c1", 2, false, false),
+        entry(3, "c2", 2, true, true),
+        entry(4, "d", 3, false, false),
+    };
+    for (deep, 0..) |it, i| {
+        var buf: [64]u8 = undefined;
+        try testing.expectEqual(@as(usize, 2) * it.entry.depth, try std.unicode.utf8CountCodepoints(prefixOf(&deep, i, false, &buf)));
+    }
+}
+
+test "connectors, the Rust cases: an ancestor level whose folder has no siblings to come is blank" {
+    // parent-a > c1 > gc1, gc2 > ggc, then parent-b: gc2 is the last at
+    // depth two, so ggc's level two is blank and its own level the bar.
+    try expectPrefixes(&.{
+        entry(0, "parent-a", 0, true, true),
+        entry(1, "c1", 1, true, true),
+        entry(2, "gc1", 2, false, false),
+        entry(3, "gc2", 2, true, true),
+        entry(4, "ggc", 3, false, false),
+        entry(5, "parent-b", 0, true, true),
+    }, false, &.{ "", "  ", "  \u{F1F04} ", "  \u{F1F04} ", "    \u{F1F04} ", "" });
+}
+
+test "connectors painted: nothing under a top-level folder's chevron, a file's slot is the bar or the last child's corner, in the chevrons' grey" {
     const items = [_]Item{
         section(0, "/w/", true),
         entry(0, "a", 0, true, true),
@@ -588,16 +668,13 @@ test "connectors: every row below the top level, folders and files alike — a b
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &items });
     try f.expectRow(1, "   \u{F47C} \u{F07C} a");
-    try f.expectRow(2, "   \u{F1F04} \u{F47C} \u{F07C} b");
-    try f.expectRow(3, "   \u{F1F04} \u{F1F04}   \u{F15B} c1");
-    try f.expectRow(4, "   \u{F1F04} \u{F1F04} \u{F47C} \u{F07C} c2");
-    try f.expectRow(5, "   \u{F1F04} \u{F1F04} \u{F1F05}   \u{F15B} d");
-    try f.expectRow(6, "   \u{F1F04} \u{F1F05}   \u{F15B} c3");
-    try f.expectRow(7, "   \u{F1F05}   \u{F15B} e");
+    try f.expectRow(2, "     \u{F47C} \u{F07C} b");
+    try f.expectRow(3, "     \u{F1F04} \u{F1F04} \u{F15B} c1");
+    try f.expectRow(4, "     \u{F1F04} \u{F47C} \u{F07C} c2");
+    try f.expectRow(5, "     \u{F1F04} \u{F1F04} \u{F1F05} \u{F15B} d");
+    try f.expectRow(6, "     \u{F1F04} \u{F1F05} \u{F15B} c3");
+    try f.expectRow(7, "     \u{F1F05} \u{F15B} e");
     try f.expectRow(8, "     \u{F15B} f");
-    // The lines take the trace colour, the chevron keeps its own.
-    try testing.expect(vaxis.Color.eql(f.style(3, 5).fg, f.theme.palette.comment));
-    try testing.expect(vaxis.Color.eql(f.style(5, 5).fg, f.theme.palette.comment));
     // ASCII: no chevron slot, the folder triangles, the dot, `| ` bars.
     var g = try Fixture.init(30, 10);
     defer g.deinit();
@@ -606,11 +683,34 @@ test "connectors: every row below the top level, folders and files alike — a b
     _ = draw(ui, g.full(), .{ .items = &items });
     try g.expectRow(0, " v /w/         d+ f+ ↓  ↕  \u{21BA}");
     try g.expectRow(1, "   ▼ a");
-    try g.expectRow(2, "   | ▼ b");
-    try g.expectRow(3, "   | | · c1");
-    try g.expectRow(5, "   | | \\ · d");
-    try g.expectRow(7, "   \\ · e");
+    try g.expectRow(2, "     ▼ b");
+    try g.expectRow(3, "     | · c1");
+    try g.expectRow(5, "     | | · d");
+    try g.expectRow(7, "     · e");
     try g.expectRow(8, "   · f");
+}
+
+test "connectors take the chevrons' colour, the default theme and a light one alike, the cursor row too" {
+    const items = [_]Item{
+        section(0, "/w/", true),
+        entry(0, "a", 0, true, true),
+        entry(1, "b", 1, true, true),
+        entry(2, "c1", 2, false, false),
+        entry(3, "c2", 2, false, false),
+    };
+    inline for (.{ "onedark", "catppuccin-latte" }) |name| {
+        var f = try Fixture.init(30, 5);
+        defer f.deinit();
+        f.theme = Theme.byName(name).?.*;
+        _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 3, .focused = true });
+        const chevron = f.theme.muted.fg;
+        // b's chevron and c1's own-level bar, its slot's bar, c2's corner.
+        try testing.expect(vaxis.Color.eql(f.style(5, 2).fg, chevron));
+        try testing.expect(vaxis.Color.eql(f.style(5, 3).fg, chevron));
+        try testing.expect(vaxis.Color.eql(f.style(7, 3).fg, chevron));
+        try testing.expect(vaxis.Color.eql(f.style(7, 4).fg, chevron));
+        try testing.expectEqualStrings("\u{F1F05}", f.cell(7, 4).char.grapheme);
+    }
 }
 
 test "connectors: a row too deep for the column folds its outer levels into `…` and keeps its name, the kept levels still drawn" {
@@ -624,8 +724,9 @@ test "connectors: a row too deep for the column folds its outer levels into `…
     var buf: [256]u8 = undefined;
     const deepest = f.row(16, &buf);
     try testing.expect(std.mem.startsWith(u8, deepest, " \u{2026} "));
-    try testing.expect(std.mem.endsWith(u8, deepest, "\u{F1F05}   \u{E738} Main.java"));
-    try testing.expect(std.mem.indexOf(u8, deepest, " \u{F1F05} ") != null);
+    try testing.expect(std.mem.endsWith(u8, deepest, "\u{F1F04} \u{F1F05} \u{E738} Main.java"));
+    // Shallow rows keep the plain two-cell lead, no `…`.
+    try testing.expect(std.mem.startsWith(u8, f.row(3, &buf), "     \u{F1F04} \u{F47C}"));
 }
 
 test "badges: M / A / ? / ! right-aligned, the unsaved dot beating git, a repo row in orange with its marker" {
@@ -764,7 +865,7 @@ test "the cursor row's marker: the list panels' bar in the leading cell, the acc
     var f = try Fixture.init(26, 10);
     defer f.deinit();
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 2, .focused = true });
-    try f.expectRow(2, "\u{258c}  \u{F1F05}   \u{E68B} main.rs");
+    try f.expectRow(2, "\u{258c}    \u{F1F05} \u{E68B} main.rs");
     try f.expectRow(1, "   \u{F47C} \u{F07C} src");
     try testing.expectEqualStrings(list_panel.marker_glyph, f.cell(0, 2).char.grapheme);
     try testing.expect(vaxis.Color.eql(f.style(0, 2).fg, f.theme.accent.fg));
@@ -779,7 +880,7 @@ test "the cursor row's marker: the list panels' bar in the leading cell, the acc
     // On a section header, and only there.
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items, .cursor = 7, .focused = true });
     try f.expectRow(7, "\u{258c}\u{F460} mixr");
-    try f.expectRow(2, "   \u{F1F05}   \u{E68B} main.rs");
+    try f.expectRow(2, "     \u{F1F05} \u{E68B} main.rs");
     // No cursor: no marker anywhere; ascii has its twin.
     _ = draw(f.ui(), f.full(), .{ .items = &fixture_items });
     var y: u16 = 0;
