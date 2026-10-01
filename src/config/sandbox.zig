@@ -45,6 +45,7 @@ const Allocator = std.mem.Allocator;
 const Map = std.process.Environ.Map;
 const os_path = @import("../core/os_path.zig");
 const demo = @import("demo.zig");
+const data_root_mod = @import("data_root.zig");
 
 pub const flag = "--sandbox";
 pub const keep_flag = "--sandbox-keep";
@@ -272,9 +273,12 @@ pub fn enter(arena: Allocator, io: Io, env: *Map, args: []const []const u8, err_
         try err_w.print("mnml: --sandbox: cannot find this binary: {s}\n", .{@errorName(err)});
         return 70;
     };
+    // The data root this run would have used: where the Marketplace put
+    // the integrations `--demo` opens, found again from inside the sandbox.
+    const host_data_root: ?[]const u8 = if (is_demo) try data_root_mod.dataRoot(arena, io, .{ .vars = env, .exe_dir = std.fs.path.dirname(exe) }) else null;
     const extra: Extra = if (is_demo) .{
         .workspace = demo.workspace_name,
-        .set = try demo.extraSet(arena, root, env.get("PATH")),
+        .set = try demo.extraSet(arena, root, env.get("PATH"), host_data_root),
         .unset = &demo.unset,
     } else .{};
     const p = try plan(arena, exe, args, root, getpid(), takes_value, extra);

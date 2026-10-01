@@ -139,7 +139,15 @@ pub fn main(init: std.process.Init) !u8 {
         }
     }
     defer if (demo_note) |n| gpa.free(n);
-    for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) return headlessSubcommand(gpa, io, env, args[1..], w);
+    for (args[1..]) |a| if (std.mem.eql(u8, a, "--headless")) {
+        // Headless has no first frame to toast on: the demo's note,
+        // with what it skipped and where it looked, goes to stderr.
+        if (demo_note) |n| {
+            err_w.print("mnml: {s}\n", .{n}) catch {};
+            err_w.flush() catch {};
+        }
+        return headlessSubcommand(gpa, io, env, args[1..], w);
+    };
     return terminalMain(gpa, io, env, args[1..], w);
 }
 
