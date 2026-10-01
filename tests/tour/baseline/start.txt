@@ -40,7 +40,7 @@
    │                                    │                                                                                   Ctrl+N         new file
    │                                    │                                                                                   Ctrl+Q         quit
    │                                    │
-   │                                    │                                                                   mnml 0.3.0-dev+gabd6de27
+   │                                    │                                                                   mnml 0.3.1-dev+gafb0650b
    │                                    │
    │                                    │
    │                                    │
@@ -55,6 +55,6 @@
    │ opens the selection. Ctrl+Shift+P  │
    │ opens the palette.                 │
   │                                    │
-   │                                    │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                       󱸀 95% 52%  󱼀 󰐎    16:56  ws   —
-                                                                                                   ⋯
+   │                                    │                                                          ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                       󱸀 95% 52%  󱼀 󰐎    03:16  ws   —
+

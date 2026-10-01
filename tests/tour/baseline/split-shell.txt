@@ -55,6 +55,6 @@
    │ [Ctrl+W] Close.                    │▌                                                                              │▌
    │                                    │▌                                                                              │▌
   │                                    │▌                                                                              │▌
-   │                                    │▌                                                                              │▌
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    16:56  ws   —
-                                                                                                   ⋯
+   │                                    │▌                                                         ⋯                    │▌
+ VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 95% 52%  󱼀 󰐎  LSP?    03:16  ws   —
+

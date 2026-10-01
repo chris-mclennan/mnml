@@ -55,6 +55,6 @@
    │ opens the selection. Ctrl+Shift+P  │
    │ opens the palette.                 │
   │                                    │
-   │                                    │
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  16:57  ws   —
-                                                                                                   ⋯
+   │                                    │                                                          ⋯
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  03:17  ws   —
+
