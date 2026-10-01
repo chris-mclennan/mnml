@@ -824,6 +824,8 @@ pub fn discover(app: *App) Allocator.Error!void {
             st.next_id += 1;
             break :blk r;
         };
+        // A workspace switch makes another root the workspace.
+        r.is_workspace_root = f.root;
         errdefer if (kept == null) r.destroy(app.io);
         try fresh.append(gpa, r);
     }
@@ -973,6 +975,12 @@ pub fn requireRepo(app: *App) CommandError!*client.Repo {
 /// Make `idx` the active repo: the rail, the statusline and the gutter
 /// follow; the status pane retargets.
 pub fn switchTo(app: *App, idx: usize) CommandError!void {
+    return switchToHow(app, idx, true);
+}
+
+/// `switchTo`, with or without its `active repo →` toast — a workspace
+/// switch says what it opened once, in its own words.
+pub fn switchToHow(app: *App, idx: usize, say: bool) CommandError!void {
     const st = &app.git;
     if (idx >= st.repos.items.len) return;
     const was = st.active;
@@ -987,8 +995,20 @@ pub fn switchTo(app: *App, idx: usize) CommandError!void {
             else => {},
         };
         try requestStatus(app);
-        app.toast("active repo → {s}", .{r.name});
+        if (say) app.toast("active repo → {s}", .{r.name});
     }
+    app.needs_render = true;
+}
+
+/// No repo is active: a workspace switch landed on a folder with none.
+/// The statusline's branch goes; `requireRepo` walks up from the new
+/// workspace the next time a git command asks.
+pub fn clearActive(app: *App) void {
+    const st = &app.git;
+    if (st.active == null) return;
+    parkRail(app, st.active);
+    st.active = null;
+    clearStatus(app);
     app.needs_render = true;
 }
 

@@ -192,7 +192,7 @@ pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
     };
     if (r - 1 < app.tree.roots.items.len) return .{
         .title = try std.fmt.allocPrint(arena, "Workspace: {s}", .{app.tree.roots.items[r - 1].name}),
-        .body = "An extra workspace root from `workspaces` in config.zon, as a second section of the tree. Click to open or fold its tree; `view.switch_workspace` makes it the one open, with its own session and `.mnml/`. Its files open like any other; git follows the repo they are in.",
+        .body = "Another workspace root — from `workspaces` in config.zon, *Add workspace*, or the workspace a switch left — as a section of the tree. Click to open or fold its tree; `view.switch_workspace` (or its `○`) makes it the workspace: the title, the statusline, git and `Ctrl+P` follow it, and the session is saved in its `.mnml/`. Its files open like any other; git follows the repo they are in.",
         .keys = &.{ .{ .chord = "Enter", .label = "Open / fold the section" }, .{ .command = .@"view.switch_workspace", .label = "Make it the workspace" } },
         .links = &.{ .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch to it" } }, .{ .command = .{ .id = .@"view.remove_workspace", .label = "Remove a root" } } },
     };
@@ -203,8 +203,8 @@ pub fn root(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
 pub fn dot(app: *App, arena: Allocator, r: u8) Allocator.Error!?Entry {
     const name = if (r == 0) std.fs.path.basename(app.workspace) else if (r - 1 < app.tree.roots.items.len) app.tree.roots.items[r - 1].name else return null;
     return .{
-        .title = try std.fmt.allocPrint(arena, "{s} workspace: {s}", .{ if (app.tree.active_root == r) "Active" else "Inactive", name }),
-        .body = "The green `●` marks the active workspace — the section the tree keeps open; a grey `○` is another root. Click a `○` to make that root the active one: its section opens, the others fold, and the cursor lands on its header. Files open and git follows the repo they are in, as anywhere in the tree. `ui.show_workspace_dots` turns the dots off.",
+        .title = try std.fmt.allocPrint(arena, "{s} workspace: {s}", .{ if (r == 0) "Active" else "Inactive", name }),
+        .body = "The green `●` marks the active workspace — the one mnml works on; a grey `○` is another root. Click a `○` to switch to it: the title, the statusline's folder and branch, git and `Ctrl+P` follow it, its section opens and the others fold. The sections keep their order — only the dot moves — and a click on the old one's `○` switches back. `ui.show_workspace_dots` turns the dots off.",
         .keys = &.{ .{ .chord = "Right-click", .label = "The workspace menu" }, .{ .command = .@"view.switch_workspace", .label = "Pick the active workspace" } },
         .links = &.{ .{ .command = .{ .id = .@"view.switch_workspace", .label = "Switch workspace" } }, .{ .command = .{ .id = .@"view.toggle_workspace_dots", .label = "Hide the dots" } } },
     };

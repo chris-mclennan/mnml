@@ -165,10 +165,15 @@ pub const Tree = struct {
     roots_synced: bool = false,
     /// The primary section's fold, once there are headers.
     primary_expanded: bool = true,
-    /// The active workspace — the section `switchTo` last made the one
-    /// open (0 the primary, i + 1 the i-th extra root). Its header
-    /// carries the `●` (`ui.show_workspace_dots`); the others `○`.
-    active_root: u8 = 0,
+    /// Where the primary's section sits among the sections: 0 first,
+    /// i after the i-th extra root. A switch to another root makes it
+    /// the primary in place (`swapPrimary`), so the sections keep their
+    /// order and only the `●` — always the primary's — moves.
+    primary_slot: u8 = 0,
+    /// The name the primary had as an extra root (`cfg.workspaces`' or
+    /// the folder's), given back when a switch makes it an extra again.
+    /// Owned; null for the launch workspace.
+    primary_name: ?[]u8 = null,
     cursor: usize = 0,
     scroll: usize = 0,
     loaded: bool = false,
@@ -195,6 +200,7 @@ pub const Tree = struct {
             self.gpa.free(r.path);
         }
         self.roots.deinit(self.gpa);
+        if (self.primary_name) |n| self.gpa.free(n);
     }
 
     /// `cfg.workspaces` → `roots`, once. A path is expanded (`~`) and
@@ -261,20 +267,68 @@ pub const Tree = struct {
         return null;
     }
 
-    /// `view.switch_workspace`'s pick: `idx` becomes the active
-    /// workspace — it opens, every other root folds, the cursor lands on
-    /// its header and its header takes the `●`.
+    /// `view.switch_workspace`'s pick, the `○` and *Switch to this
+    /// workspace*: root `idx` becomes the workspace
+    /// (`workspace_switch.promote` — the title, the statusline, git and
+    /// `Ctrl+P` follow it); its section opens, every other root folds,
+    /// the cursor lands on its header and the header has the `●`.
     pub fn switchTo(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
         if (idx > self.roots.items.len) return;
-        self.active_root = @intCast(idx);
-        self.primary_expanded = idx == 0;
-        for (self.roots.items, 0..) |*r, i| r.expanded = i + 1 == idx;
+        if (idx != 0) try @import("workspace_switch.zig").promote(app, idx);
+        self.primary_expanded = true;
+        for (self.roots.items) |*r| r.expanded = false;
         try self.refresh(app);
-        if (self.headerRow(idx)) |row| self.cursor = row;
+        if (self.headerRow(0)) |row| self.cursor = row;
         if (app.activeBuffer()) |b| b.input.onBlur();
         self.visible = true;
         app.focus = .tree;
         app.needs_render = true;
+    }
+
+    /// The section slot (0 = top) root `r` paints at: the primary at
+    /// `primary_slot`, the extra roots around it in `roots` order.
+    pub fn slotOf(self: *const Tree, r: usize) usize {
+        if (r == 0) return self.primary_slot;
+        return if (r - 1 < self.primary_slot) r - 1 else r;
+    }
+
+    /// Extra root `idx` takes the primary's place and the primary takes
+    /// its slot (Rust `promote_to_primary_workspace`): the sections keep
+    /// their order. Returns the root's path, owned, which the caller
+    /// makes `app.workspace`; `old_ws` (the workspace until now) becomes
+    /// an extra root of its own. The folds go with their sections — the
+    /// primary's are workspace-relative and an extra's absolute, so each
+    /// side's keys change spelling. Every allocation happens before the
+    /// first change, so a failure leaves the tree as it was.
+    pub fn swapPrimary(self: *Tree, idx: usize, old_ws: []const u8) Allocator.Error![]u8 {
+        const gpa = self.gpa;
+        std.debug.assert(idx >= 1 and idx <= self.roots.items.len);
+        const at = idx - 1;
+        const target = self.roots.items[at];
+        const d = self.slotOf(idx);
+        const p: usize = self.primary_slot;
+        const base = std.fs.path.basename(old_ws);
+        const demoted_name = self.primary_name orelse try gpa.dupe(u8, if (base.len > 0) base else old_ws);
+        errdefer if (self.primary_name == null) gpa.free(demoted_name);
+        const demoted_path = try gpa.dupe(u8, old_ws);
+        errdefer gpa.free(demoted_path);
+        var expanded = try swapKeys(gpa, &self.expanded, old_ws, target.path);
+        errdefer freeKeys(gpa, &expanded);
+        var seen = try swapKeys(gpa, &self.seen_top, old_ws, target.path);
+        errdefer freeKeys(gpa, &seen);
+        try self.roots.ensureUnusedCapacity(gpa, 1);
+        // Committed from here: nothing below allocates.
+        freeKeys(gpa, &self.expanded);
+        self.expanded = expanded;
+        freeKeys(gpa, &self.seen_top);
+        self.seen_top = seen;
+        _ = self.roots.orderedRemove(at);
+        self.roots.insertAssumeCapacity(if (p < d) p else p - 1, .{ .name = demoted_name, .path = demoted_path });
+        self.primary_name = target.name;
+        self.primary_slot = @intCast(d);
+        self.in_repo = null;
+        self.loaded = false;
+        return target.path;
     }
 
     /// `view.remove_workspace`'s pick: extra root `idx` (0-based into
@@ -282,14 +336,9 @@ pub const Tree = struct {
     /// read again and the cursor stays in range.
     pub fn removeRoot(self: *Tree, app: *App, idx: usize) Allocator.Error!void {
         if (idx >= self.roots.items.len) return;
+        // A root above the primary's section moves it up a slot.
+        if (idx < self.primary_slot) self.primary_slot -= 1;
         const gone = self.roots.orderedRemove(idx);
-        // The active root's index follows the roots after it down;
-        // removing the active one hands the dot back to the primary, and
-        // the primary opens: the `●` does not land on a folded section.
-        if (self.active_root == idx + 1) {
-            self.active_root = 0;
-            self.primary_expanded = true;
-        } else if (self.active_root > idx + 1) self.active_root -= 1;
         defer {
             self.gpa.free(gone.name);
             self.gpa.free(gone.path);
@@ -436,16 +485,23 @@ pub const Tree = struct {
     /// absolute paths.
     fn refreshRoots(self: *Tree, app: *App) Allocator.Error!void {
         const gpa = self.gpa;
-        try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, ""), .depth = 0, .is_dir = true, .root = 0, .header = true });
-        if (self.primary_expanded) {
-            try self.listInto(app, "", 1, 0);
-            if (try self.openNewTopDirs(1)) {
-                self.clearRows();
+        // Section by section in slot order: the primary at
+        // `primary_slot`, the extra roots around it.
+        for (0..self.roots.items.len + 1) |slot| {
+            if (slot == self.primary_slot) {
                 try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, ""), .depth = 0, .is_dir = true, .root = 0, .header = true });
+                if (!self.primary_expanded) continue;
+                const start = self.rows.items.len;
                 try self.listInto(app, "", 1, 0);
+                if (try self.openNewTopDirs(1)) {
+                    for (self.rows.items[start..]) |r| gpa.free(r.rel);
+                    self.rows.shrinkRetainingCapacity(start);
+                    try self.listInto(app, "", 1, 0);
+                }
+                continue;
             }
-        }
-        for (self.roots.items, 0..) |r, i| {
+            const i = if (slot < self.primary_slot) slot else slot - 1;
+            const r = self.roots.items[i];
             try self.rows.append(gpa, .{ .rel = try gpa.dupe(u8, r.path), .depth = 0, .is_dir = true, .root = @intCast(i + 1), .header = true });
             if (r.expanded) try self.listInto(app, r.path, 1, @intCast(i + 1));
         }
@@ -924,7 +980,8 @@ pub const Tree = struct {
             .expanded = self.primary_expanded,
             .italic = self.show_hidden,
             .fully_collapsed = self.isFullyCollapsed(),
-            .active = self.active_root == 0,
+            // The `●` is the primary's: a switch makes a root the primary.
+            .active = true,
         };
         if (!multi) try items.append(arena, .{ .section = primary });
         for (self.rows.items, 0..) |row, i| {
@@ -935,7 +992,6 @@ pub const Tree = struct {
                     .root = row.root,
                     .label = self.roots.items[row.root - 1].name,
                     .expanded = self.roots.items[row.root - 1].expanded,
-                    .active = self.active_root == row.root,
                 };
                 try items.append(arena, .{ .section = section });
                 continue;
@@ -1193,6 +1249,39 @@ pub fn previewTooHeavy(app: *App, abs: []const u8) Allocator.Error!?[]const u8 {
 pub fn underRoot(base: []const u8, path: []const u8) ?[]const u8 {
     if (path.len > base.len + 1 and std.mem.startsWith(u8, path, base) and std.fs.path.isSep(path[base.len])) return path[base.len + 1 ..];
     return null;
+}
+
+const KeySet = std.StringHashMapUnmanaged(void);
+
+/// `set` respelled for a primary swap, as a new set (owned keys): a
+/// workspace-relative key (the old primary's) becomes absolute under
+/// `old_ws`; an absolute one under `new_ws` (the promoted root's)
+/// becomes relative to it; any other stays as it is.
+fn swapKeys(gpa: Allocator, set: *const KeySet, old_ws: []const u8, new_ws: []const u8) Allocator.Error!KeySet {
+    var out: KeySet = .empty;
+    errdefer freeKeys(gpa, &out);
+    var it = set.keyIterator();
+    while (it.next()) |k| {
+        const key = if (!std.fs.path.isAbsolute(k.*)) blk: {
+            const joined = try std.fs.path.join(gpa, &.{ old_ws, k.* });
+            if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, joined, '/', '\\');
+            break :blk joined;
+        } else if (underRoot(new_ws, k.*)) |rel| blk: {
+            const owned = try gpa.dupe(u8, rel);
+            if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, owned, '\\', '/');
+            break :blk owned;
+        } else try gpa.dupe(u8, k.*);
+        errdefer gpa.free(key);
+        const gop = try out.getOrPut(gpa, key);
+        if (gop.found_existing) gpa.free(key);
+    }
+    return out;
+}
+
+fn freeKeys(gpa: Allocator, set: *KeySet) void {
+    var it = set.keyIterator();
+    while (it.next()) |k| gpa.free(k.*);
+    set.deinit(gpa);
 }
 
 /// `path` with Windows' own separator throughout (itself elsewhere).
@@ -2387,14 +2476,20 @@ test "multi-root: view.add_workspace prompts, Tab completes a directory segment 
     try acceptAddWorkspace(&app, "inner");
     try t.expectEqual(@as(usize, 2), app.tree.roots.items.len);
     try t.expect(sdk_testing.pathEndsWith(app.tree.roots.items[1].path, "/ws/inner"));
-    // view.switch_workspace lists primary + both roots; picking the second opens it.
+    // view.switch_workspace lists primary + both roots; picking the
+    // second makes it the workspace, open, in its own slot: `ws` takes
+    // its place in the list and the sections keep their order.
     try command.run(&app, .{ .static = .@"view.switch_workspace" });
     try t.expect(app.overlay == .picker);
     try t.expectEqual(@as(usize, 3), app.overlay.picker.labels.len);
     try app.overlay.picker.on_accept.?(&app, 2, "inner");
-    try t.expect(app.tree.roots.items[1].expanded);
+    try t.expect(sdk_testing.pathEndsWith(app.workspace, "/ws/inner"));
+    try t.expectEqualStrings(ws, app.tree.roots.items[0].path);
+    try t.expectEqualStrings("alpha", app.tree.roots.items[1].name);
+    try t.expectEqual(@as(u8, 2), app.tree.primary_slot);
+    try t.expect(app.tree.primary_expanded);
     try t.expect(!app.tree.roots.items[0].expanded);
-    try t.expect(!app.tree.primary_expanded);
+    try t.expect(!app.tree.roots.items[1].expanded);
 }
 
 fn settleTransfers(app: *App) !void {
@@ -2616,12 +2711,15 @@ test "view.remove_workspace lists the extra roots, the pick drops that one with 
     try t.expect(app.tree.rowOf(sub) == null);
     try t.expect(app.tree.cursor < app.tree.rows.items.len);
     try t.expect(std.mem.startsWith(u8, app.lastToast().?, "workspace removed: one"));
-    // The active root goes: the `●` is the primary's again, and the
-    // primary opens rather than staying folded under it.
+    // A switch to `two` makes it the workspace and `ws` the extra root
+    // in its slot; removing that root leaves the one section, open.
     try app.tree.switchTo(&app, 1);
-    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqualStrings(two, app.workspace);
+    try t.expectEqualStrings(ws, app.tree.roots.items[0].path);
+    try t.expectEqual(@as(u8, 1), app.tree.primary_slot);
     try app.tree.removeRoot(&app, 0);
-    try t.expectEqual(@as(@TypeOf(app.tree.active_root), 0), app.tree.active_root);
+    try t.expectEqual(@as(usize, 0), app.tree.roots.items.len);
+    try t.expectEqual(@as(u8, 0), app.tree.primary_slot);
     try t.expect(app.tree.primary_expanded);
 }
 
@@ -2644,20 +2742,25 @@ test "view.open_default_workspace adds and opens the configured folder, switches
     defer t.allocator.free(proj);
     app.cfg.startup.default_workspace = proj;
     try command.run(&app, .{ .static = .@"view.open_default_workspace" });
+    // Added and switched to: it is the workspace, `ws` the extra root.
     try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
-    try t.expect(app.tree.roots.items[0].expanded);
-    try t.expect(!app.tree.primary_expanded);
+    try t.expectEqualStrings(proj, app.workspace);
+    try t.expectEqualStrings(ws, app.tree.roots.items[0].path);
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(!app.tree.roots.items[0].expanded);
     try t.expectEqual(app_mod.FocusId.tree, app.focus);
-    // Open already: no second root, just the switch.
-    app.tree.primary_expanded = true;
-    app.tree.roots.items[0].expanded = false;
+    // The workspace already: no second root, its section opens again.
+    app.tree.primary_expanded = false;
     try command.run(&app, .{ .static = .@"view.open_default_workspace" });
     try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
-    try t.expect(app.tree.roots.items[0].expanded);
-    // The workspace itself: the primary section.
+    try t.expectEqualStrings(proj, app.workspace);
+    try t.expect(app.tree.primary_expanded);
+    // An extra root: switched back to.
     app.cfg.startup.default_workspace = ws;
     try command.run(&app, .{ .static = .@"view.open_default_workspace" });
     try t.expectEqual(@as(usize, 1), app.tree.roots.items.len);
+    try t.expectEqualStrings(ws, app.workspace);
+    try t.expectEqualStrings(proj, app.tree.roots.items[0].path);
     try t.expect(app.tree.primary_expanded);
     try t.expect(!app.tree.roots.items[0].expanded);
     // A folder that is not there.
@@ -2684,10 +2787,12 @@ test "view.manage_workspaces opens the home config on its .workspaces line and s
     try t.expectEqualStrings("workspaces are the `.workspaces` list in config.zon", app.lastToast().?);
 }
 
-test "the workspace dot: a press on a root's `○` makes it the active workspace — it opens, the others fold, the `●` moves to it; removing it hands the dot back" {
+test "the workspace dot: a press on a root's `○` switches to it — the `●` moves, the sections stay where they were; its `○` switches back" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();
     app.cfg.ui.show_workspace_dots = true;
+    const launch = try t.allocator.dupe(u8, app.workspace);
+    defer t.allocator.free(launch);
     const extra = try std.fs.path.join(t.allocator, &.{ app.workspace, "extra" });
     defer t.allocator.free(extra);
     try std.Io.Dir.cwd().createDirPath(t.io, extra);
@@ -2701,30 +2806,43 @@ test "the workspace dot: a press on a root's `○` makes it the active workspace
         }
     };
     // Both headers carry a dot, the primary's green `●`, the extra's `○`.
-    try t.expectEqual(@as(u8, 0), app.tree.active_root);
+    const top = Hit.of(&app, .{ .tree_root_dot = 0 }).?;
     const dot = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
     try t.expectEqual(@as(u16, 2), dot.w);
     try t.expectEqualStrings("○", app.screen.readCell(dot.x, dot.y).?.char.grapheme);
-    try t.expectEqualStrings("●", app.screen.readCell(Hit.of(&app, .{ .tree_root_dot = 0 }).?.x, Hit.of(&app, .{ .tree_root_dot = 0 }).?.y).?.char.grapheme);
-    // A press on the extra's dot: it is the active workspace now.
+    try t.expectEqualStrings("●", app.screen.readCell(top.x, top.y).?.char.grapheme);
+    // A press on the extra's dot: it is the workspace now, open, with
+    // the cursor on its header and the keys in the tree.
     try app.handle(.{ .mouse = .{ .x = dot.x, .y = dot.y, .kind = .press, .button = .left } });
-    try t.expectEqual(@as(u8, 1), app.tree.active_root);
-    try t.expect(app.tree.roots.items[0].expanded);
-    try t.expect(!app.tree.primary_expanded);
-    try t.expectEqual(app.tree.headerRow(1).?, app.tree.cursor);
+    try t.expectEqualStrings(extra, app.workspace);
+    try t.expectEqualStrings(launch, app.tree.roots.items[0].path);
+    try t.expect(app.tree.primary_expanded);
+    try t.expect(!app.tree.roots.items[0].expanded);
+    try t.expectEqual(app.tree.headerRow(0).?, app.tree.cursor);
     try t.expectEqual(app_mod.FocusId.tree, app.focus);
+    try t.expectEqualStrings("workspace opened: sibling", app.lastToast().?);
     try app.render();
-    const moved = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
-    try t.expectEqualStrings("●", app.screen.readCell(moved.x, moved.y).?.char.grapheme);
-    try t.expect(@import("vaxis").Color.eql(app.screen.readCell(moved.x, moved.y).?.style.fg, app.theme.palette.green));
-    const primary = Hit.of(&app, .{ .tree_root_dot = 0 }).?;
-    try t.expectEqualStrings("○", app.screen.readCell(primary.x, primary.y).?.char.grapheme);
-    // A press elsewhere on the header still folds, without moving the dot.
+    // The old workspace's section is still on top, folded, now with a
+    // `○`; the `●` is on the extra's header below it — the order held.
+    const old_dot = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
+    const new_dot = Hit.of(&app, .{ .tree_root_dot = 0 }).?;
+    try t.expectEqual(top.y, old_dot.y);
+    try t.expect(new_dot.y > old_dot.y);
+    try t.expectEqualStrings("○", app.screen.readCell(old_dot.x, old_dot.y).?.char.grapheme);
+    try t.expectEqualStrings("●", app.screen.readCell(new_dot.x, new_dot.y).?.char.grapheme);
+    try t.expect(@import("vaxis").Color.eql(app.screen.readCell(new_dot.x, new_dot.y).?.style.fg, app.theme.palette.green));
+    // A press elsewhere on a header still folds, without a switch.
     const header = Hit.of(&app, .{ .tree_root = 1 }).?;
     try app.handle(.{ .mouse = .{ .x = header.x + 8, .y = header.y, .kind = .press, .button = .left } });
-    try t.expect(!app.tree.roots.items[0].expanded);
-    try t.expectEqual(@as(u8, 1), app.tree.active_root);
-    // Removing the active root hands the dot back to the primary.
-    try app.tree.removeRoot(&app, 0);
-    try t.expectEqual(@as(u8, 0), app.tree.active_root);
+    try t.expect(app.tree.roots.items[0].expanded);
+    try t.expectEqualStrings(extra, app.workspace);
+    // The old workspace's `○` switches back: everything as it was,
+    // the extra's own name with it.
+    try app.render();
+    const back = Hit.of(&app, .{ .tree_root_dot = 1 }).?;
+    try app.handle(.{ .mouse = .{ .x = back.x, .y = back.y, .kind = .press, .button = .left } });
+    try t.expectEqualStrings(launch, app.workspace);
+    try t.expectEqualStrings(extra, app.tree.roots.items[0].path);
+    try t.expectEqualStrings("sibling", app.tree.roots.items[0].name);
+    try t.expectEqual(@as(u8, 0), app.tree.primary_slot);
 }
