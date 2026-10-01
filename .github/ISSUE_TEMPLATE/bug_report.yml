@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in mnml does the wrong thing, crashes or looks broken.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. A bug that comes with a `.test` script is
+        usually fixed fastest, because the script becomes the regression test.
+        Please leave out anything from your day job — real ticket keys, hosts,
+        company or colleague names. A made-up file reproduces just as well.
+  - type: input
+    id: version
+    attributes:
+      label: mnml version
+      description: The output of `mnml --version`.
+      placeholder: "mnml 0.3.1"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and terminal
+      description: Operating system and version, the terminal emulator and its version, and whether you run inside tmux or similar.
+      placeholder: "macOS 26.0, ghostty 1.2.0, no tmux"
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Keymap profile
+      options:
+        - vim
+        - standard
+        - not sure / does not matter
+    validations:
+      required: false
+  - type: textarea
+    id: test-script
+    attributes:
+      label: Steps as a `.test` script (if you can)
+      description: |
+        The `.test` format is a few lines — `write`, `open`, `key`, `type`, then
+        `expect screen | status | file | dirty | pane` — and `mnml test FILE`
+        runs it headlessly. See [The `.test` oracle](https://github.com/chris-mclennan/mnml#the-test-oracle)
+        and the scripts in `tests/e2e/` for examples. Skip this if plain steps are easier.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce (plain)
+      description: What you did, key by key or click by click, starting from launch.
+      placeholder: |
+        1. mnml --input vim ~/some/project
+        2. open src/main.zig
+        3. press `v` then `y`
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened instead. Paste any panic message or error toast in full.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: A screenshot of the window, or the text of the screen. Drag an image in to attach it.
+    validations:
+      required: false

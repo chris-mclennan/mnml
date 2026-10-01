@@ -1,0 +1,38 @@
+name: Feature request
+description: Something mnml could do that it does not do yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open-ended ideas and "would it make sense to…" questions fit better in
+        [Discussions → Ideas](https://github.com/chris-mclennan/mnml/discussions/categories/ideas).
+        An issue is for a concrete change.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were trying to do, and where mnml got in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour you have in mind — a command, a key, a pane, a setting. Say whether it is for the vim profile, the standard one, or both.
+    validations:
+      required: true
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: How Neovim / NvChad, VS Code or another tool does it, if one does.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives
+      description: Anything you do today instead, including an `init.lua` snippet or an integration.
+    validations:
+      required: false
