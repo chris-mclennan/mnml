@@ -42,6 +42,9 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- In `--demo`, a Jira ticket's merged pull request no longer shows
+  "BITBUCKET_ACCESS_TOKEN not set": the Jira pane reads its pipelines from
+  the offline Bitbucket with that server's own token.
 - `jira_work.refresh`, `bitbucket_prs.refresh` and any other `term` line of
   an integration installed from the Marketplace, a local folder or the demo
   said the program was "not on PATH": they looked only on PATH, while the

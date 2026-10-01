@@ -1838,6 +1838,7 @@ On top of the sandbox's variables the re-exec sets these, and drops
 | `PATH` | `<root>/demo/bin` first — the stand-in `claude` and `codex` |
 | `JIRA_BASE_URL` / `BITBUCKET_BASE_URL` | `@<root>/demo/jira.url` / `@<root>/demo/bb.url`, the fakes' URL files |
 | `JIRA_API_TOKEN` / `BITBUCKET_API_TOKEN` | the fakes' own tokens |
+| `BITBUCKET_ACCESS_TOKEN` | the Bitbucket fake's token again — the name the Jira pane's linked pull requests read (your real one is dropped first) |
 | `JIRA_RATELIMIT_STATE` / `BITBUCKET_RATELIMIT_STATE` | files under `<root>/demo/` |
 | `MNML_NO_UPDATE_CHECK` | `1` |
 | `MNML_OPEN_URL` | `none` — a link opens nothing |
