@@ -350,6 +350,9 @@ pub const rows = [_]RowSpec{
     .{ .path = "ai.routing.claude.backend", .label = "Claude backend", .section = .ai, .scope = .home },
     .{ .path = "ai.routing.codex.backend", .label = "Codex backend", .section = .ai, .scope = .home },
     .{ .path = "ai.claude_meter_mode", .label = "Claude meter", .section = .ai, .scope = .home },
+    // The sessions mode's columns (`app/sessions_mode.zig`); the AI
+    // chips' *Show side by side* submenu sets the same key.
+    .{ .path = "ai.session_columns", .label = "Sessions side by side", .section = .ai, .scope = .home, .number = .{ .min = config.Config.session_columns_min, .max = config.Config.session_columns_max, .step = 1 } },
     // A session that needs you, or ends: the desktop notification and
     // the bell that rides with it (`sessions.notifySession`). `ui.`
     // keys in the AI section: they are about sessions, which is where

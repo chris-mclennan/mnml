@@ -285,6 +285,7 @@ pub fn normalize(arena: Allocator, cfg: *Config, diags: *Diagnostics, home: ?[]c
     cfg.ai.suggest_idle_ms = std.math.clamp(cfg.ai.suggest_idle_ms, Config.suggest_idle_ms_min, Config.suggest_idle_ms_max);
     cfg.ai.suggest_timeout_ms = std.math.clamp(cfg.ai.suggest_timeout_ms, Config.suggest_timeout_ms_min, Config.suggest_timeout_ms_max);
     cfg.ai.cli_timeout_ms = std.math.clamp(cfg.ai.cli_timeout_ms, Config.cli_timeout_ms_min, Config.cli_timeout_ms_max);
+    cfg.ai.session_columns = std.math.clamp(cfg.ai.session_columns, Config.session_columns_min, Config.session_columns_max);
     if (cfg.ui.tree_width != 0) cfg.ui.tree_width = std.math.clamp(cfg.ui.tree_width, Config.tree_width_min, Config.tree_width_max);
     cfg.ui.focus_follows_mouse_delay_ms = @min(cfg.ui.focus_follows_mouse_delay_ms, Config.focus_follows_mouse_delay_ms_max);
     cfg.ui.hover_help_grace_ms = @min(cfg.ui.hover_help_grace_ms, Config.hover_help_grace_ms_max);
