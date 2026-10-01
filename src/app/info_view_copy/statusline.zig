@@ -181,6 +181,10 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
             .title = "sandbox? — NOT isolated",
             .body = "`MNML_SANDBOX` says this is a sandbox, but `HOME` is not a throwaway directory or the data root lies outside it, so this session CAN read and write your real config and state. Quit, and launch with `mnml --sandbox` from a normal shell: it makes a fresh temp home and re-runs itself inside it. Click toasts the HOME and data root in play.",
             .links = &.{ comptime copy.docsSection("Sandbox"), ask },
+        } else if (app.demoActive()) .{
+            .title = "demo",
+            .body = "A `--demo` run: a `--sandbox` (a fresh `mnml-sandbox-*` home under the temp root, so nothing here reaches your real config, sessions or credentials) with a sample Zig workspace in it, `tour`, with its git history. Its Jira and Bitbucket panes talk to offline servers on this machine, and its Claude Code and Codex are stand-ins on `PATH` — no model runs, no network is used. The model keys and Bitbucket tokens in your environment were dropped. On exit the servers stop and the whole directory is removed (`--sandbox-keep` keeps it). Click toasts where it is.",
+            .links = &.{ comptime copy.docsSection("Sandbox"), ask },
         } else .{
             .title = "sandbox",
             .body = "A `--sandbox` run: `HOME`, `XDG_CONFIG_HOME` and the data root are a fresh `mnml-sandbox-*` directory under the temp root, so this is what a brand-new user sees and nothing here reaches your real config, sessions or credentials — nor does anything a shell pane or an integration started from here does. The session is neither restored nor autosaved, and the running-instance marker is left to your real mnml. The directory is removed when this mnml exits (`--sandbox-keep` keeps it). Click toasts where it is.",

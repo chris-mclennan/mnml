@@ -42,6 +42,8 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- Hovering the ` demo ` chip describes the demo in the info panel, not a
+  plain `--sandbox`.
 - In `--demo`, a Jira ticket's merged pull request no longer shows
   "BITBUCKET_ACCESS_TOKEN not set": the Jira pane reads its pipelines from
   the offline Bitbucket with that server's own token.
