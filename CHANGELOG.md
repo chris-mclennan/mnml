@@ -42,6 +42,9 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- In the demo's shell, `claude` and `codex` are the stand-ins even where a
+  login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
+  `PATH`, so a real CLI installed there is not the one that answers.
 - Hovering the ` demo ` chip describes the demo in the info panel, not a
   plain `--sandbox`.
 - In `--demo`, a Jira ticket's merged pull request no longer shows

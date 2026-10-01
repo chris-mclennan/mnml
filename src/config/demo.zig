@@ -329,13 +329,25 @@ pub fn plantSessions(gpa: Allocator, io: Io, home: []const u8, ws: []const u8) !
     }
 }
 
+/// The stand-ins first on a login shell's PATH (`seedHome`).
+pub const zsh_path_line = "# mnml --demo: the stand-in claude and codex first, whatever the login profile did\n" ++
+    "typeset -U path; path=(\"$HOME/" ++ state_dir ++ "/bin\" $path)\n";
+pub const sh_path_line = "# mnml --demo: the stand-in claude and codex first, whatever the login profile did\n" ++
+    "PATH=\"$HOME/" ++ state_dir ++ "/bin:$PATH\"; export PATH\n";
+
 /// The throwaway home: `root` is HOME, `data_root` mnml's state in it.
 pub fn seedHome(io: Io, root: []const u8, data_root: []const u8) !void {
     try write(io, data_root, "config.zon", data.home_config);
     try write(io, data_root, "init.lua", data.init_lua);
     try write(io, data_root, "integrations/jira/config.zon", data.jira_config);
     try write(io, data_root, "integrations/bitbucket/config.zon", data.bitbucket_config);
-    try write(io, root, ".zshrc", data.zshrc);
+    // A login shell's profile (macOS's `path_helper`) puts the system's
+    // directories back in front of the stand-ins; the shell's own rc
+    // runs after it and puts them first again, so a real `claude` in
+    // `/usr/local/bin` never answers in the demo's shell.
+    try write(io, root, ".zshrc", data.zshrc ++ "\n" ++ zsh_path_line);
+    try write(io, root, ".bash_profile", sh_path_line);
+    try write(io, root, ".profile", sh_path_line);
     // The one-time ghost-text tip is not what a demo is about.
     try write(io, root, ".config/mnml/ghost-text-hint-shown", "");
     try writeExe(io, root, state_dir ++ "/bin/claude", data.claude_shim);
@@ -712,6 +724,45 @@ test "demo: the shim on PATH: the re-exec's PATH finds the stand-in claude, whic
     });
     try t.expect(std.mem.indexOf(u8, out.stdout, "Both tests pass.") != null);
     try t.expect(std.mem.indexOf(u8, out.stdout, "no model runs") != null);
+}
+
+fn shellAvailable(name: []const u8) bool {
+    const r = std.process.run(t.allocator, t.io, .{ .argv = &.{ "/bin/sh", "-c", "command -v \"$0\"", name } }) catch return false;
+    t.allocator.free(r.stdout);
+    t.allocator.free(r.stderr);
+    return r.term == .exited and r.term.exited == 0;
+}
+
+test "demo: a login shell in the demo finds the stand-in claude even when its profile puts the system's directories first" {
+    if (comptime !supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const root = try arena.dupe(u8, buf[0..n]);
+    try seedHome(t.io, root, try std.fs.path.join(arena, &.{ root, "xdg", "mnml" }));
+    // A "real" claude in a system directory, ahead of the stand-ins — the
+    // order macOS's path_helper leaves a login shell with.
+    try writeExe(t.io, root, "usr-local-bin/claude", "#!/bin/sh\necho real\n");
+    const sys = try std.fs.path.join(arena, &.{ root, "usr-local-bin" });
+    const shims = try std.fs.path.join(arena, &.{ root, state_dir, "bin" });
+    var env: Map = .init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", root);
+    try env.put("PATH", try std.fmt.allocPrint(arena, "{s}:/usr/bin:/bin:{s}", .{ sys, shims }));
+    const want = try std.fmt.allocPrint(arena, "{s}/claude\n", .{shims});
+    var ran: usize = 0;
+    // zsh reads ~/.zshrc after the login profile; bash a login ~/.bash_profile.
+    for ([_][]const []const u8{ &.{ "zsh", "-f", "-c", "source ~/.zshrc; command -v claude" }, &.{ "bash", "--noprofile", "--norc", "-c", ". ~/.bash_profile; command -v claude" }, &.{ "sh", "-c", ". ~/.profile; command -v claude" } }) |argv| {
+        if (!shellAvailable(argv[0])) continue;
+        const r = try std.process.run(arena, t.io, .{ .argv = argv, .environ_map = &env, .cwd = .{ .path = root } });
+        try t.expectEqualStrings(want, r.stdout);
+        ran += 1;
+    }
+    if (ran == 0) return error.SkipZigTest;
 }
 
 test "demo: the first toast names what was skipped, and only that, and where it looked" {
