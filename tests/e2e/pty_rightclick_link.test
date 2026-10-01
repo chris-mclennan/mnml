@@ -1,0 +1,21 @@
+# sizes: all
+# Right-click on a link in a terminal pane: "Copy link" and "Open link"
+# sit above "Copy" (a right-click makes no selection, so Copy alone had
+# nothing to copy). Copy link puts the whole URL on the clipboard.
+write a.txt "\n"
+command view.toggle_tree
+ex term sh -c 'printf "see https://example.com/a/b. here\n"; sleep 30'
+wait 1200
+expect screen contains "see https://example.com/a/b. here"
+rightclick 12 2
+wait 200
+expect screen contains "Copy link"
+expect screen contains "Open link"
+key enter
+wait 200
+expect screen contains "link copied"
+open a.txt
+command editor.use_vim
+type "p"
+expect screen contains "https://example.com/a/b"
+expect screen lacks "https://example.com/a/b."

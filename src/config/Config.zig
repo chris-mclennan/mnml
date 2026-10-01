@@ -770,6 +770,13 @@ pub const Ui = struct {
     /// asks only when something is unsaved. `:q!` / `:qa!`, the IPC
     /// `quit` and `restart` never ask either way.
     confirm_quit: bool = true,
+    /// A terminal pane copies a mouse selection the moment the button
+    /// comes up (ghostty's `copy-on-select`), and Ctrl+C over a
+    /// selection then only lets it go. `false`: a drag only selects,
+    /// and Ctrl+C over a selection is the copy. Either way Ctrl+C over a
+    /// selection sends the child nothing; with no selection it is the
+    /// child's interrupt.
+    copy_on_select: bool = true,
     first_launch_complete: bool = false,
     /// The once-per-data-root notice about a 0.2 `config.toml` beside a
     /// missing `config.zon` — a file mnml-zig never reads

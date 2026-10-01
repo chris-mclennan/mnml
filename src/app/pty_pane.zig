@@ -1294,6 +1294,26 @@ pub fn linkAt(p: *PtyPane, x: u16, y: u16) ?[]const u8 {
     return page.hyperlink_set.get(page.memory, id).uri.slice(page.memory);
 }
 
+/// The link under screen cell (`x`, `y`): an OSC 8 hyperlink the child
+/// printed (`linkAt`), else a plain `scheme://…` URL in the row's text —
+/// what `cat` of a log or a README leaves on screen. On `arena`.
+pub fn linkUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?[]const u8 {
+    if (linkAt(p, x, y)) |url| return try arena.dupe(u8, url);
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    const session = p.session orelse return null;
+    const screen = session.terminal().screens.active;
+    const pin = pinAt(p, x, y) orelse return null;
+    const line = screen.selectLine(.{ .pin = pin, .whitespace = null }) orelse return null;
+    const text = try screen.selectionString(arena, .{ .sel = line, .trim = false });
+    // The row's text starts at the pane's left edge; the column is a
+    // byte offset there for ASCII rows (a URL is ASCII).
+    const col: usize = x - b.x;
+    const left = line.topLeft(screen).x;
+    if (col < left) return null;
+    return @import("lsp_decor.zig").urlAt(text, col - left);
+}
+
 // ─── selection ──────────────────────────────────────────────────────────
 
 /// A cell rectangle on the screen.
@@ -1420,7 +1440,48 @@ pub fn selectRelease(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!voi
     if (p.select == null) return;
     try selectDrag(app, p, x, y);
     endGesture(p);
-    _ = try copySelection(app, p);
+    if (app.cfg.ui.copy_on_select) _ = try copySelection(app, p);
+}
+
+/// Ctrl+Shift+V and Shift+Insert paste the clipboard into the child, as
+/// ghostty, xterm and VS Code's terminal do; Ctrl+V stays the child's
+/// (^V — Claude Code's image paste, the shell's literal-next). True when
+/// it took the key.
+pub fn pasteKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
+    if (k.mods.alt or k.mods.super) return false;
+    const is_paste = switch (k.code) {
+        .insert => k.mods.shift and !k.mods.ctrl,
+        .char => |c| k.mods.ctrl and ((k.mods.shift and (c == 'v' or c == 'V')) or (!k.mods.shift and c == 'V')),
+        else => false,
+    };
+    if (!is_paste) return false;
+    const text = app.clipboard.text();
+    if (text.len == 0) {
+        app.toast("the clipboard is empty", .{});
+        return true;
+    }
+    try paste(app, p, text);
+    return true;
+}
+
+/// Ctrl+C (or Ctrl+Shift+C) over a selection is the selection's, never
+/// the child's: it copies — unless `ui.copy_on_select` already did on
+/// the release (Ctrl+Shift+C, the explicit copy, copies either way) —
+/// lets the selection go and sends nothing. True when it took the key;
+/// with no selection Ctrl+C goes on to the child as its interrupt.
+pub fn selectionCopyKey(app: *App, p: *PtyPane, k: Key) Allocator.Error!bool {
+    if (!k.mods.ctrl or k.mods.alt or k.mods.super) return false;
+    const c: u21 = switch (k.code) {
+        .char => |c| c,
+        else => return false,
+    };
+    if (c != 'c' and c != 'C') return false;
+    if (!hasSelection(p)) return false;
+    const explicit = k.mods.shift or c == 'C';
+    if (explicit or !app.cfg.ui.copy_on_select) _ = try copySelection(app, p);
+    clearSelection(p);
+    app.needs_render = true;
+    return true;
 }
 
 /// The selection's text to the clipboard: the unnamed register (a `p`
@@ -1537,7 +1598,10 @@ fn encodeKeyInto(w: *Io.Writer, k: Key, enc: Encoding) Io.Writer.Error!void {
                 else => unreachable,
             };
             if (mp != 1) return w.print("\x1b[1;{d}{c}", .{ mp, final });
-            if (enc.cursor_keys_app) return w.print("\x1bO{c}", .{final});
+            // DECCKM's `ESC O` form is the legacy encoding's; under the
+            // kitty protocol an arrow, Home or End is always `CSI`
+            // (ghostty's `key_encode.kitty`), whatever DECCKM says.
+            if (enc.cursor_keys_app and !enc.kitty) return w.print("\x1bO{c}", .{final});
             try w.print("\x1b[{c}", .{final});
         },
         .insert, .delete, .page_up, .page_down => {
@@ -1658,6 +1722,42 @@ test "legacy key encoding: text, control bytes, alt prefix, arrows with and with
     try t.expectEqualStrings("\x1b[15~", encoded(Key.named(.{ .f = 5 }), .{}));
     try t.expectEqualStrings("\x1b[24;5~", encoded(.{ .code = .{ .f = 12 }, .mods = .{ .ctrl = true } }, .{}));
     try t.expectEqualStrings("", encoded(Key.named(.{ .f = 13 }), .{}));
+}
+
+test "the navigation keys reach the child as ghostty itself would send them, in every mode the child can ask for" {
+    // PageUp / PageDown / Home / End, the arrows, Insert / Delete, bare and
+    // with each modifier, against libghostty-vt's own encoder — the oracle
+    // for "what does this child expect". Legacy, DECCKM, and the kitty
+    // protocol with and without DECCKM (a child that turns both on gets
+    // `CSI H`, not `ESC O H`).
+    const gi = pty.vt.input;
+    const Pair = struct { m: key_mod.KeyCode, g: gi.Key };
+    const keys = [_]Pair{
+        .{ .m = .page_up, .g = .page_up }, .{ .m = .page_down, .g = .page_down }, .{ .m = .home, .g = .home },
+        .{ .m = .end, .g = .end },         .{ .m = .up, .g = .arrow_up },         .{ .m = .down, .g = .arrow_down },
+        .{ .m = .left, .g = .arrow_left }, .{ .m = .right, .g = .arrow_right },   .{ .m = .insert, .g = .insert },
+        .{ .m = .delete, .g = .delete },
+    };
+    const modsets = [_]key_mod.Mods{ .{}, .{ .shift = true }, .{ .ctrl = true }, .{ .alt = true }, .{ .ctrl = true, .shift = true }, .{ .ctrl = true, .alt = true } };
+    const Mode = struct { enc: Encoding, opts: gi.KeyEncodeOptions };
+    const modes = [_]Mode{
+        .{ .enc = .{}, .opts = .{} },
+        .{ .enc = .{ .cursor_keys_app = true }, .opts = .{ .cursor_key_application = true } },
+        .{ .enc = .{ .kitty = true }, .opts = .{ .kitty_flags = .{ .disambiguate = true } } },
+        .{ .enc = .{ .kitty = true, .cursor_keys_app = true }, .opts = .{ .cursor_key_application = true, .kitty_flags = .{ .disambiguate = true } } },
+        .{ .enc = .{ .kitty = true }, .opts = .{ .kitty_flags = .{ .disambiguate = true, .report_alternates = true, .report_all = true, .report_associated = true } } },
+    };
+    for (modes) |md| for (keys) |kp| for (modsets) |ms| {
+        var mine_buf: [16]u8 = undefined;
+        const mine = encodeKey(.{ .code = kp.m, .mods = ms }, md.enc, &mine_buf);
+        var theirs_buf: [64]u8 = undefined;
+        var w: Io.Writer = .fixed(&theirs_buf);
+        try gi.encodeKey(&w, .{ .key = kp.g, .mods = .{ .shift = ms.shift, .ctrl = ms.ctrl, .alt = ms.alt } }, md.opts);
+        t.expectEqualStrings(w.buffered(), mine) catch |err| {
+            std.debug.print("{t} {any} kitty={} decckm={}\n", .{ kp.m, ms, md.enc.kitty, md.enc.cursor_keys_app });
+            return err;
+        };
+    };
 }
 
 test "kitty key encoding: CSI u for modified and ambiguous keys, plain text stays text" {
@@ -1929,6 +2029,176 @@ test "keys reach the child: typed text and ctrl+d end a cat that echoes back" {
     try app.handle(.{ .key = Key.ctrl('d') });
     try t.expect(try tickUntilScreen(&app, "[exited 0]", 5000));
     try t.expect(app.panes.pty(id).?.exit.?.ok());
+}
+
+test "PageUp / PageDown / Home / End and their Ctrl forms reach the child in both profiles; Shift+ them stay the pane's scrollback" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.tree.visible = false;
+        try app.setInputStyle(style);
+        _ = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon; echo ready; cat -v" }, .label = "catv" });
+        try t.expect(try tickUntilScreen(&app, "ready", 5000));
+        for ([_]Key{
+            Key.named(.page_up),                               Key.named(.page_down),
+            Key.named(.home),                                  Key.named(.end),
+            .{ .code = .home, .mods = .{ .ctrl = true } },     .{ .code = .end, .mods = .{ .ctrl = true } },
+            .{ .code = .page_up, .mods = .{ .shift = true } }, .{ .code = .home, .mods = .{ .shift = true } },
+        }) |k| try app.handle(.{ .key = k });
+        try app.handle(.{ .key = Key.named(.enter) });
+        // The Shift forms scrolled mnml's view and sent nothing.
+        try t.expect(try tickUntilScreen(&app, "▌^[[5~^[[6~^[[H^[[F^[[1;5H^[[1;5F ", 5000));
+    }
+}
+
+/// A `cat -v` child with a line to select: the key tests below read what
+/// reached it back off the screen.
+fn openSelectable(app: *App, style: @import("../input/mod.zig").Style) !*PtyPane {
+    app.tree.visible = false;
+    try app.setInputStyle(style);
+    const id = try open(app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon -isig; echo 'ready SELECTME'; cat -v" }, .label = "sel" });
+    try t.expect(try tickUntilScreen(app, "ready SELECTME", 5000));
+    return app.panes.pty(id).?;
+}
+
+/// Tick until the child has read everything typed so far: a Ctrl+C
+/// discards input the child has not read yet (`Session.interrupt`), so a
+/// key sequence that must arrive whole waits for each key to land.
+fn drained(app: *App, p: *PtyPane) !void {
+    var waited: u32 = 0;
+    while (waited <= 5000) : (waited += 5) {
+        try app.tick(App.nowMs(app.io));
+        if (p.session.?.pendingInput() == 0) return;
+        app.io.sleep(.fromMilliseconds(5), .awake) catch {};
+    }
+    return error.TestUnexpectedResult;
+}
+
+/// Drag across `SELECTME` (cells 6..13 of the child's first line).
+fn dragSelectMe(app: *App, p: *PtyPane) !void {
+    const b = p.body;
+    for ([_]struct { x: u16, kind: key_mod.MouseKind }{ .{ .x = 6, .kind = .press }, .{ .x = 13, .kind = .drag }, .{ .x = 13, .kind = .release } }) |ev|
+        try app.handle(.{ .mouse = .{ .x = b.x + ev.x, .y = b.y, .kind = ev.kind, .button = .left } });
+}
+
+test "Ctrl+C over a selection, copy on select ON: the release copied, Ctrl+C lets the selection go and sends nothing; with none it is ^C" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        try t.expect(app.cfg.ui.copy_on_select);
+        const p = try openSelectable(&app, style);
+        try dragSelectMe(&app, p);
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        try t.expect(hasSelection(p));
+        try app.clipboard.setYank("elsewhere", false);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try t.expect(!hasSelection(p));
+        // Not copied a second time: the clipboard keeps what came after.
+        try t.expectEqualStrings("elsewhere", app.clipboard.text());
+        try app.handle(.{ .key = Key.char('a') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('b') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        // Only the second Ctrl+C reached the child, as 0x03 (`cat -v`'s ^C).
+        try t.expect(try tickUntilScreen(&app, "▌a^Cb ", 5000));
+    }
+}
+
+test "Ctrl+C over a selection, copy on select OFF: the release only selects, Ctrl+C copies, lets go and sends nothing; Ctrl+Shift+C copies too" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.cfg.ui.copy_on_select = false;
+        const p = try openSelectable(&app, style);
+        try app.clipboard.setYank("before", false);
+        try dragSelectMe(&app, p);
+        try t.expect(hasSelection(p));
+        try t.expectEqualStrings("before", app.clipboard.text());
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try t.expect(!hasSelection(p));
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        // Ctrl+Shift+C is the explicit copy: it copies over a selection
+        // whatever the setting, and sends nothing either.
+        try app.clipboard.setYank("before", false);
+        try dragSelectMe(&app, p);
+        try app.handle(.{ .key = .{ .code = .{ .char = 'c' }, .mods = .{ .ctrl = true, .shift = true } } });
+        try t.expect(!hasSelection(p));
+        try t.expectEqualStrings("SELECTME", app.clipboard.text());
+        try app.handle(.{ .key = Key.char('a') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('c') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('b') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        try t.expect(try tickUntilScreen(&app, "▌a^Cb ", 5000));
+    }
+}
+
+test "paste in a terminal pane, both profiles: Ctrl+Shift+V and Shift+Insert paste the clipboard, Ctrl+V is the child's ^V" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    for ([_]@import("../input/mod.zig").Style{ .vim, .standard }) |style| {
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+        defer app.deinit();
+        app.tree.visible = false;
+        try app.setInputStyle(style);
+        // -iexten: the tty's literal-next would eat the ^V.
+        const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon -isig -iexten; echo ready; cat -v" }, .label = "paste" });
+        try t.expect(try tickUntilScreen(&app, "ready", 5000));
+        const p = app.panes.pty(id).?;
+        try app.clipboard.setYank("PASTED", false);
+        try app.handle(.{ .key = .{ .code = .{ .char = 'v' }, .mods = .{ .ctrl = true, .shift = true } } });
+        try drained(&app, p);
+        try app.handle(.{ .key = .{ .code = .insert, .mods = .{ .shift = true } } });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.ctrl('v') });
+        try drained(&app, p);
+        try app.handle(.{ .key = Key.char('q') });
+        try app.handle(.{ .key = Key.named(.enter) });
+        try t.expect(try tickUntilScreen(&app, "▌PASTEDPASTED^Vq ", 5000));
+    }
+}
+
+test "right-click on a link in a terminal pane: Copy link and Open link above Copy; Copy link puts the URL on the clipboard; off a link the menu starts at Copy" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'see https://example.com/a/b. here\n'; sleep 30" }, .label = "link" });
+    try t.expect(try tickUntilScreen(&app, "see https://example.com", 5000));
+    const p = app.panes.pty(id).?;
+    const b = p.body;
+    // Cell 10 is inside the URL; the trailing `.` is not part of it.
+    try app.handle(.{ .mouse = .{ .x = b.x + 10, .y = b.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    const its = app.overlay.menu.items;
+    try t.expectEqualStrings("Copy link", its[0].label);
+    try t.expectEqualStrings("https://example.com/a/b", its[0].action.copy_link);
+    try t.expectEqualStrings("Open link", its[1].label);
+    try t.expectEqualStrings("https://example.com/a/b", its[1].action.open_url);
+    try t.expectEqualStrings("Copy", its[2].label);
+    try @import("dispatch.zig").runMenuActionForTest(&app, its[0].action);
+    try t.expect(app.overlay == .none);
+    try t.expectEqualStrings("https://example.com/a/b", app.clipboard.text());
+    try t.expectEqualStrings("link copied", app.lastToast().?);
+    // On `see`: no link rows.
+    try app.handle(.{ .mouse = .{ .x = b.x + 1, .y = b.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("Copy", app.overlay.menu.items[0].label);
 }
 
 test "vim: <C-\\><C-n> leaves the child for terminal-normal, where the leader and Ctrl-W work and i returns; <C-x> too; a lone <C-\\> reaches the child" {

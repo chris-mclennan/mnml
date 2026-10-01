@@ -706,6 +706,9 @@ pub const MenuAction = union(enum) {
     /// position, a language name (Rust `CopyPath` / `CopyText`). The
     /// menu's `mem` arena or a static owns the bytes.
     copy_text: []const u8,
+    /// // right-click: a link under the pointer to the clipboard — a
+    /// terminal pane's *Copy link* (toast "link copied").
+    copy_link: []const u8,
     /// // right-click: a web URL for the external browser (Rust `OpenUrl`).
     open_url: []const u8,
     /// // right-click: a path to open — a file in a buffer, a directory

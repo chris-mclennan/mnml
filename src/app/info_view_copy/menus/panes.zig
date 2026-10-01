@@ -435,6 +435,16 @@ pub const rows = [_]Row{
     // ── a terminal pane's body (`openPtyPaneMenu`, titled by the
     // pane's own name). Clear, Restart, Rename…, Color and Equalize
     // splits are written where the tab menu's rows are ──
+    .{ .label = "Copy link", .kind = .copy_link, .entry = .{
+        .title = "Copy link",
+        .body = "Shown when the right-click lands on a link — one the program printed as a hyperlink, or a plain `https://…` in the output. Copies the whole URL to the clipboard (the register a `p` in an editor pastes, and the system clipboard), wherever on it the click landed.",
+        .links = &.{.{ .command = .{ .id = .@"term.paste", .label = "Paste it back" } }},
+    } },
+    .{ .label = "Open link", .kind = .open_url, .entry = .{
+        .title = "Open link",
+        .body = "Shown when the right-click lands on a link. Opens the URL in the OS browser — what Ctrl+click (Cmd+click) on the link does.",
+        .links = &.{.{ .command = .{ .id = .@"term.copy", .label = "Copy the selection instead" } }},
+    } },
     .{ .label = "Copy", .command = .@"term.copy", .entry = .{
         .title = "Copy",
         .body = "Copies the text selected in the terminal to the clipboard — the register a `p` in an editor pastes, and the system clipboard. Drag across the output to select it, double-click for a word or a path, triple-click for the line; a release copies on its own, so this row is for copying the same selection again. Hold Shift to select in a program that takes the mouse. Nothing selected says so.",

@@ -706,6 +706,8 @@ fn ptyKey(app: *App, id: PaneId, p: *pty_pane.PtyPane, k: Key) Allocator.Error!v
         return;
     }
     if (pty_pane.escapeKey(app, p, k)) return;
+    if (try pty_pane.selectionCopyKey(app, p, k)) return;
+    if (try pty_pane.pasteKey(app, p, k)) return;
     if (modified and !pty_pane.childOwned(k)) {
         if (try pty_search.findChord(app, id, p, k)) return;
         const bound = app.keymap.resolveSeq(&.{Chord.of(k)}) != .none;
@@ -1355,7 +1357,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     // right-click: a string-carrying row's bytes belong to the menu's
     // own arena, which the close frees — copy them out first.
     const text: ?[]const u8 = switch (action) {
-        .copy_text, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
+        .copy_text, .copy_link, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
         .claude_account => |c| try app.frame.allocator().dupe(u8, c.name),
         else => null,
     };
@@ -1446,6 +1448,10 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .copy_text => {
             try app.clipboard.set(text.?, false);
             app.toast("copied {s}", .{text.?});
+        },
+        .copy_link => {
+            try app.clipboard.set(text.?, false);
+            app.toast("link copied", .{});
         },
         .open_url => git_app.openExternal(app, text.?),
         // The chip's own service, so the view opens on the requests

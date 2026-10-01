@@ -212,7 +212,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .script_list_refresh => if (ascii) "@" else "\u{f021}", // fa-refresh
         .script_section_show => if (ascii) "L" else "\u{f08b1}", // nf-md-language_lua
         // right-click: the four string-carrying actions.
-        .copy_text => if (ascii) "y" else "\u{f0c5}", // fa-copy
+        .copy_text, .copy_link => if (ascii) "y" else "\u{f0c5}", // fa-copy
         .open_url => if (ascii) "w" else "\u{f0ac}", // fa-globe
         .open_path => if (ascii) "o" else "\u{f07c}", // fa-folder_open
         // colors: a `Color: …` row, the theme pill's brush.

@@ -49,6 +49,23 @@ the release ships one file), and one line per change a user can see.
 
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
+- Right-click on a link in a terminal or session pane offers "Copy link" and
+  "Open link" above "Copy" (a right-click selects nothing, so Copy had
+  nothing to copy); a hyperlink the program printed or a plain `https://…`
+  in the output both count.
+- Ctrl+Shift+V and Shift+Insert paste the clipboard into a terminal pane in
+  both profiles (Shift+Insert used to send the program a raw key); plain
+  Ctrl+V stays the program's (Claude Code's image paste).
+- Ctrl+C over a selection in a terminal or session pane no longer reaches the
+  program too: the selection was already copied, so Ctrl+C only clears it and
+  the program hears nothing. With nothing selected Ctrl+C is still the
+  program's own ^C. Both keymap profiles.
+- New `ui.copy_on_select` (Settings: "Terminal copy on select", on by
+  default): off, a drag in a terminal pane only selects and Ctrl+C over the
+  selection is what copies it. Ctrl+Shift+C copies a selection either way.
+- A program that turns on both the kitty keyboard protocol and application
+  cursor keys gets arrows, Home and End as `CSI` sequences, as ghostty sends
+  them, instead of the `ESC O` form.
 - `:only` (`view.only`) no longer crashes when gathering the other splits
   empties one of them first — reachable when a pane was tabbed in two
   splits at once.
