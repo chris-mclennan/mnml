@@ -1206,6 +1206,17 @@ fn tabStripStep(app: *App, leaf_idx: u32, delta: i8) Allocator.Error!void {
     return tabStripStepLid(app, lid, delta);
 }
 
+/// The pager's ` ‹ ` / ` › `: the strip's window moves to the previous
+/// / next page of tabs, wrapping, as the last paint measured them.
+fn tabStripPage(app: *App, leaf_idx: u32, forward: bool) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const lid = (try layout.leafAt(app.frame.allocator(), leaf_idx)) orelse return;
+    const leaf = layout.leaf(lid) orelse return;
+    leaf.strip_first = if (forward) leaf.strip_page_next else leaf.strip_page_prev;
+    leaf.strip_anchor = leaf.active;
+    app.needs_render = true;
+}
+
 /// A click on the dock's tab strip: the tab it names takes the keys,
 /// middle closes it, right opens the tab menu. The dock's panes are
 /// out of the split tree, so there is no leaf to route through.
@@ -2778,7 +2789,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .button => |id| {
             // The strip's markers and `+`: a wheel scrolls the strip, a
             // press on a marker steps it.
-            if (render.Button.tabScrollOf(id)) |ts| return tabStripStep(app, @intCast(ts.leaf), if (wheel) (if (m.kind == .scroll_down) @as(i8, 1) else -1) else (if (ts.dir == .right) @as(i8, 1) else -1));
+            // A wheel over the pager steps a tab; a press on an arrow
+            // turns a page.
+            if (render.Button.tabScrollOf(id)) |ts| {
+                if (wheel) return tabStripStep(app, @intCast(ts.leaf), if (m.kind == .scroll_down) @as(i8, 1) else -1);
+                if (m.kind != .press) return;
+                return tabStripPage(app, @intCast(ts.leaf), ts.dir == .right);
+            }
             if (wheel) {
                 if (render.Button.newTabLeaf(id)) |leaf_idx| return tabStripStep(app, @intCast(leaf_idx), if (m.kind == .scroll_down) 1 else -1);
                 return;

@@ -46,8 +46,8 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .links = &.{ .{ .command = .{ .id = .@"tab.close", .label = "Close this page" } }, .{ .command = .{ .id = .@"tab.only", .label = "Close every other page" } } },
     };
     if (Button.tabScrollOf(id)) |ts| return .{
-        .title = if (ts.dir == .left) "More tabs to the left" else "More tabs to the right",
-        .body = "The strip holds more tabs than fit, and this marker stands in for the ones scrolled out of view on this side. Click scrolls the strip one tab that way; the buffer picker lists every tab, shown or hidden, when scrolling is the slow way. The active tab is always scrolled into view when it changes.",
+        .title = if (ts.dir == .left) "Previous page of tabs" else "Next page of tabs",
+        .body = "The strip holds more tabs than fit, so they are cut into pages of whole tabs and `‹ 2/5 ›` says which page is on show. Click turns one page that way — before the first comes the last, after the last the first; the wheel over the strip moves one tab at a time. The control is gone when every tab fits. The buffer picker lists every tab, shown or hidden; the active tab is always brought into view when it changes.",
         .keys = &.{ .{ .command = .@"buffer.next", .label = "Next buffer" }, .{ .command = .@"buffer.prev", .label = "Previous buffer" }, .{ .command = .@"picker.buffers", .label = "Buffer picker" } },
         .links = &.{ .{ .command = .{ .id = .@"picker.buffers", .label = "Pick a buffer" } }, .{ .command = .{ .id = .@"buffer.close_others", .label = "Close the other tabs" } } },
     };

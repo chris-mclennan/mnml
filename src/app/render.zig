@@ -1622,6 +1622,8 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
     const win = bufferline.draw(ui, strip, tabs, opts);
     leaf.strip_first = win.first;
     leaf.strip_hidden_right = win.hidden_right;
+    leaf.strip_page_prev = win.page_prev;
+    leaf.strip_page_next = win.page_next;
 }
 
 // ── welcome ──

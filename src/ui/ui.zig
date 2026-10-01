@@ -24,6 +24,7 @@ pub const Ui = @import("context.zig");
 pub const editor_view = @import("editor_view.zig");
 pub const statusline = @import("statusline.zig");
 pub const bufferline = @import("bufferline.zig");
+pub const stepper = @import("stepper.zig");
 
 pub const chip = @import("chip.zig");
 pub const icons = @import("icons.zig");

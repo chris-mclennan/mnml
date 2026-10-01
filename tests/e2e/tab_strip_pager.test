@@ -1,0 +1,62 @@
+# width: 80
+# height: 24
+# env: PATH=
+# Twelve tabs at 80 columns overflow the strip: the pager ` ‹ n/m › `
+# (`ui/stepper.zig`) stands where the tabs end, says which page of
+# whole tabs is on show, and its arrows turn a page — `›` past the last
+# page wraps to the first, `‹` before the first to the last. Closing
+# tabs until all fit takes the pager away entirely.
+write t1.txt "t1\n"
+write t2.txt "t2\n"
+write t3.txt "t3\n"
+write t4.txt "t4\n"
+write t5.txt "t5\n"
+write t6.txt "t6\n"
+write t7.txt "t7\n"
+write t8.txt "t8\n"
+write t9.txt "t9\n"
+write t10.txt "t10\n"
+write t11.txt "t11\n"
+write t12.txt "t12\n"
+open t1.txt
+open t2.txt
+open t3.txt
+open t4.txt
+open t5.txt
+open t6.txt
+open t7.txt
+open t8.txt
+open t9.txt
+open t10.txt
+open t11.txt
+open t12.txt
+# The last tab is active: the last page of three, the pager at the end.
+expect screen contains "t12.txt 󰅖   󰐕   ‹ 3/3 ›"
+expect screen lacks "t1.txt"
+# `›` past the last page: the first, from t1.
+click 66 1
+expect screen contains "‹ 1/3 ›"
+expect screen contains " t1.txt 󰅖"
+expect screen lacks "t12.txt"
+# `›` again: page 2; `‹` back to 1; `‹` before the first: the last.
+click 66 1
+expect screen contains "‹ 2/3 ›"
+expect screen lacks " t1.txt 󰅖"
+click 60 1
+expect screen contains "‹ 1/3 ›"
+click 60 1
+expect screen contains "‹ 3/3 ›"
+expect screen contains "t12.txt"
+# The keys never moved: t12 is still the tab being typed into.
+expect pane t12.txt
+# Close tabs until every one fits: the pager is gone, cells and all.
+command buffer.close
+command buffer.close
+command buffer.close
+command buffer.close
+command buffer.close
+command buffer.close
+command buffer.close
+expect screen contains "t5.txt"
+expect screen lacks "‹"
+expect screen lacks "›"

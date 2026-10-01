@@ -38,6 +38,10 @@ pub const Leaf = struct {
     /// Tabs past the window's right edge as of the last paint — what a
     /// wheel-down has to scroll into.
     strip_hidden_right: usize = 0,
+    /// The overflow pager's targets as of the last paint: the offsets
+    /// of the previous and the next page of tabs (`bufferline.Window`).
+    strip_page_prev: usize = 0,
+    strip_page_next: usize = 0,
 };
 
 pub const Node = union(enum) {
