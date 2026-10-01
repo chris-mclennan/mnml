@@ -222,14 +222,17 @@ pub fn defaultTreeWidth(app: *const App) u16 {
 /// Put the left column back on the config's width when nothing pinned
 /// it — at start, on a resize, on a config reload. Under git mode's
 /// snap the width the mode gives back is the one that moves.
+/// // changed (hunt5): and the snap itself follows too — git mode's
+/// column is "a fifth of the screen", so a resize re-snaps it, pinned
+/// or not; only the width given back on leaving keeps a pin.
 pub fn syncTreeWidth(app: *App) void {
-    if (app.side.tree_pinned) return;
-    const w = defaultTreeWidth(app);
     if (app.git_palette.active) if (app.git_palette.pre_size) |*ps| if (isSidebarColumn(app, ps.side)) {
-        ps.n = w;
+        if (!app.side.tree_pinned) ps.n = defaultTreeWidth(app);
+        snapGit(app);
         return;
     };
-    app.tree.width = w;
+    if (app.side.tree_pinned) return;
+    app.tree.width = defaultTreeWidth(app);
 }
 
 /// A width set by hand: the live column takes it and keeps it through
@@ -1132,4 +1135,27 @@ test "the left column: the share at start and on a resize; an explicit number ho
         resetTreeWidth(&app);
         try t.expectEqual(@as(u16, 36), app.tree.width);
     }
+}
+
+test "git mode's snap follows a resize — a fifth of the new width — and leaving gives back the width the window now asks for" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 200, .rows = 60 });
+    defer app.deinit();
+    try std.testing.expectEqual(@as(u16, 40), app.tree.width);
+    // Git mode's entry, as `git_palette.enter` stashes and snaps.
+    app.git_palette.pre_size = .{ .side = .left, .n = size(&app, .left) };
+    app.git_palette.active = true;
+    snapGit(&app);
+    try std.testing.expectEqual(@as(u16, 40), app.tree.width);
+    try app.resize(120, 40);
+    try std.testing.expectEqual(@as(u16, 24), app.tree.width);
+    try std.testing.expectEqual(@as(u16, 30), app.git_palette.pre_size.?.n);
+    // A pinned width is kept for the way out, and the snap still moves.
+    pinTreeWidth(&app, 52);
+    app.git_palette.pre_size.?.n = 52;
+    snapGit(&app);
+    try app.resize(160, 40);
+    try std.testing.expectEqual(@as(u16, 32), app.tree.width);
+    try std.testing.expectEqual(@as(u16, 52), app.git_palette.pre_size.?.n);
+    app.git_palette.active = false;
+    app.git_palette.pre_size = null;
 }
