@@ -38,6 +38,7 @@ const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
 const Rect = @import("rect.zig");
+const toast = @import("toast.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
@@ -305,6 +306,9 @@ pub const Model = struct {
     edit_scroll: *usize,
     sending: bool,
     failed: ?[]const u8,
+    /// `failed` is a refusal before the wire (an unresolved `{{VAR}}`):
+    /// titled `not sent`, not `failed`.
+    not_sent: bool = false,
     response: ?ResponseModel,
     /// Set while the response is streaming in; `response` then holds
     /// the head and the body so far.
@@ -803,7 +807,7 @@ fn drawSendState(ui: Ui, content: Rect, m: Model, used: usize) void {
     const y = content.y + @as(u16, @intCast(@min(used, content.h))) + 1;
     if (y >= content.bottom()) return;
     if (m.failed) |e| {
-        _ = ui.putStr(content.x, y, content.w, ui.fmt("  \u{2717} last send: {s}", .{e}), .{ .fg = p.red, .bg = p.bg_dark });
+        _ = ui.putStr(content.x, y, content.w, ui.fmt("  \u{2717} {s}: {s}", .{ if (m.not_sent) "not sent" else "last send", e }), .{ .fg = p.red, .bg = p.bg_dark });
     } else if (m.stream) |st| {
         _ = ui.putStr(content.x, y, content.w, ui.fmt("  \u{25B6} streaming \u{00B7} {d} events received", .{st.events}), .{ .fg = p.cyan, .bg = p.bg_dark });
     } else if (m.sending) {
@@ -1414,7 +1418,7 @@ fn drawStatusTitle(ui: Ui, r: Rect, m: Model) void {
     } else if (m.stream) |st| {
         segs.append(ui.arena, .{ .text = ui.fmt(" \u{25B6} streaming \u{00B7} {d} events ", .{st.events}), .style = .{ .fg = p.cyan, .bg = ground, .bold = true } }) catch return;
     } else if (m.failed != null) {
-        segs.append(ui.arena, .{ .text = " \u{2717} failed ", .style = .{ .fg = p.red, .bg = ground, .bold = true } }) catch return;
+        segs.append(ui.arena, .{ .text = if (m.not_sent) " \u{2717} not sent " else " \u{2717} failed ", .style = .{ .fg = p.red, .bg = ground, .bold = true } }) catch return;
     } else if (m.response) |resp| {
         const color = switch (resp.status / 100) {
             2 => p.green,
@@ -1549,7 +1553,11 @@ fn responseRows(ui: Ui, w: u16, m: Model) []const Line {
         return out.items;
     };
     if (m.failed) |e| {
-        push(&out, ui.arena, plain(ui, ui.fmt("  \u{2717} {s}", .{e}), .{ .fg = p.red, .bg = p.bg_dark, .bold = true }));
+        // Wrapped at word breaks under the `✗`: a refusal names every
+        // unresolved variable and where to define it, which a box half
+        // the window wide cuts mid-sentence on one row.
+        const st: Style = .{ .fg = p.red, .bg = p.bg_dark, .bold = true };
+        for (toast.wrap(ui, e, w -| 5), 0..) |l, i| push(&out, ui.arena, plain(ui, ui.fmt("{s}{s}", .{ if (i == 0) "  \u{2717} " else "    ", l }), st));
         return out.items;
     }
     const resp = m.response orelse {
@@ -1968,6 +1976,19 @@ test "after a send: the status title on the Response border, the Headers count, 
     try fx.expectRow(8, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
     try fx.expectRow(9, "\u{2502}  \u{2717} last send: connection refused" ++ " " ** 54 ++ "\u{2502}");
     try testing.expect(fx.fgEql(4, 9, .{ .fg = fx.theme.palette.red }));
+    // A refusal before the wire (an unresolved `{{VAR}}`) is titled
+    // `not sent`, and never claims a last send.
+    m.failed = "unresolved {{jira}}";
+    m.not_sent = true;
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 75 ++ " \u{2717} not sent \u{2510}");
+    try fx.expectRow(9, "\u{2502}  \u{2717} not sent: unresolved {{jira}}" ++ " " ** 54 ++ "\u{2502}");
+    // A long refusal wraps under the `✗` instead of running off the box.
+    m.failed = "unresolved {{jira}} {{jira_basic}} \u{2014} no env defines them; add them to .mnml/env/<env>.env or pick an env";
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    try fx.expectRow(21, "\u{2502}  \u{2717} unresolved {{jira}} {{jira_basic}} \u{2014} no env defines them; add them to" ++ " " ** 14 ++ "\u{2502}");
+    try fx.expectRow(22, "\u{2502}    .mnml/env/<env>.env or pick an env" ++ " " ** 49 ++ "\u{2502}");
+    m.not_sent = false;
     m.failed = null;
     m.sending = true;
     _ = draw(ui, 3, ui.canvas.full(), m);

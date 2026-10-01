@@ -223,6 +223,23 @@ pub fn selectExisting(arena: Allocator, io: Io, workspace: []const u8, explicit:
     return null;
 }
 
+/// The one sentence for `{{NAME}}`s no env defines — the request
+/// pane's refusal and `mnml run` / `chain run`'s warning say it alike.
+/// `env_name` null: no env file exists (or none is selected).
+pub fn unresolvedMessage(alloc: Allocator, names: []const []const u8, env_name: ?[]const u8) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, "unresolved");
+    for (names) |n| try out.print(alloc, " {{{{{s}}}}}", .{n});
+    const them = names.len > 1;
+    if (env_name) |e| {
+        try out.print(alloc, " \u{2014} not defined in env {s}; add {s} to .mnml/env/{s}.env or pick an env", .{ e, if (them) "them" else "it", e });
+    } else {
+        try out.print(alloc, " \u{2014} no env defines {s}; add {s} to .mnml/env/<env>.env or pick an env", .{ if (them) "them" else "it", if (them) "them" else "it" });
+    }
+    return out.toOwnedSlice(alloc);
+}
+
 /// `default_env=<name>` from `<ws>/.rqst/config` (rqst's KEY=VALUE file).
 pub fn rqstConfigDefault(arena: Allocator, io: Io, workspace: []const u8) Allocator.Error!?[]const u8 {
     const path = try std.fs.path.join(arena, &.{ workspace, ".rqst", "config" });
@@ -772,4 +789,13 @@ test "selectExisting: a source whose file is gone is skipped; no env file means 
     try testing.expect(dev.is_fallback);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/staging.env", .data = "A=3\n" });
     try testing.expectEqualStrings("staging", (try selectExisting(a, testing.io, ws, null, null, null)).?.name);
+}
+
+test "unresolvedMessage names every miss and where to define it" {
+    const one = try unresolvedMessage(testing.allocator, &.{"jira"}, null);
+    defer testing.allocator.free(one);
+    try testing.expectEqualStrings("unresolved {{jira}} \u{2014} no env defines it; add it to .mnml/env/<env>.env or pick an env", one);
+    const two = try unresolvedMessage(testing.allocator, &.{ "A", "B" }, "dev");
+    defer testing.allocator.free(two);
+    try testing.expectEqualStrings("unresolved {{A}} {{B}} \u{2014} not defined in env dev; add them to .mnml/env/dev.env or pick an env", two);
 }

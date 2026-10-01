@@ -944,6 +944,21 @@ pub fn expandWith(gpa: Allocator, io: Io, req: *const Request, set: *const env_m
     return out;
 }
 
+/// Every name `req` templates that `set` cannot resolve, deduplicated:
+/// the URL after its `# @path` values land (a value may name a var),
+/// each header value, the body (its form / multipart rows included —
+/// they are body text until the encoder runs) — exactly what
+/// `expandWith` expands. A name an env value names counts too
+/// (`BASE=http://{{HOST}}` with no HOST).
+pub fn unresolvedIn(arena: Allocator, req: *const Request, set: *const env_mod.EnvSet) Allocator.Error![]const []const u8 {
+    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+    const url = try parse.substitutePath(arena, req.url, try parse.pathParams(arena, req));
+    for (try env_mod.unresolved(arena, url, set)) |m| try seen.put(arena, m, {});
+    for (req.headers.items) |h| for (try env_mod.unresolved(arena, h.value, set)) |m| try seen.put(arena, m, {});
+    if (req.body) |b| for (try env_mod.unresolved(arena, b, set)) |m| try seen.put(arena, m, {});
+    return seen.keys();
+}
+
 // ─── panes ──────────────────────────────────────────────────────────────
 
 pub fn activeRequest(app: *App) ?*RequestPane {
@@ -1386,13 +1401,18 @@ pub fn fire(app: *App, id: PaneId) CommandError!void {
     var staged = try rp.request.clone(a);
     const script = try script_mod.parse(a, rp.request.script orelse "");
     try script_mod.applyPre(a, &staged, &set, script);
-    // The URL, the headers and the body — a `{{VAR}}` an env value
-    // names counts too (`BASE=http://{{HOST}}` with no HOST).
-    var missing: std.ArrayListUnmanaged([]const u8) = .empty;
-    try missing.appendSlice(a, try env_mod.unresolved(a, staged.url, &set));
-    for (staged.headers.items) |h| try missing.appendSlice(a, try env_mod.unresolved(a, h.value, &set));
-    if (staged.body) |b| try missing.appendSlice(a, try env_mod.unresolved(a, b, &set));
-    if (missing.items.len > 0) app.toast("http: unresolved {{{{{s}}}}} — env: {s}", .{ missing.items[0], set.name orelse "?" });
+    // A `{{VAR}}` nothing defines never reaches the wire: the literal
+    // braces would go out as written (`GET {{jira}}/…` fails in the URL
+    // parser as `InvalidFormat`, a header leaks the template). The pane
+    // says which names and where to define them, and does not send.
+    const missing = try unresolvedIn(a, &staged, &set);
+    if (missing.len > 0) {
+        const msg = try env_mod.unresolvedMessage(a, missing, set.name);
+        try rp.setRefused(msg);
+        app.toast("http: {s}", .{msg});
+        app.needs_render = true;
+        return;
+    }
     var expanded = try expandWith(app.gpa, app.io, &staged, &set);
     var handed = false;
     errdefer if (!handed) expanded.deinit(app.gpa);
@@ -3621,6 +3641,40 @@ test "description and tags: the prompts write the directives, the block keeps th
     try app.handle(.{ .key = Key.named(.enter) });
     try testing.expectEqualStrings("tags: cleared", app.lastToast().?);
     try testing.expectEqualStrings("# @description List the users", rp.request.script.?);
+}
+
+test "send: an unresolved {{VAR}} is refused before the wire, naming it and where to define it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try realRoot(&tmp, testing.allocator);
+    defer testing.allocator.free(root);
+    // The user's report: no env file at all, a Jira call templated on one.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "me.http", .data = "GET {{jira}}/rest/api/3/myself\n" });
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root });
+    defer app.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ root, "me.http" });
+    defer testing.allocator.free(path);
+    const id = try openFile(&app, path, false);
+    const rp = app.panes.get(id).?.asRequest().?;
+    try fire(&app, id);
+    try testing.expect(rp.state == .failed and rp.refused);
+    try testing.expectEqualStrings("unresolved {{jira}} \u{2014} no env defines it; add it to .mnml/env/<env>.env or pick an env", rp.state.failed);
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
+    try testing.expectEqual(@as(usize, 0), app.http.handles.count());
+    try testing.expect(std.mem.endsWith(u8, app.toasts.items[app.toasts.items.len - 1].text, rp.state.failed));
+    // A header and a `# @path` value template too; an env that defines
+    // the URL's name but not theirs names only theirs.
+    try tmp.dir.createDirPath(testing.io, ".mnml/env");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = ".mnml/env/dev.env", .data = "jira=http://127.0.0.1:9\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "two.http", .data = "# @path id = {{ISSUE}}\nGET {{jira}}/issue/:id\nAuthorization: Bearer {{TOKEN}}\n" });
+    const two = try std.fs.path.join(testing.allocator, &.{ root, "two.http" });
+    defer testing.allocator.free(two);
+    const id2 = try openFile(&app, two, false);
+    const rp2 = app.panes.get(id2).?.asRequest().?;
+    try fire(&app, id2);
+    try testing.expect(rp2.state == .failed and rp2.refused);
+    try testing.expectEqualStrings("unresolved {{ISSUE}} {{TOKEN}} \u{2014} not defined in env dev; add them to .mnml/env/dev.env or pick an env", rp2.state.failed);
+    try testing.expectEqual(@as(u32, 0), app.http.sending);
 }
 
 test "env chip: no env file claims no env; a pick whose file is gone is dropped; the picker offers + New env" {

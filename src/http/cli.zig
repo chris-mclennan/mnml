@@ -133,7 +133,10 @@ pub fn run(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, argv: []
     for (try env_mod.unresolved(a, req.url, &set)) |m| try seen.put(a, m, {});
     for (req.headers.items) |h| for (try env_mod.unresolved(a, h.value, &set)) |m| try seen.put(a, m, {});
     if (req.body) |b| for (try env_mod.unresolved(a, b, &set)) |m| try seen.put(a, m, {});
-    for (seen.keys()) |m| try std_.err.print("warn: {{{{{s}}}}} is not defined in env {s}\n", .{ m, sel.name });
+    if (seen.count() > 0) {
+        const env_shown: ?[]const u8 = if (env_mod.exists(io, ws, sel.name)) sel.name else null;
+        try std_.err.print("warn: {s}\n", .{try env_mod.unresolvedMessage(a, seen.keys(), env_shown)});
+    }
     req.url = try env_mod.expand(a, io, try parse.substitutePath(a, req.url, try parse.pathParams(a, &req)), &set);
     for (req.headers.items) |*h| h.value = try env_mod.expand(a, io, h.value, &set);
     if (req.body) |b| req.body = try env_mod.expand(a, io, b, &set);
@@ -411,7 +414,7 @@ test "run: env resolution, the request line on stderr, the response on stdout; a
     defer testing.allocator.free(file);
     const code = try run(testing.allocator, testing.io, &env, &.{file}, .{ .out = &out.writer, .err = &err.writer });
     try testing.expectEqual(@as(u8, 0), code);
-    try testing.expect(std.mem.startsWith(u8, err.written(), "env: dev\nwarn: {{MISSING}} is not defined in env dev\nGET http://127.0.0.1:"));
+    try testing.expect(std.mem.startsWith(u8, err.written(), "env: dev\nwarn: unresolved {{MISSING}} \u{2014} not defined in env dev; add it to .mnml/env/dev.env or pick an env\nGET http://127.0.0.1:"));
     try testing.expect(std.mem.startsWith(u8, out.written(), "HTTP 200 OK · "));
     try testing.expect(std.mem.endsWith(u8, out.written(), "\n\npong\n"));
     try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "x-env: {{MISSING}}") != null);

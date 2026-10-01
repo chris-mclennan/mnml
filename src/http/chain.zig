@@ -165,7 +165,10 @@ pub fn run(gpa: Allocator, io: Io, chain_path: []const u8, workspace: []const u8
             for (try env_mod.unresolved(a, raw.url, &set)) |m| try seen.put(a, m, {});
             for (raw.headers.items) |h| for (try env_mod.unresolved(a, h.value, &set)) |m| try seen.put(a, m, {});
             if (raw.body) |b| for (try env_mod.unresolved(a, b, &set)) |m| try seen.put(a, m, {});
-            for (seen.keys()) |m| try appendFmt(a, &trace, "   warn: {{{{{s}}}}} is not defined in env {s}\n", .{ m, env_name });
+            if (seen.count() > 0) {
+                const env_shown: ?[]const u8 = if (env_mod.exists(io, workspace, env_name)) env_name else null;
+                try appendFmt(a, &trace, "   warn: {s}\n", .{try env_mod.unresolvedMessage(a, seen.keys(), env_shown)});
+            }
         }
         var req = try expandWith(a, io, &raw, &set);
         // The same wire body the pane and `mnml-zig run` send.
@@ -297,7 +300,7 @@ test "run: two steps over a local server, the first's extract feeds the second" 
     defer testing.allocator.free(un_path);
     var un = try run(testing.allocator, io, un_path, ws, "dev");
     defer un.deinit(testing.allocator);
-    try testing.expect(std.mem.indexOf(u8, un.trace, "   warn: {{TOKEN}} is not defined in env dev\n") != null);
+    try testing.expect(std.mem.indexOf(u8, un.trace, "   warn: unresolved {{TOKEN}} \u{2014} no env defines it; add it to .mnml/env/<env>.env or pick an env\n") != null);
     // A missing extract stops the chain.
     try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/chains/bad.chain.json", .data = "[{\"request\":\"login.curl\",\"extract\":{\"X\":\"$.nope\"}},{\"request\":\"list.curl\"}]" });
     const bad_path = try std.fs.path.join(testing.allocator, &.{ ws, ".mnml/chains/bad.chain.json" });

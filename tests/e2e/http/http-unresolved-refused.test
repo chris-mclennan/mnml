@@ -1,0 +1,32 @@
+# width: 200
+# height: 45
+# A `{{VAR}}` nothing defines is refused before the wire: no env file
+# exists, so `GET {{jira}}/…` is not sent (its literal braces used to
+# reach the URL parser as `InvalidFormat`). The Response box and a toast
+# name the variable and where to define it; the Env chip says `no env`.
+write me.http "GET {{jira}}/rest/api/3/myself\nAccept: application/json\n"
+open me.http
+expect screen contains "no env ▾"
+command http.send
+wait 300
+expect screen contains "✗ not sent"
+expect screen contains "unresolved {{jira}} — no env defines it; add it to .mnml/env/<env>.env or pick an env"
+expect screen lacks "InvalidFormat"
+expect screen lacks "last send"
+# A header templates too: with the URL literal and the server up, a
+# header naming an undefined var still stops the send — the echo never
+# lands, the refusal names the header's var.
+serve 0 200 @echo
+write h.http "GET http://127.0.0.1:${SERVE_PORT}/echo\nX-Token: {{TOKEN}}\n"
+open h.http
+command http.send
+wait 600
+expect screen contains "unresolved {{TOKEN}} — no env defines it"
+expect screen lacks "X-Token: {{TOKEN}}"
+# Defined, it goes out resolved.
+write .mnml/env/dev.env "TOKEN=t-42\n"
+wait 300
+command http.send
+wait 1000
+expect screen contains "X-Token: t-42"
+expect screen lacks "not sent"
