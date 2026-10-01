@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/chris-mclennan/mnml/discussions/categories/q-a
+    about: Ask how to do something, or why mnml behaves the way it does.
+  - name: The manual
+    url: https://mnml.sh
+    about: Install, configuration, keymaps, Lua and the SDK.
