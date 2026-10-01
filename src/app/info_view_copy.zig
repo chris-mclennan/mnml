@@ -282,7 +282,10 @@ pub fn chordDisplay(arena: Allocator, spec: []const u8) Allocator.Error![]const 
             first_part = false;
             const is_mod = std.mem.eql(u8, part, "ctrl") or std.mem.eql(u8, part, "shift") or std.mem.eql(u8, part, "alt") or std.mem.eql(u8, part, "super");
             if (is_mod) modified = true;
-            const named = is_mod or (part.len > 1 and (part[0] == 'f' and std.ascii.isDigit(part[1]))) or std.mem.eql(u8, part, "space") or std.mem.eql(u8, part, "enter") or std.mem.eql(u8, part, "esc") or std.mem.eql(u8, part, "tab");
+            // Every multi-letter name is a named key (`f12`, `space`,
+            // `delete`, `left`) and reads capitalised, as a menu prints
+            // it: `Delete`, not `delete`.
+            const named = is_mod or part.len > 1;
             if (named) {
                 try out.append(arena, std.ascii.toUpper(part[0]));
                 try out.appendSlice(arena, part[1..]);
@@ -549,6 +552,8 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
     try t.expectEqualStrings("Ctrl+K Ctrl+I", try chordDisplay(a, "ctrl+k ctrl+i"));
     try t.expectEqualStrings("Ctrl+.", try chordDisplay(a, "ctrl+."));
     try t.expectEqualStrings("Space f f", try chordDisplay(a, "space f f"));
+    try t.expectEqualStrings("Delete", try chordDisplay(a, "delete"));
+    try t.expectEqualStrings("Ctrl+Shift+Left", try chordDisplay(a, "ctrl+shift+left"));
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
     defer app.deinit();
     try t.expectEqualStrings("F12", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
