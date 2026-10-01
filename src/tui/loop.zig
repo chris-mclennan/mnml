@@ -183,6 +183,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
 
     var buf: [64]event.AppEvent = undefined;
     var last_frame_ms: i64 = 0;
+    var input_report: InputReport = .{};
     while (!app.quit) {
         const timeout: Io.Timeout = if (app.nextDeadlineMs()) |deadline| blk: {
             const ms = @max(deadline - App.nowMs(io), 0);
@@ -214,6 +215,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
                 // behind it for seconds.
                 if (ev == .pty_readable) continue;
                 input_seen = true;
+                if (app.cfg.ipc.report_input) if (channel) |*c| if (input_report.line(ev, App.nowMs(io))) |l| c.appendEvent(l);
                 if (ev == .winsize) term.resize(.{ .rows = ev.winsize.rows, .cols = ev.winsize.cols, .x_pixel = 0, .y_pixel = 0 }) catch {};
                 try app.handle(ev);
             }
@@ -278,6 +280,58 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
 
 /// The frame interval while a terminal pane is working off a backlog.
 const flood_frame_ms = 16;
+
+/// `ipc.report_input`: the person at the terminal touched it. One
+/// `input` line per kind at most every `every_ms`, so a held key or a
+/// wheel spin is a line a second rather than a flood. Only events from
+/// the terminal come through here — the channel's own `key` / `click`
+/// lines arrive as `.ipc` — so a host replaying a script never sees its
+/// own keys reported back. Motion, release, focus and resize are not
+/// input: a pointer crossing the window is not someone taking over.
+pub const InputReport = struct {
+    last_ms: [3]i64 = .{ std.math.minInt(i64), std.math.minInt(i64), std.math.minInt(i64) },
+
+    pub const every_ms = 1000;
+    const kinds = [_][]const u8{ "key", "mouse", "paste" };
+
+    pub fn kindOf(ev: event.AppEvent) ?usize {
+        return switch (ev) {
+            .key => 0,
+            .mouse => |m| switch (m.kind) {
+                .press, .scroll_up, .scroll_down => 1,
+                .release, .drag, .motion => null,
+            },
+            .paste => 2,
+            else => null,
+        };
+    }
+
+    /// The line to append for `ev` at `now_ms`, or null.
+    pub fn line(self: *InputReport, ev: event.AppEvent, now_ms: i64) ?[]const u8 {
+        const k = kindOf(ev) orelse return null;
+        if (self.last_ms[k] != std.math.minInt(i64) and now_ms - self.last_ms[k] < every_ms) return null;
+        self.last_ms[k] = now_ms;
+        return switch (k) {
+            0 => "{\"event\":\"input\",\"kind\":\"" ++ kinds[0] ++ "\"}",
+            1 => "{\"event\":\"input\",\"kind\":\"" ++ kinds[1] ++ "\"}",
+            else => "{\"event\":\"input\",\"kind\":\"" ++ kinds[2] ++ "\"}",
+        };
+    }
+};
+
+test "InputReport: a key, a click and a wheel are input, at most one line a second per kind; motion, release and resize are not" {
+    var r: InputReport = .{};
+    const k: event.AppEvent = .{ .key = .{ .code = .{ .char = 'a' } } };
+    try t.expectEqualStrings("{\"event\":\"input\",\"kind\":\"key\"}", r.line(k, 10_000).?);
+    try t.expect(r.line(k, 10_500) == null);
+    try t.expect(r.line(.{ .mouse = .{ .x = 1, .y = 1, .kind = .motion } }, 10_500) == null);
+    try t.expect(r.line(.{ .mouse = .{ .x = 1, .y = 1, .kind = .release, .button = .left } }, 10_500) == null);
+    try t.expect(r.line(.{ .winsize = .{ .cols = 80, .rows = 24 } }, 10_500) == null);
+    try t.expectEqualStrings("{\"event\":\"input\",\"kind\":\"mouse\"}", r.line(.{ .mouse = .{ .x = 1, .y = 1, .kind = .press, .button = .left } }, 10_500).?);
+    try t.expect(r.line(.{ .mouse = .{ .x = 1, .y = 1, .kind = .scroll_down } }, 10_900) == null);
+    try t.expectEqualStrings("{\"event\":\"input\",\"kind\":\"key\"}", r.line(k, 11_000).?);
+    try t.expectEqualStrings("{\"event\":\"input\",\"kind\":\"mouse\"}", r.line(.{ .mouse = .{ .x = 1, .y = 1, .kind = .scroll_up } }, 11_600).?);
+}
 
 /// Waits on the signal self-pipe (`core/exit_signal.zig`) and wakes the
 /// UI thread, which parks on the event queue and would otherwise not

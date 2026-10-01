@@ -517,6 +517,12 @@ otherwise. Copy what you need; leave the rest out.
         // notify, register-command, open-pty, run-command) is always
         // taken; the headless loop takes everything regardless.
         .allow_input = false,
+        // Whether a key, click, wheel or paste at the live terminal writes
+        // {"event":"input","kind":"key|mouse|paste"} to events.jsonl (one
+        // a second per kind; never what was pressed; never the channel's
+        // own input) — how a host replaying a script sees a person take
+        // over (demo/attract/)
+        .report_input = false,
     },
     // ── terminal panes ─────────────────────────────────────────────────
     // Read when a pane starts; a pane already open keeps what it began with.
