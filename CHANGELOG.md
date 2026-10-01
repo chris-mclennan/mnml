@@ -42,6 +42,12 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- `jira_work.refresh`, `bitbucket_prs.refresh` and any other `term` line of
+  an integration installed from the Marketplace, a local folder or the demo
+  said the program was "not on PATH": they looked only on PATH, while the
+  pane itself runs the copy linked into the data root. They now run that
+  copy too.
+
 - On Linux, a terminal pane whose command prints and exits at once
   (`:terminal printf hi`) could come up empty: the exit was noticed before
   the command's last output was read. The exit now waits for that output.
