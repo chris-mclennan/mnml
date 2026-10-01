@@ -36,6 +36,10 @@ the release ships one file), and one line per change a user can see.
 - On Linux, a terminal pane whose command prints and exits at once
   (`:terminal printf hi`) could come up empty: the exit was noticed before
   the command's last output was read. The exit now waits for that output.
+- Showing or hiding an integration on the top bar toasts "top bar", as the
+  menu says, and names the integration by its label (`Bitbucket PRs: shown
+  on the top bar`), not its id; the first-party rows' menus say "Show on top
+  bar" / "Hide from top bar" like the others.
 
 ## v0.3.1
 
