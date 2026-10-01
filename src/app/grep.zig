@@ -594,9 +594,18 @@ const WorkerError = Io.Cancelable || Allocator.Error;
 /// then the in-process walk.
 pub fn worker(events: *event.EventQueue, io: Io, gpa: Allocator, root: []const u8, query: []const u8, flags: Flags, generation: u32, pane: PaneId, abort: *Abort, git_first: bool) Io.Cancelable!void {
     var ctx: Ctx = .{ .events = events, .io = io, .gpa = gpa, .generation = generation, .pane = pane, .abort = abort };
-    runBackends(&ctx, root, query, flags, git_first) catch |err| switch (err) {
+    return runCtx(&ctx, root, query, flags, git_first);
+}
+
+/// The worker's body over a prepared `Ctx`. A run that stops early —
+/// the pane moved on (`stale`) or its group was cancelled mid-read, as
+/// a pane's deinit does — leaves its open batch unposted, and no event
+/// will ever free it: it goes here, however the run ends.
+fn runCtx(c: *Ctx, root: []const u8, query: []const u8, flags: Flags, git_first: bool) Io.Cancelable!void {
+    defer c.discard();
+    runBackends(c, root, query, flags, git_first) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
-        error.OutOfMemory => return postOom(events, io, gpa),
+        error.OutOfMemory => return postOom(c.events, c.io, c.gpa),
     };
 }
 
@@ -728,6 +737,14 @@ const Ctx = struct {
     rg_bin: []const u8 = "rg",
     /// The git binary, likewise.
     git_bin: []const u8 = "git",
+
+    /// Free the batch the run left open (never posted). A posted batch
+    /// is the event's; `flush` has already let go of it.
+    fn discard(c: *Ctx) void {
+        const b = c.batch orelse return;
+        c.batch = null;
+        b.destroy(c.gpa);
+    }
 
     fn stale(c: *const Ctx) bool {
         return c.abort.generation.load(.acquire) != c.generation;
@@ -2275,6 +2292,55 @@ test "grep: a stale batch is dropped; the pane's deinit cancels a worker mid-run
     // Closing the pane while the worker may still be running must not leak or crash.
     try app.forceClosePane(id);
     try t.expect(find(app) == null);
+}
+
+test "grep: a worker cancelled with a batch still open frees it — nothing leaks whichever side wins" {
+    // The pane's deinit cancels its group while the worker may be
+    // mid-read with hits pushed into a batch not yet posted (fewer than
+    // `batch_size`). That batch has no event to free it. A stand-in rg
+    // prints one full batch and one hit more, then blocks: the full
+    // batch is posted, the extra hit sits in the open one when the
+    // cancel lands (the read is not interrupted: the run ends when the
+    // stand-in does, a second later, and finds itself stale).
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.tmp.dir.createDirPath(t.io, "bin");
+    const line = "{\"type\":\"match\",\"data\":{\"path\":{\"text\":\"./src/a.zig\"},\"lines\":{\"text\":\"const alpha = 1;\\n\"},\"line_number\":1,\"absolute_offset\":0,\"submatches\":[{\"match\":{\"text\":\"alpha\"},\"start\":6,\"end\":11}]}}";
+    const script = try std.fmt.allocPrint(t.allocator, "#!/bin/sh\ni=0\nwhile [ $i -le {d} ]; do printf '%s\\n' '{s}'; i=$((i+1)); done\nexec sleep 1\n", .{ batch_size, line });
+    defer t.allocator.free(script);
+    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/rg", .data = script, .flags = .{ .permissions = .executable_file } });
+    const bin = try std.fs.path.join(t.allocator, &.{ f.root, "bin/rg" });
+    defer t.allocator.free(bin);
+    var abort: Abort = .{};
+    abort.generation.store(1, .release);
+    var ctx: Ctx = .{ .events = f.app.events, .io = t.io, .gpa = t.allocator, .generation = 1, .pane = 0, .abort = &abort, .rg_bin = bin };
+    var group: Io.Group = .init;
+    try group.concurrent(t.io, runCtx, .{ &ctx, @as([]const u8, f.root), @as([]const u8, "alpha"), Flags{}, false });
+    // The first (full) batch arrives: the extra hit is in the same read.
+    var buf: [8]event.AppEvent = undefined;
+    var posted: usize = 0;
+    var waited: usize = 0;
+    while (posted == 0 and waited < 500) : (waited += 1) {
+        const n = f.app.events.drain(t.io, &buf);
+        for (buf[0..n]) |ev| {
+            defer event.freeEvent(t.allocator, ev);
+            if (ev == .grep) posted += ev.grep.hits.items.len;
+        }
+        if (posted == 0) try t.io.sleep(.fromMilliseconds(10), .awake);
+    }
+    try t.expectEqual(batch_size, posted);
+    // Long enough for the worker to push the extra hit and block reading.
+    try t.io.sleep(.fromMilliseconds(100), .awake);
+    try t.expect(ctx.batch != null);
+    abort.generation.store(std.math.maxInt(u32), .release);
+    group.cancel(t.io);
+    try t.expect(ctx.batch == null);
+    while (true) {
+        const n = f.app.events.drain(t.io, &buf);
+        if (n == 0) break;
+        for (buf[0..n]) |ev| event.freeEvent(t.allocator, ev);
+    }
 }
 
 test "relocate: a hit keeps its line while it reads the same, follows an edit to the nearest line that does, else says it is lost" {

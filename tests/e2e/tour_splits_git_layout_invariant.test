@@ -1,0 +1,87 @@
+# width: 120
+# height: 40
+# The web demo's tour, splits then git then the next flow's reset, at
+# the IPC level the attract runner drives it. The git flow ends in git
+# mode, which stashes the editor layout (`git_palette.enter`); the reset
+# closes every pane while the stash is out of `app.layouts`. Before, the
+# stash kept the closed panes' ids, leaving git mode put them back as
+# dangling tabs, and the next new pane — handed one of those freed slots
+# — sat in two leaves at once (view.only then panicked walking them).
+# The runner checks the layout invariant after every step: a pane in at
+# most one leaf of a page, and no tab for a closed pane.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write src/main.zig "pub fn main() void {}\n"
+write src/util.zig "pub fn sum() void {}\n"
+write README.md "readme\n"
+write CHANGELOG.md "changelog\n"
+shell git add -A
+shell git commit -q -m "initial"
+write src/util.zig "pub fn sum() void {}\npub fn max() void {}\n"
+
+# splits.flow
+open src/main.zig
+command view.split_right
+open src/util.zig
+expect screen contains "pub fn sum"
+command view.split_down
+open README.md
+command view.focus_left
+command tab.new
+open CHANGELOG.md
+expect pane "CHANGELOG.md"
+command tab.goto_1
+command tab.only
+command toast.dismiss_all
+
+# git.flow's reset, then the flow
+key esc
+key esc
+command view.only
+command view.close_others
+command buffer.close
+command view.only
+command view.close_others
+command buffer.close
+command view.activity_explorer
+open src/util.zig
+command git.status_pane
+expect screen contains "Unstaged changes"
+key enter
+wait 300
+command git.status_pane
+key s
+command view.activity_git
+wait 300
+
+# the next flow's reset, from git mode: every pane closes while the
+# editor layout is stashed
+key esc
+key esc
+command view.only
+command view.close_others
+command buffer.close
+command view.only
+command view.close_others
+command buffer.close
+command view.only
+command view.close_others
+command buffer.close
+command view.only
+command view.close_others
+command buffer.close
+command view.activity_explorer
+command toast.dismiss_all
+
+# new panes take the freed slots; each must land in one leaf
+open src/main.zig
+expect screen contains "fn main"
+command view.split_right
+command view.split_down
+command git.status_pane
+expect screen contains "Unstaged changes"
+command view.focus_left
+command view.only
+expect screen contains "fn main"
+expect screen lacks "Unstaged changes"

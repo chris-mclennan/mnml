@@ -972,11 +972,13 @@ pub const Tree = struct {
         var cursor_item: ?usize = null;
         const primary: tree_view.Section = .{
             .root = 0,
-            // Alone, the header names the whole path; beside other
-            // roots it is named the way they are — by its folder — so
-            // the pair can be told apart at the stock width (the path
-            // is the header's hover).
+            // Alone, the header names the whole path — cut from the
+            // left when it must be, so the folder's name is what
+            // survives; beside other roots it is named the way they
+            // are — by its folder — so the pair can be told apart at
+            // the stock width (the path is the header's hover).
             .label = if (multi) primaryName(app) else try wsLabel(app, arena),
+            .path = !multi,
             .expanded = self.primary_expanded,
             .italic = self.show_hidden,
             .fully_collapsed = self.isFullyCollapsed(),
@@ -2785,6 +2787,46 @@ test "view.manage_workspaces opens the home config on its .workspaces line and s
     try t.expect(std.mem.endsWith(u8, e.buf.doc.path.?, "config.zon"));
     try t.expectEqual(@as(usize, 2), e.buf.editor.currentLine());
     try t.expectEqualStrings("workspaces are the `.workspaces` list in config.zon", app.lastToast().?);
+}
+
+test "the header after a switch names the switched-to folder; a lone root's path is cut from the left, so its folder survives the stock width" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.cfg.ui.show_workspace_dots = true;
+    const extra = try std.fs.path.join(t.allocator, &.{ app.workspace, "a-rather-long-parent-folder", "car" });
+    defer t.allocator.free(extra);
+    try std.Io.Dir.cwd().createDirPath(t.io, extra);
+    _ = try app.tree.addRoot(&app, extra, null);
+    try app.tree.refresh(&app);
+    try app.tree.switchTo(&app, 1);
+    try t.expectEqualStrings(extra, app.workspace);
+    const HeaderText = struct {
+        fn of(a: *App, root: u8) ![]const u8 {
+            for (a.hits.items.items) |e| if (std.meta.eql(e.target, @import("../ui/hit.zig").HitTarget{ .tree_root = root })) {
+                var out: std.ArrayListUnmanaged(u8) = .empty;
+                var x = e.rect.x;
+                while (x < e.rect.right()) : (x += 1) {
+                    const cell = a.screen.readCell(x, e.rect.y) orelse break;
+                    try out.appendSlice(a.frame.allocator(), cell.char.grapheme);
+                }
+                return out.items;
+            };
+            return error.NoHeader;
+        }
+    };
+    try app.render();
+    // Beside the old workspace's section: the folder, not the path.
+    const switched = try HeaderText.of(&app, 0);
+    try t.expect(std.mem.indexOf(u8, switched, "● car ") != null);
+    try t.expect(std.mem.indexOf(u8, switched, "● /") == null);
+    // The old workspace goes; the switched-to root is alone and names
+    // its path — at the stock width cut from the left, the folder kept.
+    try app.tree.removeRoot(&app, 0);
+    try t.expectEqual(@as(usize, 0), app.tree.roots.items.len);
+    try app.render();
+    const alone = try HeaderText.of(&app, 0);
+    // Five cells at the stock width: the name and the ellipsis.
+    try t.expect(std.mem.indexOf(u8, alone, "● …car/ ") != null);
 }
 
 test "the workspace dot: a press on a root's `○` switches to it — the `●` moves, the sections stay where they were; its `○` switches back" {

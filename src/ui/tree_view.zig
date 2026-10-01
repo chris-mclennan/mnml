@@ -151,6 +151,10 @@ pub const Section = struct {
     /// The active workspace — the primary; a switch makes a root that —
     /// has the green `●`, every other section the grey `○`.
     active: bool = false,
+    /// The label is a path (the primary alone names its whole path): a
+    /// cut takes its start, not its end, so the folder's name survives
+    /// (`…/mnml-zig-worktrees/sidecar/`, not `/Use…`).
+    path: bool = false,
 };
 
 /// A file or directory row.
@@ -294,7 +298,7 @@ fn drawSection(ui: Ui, r: Rect, sb_w: u16, s: Section, p: Props, is_cursor: bool
     // The label's room: the primary keeps the cluster's, an extra four
     // cells — and a cell of air before the bar.
     const max_label: u16 = @max(4, if (primary) r.w -| (3 + 2 + chip_reserve) else r.w -| 4 -| sb_w);
-    const label = ui.clipStr(s.label, max_label);
+    const label = if (s.path) ui.clipPathLeft(s.label, max_label) else ui.clipStr(s.label, max_label);
     var style = Theme.onBg(Theme.withFg(t.fg, if (primary) pal.green else pal.fg), bg);
     style.bold = true;
     // The focus cue: a workspace header is the tree's title, dim while

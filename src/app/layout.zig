@@ -159,6 +159,23 @@ pub const Layout = struct {
         return null;
     }
 
+    /// A pane this page tabs more than once — in two leaves, or twice
+    /// in one. Null on a well-formed page: a pane lives in one leaf.
+    pub fn duplicateTab(self: *const Layout) ?PaneId {
+        for (self.nodes.items, 0..) |n, i| switch (n) {
+            .leaf => |l| for (l.tabs.items, 0..) |t, k| {
+                // Later in the same leaf, or in any later leaf.
+                if (std.mem.indexOfScalarPos(PaneId, l.tabs.items, k + 1, t) != null) return t;
+                for (self.nodes.items[i + 1 ..]) |m| switch (m) {
+                    .leaf => |o| if (std.mem.indexOfScalar(PaneId, o.tabs.items, t) != null) return t,
+                    else => {},
+                };
+            },
+            else => {},
+        };
+        return null;
+    }
+
     pub fn leaf(self: *Layout, id: NodeId) ?*Leaf {
         return switch (self.nodes.items[id]) {
             .leaf => |*l| l,
@@ -283,9 +300,16 @@ pub const Layout = struct {
     }
 
     /// Split the leaf holding `pane`: the new leaf shows `new_pane` and
-    /// sits after (right / below). Returns the new leaf.
+    /// sits after (right / below). Returns the new leaf. A `new_pane`
+    /// already tabbed on this page moves out of its leaf first — a pane
+    /// is in one leaf — and `pane` itself cannot be split off from its
+    /// own leaf (null).
     pub fn split(self: *Layout, pane: PaneId, dir: SplitDir, new_pane: PaneId) Allocator.Error!?NodeId {
-        const lid = self.leafOf(pane) orelse return null;
+        if (pane == new_pane or self.leafOf(pane) == null) return null;
+        while (self.leafOf(new_pane) != null) _ = self.removePane(new_pane);
+        // Looked up after the move: `new_pane` going can collapse a split
+        // (never `pane`'s leaf, which keeps `pane`).
+        const lid = self.leafOf(pane).?;
         self.zoomed = null;
         var nl: Leaf = .{ .active = new_pane };
         try nl.tabs.append(self.gpa, new_pane);
@@ -591,8 +615,11 @@ pub const Layout = struct {
     }
 
     /// The first `.empty` slot in tree order becomes a leaf showing
-    /// `pane`; returns that leaf, or null when there is no slot.
+    /// `pane`; returns that leaf, or null when there is no slot. A
+    /// `pane` already tabbed on this page moves out of its leaf first
+    /// (which can collapse a slot beside it, and then there may be none).
     pub fn fillFirstEmpty(self: *Layout, pane: PaneId) Allocator.Error!?NodeId {
+        while (self.leafOf(pane) != null) _ = self.removePane(pane);
         const id = self.firstEmptyUnder(self.root orelse return null) orelse return null;
         self.zoomed = null;
         var l: Leaf = .{ .active = pane };
@@ -857,7 +884,21 @@ pub const LayoutState = struct {
         };
         return n;
     }
+
+    /// The first broken pane of the layout invariant, if any: a pane
+    /// tabbed in two leaves of one page (or twice in one leaf). Debug
+    /// builds check it after every command and event
+    /// (`App.checkLayoutInvariant`), and the e2e runner after every step.
+    pub fn violation(self: *const LayoutState) ?Violation {
+        for (self.layouts.items, 0..) |*l, page| {
+            if (l.duplicateTab()) |pane| return .{ .page = page, .pane = pane };
+        }
+        return null;
+    }
 };
+
+/// `LayoutState.violation`'s answer: which page, which pane.
+pub const Violation = struct { page: usize, pane: PaneId };
 
 test "layout: leaf tabs, close falls to the right neighbour then left, split + collapse, rects" {
     const gpa = std.testing.allocator;
@@ -1397,4 +1438,37 @@ test "grid: findPureCluster is the smallest subtree of exactly the set, empties 
     try std.testing.expectEqual(only, m.root.?);
     try std.testing.expectEqual(@as(usize, 3), (try m.leaves(a)).len);
     try std.testing.expectEqual(@as(usize, 1), m.leaf(m.leafOf(5).?).?.tabs.items.len);
+}
+
+test "layout invariant: split and fillFirstEmpty move a pane already tabbed on the page instead of showing it twice; duplicateTab names a twin" {
+    const gpa = std.testing.allocator;
+    var l = Layout.init(gpa);
+    defer l.deinit();
+    // 0 and 5 share a leaf; splitting 0 with 5 moves 5 out, not copies it.
+    const first = try l.showIn(null, 0);
+    _ = try l.showIn(first, 5);
+    try std.testing.expect(l.duplicateTab() == null);
+    const right = (try l.split(0, .horizontal, 5)).?;
+    try std.testing.expectEqual(right, l.leafOf(5).?);
+    try std.testing.expect(l.duplicateTab() == null);
+    try std.testing.expectEqualSlices(PaneId, &.{0}, l.leaf(l.leafOf(0).?).?.tabs.items);
+    // A pane alone in its leaf split in elsewhere: its old leaf goes.
+    const below = (try l.split(0, .vertical, 5)).?;
+    try std.testing.expectEqual(below, l.leafOf(5).?);
+    try std.testing.expect(l.duplicateTab() == null);
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    try std.testing.expectEqual(@as(usize, 2), (try l.leaves(arena.allocator())).len);
+    // A pane cannot be split off from itself.
+    try std.testing.expect((try l.split(0, .horizontal, 0)) == null);
+    // A grid slot filled with a pane already shown: moved, not copied.
+    try l.buildGrid(l.root.?, &.{ &.{ 0, 5 }, &.{ 7, null } });
+    _ = try l.showIn(l.leafOf(0).?, 9);
+    const slot = (try l.fillFirstEmpty(9)).?;
+    try std.testing.expectEqual(slot, l.leafOf(9).?);
+    try std.testing.expectEqualSlices(PaneId, &.{0}, l.leaf(l.leafOf(0).?).?.tabs.items);
+    try std.testing.expect(l.duplicateTab() == null);
+    // The check itself: a tab appended to a second leaf is named.
+    try l.leaf(l.leafOf(0).?).?.tabs.append(gpa, 5);
+    try std.testing.expectEqual(@as(?PaneId, 5), l.duplicateTab());
 }

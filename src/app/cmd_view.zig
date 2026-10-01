@@ -1326,6 +1326,8 @@ test "view.only: a leaf emptied while it runs is skipped, not dereferenced" {
     // node — and then the loop came to L1 and dereferenced it.
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
+    // This test builds the twin-leaf shape on purpose; the debug invariant would stop it first.
+    app.layout_check = false;
     const c = try app.openScratch();
     const a = try app.openScratch();
     const b = try app.openScratch();

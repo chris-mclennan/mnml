@@ -552,6 +552,10 @@ pub fn run(app: *App, ref: CommandRef) CommandError!void {
         app.running_cmd = outer;
         app.running_serial = outer_serial;
     }
+    defer app.checkLayoutInvariant(switch (ref) {
+        .static => |id| name(id),
+        .dyn => "a registered command",
+    });
     const result: CommandError!void = switch (ref) {
         .static => |id| if (runners.get(id)) |f| f(app) else app.diag.fail(app.frame.allocator(), "{s}: not implemented yet", .{name(id)}),
         .dyn => |slot| runDyn(app, slot),

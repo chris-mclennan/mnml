@@ -383,12 +383,9 @@ pub fn tick(app: *App, now: i64) void {
         return;
     }
     if (!st.open) {
-        if (mode(app) == .auto_hide and hover_zones.dwelled(app, .launcher_dock)) {
-            st.open = true;
-            st.by_key = false;
-            st.touched = true;
-            st.left_at_ms = null;
-        }
+        // `reveal` asks for the frame: the dwell runs out in a tick
+        // with no event behind it, and the loop draws only when asked.
+        if (mode(app) == .auto_hide and hover_zones.dwelled(app, .launcher_dock)) reveal(app, false);
         return;
     }
     // The keyboard holds it open outright.
@@ -1995,6 +1992,41 @@ test "the dwell: auto-hide reveals after reveal_ms in the band, stays while the 
     hover_zones.begin(&app, full, 2500);
     tick(&app, 2500);
     try t.expect(!revealed(&app));
+}
+
+test "one hover on the grip is enough: the loop wakes at the dwell's deadline, its tick asks for the frame, and the strip is on screen — no second pointer event" {
+    // The terminal loop draws only when `needs_render` says so. The
+    // dwell used to open the strip in `tick` without asking for a
+    // frame, so a lone hover (the demo's IPC `hover`) revealed nothing
+    // until some later event happened to repaint.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    app.cfg.ui.dock.reveal_ms = 250;
+    app.now_ms = 1000;
+    try app.render();
+    const gy = rowContaining(&app, edge_grip_glyph).?;
+    const gx: u16 = @intCast(app.screen.width / 2);
+    // The loop, as `tui/loop.zig` runs it: events, tick, a frame if asked.
+    const Loop = struct {
+        fn pass(a: *App, now: i64) !void {
+            try a.tick(now);
+            if (a.needs_render) try a.render();
+        }
+    };
+    // The one pointer event: onto the grip.
+    try app.handle(.{ .mouse = .{ .x = gx, .y = gy, .kind = .motion } });
+    try Loop.pass(&app, 1000);
+    try t.expect(!revealed(&app));
+    // Nothing else happens; the loop sleeps until the next deadline,
+    // which is the dwell's.
+    const due = app.nextDeadlineMs().?;
+    try t.expect(due <= 1000 + 250);
+    try Loop.pass(&app, due);
+    try t.expect(revealed(&app));
+    try t.expect(rowContaining(&app, "New terminal") != null);
 }
 
 test "under `.outer` the `:` line owns the bottom row outright: an open one refuses the reveal and puts a revealed strip away — a side strip, which covers none of that row, is not in contest" {

@@ -54,6 +54,18 @@ the release ships one file), and one line per change a user can see.
   pane, not just this page's — no longer leaves that page pointing at them.
   The next pane opened (the git status pane, say) was given a freed slot,
   appeared on both pages, and mnml crashed the next time it was shown.
+- A pane closed while git mode was showing — the web demo's tour does this
+  between its git and terminal flows — stayed behind in the editor layout
+  the mode had put aside. Leaving the mode brought it back as a tab of
+  nothing, and the next pane opened took its slot and appeared in two
+  splits at once (`view.only` then crashed). Closing a pane now clears it
+  there too, and a split never shows a pane twice.
+- Closing a search (grep) pane, or re-running its query, while the search
+  was still running leaked the hits it had found but not yet shown.
+- `mnml test --sizes`: at a size a file was not written at, an `expect
+  within <ms>` is waited on again (its verdict still ignored), so the steps
+  after it run against the state they expect. A `shell` step after one could
+  fail at 200x60 alone (`sessions_changes.test`).
 - In the demo's shell, `claude` and `codex` are the stand-ins even where a
   login profile (macOS's `path_helper`) puts `/usr/local/bin` first on
   `PATH`, so a real CLI installed there is not the one that answers.
@@ -88,6 +100,14 @@ the release ships one file), and one line per change a user can see.
 - With a second workspace root in the tree, the primary root's header names
   its folder, as the added root's does, instead of its absolute path (cut to
   `● /Use…` at the stock width); the path is the header's hover.
+- A workspace root alone in the tree names its path cut from the left —
+  `● …/mnml-zig-worktrees/sidecar/`, or `● …car/` at the stock width — so
+  the folder's name is what survives, not `● /Use…`. A root switched to
+  names its folder beside the others, like any added root.
+- Resting the pointer on an auto-hiding dock's `⋯` grip brings the strip up
+  when `ui.dock.reveal_ms` runs out. Before, the strip came up only on the
+  next pointer event after that: a single hover (an IPC `hover`, a hand that
+  stops moving) showed nothing.
 - An auto-hiding bottom dock above the statusline (the default placement)
   showed its `⋯` grip on the screen's last row but brought its items up two
   rows higher. The grip now sits on the row the items appear on — hover it,

@@ -407,6 +407,14 @@ pub fn leave(app: *App) void {
     app.needs_render = true;
 }
 
+/// A pane closing while the mode holds leaves the layout put aside on
+/// entry too, so leaving the mode brings back only panes that exist.
+pub fn forgetPane(app: *App, id: PaneId) void {
+    const p = if (app.git_palette.pre) |*p| p else return;
+    while (p.layout.leafOf(id) != null) _ = p.layout.removePane(id);
+    if (p.active == id) p.active = null;
+}
+
 /// `git.branch_rail_toggle`: in and out of the mode.
 pub fn toggle(app: *App) CommandError!void {
     if (app.git_palette.active) {
@@ -2033,6 +2041,40 @@ test "git.graph shows the ACTIVE repo's graph: with two discovered repos the fir
     try testing.expectEqual(beta.id, app.git.activeRepo().?.id);
     try testing.expectEqual(beta.id, git.activeGraph(app).?.repo);
     try testing.expect(app.focus == .pane and app.focus.pane == app.active.?);
+}
+
+test "a pane closed while git mode holds the editor layout aside leaves it too: leaving brings back no tab for it, and the next pane, in its freed slot, is in one leaf" {
+    // The web demo's tour: the git flow ends in git mode, and the next
+    // flow's reset closes every pane while the editor layout is put
+    // aside. The aside layout kept the closed ids; leaving put them back
+    // as tabs of nothing, and the next new pane took one of those slots
+    // and sat in two leaves.
+    var t = try TestApp.initWith(&.{"alpha"});
+    defer t.deinit();
+    const app = &t.app;
+    // The assertions below are the test; the debug check would stop the
+    // broken case before them.
+    app.layout_check = false;
+    const a = try app.openScratch();
+    try command.run(app, .{ .static = .@"view.split_right" });
+    const b = app.active.?;
+    try testing.expect(b != a);
+    try command.run(app, .{ .static = .@"view.activity_git" });
+    try testing.expect(app.git_palette.active and app.git_palette.pre != null);
+    try app.forceClosePane(b);
+    try command.run(app, .{ .static = .@"view.activity_explorer" });
+    try testing.expect(!app.git_palette.active);
+    const layout = app.layouts.current();
+    try testing.expect(layout.leafOf(b) == null);
+    try testing.expect(layout.leafOf(a) != null);
+    try testing.expect(app.layoutFault() == null);
+    // The freed slot goes to the next pane, split beside `a`: one leaf.
+    app.setActive(a);
+    try command.run(app, .{ .static = .@"view.split_right" });
+    const c = app.active.?;
+    try testing.expectEqual(b, c);
+    try testing.expectEqual(@as(usize, 1), app.layouts.holders(c));
+    try testing.expect(app.layoutFault() == null);
 }
 
 test "the chevrons and `[` / `]` step through the repos in discovery order and wrap, the graph tab following; the rail moves with the switch; one repo leaves them inert" {

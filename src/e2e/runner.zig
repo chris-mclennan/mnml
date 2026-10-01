@@ -534,6 +534,10 @@ const Run = struct {
                 self.noteQuit();
                 if (self.quit) continue;
                 if (self.renderCycle()) |msg| return self.failMsg(msg);
+                if (self.layoutFault()) |msg| {
+                    defer self.gpa.free(msg);
+                    return self.fail("line {d}: {s}", .{ line.ln, msg });
+                }
                 self.noteQuit();
             },
             .check => |check| {
@@ -560,6 +564,14 @@ const Run = struct {
         defer arena.deinit();
         const st = d.status(arena.allocator()) catch return;
         if (st.quit) self.quit = true;
+    }
+
+    /// The driver's layout invariant (`Driver.layoutFault`), checked
+    /// after every step: a pane in two leaves of one page fails the
+    /// file at the step that left it there, whatever the script expects.
+    fn layoutFault(self: *Run) ?[]u8 {
+        const d = self.driver orelse return null;
+        return d.layoutFault(self.gpa) catch |e| self.errMsg("layout: {s}", e);
     }
 
     fn failMsg(self: *Run, msg: []u8) Outcome {
@@ -623,8 +635,10 @@ const Run = struct {
     }
 
     /// A failing check is retried until the budget runs out. At a
-    /// non-content size the check is evaluated once and its verdict
-    /// ignored — those runs exist to prove nothing panics or leaks.
+    /// non-content size its verdict is ignored — those runs exist to
+    /// prove nothing panics or leaks — and a plain check is evaluated
+    /// once; an `expect within` is still waited on, since what follows
+    /// it relies on the state it waits for.
     /// Once the app has quit there is nothing left to retry AGAINST (the
     /// runner stops ticking it), so the check is evaluated once and
     /// answered.
@@ -639,11 +653,19 @@ const Run = struct {
             defer self.gpa.free(screen);
             const err = self.runCheck(screen, check) orelse return null;
             if (!asserting) {
+                // The verdict is ignored here, but an `expect within` is
+                // also the script's sync point: the steps after it (a key
+                // on a row that loads late, a `shell` that reads what a
+                // git job wrote) assume the state it waited for. So it is
+                // still waited on, to its own budget; a plain `expect` —
+                // most of them strings that may reflow at this size — is
+                // looked at once.
                 self.gpa.free(err);
-                return null;
+                if (budget_ms == null or self.quit or self.nowMs() >= deadline) return null;
+            } else {
+                if (self.quit or self.nowMs() >= deadline) return err;
+                self.gpa.free(err);
             }
-            if (self.quit or self.nowMs() >= deadline) return err;
-            self.gpa.free(err);
             d.tick() catch |e| return self.errMsg("render: {s}", e);
             self.drainIpc();
             self.sleepMs(self.opts.timing.expect_poll_ms);
@@ -2858,6 +2880,36 @@ test "expect within <ms> polls past the runner's budget and answers the moment t
     defer o3.deinit(t.allocator);
     try t.expect(!o3.passed);
     try t.expect(std.mem.startsWith(u8, o3.message.?, "line 2: screen does not contain \"late\""));
+}
+
+test "at a structure-only size an `expect within` is still waited on — the steps after it rely on it — while its verdict stays ignored" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var opts = env.opts();
+    opts.sizes = &.{.{ .cols = 200, .rows = 60 }};
+    const off: Size = .{ .cols = 200, .rows = 60 };
+    try t.expect(!assertsAt(off, opts));
+    // The text lands on the 80th render. A plain expect looks once and
+    // moves on; `within` keeps the app ticking until it is there.
+    const within = try env.script("w.test", "open a.txt\nexpect within 5000 screen contains late\n");
+    defer t.allocator.free(within);
+    var slow: StubFactory = .{ .proto = .{ .text = "early", .late_after = 80, .late_text = "late" } };
+    var o = runFile(t.allocator, t.io, slow.factory(), within, off, opts);
+    try expectPassed(&o);
+    try t.expect(slow.stats.renders >= 80);
+    try t.expect(slow.stats.renders < 200);
+    const bare = try env.script("b.test", "open a.txt\nexpect screen contains late\n");
+    defer t.allocator.free(bare);
+    var slow2: StubFactory = .{ .proto = .{ .text = "early", .late_after = 80, .late_text = "late" } };
+    var o2 = runFile(t.allocator, t.io, slow2.factory(), bare, off, opts);
+    try expectPassed(&o2);
+    try t.expect(slow2.stats.renders < 80);
+    // A `within` that never holds is waited out and still not a failure.
+    const never = try env.script("n.test", "open a.txt\nexpect within 100 screen contains late\n");
+    defer t.allocator.free(never);
+    var stuck: StubFactory = .{ .proto = .{ .text = "early" } };
+    var o3 = runFile(t.allocator, t.io, stuck.factory(), never, off, opts);
+    try expectPassed(&o3);
 }
 
 test "substitutePorts: the first and the n-th, a name past the servers left as written" {
