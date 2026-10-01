@@ -28,7 +28,7 @@ expect screen contains "Open"
 expect screen contains "Disable"
 # Browser is the one chip that ships on the bar, so its row offers the
 # other direction.
-expect screen contains "Hide from palette bar"
+expect screen contains "Hide from top bar"
 key esc
 # Claude Code's: the sessions submenu, the usage pane, the login, the
 # profiles. Enter on Usage opens the pane.
@@ -40,7 +40,7 @@ expect screen contains "Configure profiles"
 key down
 key enter
 expect screen contains "Claude usage"
-# Show in palette bar persists: the row menu's last item writes the home
+# Show on top bar persists: the row menu's last item writes the home
 # config, and the toast names it.
 rightclick 4 8
 key down
@@ -49,4 +49,4 @@ key down
 key down
 key down
 key enter
-expect screen contains "claude_code: shown on the palette bar"
+expect screen contains "Claude Code: shown on the top bar"

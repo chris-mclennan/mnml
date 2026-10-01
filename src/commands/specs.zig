@@ -922,7 +922,7 @@ pub const specs = [_]Spec{
     // // changed (launcher-dock): the activity bar's pair, for the dock.
     .{ .id = "integrations.pin_to_dock", .title = "Integrations: pin the chip's command onto the launcher dock", .group = "integrations" },
     .{ .id = "integrations.unpin_from_dock", .title = "Integrations: take the chip's command off the launcher dock", .group = "integrations" },
-    .{ .id = "integrations.toggle_palette_bar", .title = "Integrations: show / hide the chip on the palette bar", .group = "integrations" },
+    .{ .id = "integrations.toggle_palette_bar", .title = "Integrations: show / hide the chip on the top bar", .group = "integrations" },
     .{ .id = "term.rename", .title = "Terminal: rename this session (shown in the tab)", .group = "term" },
     // The scrollback search. No keymap chord: the terminal pane's own key
     // handler reads `/` (vim, terminal-normal) and the standard profile's

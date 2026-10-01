@@ -1853,7 +1853,7 @@ fn togglePaletteBar(app: *App) CommandError!void {
     }
     if (try focusedFirstParty(app)) |i| return fpToggle(app, i, .in_palette_bar);
     if (try focusedRow(app)) |r| return toggleChipField(app, r, .in_palette_bar);
-    return pickRow(app, .integrations_toggle_bar, "Show / hide on the palette bar");
+    return pickRow(app, .integrations_toggle_bar, "Show / hide on the top bar");
 }
 
 // ─── the section ────────────────────────────────────────────────────────
@@ -2385,7 +2385,7 @@ fn openFirstPartyMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void 
         try rows.append(app.gpa, .{ .label = "Collections", .action = .{ .command = .@"view.activity_http" } });
     }
     try rows.append(app.gpa, .{ .label = if (fpEnabled(app, i)) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" }, .separator_before = true });
-    try rows.append(app.gpa, .{ .label = if (fpOnBar(app, i)) "Hide from palette bar" else "Show in palette bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
+    try rows.append(app.gpa, .{ .label = if (fpOnBar(app, i)) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
     try context_menus.openOwned(app, fp.label, owned, x, y, mem);
@@ -2833,8 +2833,8 @@ fn fpToggle(app: *App, i: usize, flag: ChipFlag) CommandError!void {
         .in_palette_bar => fpOnBar(app, i),
     };
     switch (flag) {
-        .enabled => app.toast("{s}: {s}", .{ fp.id, if (now) "enabled" else "disabled" }),
-        .in_palette_bar => app.toast("{s}: {s} the palette bar", .{ fp.id, if (now) "shown on" else "hidden from" }),
+        .enabled => app.toast("{s}: {s}", .{ fp.label, if (now) "enabled" else "disabled" }),
+        .in_palette_bar => app.toast("{s}: {s} the top bar", .{ fp.label, if (now) "shown on" else "hidden from" }),
     }
 }
 
@@ -2903,6 +2903,9 @@ fn toggleChipField(app: *App, i: usize, flag: ChipFlag) CommandError!void {
         return app.diag.fail(app.frame.allocator(), "cannot write {s}: {s}", .{ app.relPath(inst.path), @errorName(err) });
     };
     const id = try app.frame.allocator().dupe(u8, inst.id());
+    // The toast names the integration the way the menu and the list
+    // do — its label — not its id; `refresh` below frees the manifest.
+    const label = try app.frame.allocator().dupe(u8, if (inst.manifest.label.len > 0) inst.manifest.label else id);
     if (flag == .in_palette_bar) try recordTopBar(app, id, chip.in_palette_bar);
     const now = switch (flag) {
         .enabled => chip.enabled,
@@ -2910,8 +2913,8 @@ fn toggleChipField(app: *App, i: usize, flag: ChipFlag) CommandError!void {
     };
     try refresh(app);
     switch (flag) {
-        .enabled => app.toast("{s}: {s}", .{ id, if (now) "enabled" else "disabled" }),
-        .in_palette_bar => app.toast("{s}: {s} the palette bar", .{ id, if (now) "shown on" else "hidden from" }),
+        .enabled => app.toast("{s}: {s}", .{ label, if (now) "enabled" else "disabled" }),
+        .in_palette_bar => app.toast("{s}: {s} the top bar", .{ label, if (now) "shown on" else "hidden from" }),
     }
 }
 
@@ -3579,13 +3582,16 @@ test "a manifest the scan has not seen starts off the top bar, however it was in
     try testing.expect(std.mem.indexOf(u8, text, ".in_palette_bar = false") != null);
     try testing.expect(std.mem.indexOf(u8, text, ".sdk") == null);
     testing.allocator.free(text);
-    // Shown, then hidden again from the menu.
+    // Shown, then hidden again from the menu. The toasts say "top bar",
+    // as the menu does, and name the integration by its label.
     try st.setMenuChip(testing.allocator, "hello");
     try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
     try testing.expect(st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    try testing.expectEqualStrings("Hello: shown on the top bar", app.lastToast().?);
     try st.setMenuChip(testing.allocator, "hello");
     try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
     try testing.expect(!st.list[st.find("hello").?].manifest.chip.?.in_palette_bar);
+    try testing.expectEqualStrings("Hello: hidden from the top bar", app.lastToast().?);
     // A reinstall from the shell writes the default again; the rescan
     // (a restart or `integrations.refresh`) keeps the hide.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/hello.zon", .data = fixture_manifest });
@@ -4366,10 +4372,13 @@ test "the two preferences persist to the home config and come back on the next l
         try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
         try command.run(&app, .{ .static = .@"integrations.toggle_enabled" });
         try testing.expect(fpEnabled(&app, 1));
-        try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "claude_code: enabled") != null);
+        // The toasts name the row the way the row does — its label — and
+        // the bar the way the menu does: the top bar.
+        try testing.expectEqualStrings("Claude Code: enabled", app.lastToast().?);
         try rowMouse(&app, 1, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
         try command.run(&app, .{ .static = .@"integrations.toggle_palette_bar" });
         try testing.expect(fpOnBar(&app, 1));
+        try testing.expectEqualStrings("Claude Code: shown on the top bar", app.lastToast().?);
         // The chip cluster follows: it is on the bar now, and the other
         // three are not.
         const bar = try chips(&app, app.frame.allocator());

@@ -916,7 +916,11 @@ pub const Tree = struct {
         var cursor_item: ?usize = null;
         const primary: tree_view.Section = .{
             .root = 0,
-            .label = try wsLabel(app, arena),
+            // Alone, the header names the whole path; beside other
+            // roots it is named the way they are — by its folder — so
+            // the pair can be told apart at the stock width (the path
+            // is the header's hover).
+            .label = if (multi) primaryName(app) else try wsLabel(app, arena),
             .expanded = self.primary_expanded,
             .italic = self.show_hidden,
             .fully_collapsed = self.isFullyCollapsed(),
@@ -1074,6 +1078,13 @@ pub fn chipClick(app: *App, c: tree_view.Chip) Allocator.Error!void {
 
 /// The primary header's label: the workspace path with `$HOME` as `~`
 /// and a trailing slash (neo-tree's root row).
+/// The primary root's name beside the other roots: its folder's name,
+/// as an added root is named (`addRoot`).
+pub fn primaryName(app: *const App) []const u8 {
+    const base = std.fs.path.basename(app.workspace);
+    return if (base.len > 0) base else app.workspace;
+}
+
 pub fn wsLabel(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     const full = app.workspace;
     const home = app.userHome();
@@ -1309,8 +1320,7 @@ pub const WorkspaceRow = struct {
 pub fn workspaceRows(app: *App, arena: Allocator) Allocator.Error![]const WorkspaceRow {
     try app.tree.syncRoots(app);
     const out = try arena.alloc(WorkspaceRow, 1 + app.tree.roots.items.len);
-    const primary = std.fs.path.basename(app.workspace);
-    out[0] = .{ .name = if (primary.len > 0) primary else app.workspace, .path = app.workspace, .expanded = app.tree.primary_expanded };
+    out[0] = .{ .name = primaryName(app), .path = app.workspace, .expanded = app.tree.primary_expanded };
     for (app.tree.roots.items, out[1..]) |r, *o| o.* = .{ .name = r.name, .path = r.path, .expanded = r.expanded };
     return out;
 }
@@ -2213,15 +2223,20 @@ test "multi-root: cfg.workspaces become collapsed sections; a header opens on en
     try t.expect(!app.tree.roots.items[0].expanded);
     try t.expectEqual(@as(usize, 0), app.tree.cursor);
     try t.expectEqual(app_mod.FocusId.tree, app.focus);
-    // The screen shows both headers: the primary's path, open, with
-    // its chips; the extra's name, folded.
+    // The screen shows both headers, each by its folder's name: the
+    // primary's, open, with its chips — not its absolute path, which a
+    // stock-width sidebar cut to `/Use…` — and the extra's, folded.
     app.cfg.ui.show_workspace_dots = false;
     try app.render();
     const txt = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "\u{f47c} ") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{f47c} main ") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "\u{f47c} /") == null);
     try t.expect(std.mem.indexOf(u8, txt, "\u{f460} sibling") != null);
     try t.expect(std.mem.indexOf(u8, txt, "\u{EB37}") != null);
+    // The path is the header's hover.
+    const hover = (try @import("info_view_copy/tree.zig").root(&app, app.frame.allocator(), 0)).?;
+    try t.expect(std.mem.endsWith(u8, hover.title, "main/"));
 }
 
 test "mouse: one click opens a file (Rust), a click on a folder row folds it, the header folds the section, a chip prompts, the wheel steps the cursor" {

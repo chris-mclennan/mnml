@@ -36,6 +36,17 @@ the release ships one file), and one line per change a user can see.
 - On Linux, a terminal pane whose command prints and exits at once
   (`:terminal printf hi`) could come up empty: the exit was noticed before
   the command's last output was read. The exit now waits for that output.
+- Showing or hiding an integration on the top bar toasts "top bar", as the
+  menu says, and names the integration by its label (`Bitbucket PRs: shown
+  on the top bar`), not its id; the first-party rows' menus say "Show on top
+  bar" / "Hide from top bar" like the others.
+- Bitbucket PRs: a repo's `Show more (N)` is the row under that repo's pull
+  requests, counting that repo's hidden rows and showing that repo's when
+  pressed. It used to be one row at the end of the tree, under the last
+  repo's header, where it read as the last repo's.
+- With a second workspace root in the tree, the primary root's header names
+  its folder, as the added root's does, instead of its absolute path (cut to
+  `● /Use…` at the stock width); the path is the header's hover.
 
 ## v0.3.1
 

@@ -1,0 +1,15 @@
+# Beside a second root, the primary root's header names its folder the
+# way the added root's does — not its absolute path, which the stock
+# sidebar cut to `● /Use…` next to `○ extra` (src/app/tree.zig,
+# `primaryName`). Alone, the header still names the whole path.
+write a.txt "a\n"
+write extra/lib/c.txt "c\n"
+command view.focus_tree
+command view.add_workspace
+type extra
+key enter
+expect screen contains "workspace added: extra"
+expect screen contains " ○ extra"
+expect screen contains " ● "
+expect screen lacks " ● /"
+expect screen lacks " ● ~"
