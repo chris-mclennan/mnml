@@ -3040,6 +3040,14 @@ pub const App = struct {
         const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.doc.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
         const next = layout.removePane(id);
+        // Every page lets the pane go, not only this one: `view.close_others`
+        // and a session ending close panes another page shows (and a
+        // buffer may be on several). An id left in a page's tree once its
+        // slot is free is a dangling tab — and the next `panes.add` hands
+        // that slot to a new pane, which then sits on two pages at once.
+        for (self.layouts.layouts.items) |*l| while (l.leafOf(id) != null) {
+            _ = l.removePane(id);
+        };
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
