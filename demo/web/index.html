@@ -59,7 +59,7 @@ body[data-phase="tour"] .banner { display: inline-flex; }
 /* the end of the session */
 .ended {
   position: absolute; inset: 0; z-index: 3; display: none; place-items: center; text-align: center;
-  background: color-mix(in srgb, #0f0f11 78%, transparent);
+  background: #121216;
 }
 .ended h2 { color: var(--gray-9); font-size: 22px; font-weight: 600; margin-bottom: 8px; }
 .ended p { margin-bottom: 18px; }
@@ -91,7 +91,7 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
       </div>
       <div class="ended" id="ended">
         <div>
-          <h2>That was ten minutes of mnml.</h2>
+          <h2 id="ended-title">That was ten minutes of mnml.</h2>
           <p>Each session is a fresh sandbox, gone when it ends.</p>
           <button class="brand" id="again">Start again</button>
         </div>
@@ -164,6 +164,8 @@ button.brand { background: var(--accent); color: #0f0f11; border-color: var(--ac
     let st;
     try { st = await (await fetch("/api/state", { cache: "no-store" })).json(); } catch (_) { $("status").textContent = "offline"; return; }
     document.body.dataset.phase = st.phase;
+    const mins = Math.round(st.cap_s / 60);
+    $("ended-title").textContent = "That was " + (mins === 1 ? "a minute" : mins + " minutes") + " of mnml.";
     if (!flowsShown && st.flows) {
       for (const f of st.flows) { const o = document.createElement("option"); o.value = f.name; o.textContent = f.title; o.title = f.flow; $("picker").appendChild(o); }
       flowsShown = true;

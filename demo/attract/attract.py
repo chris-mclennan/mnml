@@ -55,6 +55,7 @@ TTYD_SOCK = os.path.join(STATE, "ttyd.sock")
 BASE = "/term"
 SESSION_MARK = os.path.join(STATE, "session")
 ENDED_MARK = os.path.join(STATE, "ended")
+EXITED_MARK = os.path.join(STATE, "exited")
 # Input this soon after the session started is the terminal answering
 # the app's startup queries, not a visitor.
 STARTUP_GRACE_S = 4.0
@@ -174,6 +175,10 @@ class Player:
         """Back to the start surface (the tour's own `reset`): overlays
         shut, every split and buffer closed, the explorer showing."""
         self.app.send({"cmd": "key", "key": "esc"}, {"cmd": "key", "key": "esc"})
+        # One tab page: the splits flow leaves a second, and the git status
+        # pane opened with two pages panics this build (App.showPane,
+        # `unreachable`) — reported with the trial; the reset dodges it.
+        self.app.send({"cmd": "run-command", "id": "tab.only"})
         self.sleep(150)
         for _ in range(8):
             if not self.app.status().get("panes"):
@@ -204,7 +209,11 @@ class Player:
         elif op == "type":
             app.send({"cmd": "type", "text": a[0]})
         elif op == "open":
-            app.send({"cmd": "open", "path": a[0]})
+            # mnml resolves `open` against its own cwd (the sandbox home),
+            # the recorder's app ran in the workspace: spell it absolute.
+            ws = workspace()
+            path = a[0] if os.path.isabs(a[0]) or not ws else os.path.join(ws, a[0])
+            app.send({"cmd": "open", "path": path})
         elif op in ("click", "hover"):
             c = {"cmd": op, "col": int(a[0]), "row": int(a[1])}
             if op == "click":
@@ -258,7 +267,7 @@ class Player:
         if "pub fn sum" in s and "tour %" in s and "Both tests pass." in s and len(self.app.status().get("panes", [])) <= 3:
             return
         self.reset()
-        self.app.send({"cmd": "open", "path": "src/util.zig"})
+        self.step("open", ["src/util.zig"])
         self.until("pub fn sum", 4000)
         self.app.send({"cmd": "run-command", "id": "ai.claude_code_new_right"})
         self.until("Both tests pass.", 12000)
@@ -399,6 +408,19 @@ class Session:
             self.mark_mtime = m
             self.new_session()
         self.read_events()
+        if os.path.exists(EXITED_MARK) or not self.visitor_alive():
+            with self.lock:
+                if self.phase not in ("ended", "idle"):
+                    try:
+                        code = open(EXITED_MARK).read().strip() or "?"
+                    except OSError:
+                        code = "?"
+                    log(f"session: mnml exited ({code}) in {self.flow or self.phase}" if code != "?" else
+                        f"session: the visitor left (ttyd ended the session) in {self.flow or self.phase}")
+                    self.stop_player()
+                    self.phase = "idle"
+                    self.flow = None
+                    self.started = 0.0
         now = time.monotonic()
         with self.lock:
             phase = self.phase
@@ -410,6 +432,16 @@ class Session:
                 self.start_tour(why="first screen never settled")
             elif phase == "live" and now - self.last_input >= IDLE_S:
                 self.start_tour(why=f"idle {int(IDLE_S)} s")
+
+    def visitor_alive(self):
+        """session.sh's pid is in the marker; ttyd ends it (SIGHUP) when the
+        visitor's websocket closes."""
+        try:
+            pid = int(open(SESSION_MARK).read().strip())
+            os.kill(pid, 0)
+            return True
+        except (OSError, ValueError):
+            return False
 
     def new_session(self):
         with self.lock:
@@ -449,6 +481,7 @@ class Session:
                         log("session: mnml exited")
                         self.stop_player()
                         self.phase = "idle"
+                        self.flow = None
                         self.started = 0.0
 
     def end(self):

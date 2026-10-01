@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TAG=${1:-mnml-demo:local}
 cd "$ROOT"
-VERSION=$(sed -n 's/^ *\.version = "\(.*\)",/\1/p' build.zig.zon | head -1)+g$(git rev-parse --short HEAD)
+VERSION=$(sed -n 's/^ *\.version = "\(.*\)",/\1/p' build.zig.zon | head -1)+g$(git log -1 --format=%h -- . ":(exclude)demo")
 # A local image with Zig 0.16 already in it saves the tarball download.
 BUILDER_ARGS=()
 for img in ${MNML_DEMO_BUILDER:-mnml-zig-linux-gate mnml-pty-stress}; do

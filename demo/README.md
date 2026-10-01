@@ -21,7 +21,8 @@ demo/run-local.sh stop       # stop every container this script started
 
 Options: `--port N` (several side by side), `--cap SECONDS` (default
 600), `--idle SECONDS` (default 180), `--rebuild` (after changing the
-app or this folder; `demo/build.sh` alone rebuilds the image).
+app or this folder; `demo/build.sh` alone rebuilds the image), `--dev`
+(this checkout's runner, flows and page mounted over the image's).
 
 Each `run-local.sh` is a **new container**: a fresh `mnml --demo`
 sandbox, nothing shared with any other run. Reloading the page (or
@@ -97,8 +98,32 @@ used only by `docker build` (apt, Zig, fonts, Zig packages).
 
 ## Image
 
-See the numbers in the commit that measured them: `docker image ls
-mnml-demo:local`.
+`mnml-demo:local` measured on this Mac (linux/arm64): **483 MB on disk,
+107 MB compressed** — Debian trixie-slim, git/zsh/python3/vim-tiny,
+the stripped ReleaseSafe `mnml` (72 MB), the integrations and fakes
+(7 MB), ttyd's static binary, 2 MB of web fonts. A cold build is about
+25 minutes here (the app's ReleaseSafe compile dominates); a rebuild
+that only touches `demo/` reuses the build stage when docker's cache
+holds. `demo/build.sh` reuses a local image with Zig 0.16 in it
+(`mnml-zig-linux-gate`) when there is one: ziglang.org served the
+tarball at ~70 KB/s during this work.
+
+## Notes from the trial
+
+- The terminal is 200x60 cells, the recordings' grid. The page picks the
+  xterm.js font size that fits 200x60 into the window and sizes the frame
+  to it (no CSS scaling: xterm.js's canvas and mouse maths want 1:1).
+- xterm.js runs its canvas renderer; ttyd's default WebGL renderer drew
+  the icon faces as missing-glyph boxes after a font-size change.
+- ttyd's `-t fontFamily=` keeps only the first family of a list, so
+  `web/term-head.html` sets the whole stack once the terminal exists.
+- The terminal answers mnml's startup queries (a cursor-position report
+  can read as F3), so input in a session's first 4 s does not stop the
+  tour.
+- **An app bug the tour found:** opening the git status pane while a
+  second tab page exists panics this build (`App.showPane`, reached
+  unreachable code, from `git.status_pane`). The runner's `reset` runs
+  `tab.only` first to stay clear of it; a visitor can still hit it.
 
 ## Rollback
 
