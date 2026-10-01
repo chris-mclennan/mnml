@@ -128,6 +128,7 @@ const script_list = @import("app/script_list.zig");
 const script_section = @import("app/script_section.zig");
 const search_section = @import("app/search_section.zig");
 const grep_picker = @import("app/grep_picker.zig");
+const session_search = @import("app/session_search.zig");
 const messages = @import("app/messages.zig");
 const harpoon = @import("app/harpoon.zig");
 const stress = @import("app/stress.zig");
@@ -346,6 +347,8 @@ pub const PromptPurpose = union(enum) {
     /// Workspace grep: the query; the replacement for every enabled hit.
     grep_query,
     grep_replace,
+    /// `ai.search_sessions`: the words to find in the transcripts.
+    session_search,
     /// `view.add_workspace`: a folder (Tab completes path segments).
     add_workspace,
     /// `view.terminal_glyph_custom`: the SVG to bake as the terminal
@@ -1252,6 +1255,8 @@ pub const App = struct {
     search_section: search_section.State,
     /// The live-grep picker's worker (`app/grep_picker.zig`).
     grep_picker: grep_picker.State,
+    /// `ai.search_sessions`'s worker and its last hits (`app/session_search.zig`).
+    session_search: session_search.State = .{},
     dock: dock.State = .{},
     /// The editor body before the dock's inline strips came off it.
     dock_area: Rect = .{},
@@ -2024,6 +2029,7 @@ pub const App = struct {
         self.todos.deinit(gpa, self.io);
         self.search_section.deinit(gpa, self.io);
         self.grep_picker.deinit(gpa, self.io);
+        self.session_search.deinit(gpa, self.io);
         self.notes.deinit(gpa, self.io);
         self.findings.deinit(gpa, self.io);
         self.scripts_panel.deinit(gpa);
@@ -3415,6 +3421,7 @@ pub const App = struct {
             .usage => |result| try usage_pane.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
+            .session_search => |result| try session_search.handle(self, result),
             .script_task => |t| script_task.handle(self, t),
             .syntax => |r| syntax_jobs.handle(self, r),
             .job => |j| jobs_mod.handleEvent(self, j),
@@ -3861,6 +3868,7 @@ test {
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
     _ = @import("app/session_attention.zig");
+    _ = @import("app/session_search.zig");
     _ = @import("app/welcome.zig");
     _ = @import("app/cloud_agents.zig");
     _ = @import("ui/sessions_table_view.zig");

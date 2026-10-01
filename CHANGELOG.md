@@ -53,6 +53,10 @@ the release ships one file), and one line per change a user can see.
   runs is shown selected in the sessions table.
 - The bell's right-click menu leads with every session waiting on you right
   now, one `Needs input: NAME` row each, and a row goes to that session.
+- **Search sessions…** (`ai.search_sessions`, also on the SESSIONS rail
+  menu) searches every Claude Code and Codex transcript of this workspace
+  for what was said and lists `name · date · line`; Enter goes to that
+  session.
 
 ### Fixes
 

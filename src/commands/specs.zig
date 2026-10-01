@@ -590,6 +590,7 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.next_waiting", .title = "Sessions: focus the next session that needs you (wraps)", .group = "sessions", .short = "next session that needs you", .keys = .{ .vim = &.{"space a j"}, .standard = &.{"ctrl+alt+n"} } },
     .{ .id = "sessions.prev_waiting", .title = "Sessions: focus the previous session that needs you (wraps)", .group = "sessions", .short = "previous session that needs you", .keys = .{ .vim = &.{"space a k"}, .standard = &.{"ctrl+alt+shift+n"} } },
     // // changed (sessions-merge): the table and the cloud rows.
+    .{ .id = "ai.search_sessions", .title = "Search sessions… (every transcript of this workspace)", .group = "ai", .short = "search sessions" },
     .{ .id = "sessions.table", .title = "Sessions: open every session on this machine as a table (grouped by workspace)", .group = "sessions" },
     .{ .id = "sessions.show_ended", .title = "Sessions table: show / hide ended sessions older than a day", .group = "sessions" },
     // // changed (sessions-card): the section's history chip.

@@ -29,6 +29,7 @@ const font_scan = @import("../app/font_scan.zig");
 const ipc_command = @import("../ipc/command.zig");
 const transfers = @import("../app/transfers.zig");
 const grep = @import("../app/grep.zig");
+const session_search = @import("../app/session_search.zig");
 const script_task = @import("../app/script_task.zig");
 const syntax_jobs = @import("../app/syntax_jobs.zig");
 const jobs = @import("../app/jobs.zig");
@@ -225,6 +226,8 @@ pub const AppEvent = union(enum) {
     transfer: *transfers.Event,
     /// A batch of grep hits (the last one says `done`). Owned; `grep.handle` copies and destroys it.
     grep: *grep.Result,
+    /// `ai.search_sessions`: the transcript search's hits (`app/session_search.zig`).
+    session_search: *session_search.Result,
     /// A hidden script task's output lines or its exit. Owned;
     /// `script_task.handle` destroys it.
     script_task: *script_task.Event,
@@ -260,6 +263,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .usage => |r| r.destroy(gpa),
         .tests => |r| r.destroy(gpa),
         .grep => |r| r.destroy(gpa),
+        .session_search => |r| r.destroy(gpa),
         .script_task => |r| r.destroy(gpa),
         .syntax => |r| r.destroy(gpa),
         .job => |j| j.destroy(gpa),

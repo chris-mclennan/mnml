@@ -1792,6 +1792,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
         .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
         .grep_query => try grep.acceptQuery(app, text),
+        .session_search => try @import("session_search.zig").acceptQuery(app, text),
         .grep_replace => try grep.acceptReplace(app, text),
         .add_workspace => try tree_mod.acceptAddWorkspace(app, text),
         .terminal_glyph_svg => try toastOnFail(app, @import("terminal_glyph.zig").customAccept(app, text)),

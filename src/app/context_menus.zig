@@ -408,6 +408,7 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             .{ .label = "+ New Codex session", .action = .{ .command = .@"ai.codex_new" } },
             .{ .label = "+ New cloud run…", .action = .{ .command = .@"cloud_agents.new_run" } },
             .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" } },
+            .{ .label = "Search sessions…", .action = .{ .command = .@"ai.search_sessions" } },
         },
         .http => &.{
             .{ .label = "+ New request", .action = .{ .command = .@"http.new" } },
