@@ -1,0 +1,11 @@
+# The editor: a double-click selects the word under the pointer, three
+# presses the line (`dispatch.editorPress`). The word is long enough
+# that the cell lands in it whatever the gutter's width.
+write doc.txt "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbb\nsecond line\n"
+open doc.txt
+command view.toggle_tree
+doubleclick 15 2
+expect screen contains "Sel 30 "
+click 15 2
+doubleclick 15 2
+expect screen contains "Sel 36 "

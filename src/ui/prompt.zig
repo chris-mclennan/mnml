@@ -46,6 +46,9 @@ pub const State = struct {
     /// character or paste replaces it, backspace / delete clear it, any
     /// other key drops the selection and edits the line as usual.
     select_all: bool = false,
+    /// A double-clicked word (`text_field.clickSelect`): the range from
+    /// here to the caret. A triple-click is `select_all`.
+    anchor: ?usize = null,
 
     pub fn text(s: *const State) []const u8 {
         return s.buf.items;
@@ -140,7 +143,7 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
         else => {},
     }
     if (selected and consumeSelection(s, key)) return .consumed;
-    _ = try text_field.handleKey(&s.buf, &s.caret, gpa, key);
+    _ = try text_field.editKey(&s.buf, &s.caret, &s.anchor, gpa, key);
     return .consumed;
 }
 
@@ -170,7 +173,27 @@ pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void {
         s.buf.clearRetainingCapacity();
         s.caret = 0;
     }
-    try text_field.insert(&s.buf, &s.caret, gpa, text);
+    try text_field.insertSel(&s.buf, &s.caret, &s.anchor, gpa, text);
+}
+
+/// A press `clicks` deep on the field `col` cells in: the caret there,
+/// the word (a double), the whole line (a triple — the seeded-name
+/// selection, so typing replaces it).
+pub fn click(s: *State, col: u16, field_w: u16, clicks: u8, method: @import("vaxis").gwidth.Method) void {
+    const byte = text_field.byteAtCol(s.buf.items, s.caret, field_w, col, method);
+    s.select_all = false;
+    if (clicks >= 3) {
+        s.anchor = null;
+        s.select_all = s.buf.items.len > 0;
+        s.caret = s.buf.items.len;
+        return;
+    }
+    text_field.clickSelect(s.buf.items, &s.caret, &s.anchor, byte, clicks);
+}
+
+/// The field's rect inside the row `draw` registers as `.overlay_item(0)`.
+pub fn fieldOf(row: Rect) Rect {
+    return Rect.init(row.x + 1, row.y, row.w -| 2, 1);
 }
 
 /// Title row, then the input (hit `.overlay_item(0)`), then the hint.
@@ -182,7 +205,7 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret {
     const inner = overlay.boxLook(ui, area, @max(w, @min(area.w, 8)), height, s.title, .third, .menu);
     if (inner.isEmpty()) return null;
     const field_row = inner.row(0);
-    const field = Rect.init(field_row.x + 1, field_row.y, field_row.w -| 2, 1);
+    const field = fieldOf(field_row);
     ui.hit(field_row, .{ .overlay_item = 0 });
     // A seeded line paints as a selection so the user sees that typing
     // replaces it.
@@ -196,6 +219,7 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret {
             break :blk ps;
         },
         .secret = s.secret,
+        .anchor = s.anchor,
     });
     overlay.hint(ui, inner.row(1), hint_text);
     return caret;

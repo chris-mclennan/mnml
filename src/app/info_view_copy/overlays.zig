@@ -17,7 +17,17 @@ pub fn entry(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     return switch (app.overlay) {
         .settings => try settings_copy.entry(app, arena, id),
         .confirm => |*c| try confirm(app, arena, c.purpose, c.state.choices, id),
-        .picker => |*p| try picker(app, arena, p.kind, id),
+        .picker => |*p| if (id == @import("../../ui/picker.zig").query_item) .{
+            .title = "The picker's query",
+            .body = "What you type filters the rows below (in a live-grep picker it is the pattern itself). A click puts the caret where you clicked, a double-click takes the word under the pointer and a triple the whole query — the next character you type or paste replaces what is selected, Backspace deletes it, an arrow drops it.",
+            .keys = &.{ .{ .chord = "Esc", .label = "Close" }, .{ .chord = "Enter", .label = "Accept the row" } },
+            .links = &.{.{ .command = .{ .id = .palette, .label = "The command palette" } }},
+        } else try picker(app, arena, p.kind, id),
+        .prompt => if (id == 0) .{
+            .title = "The prompt's line",
+            .body = "The text this prompt submits on Enter. A click puts the caret where you clicked, a double-click takes the word under the pointer and a triple the whole line — the next character you type or paste replaces what is selected, Backspace deletes it, an arrow drops it. ↑ and ↓ walk the prompt's history; Esc cancels.",
+            .keys = &.{ .{ .chord = "Enter", .label = "Submit" }, .{ .chord = "Esc", .label = "Cancel" } },
+        } else null,
         .help => .{
             .title = "Keymap reference",
             .body = "Every chord of the active profile grouped by area, with the command it runs — a click on a header row folds its group, `c` folds every group and `e` opens them all, `/` filters. Esc or F1 closes it. The cheatsheet pane is the same list as a tab, with a filter, for keeping open beside the code.",

@@ -417,6 +417,13 @@ fn walkOverlays(w: *Walk) Allocator.Error!void {
     const refs = try @import("integrations.zig").settingRefs(app, w.arena);
     if (refs.len > 0) try w.probe("settings:integration_row", .{ .overlay_item = settings_app.integ_base });
     w.closeOverlay();
+    // The two overlay text fields a click selects in.
+    try @import("session_search.zig").openPrompt(app);
+    try w.probe("prompt:field", .{ .overlay_item = 0 });
+    w.closeOverlay();
+    command.run(app, .{ .static = .palette }) catch {};
+    if (app.overlay == .picker) try w.probe("picker:query", .{ .overlay_item = @import("../ui/picker.zig").query_item });
+    w.closeOverlay();
     // The confirm boxes.
     const msg = try app.gpa.dupe(u8, "audit");
     app.overlay = .{ .confirm = .{ .state = .{ .title = "Quit", .message = msg, .choices = &App.quit_choices }, .purpose = .quit, .message = msg } };

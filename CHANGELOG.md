@@ -58,6 +58,13 @@ the release ships one file), and one line per change a user can see.
   for what was said and lists `name · date · line`; Enter goes to that
   session.
 
+### Text fields
+
+- A prompt's line and a picker's query take the mouse: a click puts the
+  caret there, a double-click selects the word under the pointer and a
+  triple the whole line; typing or a paste replaces the selection,
+  Backspace deletes it.
+
 ### Fixes
 
 - The tree's connectors follow the Rust rule again: none under a top-level
