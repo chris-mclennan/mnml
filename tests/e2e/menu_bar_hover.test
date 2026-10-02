@@ -4,15 +4,16 @@
 # rows from y 2) shows no highlight until a row is hovered; the
 # hovered row lights with Rust's `▸ ` marker; the pointer on another
 # word of the bar switches to that menu (Edit, the brand, the ») —
-# Rust's `MenuOpenState::new_mouse(hovered_idx)`; Esc closes.
+# Rust's `MenuOpenState::new_mouse(hovered_idx)`; Esc closes. Each
+# row ends in its chord (`Ctrl+N`), one cell short of the border.
 click 12 0
-expect screen contains "│  󰈤  New file                │"
-expect screen lacks "│▸ 󰈤  New file                │"
+expect screen contains "│  󰈤  New file                  Ctrl+N │"
+expect screen lacks "│▸ 󰈤  New file                  Ctrl+N │"
 hover 20 2
-expect screen contains "│▸ 󰈤  New file                │"
+expect screen contains "│▸ 󰈤  New file                  Ctrl+N │"
 hover 20 3
-expect screen contains "│▸   Open file…              │"
-expect screen lacks "│▸ 󰈤  New file                │"
+expect screen contains "│▸   Open file…                Ctrl+P │"
+expect screen lacks "│▸ 󰈤  New file                  Ctrl+N │"
 hover 18 0
 expect screen contains "Find in files…"
 expect screen lacks "New file"

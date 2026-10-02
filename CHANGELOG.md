@@ -18,6 +18,11 @@ the release ships one file), and one line per change a user can see.
   columns, 40 at 200, never more than 48 — and follows a resize; a number in
   `ui.tree_width` still pins it. Right-click its divider to reset or set the
   width (cells or `25%`), hide or auto-hide it, or move it to the other side.
+- Every menu — right-click menus, the menu bar's drop-downs, chip and dock
+  menus — prints each row's keyboard chord at its right edge, in muted grey,
+  for the profile you are in (`Ctrl+N` under standard, the vim chord under
+  vim). A row with no binding shows none, and a row too narrow for both drops
+  the chord rather than clip its label.
 
 ### Sandbox and demo
 

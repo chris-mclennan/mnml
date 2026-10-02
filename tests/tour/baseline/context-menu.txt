@@ -8,28 +8,28 @@
    │      .gitignore                   │▌  5 │   var total: i64 = 0;
   │      CHANGELOG.md               ? │▌  6 │   for (xs) |x| total += x;
    │     󰂺 README.md                    │▌  7 │   return total;
- 󰐱 │                                    │▌  8 }                       ┌ Editor ───────────────────┐
-   │                   󰐙 Add workspace  │▌  9                         │   Cut                    │
- 󰎒 │                                    │▌ 10 test "sum adds" {       │   Copy                   │
-   │                                    │▌ 11 │   try std.testing.expe│   Paste                  │1, 2, 3 }));
-  │                                    │▌ 12 }                       │   Undo                   │
-   │                                    │▌ 13▎                        │   Redo                   │
-  │                                    │▌ 14▎/// The largest element,│   Select all             │
-   │                                    │▌ 15▎pub fn max(xs: []const i│───────────────────────────│
-  │                                    │▌ 16▎│   if (xs.len == 0) ret│   Go to definition       │
-   │                                    │▌ 17▎│   var best = xs[0];   │   Find references        │
- 󱘣 │                                    │▌ 18▎│   for (xs[1..]) |x| be│   Hover info             │
-   │                                    │▌ 19▎│   return best;        │   Rename symbol          │
- 󰢱 │                                    │▌ 20▎}                       │───────────────────────────│
-   │                                    │▌                            │   Select all occurrences │
-   │                                    │▌                            │   Expand selection       │
-   │                                    │▌                            │   Toggle fold            │
-   │                                    │▌                            │───────────────────────────│
-   │                                    │▌                            │ 󰚩  Explain with Claude    │
-   │                                    │▌                            │ 󰚩  Ask Claude…            │
-   │                                    │▌                            │───────────────────────────│
-   │                                    │▌                            │   Save                   │
-   │                                    │▌                            └───────────────────────────┘
+ 󰐱 │                                    │▌  8 }                       ┌ Editor ─────────────────────────────────┐
+   │                   󰐙 Add workspace  │▌  9                         │   Cut                                  │
+ 󰎒 │                                    │▌ 10 test "sum adds" {       │   Copy                                 │
+   │                                    │▌ 11 │   try std.testing.expe│   Paste                                │
+  │                                    │▌ 12 }                       │   Undo                                 │
+   │                                    │▌ 13▎                        │   Redo                    Ctrl+Shift+Z │
+  │                                    │▌ 14▎/// The largest element,│   Select all                           │
+   │                                    │▌ 15▎pub fn max(xs: []const i│─────────────────────────────────────────│
+  │                                    │▌ 16▎│   if (xs.len == 0) ret│   Go to definition                 F12 │
+   │                                    │▌ 17▎│   var best = xs[0];   │   Find references            Shift+F12 │
+ 󱘣 │                                    │▌ 18▎│   for (xs[1..]) |x| be│   Hover info             Ctrl+K Ctrl+I │
+   │                                    │▌ 19▎│   return best;        │   Rename symbol                     F2 │
+ 󰢱 │                                    │▌ 20▎}                       │─────────────────────────────────────────│
+   │                                    │▌                            │   Select all occurrences  Ctrl+Shift+L │
+   │                                    │▌                            │   Expand selection                     │
+   │                                    │▌                            │   Toggle fold             Ctrl+Shift+[ │
+   │                                    │▌                            │─────────────────────────────────────────│
+   │                                    │▌                            │ 󰚩  Explain with Claude        Space a e │
+   │                                    │▌                            │ 󰚩  Ask Claude…                Space a a │
+   │                                    │▌                            │─────────────────────────────────────────│
+   │                                    │▌                            │   Save                          Ctrl+S │
+   │                                    │▌                            └─────────────────────────────────────────┘
    │                                    │▌
    │                                    │▌
    │                                    │▌
@@ -56,5 +56,5 @@
    │ · [Ctrl+P] Files                   │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  19:52  ws   zig
+ EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  01:39  ws   zig
 

@@ -406,7 +406,7 @@ pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.E
         .command => |c| .{
             .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
             .body = if (try copy.chordOf(app, arena, c)) |chord|
-                try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. {s} does the same from the keyboard; the palette lists it under its group.", .{ command.name(c), command.title(c), chord })
+                try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. {s}, the chord at the row's right edge, does the same from the keyboard; the palette lists it under its group.", .{ command.name(c), command.title(c), chord })
             else
                 try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. No chord binds it in this profile; the palette lists it under its group.", .{ command.name(c), command.title(c) }),
         },

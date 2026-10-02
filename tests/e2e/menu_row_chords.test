@@ -1,0 +1,26 @@
+# sizes: all
+# A menu row that runs a command carries that command's chord under the
+# ACTIVE profile at its right edge, muted (`app/render.zig`'s
+# `menuChords`, read through `info_view_copy.chordOf`). The tree row's
+# menu, in each profile: standard reads `Ctrl+N` on New file and
+# `Ctrl+K p` on Copy path; vim binds neither, so those rows end bare,
+# and both read `Delete` on Delete…. The menu's width comes from its
+# rows, so the cells are the same at every screen size.
+write notes.txt hello
+open notes.txt
+command tree.refresh
+rightclick 4 2
+expect screen contains "New file…           Ctrl+N │"
+expect screen contains "Delete…             Delete │"
+expect screen contains "Copy path         Ctrl+K p │"
+expect screen contains "Refresh tree               │"
+# The chord's first cell, in the muted grey (onedark's comment).
+expect color 29 6 fg #80848d
+key esc
+command editor.use_vim
+rightclick 4 2
+expect screen contains "Delete…   Delete │"
+expect screen contains "New file…        │"
+expect screen lacks "Ctrl+N"
+expect screen lacks "Ctrl+K p"
+key esc

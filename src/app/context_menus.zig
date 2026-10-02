@@ -2278,7 +2278,8 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expect(std.mem.indexOf(u8, closed, "│            │") == null);
     try t.expect(std.mem.indexOf(u8, closed, "Scratch buffer") == null);
     // → opens New's child hung from its row: the frame's top on the
-    // row, the rows below, Rust's glyph rule on each leaf, no
+    // row, the rows below, Rust's glyph rule on each leaf, each
+    // leaf's chord at its right edge (the frame grew by the widest), no
     // highlight until an arrow; the frame registers its rows.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expect(m.sub != null);
@@ -2287,11 +2288,11 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expect(!m.sub.?.highlight);
     const open = try screenOf(&app);
     defer t.allocator.free(open);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f15b}  New   ▸ │┌───────────────────┐") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Open  ▸ ││ \u{f067}  Scratch buffer │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f04b}  From clipboard │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f120}  Shell          │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Browser tab    │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f15b}  New   ▸ │┌───────────────────────────┐") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Open  ▸ ││ \u{f067}  Scratch buffer         │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f04b}  From clipboard         │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f120}  Shell     Ctrl+Shift+` │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Browser tab    Space B │") != null);
     try t.expect(std.mem.indexOf(u8, open, "⋮") == null);
     var child_hits: usize = 0;
     for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 1) {
@@ -2302,20 +2303,21 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expectEqual(@as(u16, 3), m.sub.?.rect.y);
     // j lights the child's cursor row AND moves it (Rust's child
     // `move_down` steps on the first arrow; walkthrough 2.2). The kebab
-    // shows only where the label leaves room for it: not on the
-    // longest rows (Rust's screen keeps the label there), on HTTP request.
+    // shows only where the label leaves room for it.
     try app.handle(.{ .key = app_mod.Key.char('j') });
     try t.expect(m.sub.?.highlight);
     try t.expectEqual(@as(usize, 1), m.sub.?.cursor);
     const lit = try screenOf(&app);
     defer t.allocator.free(lit);
-    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer │") != null);
-    try t.expect(std.mem.indexOf(u8, lit, "⋮") == null);
+    // The frame grew for the chords, so the label leaves the kebab
+    // its room here now.
+    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer         │") != null);
+    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f04b}  From clipboard       ⋮ │") != null);
     try app.handle(.{ .key = app_mod.Key.char('j') });
     try t.expectEqual(@as(usize, 2), m.sub.?.cursor);
     const lit2 = try screenOf(&app);
     defer t.allocator.free(lit2);
-    try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request ⋮ │") != null);
+    try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request         ⋮ │") != null);
     // ← closes it, the parent cursor stays.
     try app.handle(.{ .key = app_mod.Key.named(.left) });
     try t.expect(m.sub == null);
@@ -2337,7 +2339,7 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expectEqual(command.CommandId.@"buffer.reopen", m.items[0].action.command);
     const reopen = try screenOf(&app);
     defer t.allocator.free(reopen);
-    try t.expect(std.mem.indexOf(u8, reopen, "│ \u{f07c}  Reopen last closed (1) │") != null);
+    try t.expect(std.mem.indexOf(u8, reopen, "│ \u{f07c}  Reopen last closed (1)  Ctrl+Shift+T ⋮ │") != null);
     // Under ascii icons the column paints the twins and ▸ is `>`.
     app.cfg.ui.ascii_icons = true;
     try openNewTabMenu(&app, 31, 2);
@@ -2345,9 +2347,9 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     defer t.allocator.free(ascii);
     try t.expect(std.mem.indexOf(u8, ascii, "\u{f15b}") == null);
     // (The Reopen row is still there, so the frame is wider than above.)
-    try t.expect(std.mem.indexOf(u8, ascii, "| o  Reopen last closed (1) |") != null);
-    try t.expect(std.mem.indexOf(u8, ascii, "| f  New                  > |") != null);
-    try t.expect(std.mem.indexOf(u8, ascii, "| #  Dock                 > |") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "| o  Reopen last closed (1)  Ctrl+Shift+T : |") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "| f  New                                  > |") != null);
+    try t.expect(std.mem.indexOf(u8, ascii, "| #  Dock                                 > |") != null);
 }
 
 test "the + menu: the Integrations group lists the enabled integration chips with their own glyphs; a chip without a command is left out" {

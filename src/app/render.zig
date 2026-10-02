@@ -65,6 +65,7 @@ const overlay_mod = @import("../ui/overlay.zig");
 const Theme = @import("../ui/theme.zig");
 const Style = vaxis.Style;
 const menu_glyph = @import("../ui/menu_glyph.zig");
+const info_view_copy = @import("info_view_copy.zig");
 const discovery = @import("discovery.zig");
 const help_app = @import("help.zig");
 const help_ui = @import("../ui/help_overlay.zig");
@@ -814,7 +815,10 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // A context menu is the topmost layer — over the toasts too, whose
     // own menu it is — and it stays above the statusline and the `:`
     // line, whatever it was anchored in.
-    if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu);
+    if (app.overlay == .menu) drawMenu(ui, Rect.init(full.x, full.y, full.w, fr.upper.bottom() -| full.y), &app.overlay.menu, .{
+        .rows = menuChords(app, arena, app.overlay.menu.items),
+        .sub = if (app.overlay.menu.sub) |sub| menuChords(app, arena, sub.items) else &.{},
+    });
     try discovery.drawTooltip(app, ui, full);
     applyCursor(app, screen);
 }
@@ -2863,8 +2867,13 @@ fn drawOverlay(app: *App, ui: Ui, fr: FrameRects) Allocator.Error!void {
 /// Every row registers `.menu_item{0, idx}` (the child's rows `{1,
 /// idx}`); a separator paints a rule and registers nothing; the kebab
 /// registers `{2, idx}` / `{3, idx}` over its own two cells.
-fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
-    const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, m.dropdown);
+///
+/// A row that runs a command carries its chord under the active
+/// profile at its right edge, muted (`menuChords`) — the width grows
+/// by the widest one, and a row too narrow for label, gap and chord
+/// drops the chord, never the label.
+fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState, chords: MenuChords) void {
+    const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, chords.rows, m.dropdown, m.curatable);
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
     const x = @min(m.x, (screen.x + screen.w) -| w);
@@ -2877,6 +2886,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
         .cursor = if (m.highlight) &m.cursor else null,
         .scroll = &m.scroll,
         .follow = m.follow,
+        .chords = chords.rows,
         .menu_id = 0,
         .kebab = m.curatable and m.sub == null,
         .dropdown = m.dropdown,
@@ -2884,7 +2894,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
     const sub = if (m.sub) |*s| s else return;
     // The child: a context menu's hangs from the parent row (its first
     // row one below it), a dropdown's lines its first row up with it.
-    const child = menuSize(ui, null, sub.items, m.dropdown);
+    const child = menuSize(ui, null, sub.items, chords.sub, m.dropdown, m.curatable);
     const cw: u16 = @min(child.w, screen.w);
     const ch: u16 = @min(child.h, screen.h);
     const row_y = inner.y + (parent_row.get(sub.parent) orelse 0);
@@ -2900,6 +2910,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState) void {
         .cursor = if (sub.highlight) &sub.cursor else null,
         .scroll = &sub.scroll,
         .follow = sub.follow,
+        .chords = chords.sub,
         .menu_id = 1,
         .kebab = m.curatable,
         .dropdown = m.dropdown,
@@ -2916,6 +2927,44 @@ pub fn menuTop(screen: Rect, anchor_y: u16, h: u16) u16 {
 }
 
 const MenuSize = struct { w: u16, h: u16 };
+
+/// The chord each row of an open menu shows, by item index, and its
+/// child's; null (or a short slice) shows none.
+const MenuChords = struct {
+    rows: []const ?[]const u8 = &.{},
+    sub: []const ?[]const u8 = &.{},
+};
+
+/// The cells between a row's label and its chord, at the least.
+const chord_gap: u16 = 2;
+
+/// Every row's chord under the active profile, on the frame arena: a
+/// `.command` row reads the one resolver the hover copy uses
+/// (`info_view_copy.chordOf` — the profile's primary chord, spelled
+/// `Ctrl+P` / `gd`), a `.dyn` row its first registered key; any other
+/// row, and a parent row, shows none. OOM paints no chords.
+pub fn menuChords(app: *const App, arena: Allocator, items: []const command.MenuItem) []const ?[]const u8 {
+    const out = arena.alloc(?[]const u8, items.len) catch return &.{};
+    for (items, out) |it, *c| c.* = rowChord(app, arena, it) catch null;
+    return out;
+}
+
+fn rowChord(app: *const App, arena: Allocator, it: command.MenuItem) Allocator.Error!?[]const u8 {
+    if (it.submenu.len > 0) return null;
+    return switch (it.action) {
+        .command => |id| try info_view_copy.chordOf(app, arena, id),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |d|
+            (if (d.keys.len > 0) try info_view_copy.chordDisplay(arena, d.keys[0]) else null)
+        else
+            null,
+        else => null,
+    };
+}
+
+/// The chord at `i`, if the menu has one for it.
+fn chordAt(chords: []const ?[]const u8, i: usize) ?[]const u8 {
+    return if (i < chords.len) chords[i] else null;
+}
 
 /// The marker a dropdown row ends in (` ▸`) and a context row ends in
 /// (`▸ ` / `⋮ `): two cells either way.
@@ -2937,16 +2986,27 @@ fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
 
 /// Frame + rows, in the shape Rust sizes them (`ContextMenu::
 /// content_width`; `menu_bar.rs`'s `w` / `sub_w`).
-fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, dropdown: bool) MenuSize {
+fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords: []const ?[]const u8, dropdown: bool, curatable: bool) MenuSize {
     var rows: u16 = 0;
     var widest: u16 = 0;
     var any_icon = false;
-    for (items) |it| {
+    for (items, 0..) |it, i| {
         rows += 1;
         if (it.separator_before) rows += 1;
         if (menu_glyph.forItem(it, ui.ascii).len > 0) any_icon = true;
         const label_w = ui.width(rowLabel(ui, it)) + if (it.submenu.len > 0) marker_w else 0;
-        widest = @max(widest, label_w);
+        // The chord grows the row by itself and its gap; the frame is
+        // clamped to the screen after, and a row the clamp leaves too
+        // narrow drops the chord (`paintMenuRows`).
+        // A dropdown's row has no air of its own at the right; the
+        // chord brings its one cell.
+        // On a curatable menu the focused command row's kebab sits
+        // past the chord, so a chorded row keeps it room as well.
+        const chord_w: u16 = if (chordAt(chords, i)) |c|
+            chord_gap + ui.width(c) + @intFromBool(dropdown) + (if (curatable and it.action == .command) marker_w else 0)
+        else
+            0;
+        widest = @max(widest, label_w + chord_w);
     }
     if (dropdown) {
         const icon_col: u16 = if (any_icon) menu_glyph.width else 0;
@@ -2974,6 +3034,8 @@ const RowsProps = struct {
     /// cursor per `follow`.
     scroll: *usize,
     follow: app_mod.MenuFollow,
+    /// Each item's chord (`menuChords`), by index.
+    chords: []const ?[]const u8 = &.{},
     menu_id: u32,
     /// Paint the curation kebab on the highlighted leaf row.
     kebab: bool,
@@ -3108,6 +3170,18 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         const marker_room: u16 = if (marker != null) marker_w else 0;
         const label_max = r.right() -| xx -| marker_room -| air;
         _ = ui.putStr(xx, r.y, label_max, ui.clipStr(label, label_max), Theme.withFg(style, label_fg));
+        // The chord, right-aligned one cell short of the marker (or the
+        // border): muted on a plain row, the highlight's own ink on the
+        // selected one so it reads on the cyan. Only where the whole
+        // label, the gap and the whole chord fit — the label is never
+        // clipped for it.
+        if (chordAt(p.chords, i)) |chord| {
+            const chord_end = r.right() -| marker_room -| 1;
+            const chord_w = ui.width(chord);
+            if (chord_w > 0 and xx + ui.width(label) + chord_gap + chord_w <= chord_end) {
+                _ = ui.putStr(chord_end - chord_w, r.y, chord_w, chord, Theme.withFg(style, if (selected) style.fg else th.muted.fg));
+            }
+        }
         if (marker) |mk| {
             const mx = r.right() -| marker_w;
             _ = ui.putStr(mx, r.y, marker_w, mk, style);
@@ -3505,6 +3579,148 @@ test "menuTop: below when it fits, flipped onto the pointer when it does not, cl
     // Too tall to flip: as low as the screen allows.
     try t.expectEqual(@as(u16, 0), menuTop(Rect.init(0, 0, 80, 5), 4, 6));
     try t.expectEqual(@as(u16, 2), menuTop(Rect.init(0, 0, 80, 8), 3, 6));
+}
+
+// ── menu chords ──
+
+/// Where `text` (ASCII) starts on the screen, scanning row by row.
+fn findOnScreen(app: *App, text: []const u8) ?[2]u16 {
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        while (x + text.len <= app.screen.width) : (x += 1) {
+            const hit = for (text, 0..) |ch, k| {
+                const c = app.screen.readCell(x + @as(u16, @intCast(k)), y) orelse break false;
+                if (c.char.grapheme.len != 1 or c.char.grapheme[0] != ch) break false;
+            } else true;
+            if (hit) return .{ x, y };
+        }
+    }
+    return null;
+}
+
+/// The ASCII cells from `x` up to the row's border, as text.
+fn rowTail(app: *App, x: u16, y: u16, buf: []u8) []const u8 {
+    var n: usize = 0;
+    var cx = x;
+    while (cx < app.screen.width and n < buf.len) : (cx += 1) {
+        const g = app.screen.readCell(cx, y).?.char.grapheme;
+        // The frame's edge is the first cell that is not ASCII.
+        if (g.len != 1) break;
+        buf[n] = g[0];
+        n += 1;
+    }
+    return buf[0..n];
+}
+
+fn openChordMenu(app: *App, items: []const command.MenuItem) !void {
+    try app.openMenu("chords", try app.gpa.dupe(command.MenuItem, items), 10, 5);
+}
+
+test "menu chords: a command row shows the active profile's chord at its right edge, muted; an unbound row and a non-command row show none" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // The cursor sits on row 0, so the rows under test paint plain.
+    try openChordMenu(&app, &.{
+        .{ .label = "Copy the text", .action = .{ .copy_text = "x" } },
+        .{ .label = "Go to definition", .action = .{ .command = .@"lsp.goto_definition" } },
+        .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
+    });
+    try app.render();
+    const def = findOnScreen(&app, "Go to definition").?;
+    var buf: [128]u8 = undefined;
+    // Standard: F12, right-aligned one cell short of the border.
+    const tail = rowTail(&app, def[0] + 16, def[1], &buf);
+    try t.expect(std.mem.endsWith(u8, tail, " F12 "));
+    const f12 = findOnScreen(&app, "F12").?;
+    try t.expectEqual(def[1], f12[1]);
+    try t.expect(std.meta.eql(app.screen.readCell(f12[0], f12[1]).?.style.fg, app.theme.muted.fg));
+    try t.expect(f12[0] >= def[0] + 16 + chord_gap);
+    // Unbound and non-command rows: nothing but blanks after the label.
+    const refresh = findOnScreen(&app, "Refresh tree").?;
+    try t.expectEqual(@as(usize, 0), std.mem.trim(u8, rowTail(&app, refresh[0] + 12, refresh[1], &buf), " ").len);
+    const copy = findOnScreen(&app, "Copy the text").?;
+    try t.expectEqual(@as(usize, 0), std.mem.trim(u8, rowTail(&app, copy[0] + 13, copy[1], &buf), " ").len);
+    // Vim: the same row reads `gd`, and F12 is gone.
+    try app.setInputStyle(.vim);
+    try app.render();
+    const vdef = findOnScreen(&app, "Go to definition").?;
+    try t.expectEqualStrings("gd", std.mem.trim(u8, rowTail(&app, vdef[0] + 16, vdef[1], &buf), " "));
+    try t.expect(findOnScreen(&app, "F12") == null);
+}
+
+test "menu chords: the menu grows by the widest chord; a row too narrow for label, gap and chord drops the chord, never the label" {
+    // 40 columns: the frame clamps to the screen — 33 cells for a label.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 40, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const long = "A label that nearly fills a row";
+    try openChordMenu(&app, &.{
+        .{ .label = "Copy the text", .action = .{ .copy_text = "x" } },
+        .{ .label = long, .action = .{ .command = .@"lsp.goto_definition" } },
+        .{ .label = "Hover", .action = .{ .command = .@"lsp.hover" } },
+    });
+    try app.render();
+    // The label whole, its chord dropped.
+    try t.expect(findOnScreen(&app, long) != null);
+    try t.expect(findOnScreen(&app, "F12") == null);
+    // The short row in the same menu still carries its own.
+    const hover = findOnScreen(&app, "Hover").?;
+    const chord = findOnScreen(&app, "Ctrl+K Ctrl+I").?;
+    try t.expectEqual(hover[1], chord[1]);
+    // Wide enough: the frame grew past the label to hold the chord.
+    var wide = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer wide.deinit();
+    wide.tree.visible = false;
+    try openChordMenu(&wide, &.{
+        .{ .label = "Copy the text", .action = .{ .copy_text = "x" } },
+        .{ .label = long, .action = .{ .command = .@"lsp.goto_definition" } },
+    });
+    try wide.render();
+    const l = findOnScreen(&wide, long).?;
+    const f = findOnScreen(&wide, "F12").?;
+    try t.expectEqual(l[1], f[1]);
+    try t.expect(f[0] >= l[0] + long.len + chord_gap);
+}
+
+test "menu chords: a menu-bar dropdown's rows carry their chords too" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openChordMenu(&app, &.{
+        .{ .label = "Settings…", .action = .{ .command = .@"view.settings" } },
+        .{ .label = "Quit mnml", .action = .{ .command = .@"app.quit" } },
+    });
+    app.overlay.menu.dropdown = true;
+    app.overlay.menu.highlight = false;
+    try app.render();
+    const quit = findOnScreen(&app, "Quit mnml").?;
+    const chord = findOnScreen(&app, "Ctrl+Q").?;
+    try t.expectEqual(quit[1], chord[1]);
+    try t.expect(chord[0] >= quit[0] + 9 + chord_gap);
+    try t.expect(findOnScreen(&app, "Ctrl+,") != null);
+}
+
+test "menu chords: the selected row keeps its highlight and paints its chord in the highlight's ink" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openChordMenu(&app, &.{
+        .{ .label = "Copy the text", .action = .{ .copy_text = "x" } },
+        .{ .label = "Go to definition", .action = .{ .command = .@"lsp.goto_definition" } },
+    });
+    app.overlay.menu.cursor = 1;
+    try app.render();
+    const f12 = findOnScreen(&app, "F12").?;
+    const c = app.screen.readCell(f12[0], f12[1]).?;
+    const pal = app.theme.palette;
+    try t.expect(std.meta.eql(c.style.bg, pal.cyan));
+    try t.expect(std.meta.eql(c.style.fg, pal.bg_dark));
+    // ASCII mode prints it plainly, the same text.
+    app.cfg.ui.ascii_icons = true;
+    try app.render();
+    try t.expect(findOnScreen(&app, "F12") != null);
 }
 
 // ── ui toggles: the frame-level ones, one cell each ──
