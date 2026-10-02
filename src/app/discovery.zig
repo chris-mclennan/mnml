@@ -262,6 +262,7 @@ fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip {
         .title = if (app.undo_chip) |u| try std.fmt.allocPrint(arena, "Undo: {s}", .{u.label}) else "Undo",
         .detail = "click puts it back · right-click drops the offer",
     };
+    if (@import("session_attention.zig").isSessionToast(app, id)) return .{ .title = "A session needs input", .detail = "click goes to it (Focus) · right-click: dismiss / copy / dismiss all" };
     if (id >= toast_mod.button_base) return .{ .title = "Toast", .detail = "click dismisses · right-click: dismiss / copy / dismiss all" };
     // // changed (bottom-row): the row under the statusline.
     if (id == @intFromEnum(render.Button.cmdline_bar)) return .{ .title = "Command line", .detail = "click opens the `:` line (Ctrl+;)" };
@@ -555,7 +556,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             const listed = capped(app, seg, rows.items, 0);
             break :blk .{
                 .title = if (u.err + u.warn == 0) "Messages — nothing unread" else try std.fmt.allocPrint(arena, "Messages — {d} unread ({d} errors)", .{ u.err + u.warn, u.err }),
-                .detail = "click: the history · right-click: clear",
+                .detail = "click: the history · right-click: the sessions waiting on you, then clear",
                 .rows = listed.rows,
                 .more = listed.more,
                 .row_seg = listed.row_seg,

@@ -45,6 +45,26 @@ the release ships one file), and one line per change a user can see.
   so a host replaying a script can tell when a person takes over. Off by
   default.
 
+### Sessions
+
+- The `session needs input: NAME` toast goes to the session when clicked
+  (or through its ` Focus ` button): its pane comes forward with the keys,
+  as a double-click on its SESSIONS card does; a session another terminal
+  runs is shown selected in the sessions table.
+- The bell's right-click menu leads with every session waiting on you right
+  now, one `Needs input: NAME` row each, and a row goes to that session.
+- **Search sessions…** (`ai.search_sessions`, also on the SESSIONS rail
+  menu) searches every Claude Code and Codex transcript of this workspace
+  for what was said and lists `name · date · line`; Enter goes to that
+  session.
+
+### Text fields
+
+- A prompt's line and a picker's query take the mouse: a click puts the
+  caret there, a double-click selects the word under the pointer and a
+  triple the whole line; typing or a paste replaces the selection,
+  Backspace deletes it.
+
 ### Fixes
 
 - The tree's connectors follow the Rust rule again: none under a top-level

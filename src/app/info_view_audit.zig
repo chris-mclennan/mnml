@@ -275,6 +275,14 @@ fn walkButtons(w: *Walk) Allocator.Error!void {
     try w.probe("button:zon_source", .{ .button = zon_pane.button_source });
     w.app.toast("audit toast", .{});
     try w.probe("button:toast", .{ .button = toast_mod.button_base });
+    // The needs-input toast is an offer to go to the session; its body
+    // and its Focus button say so (`app/session_attention.zig`).
+    try @import("session_attention.zig").announce(w.app, null, "audit-session", "audit");
+    try w.probe("button:toast_session", .{ .button = toast_mod.button_base });
+    try w.probe("button:toast_session_focus", .{ .button = toast_mod.action_base });
+    // …and the bell's rows for the sessions waiting, which need a
+    // waiting session to appear in the real menu.
+    try w.probeEntry("menu:bell/Needs input: …", copy.menus.lookupItem("Messages", null, "Needs input: audit", .{ .session_focus = .{ .id = "audit-session" } }));
     try w.probe("button:undo", .{ .button = toast_mod.undo_button });
     const chips = try @import("integrations.zig").chips(w.app, w.arena);
     if (chips.len > 0) try w.probe("button:integration_chip", .{ .button = integrations_view.chip_base });
@@ -408,6 +416,13 @@ fn walkOverlays(w: *Walk) Allocator.Error!void {
     try w.probe("settings:reset", .{ .overlay_item = settings_app.reset_id });
     const refs = try @import("integrations.zig").settingRefs(app, w.arena);
     if (refs.len > 0) try w.probe("settings:integration_row", .{ .overlay_item = settings_app.integ_base });
+    w.closeOverlay();
+    // The two overlay text fields a click selects in.
+    try @import("session_search.zig").openPrompt(app);
+    try w.probe("prompt:field", .{ .overlay_item = 0 });
+    w.closeOverlay();
+    command.run(app, .{ .static = .palette }) catch {};
+    if (app.overlay == .picker) try w.probe("picker:query", .{ .overlay_item = @import("../ui/picker.zig").query_item });
     w.closeOverlay();
     // The confirm boxes.
     const msg = try app.gpa.dupe(u8, "audit");

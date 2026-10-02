@@ -103,6 +103,11 @@ pub const rows = [_]Row{
         .body = "Opens every session on this machine — this workspace's and every other's — as a table pane grouped by workspace, one row per session with its state, tokens, cost and age, the summary under the list adding the model, branch and last messages for the row under the cursor; Enter focuses one, and the pane follows sessions as they come and go. Sessions that ended over a day ago stay hidden until the `ended:` chip shows them.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.table", .label = "Open the table" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
     } },
+    .{ .label = "Search sessions\u{2026}", .command = .@"ai.search_sessions", .entry = .{
+        .title = "Search sessions\u{2026}",
+        .body = "Asks for words, then searches every Claude Code and Codex transcript this workspace has — what you asked and what the agent answered, not the JSON around it — on a worker, and lists the hits as `name · date · line`. Enter goes to that session: its pane when one here runs it, else its row in the sessions table. A terminal pane cannot be scrolled to the line, so the row's detail names it.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.search_sessions", .label = "Search the transcripts" } }, .{ .command = .{ .id = .@"sessions.table", .label = "Open the table" } } },
+    } },
     // ── HTTP ──
     .{ .label = "+ New request", .entry = .{
         .title = "+ New request",

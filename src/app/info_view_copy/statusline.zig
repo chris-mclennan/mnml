@@ -347,7 +347,7 @@ fn bell(app: *App, arena: Allocator) Allocator.Error!Entry {
     const u = app.messages.unread();
     return .{
         .title = if (u.err + u.warn == 0) "Messages — nothing unread" else try std.fmt.allocPrint(arena, "Messages — {d} unread ({d} error{s})", .{ u.err + u.warn, u.err, if (u.err == 1) "" else "s" }),
-        .body = "Every toast is also kept in a history, so a message that scrolled past is not lost. The bell is quiet when there is nothing, carries a count in yellow for warnings and in red for errors — the colour is the level, so the number does not have to be. Click opens the history; right-click shows it or clears it. The list holds the last 200 entries.",
+        .body = "Every toast is also kept in a history, so a message that scrolled past is not lost. The bell is quiet when there is nothing, carries a count in yellow for warnings and in red for errors — the colour is the level, so the number does not have to be. Click opens the history; right-click leads with every Claude Code or Codex session waiting on you right now — a row goes to it — then shows the history or clears it. The list holds the last 200 entries.",
         .links = &.{ .{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }, .{ .command = .{ .id = .@"messages.clear", .label = "Clear the messages" } }, ask },
     };
 }

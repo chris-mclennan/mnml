@@ -353,6 +353,11 @@ pub const rows = [_]Row{
 
     // ── the bell: `Messages` (its `Show messages` is the shared row
     // written above) ──
+    .{ .menu = "Messages", .label = "Needs input: ", .prefix = true, .kind = .session_focus, .entry = .{
+        .title = "Go to the session that needs input",
+        .body = "One row per Claude Code or Codex session waiting on you right now — stopped at a permission, a choice or a question. The row brings its pane on screen with the keys, as a double-click on its SESSIONS card does; a session another terminal runs is shown selected in the sessions table, since there is no pane here to give the keys. The rows are read when the menu opens, so one that stopped waiting since is simply gone.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session that needs you" } }, .{ .command = .{ .id = .@"sessions.table", .label = "Open the sessions table" } }, ask },
+    } },
     .{ .label = "Clear history", .command = .@"messages.clear", .entry = .{
         .title = "Clear history",
         .body = "Empties the toast log and toasts how many entries went, which clears the bell's unread warning and error counts with them. They are gone: the log is not written anywhere else, and the session file loses them on its next save. Read them through *Show messages* first if a warning still matters.",

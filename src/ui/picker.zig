@@ -59,10 +59,15 @@ pub const Item = struct {
 pub const PreviewRow = []const script_view.Segment;
 pub const PreviewSegment = script_view.Segment;
 
+/// The `.overlay_item` id of the query field — past every row index.
+pub const query_item: u32 = std.math.maxInt(u32);
+
 pub const State = struct {
     title: []const u8,
     query: text_field.Buf = .empty,
     caret: usize = 0,
+    /// The query's selection (`text_field.clickSelect`), from here to the caret.
+    sel_anchor: ?usize = null,
     cursor: usize = 0,
     scroll: usize = 0,
     /// The unfiltered count, for ` N of M `; null paints ` N `.
@@ -222,7 +227,7 @@ pub fn wheel(s: *State, delta: isize, count: usize) void {
 }
 
 fn editKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
-    switch (try text_field.handleKey(&s.query, &s.caret, gpa, key)) {
+    switch (try text_field.editKey(&s.query, &s.caret, &s.sel_anchor, gpa, key)) {
         .changed => {
             s.cursor = 0;
             s.scroll = 0;
@@ -234,7 +239,7 @@ fn editKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
 }
 
 pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void {
-    try text_field.insert(&s.query, &s.caret, gpa, text);
+    try text_field.insertSel(&s.query, &s.caret, &s.sel_anchor, gpa, text);
     s.cursor = 0;
     s.scroll = 0;
 }
@@ -371,7 +376,10 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
         field_w = qr.w -| (2 + count_w + 1);
     }
     const qf = Rect.init(qr.x + 2, qr.y, field_w, 1);
-    const caret = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = Theme.onBg(t.fg, bg) });
+    // The query's own hit, over the field: a click places the caret, a
+    // double takes a word, a triple the query (`dispatch`).
+    ui.hit(qf, .{ .overlay_item = query_item });
+    const caret = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = Theme.onBg(t.fg, bg), .anchor = s.sel_anchor });
     if (inner.h < 2) return caret;
 
     // ── the preview column ──

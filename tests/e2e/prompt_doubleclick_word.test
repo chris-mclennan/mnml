@@ -1,0 +1,14 @@
+# A double-click in a prompt's line takes the word under the pointer,
+# and the next typed character replaces it (`text_field.clickSelect`).
+# Three presses take the whole line. The Search sessions prompt is a
+# plain one: its box sits on row 13, the line starts at column 32.
+command ai.search_sessions
+type aaaa bbbbbbbbbbbbbbbbbbbbbbbb cccc
+doubleclick 45 13
+type Z
+expect screen contains "aaaa Z cccc"
+click 33 13
+doubleclick 33 13
+type q
+expect screen contains "│ q "
+expect screen lacks "cccc"

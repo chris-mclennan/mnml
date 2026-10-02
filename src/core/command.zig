@@ -139,6 +139,7 @@ const runner_tables = .{
     @import("../app/requests.zig"),
     @import("../app/grep.zig"),
     @import("../app/grep_picker.zig"),
+    @import("../app/session_search.zig"),
     @import("../app/image_pane.zig"),
     @import("../app/jumplist.zig"),
     @import("../app/cmd_dap.zig"),
@@ -764,6 +765,11 @@ pub const MenuAction = union(enum) {
     /// A workspace header menu's *Switch to this workspace*: that root
     /// (0 the primary, i + 1 the i-th extra) becomes the active one.
     switch_workspace: u8,
+    /// The bell menu's *Needs input: …* rows: go to a session waiting
+    /// on you — `pane` when a pane here runs it, else the listing's
+    /// `id` (the menu's `mem` arena owns the bytes;
+    /// `app/session_attention.zig`).
+    session_focus: struct { pane: ?u32 = null, id: []const u8 = "" },
     none,
 };
 
@@ -901,7 +907,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1158), count);
+    try std.testing.expectEqual(@as(usize, 1159), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

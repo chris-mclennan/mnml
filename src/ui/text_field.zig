@@ -201,6 +201,129 @@ pub fn nextWord(text: []const u8, at: usize) usize {
     return i;
 }
 
+// ── selection and the pointer ──
+//
+// A field's selection is a byte `anchor` beside its caret: the range
+// between them, either way round. The owner keeps it (`?usize`, null
+// for none) next to the buffer and the caret, hands it to `editKey` /
+// `insertSel` so typing replaces it, and to `draw` so it is painted.
+// A click lands through `byteAtCol` and `clickSelect`: one press puts
+// the caret there, a double the word under it, a triple the line —
+// and a field is one line, so the whole text.
+
+/// The selection's byte range, low first; null when there is none.
+pub fn selRange(caret: usize, anchor: ?usize) ?[2]usize {
+    const a = anchor orelse return null;
+    if (a == caret) return null;
+    return .{ @min(a, caret), @max(a, caret) };
+}
+
+/// `handleKey` over a selection: a typed character, a paste or an
+/// erase replaces the selected text; any other key drops the selection
+/// and edits as usual.
+pub fn editKey(buf: *Buf, caret: *usize, anchor: *?usize, gpa: Allocator, key: Key) Allocator.Error!Edit {
+    if (selRange(caret.*, anchor.*)) |r| {
+        const typed = if (key.typed()) |cp| cp >= 0x20 and cp != 0x7f and !key.mods.ctrl and !key.mods.alt else false;
+        const erase = (key.code == .backspace or key.code == .delete) and !key.mods.ctrl and !key.mods.alt;
+        if (typed or erase) {
+            anchor.* = null;
+            _ = deleteRange(buf, caret, @min(r[0], buf.items.len), @min(r[1], buf.items.len));
+            if (erase) return .changed;
+            _ = try handleKey(buf, caret, gpa, key);
+            return .changed;
+        }
+    }
+    const e = try handleKey(buf, caret, gpa, key);
+    if (e != .ignored) anchor.* = null;
+    return e;
+}
+
+/// `insert` over a selection: the paste replaces it.
+pub fn insertSel(buf: *Buf, caret: *usize, anchor: *?usize, gpa: Allocator, text: []const u8) Allocator.Error!void {
+    if (selRange(caret.*, anchor.*)) |r| _ = deleteRange(buf, caret, @min(r[0], buf.items.len), @min(r[1], buf.items.len));
+    anchor.* = null;
+    try insert(buf, caret, gpa, text);
+}
+
+const Class = enum { word, space, punct };
+
+fn classOf(c: u8) Class {
+    if (c == ' ' or c == '\t') return .space;
+    if (std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80) return .word;
+    return .punct;
+}
+
+/// The run of one class around `at` — letters, digits and `_` (and any
+/// non-ASCII byte) are a word, blanks a run of blanks, the rest a run
+/// of punctuation — the editor's double-click word.
+pub fn wordBoundsAt(text: []const u8, at_in: usize) [2]usize {
+    if (text.len == 0) return .{ 0, 0 };
+    const at = @min(at_in, text.len - 1);
+    const k = classOf(text[at]);
+    var lo = at;
+    while (lo > 0 and classOf(text[lo - 1]) == k) lo -= 1;
+    var hi = at + 1;
+    while (hi < text.len and classOf(text[hi]) == k) hi += 1;
+    while (lo > 0 and (text[lo] & 0xC0) == 0x80) lo -= 1;
+    while (hi < text.len and (text[hi] & 0xC0) == 0x80) hi += 1;
+    return .{ lo, hi };
+}
+
+/// A press `clicks` deep (1, 2, 3 — `dispatch.clickCount`) at byte
+/// `byte`: the caret there; the word; the whole line.
+pub fn clickSelect(text: []const u8, caret: *usize, anchor: *?usize, byte: usize, clicks: u8) void {
+    const b = @min(byte, text.len);
+    switch (clicks) {
+        0, 1 => {
+            caret.* = b;
+            anchor.* = null;
+        },
+        2 => {
+            const w = wordBoundsAt(text, b);
+            anchor.* = w[0];
+            caret.* = w[1];
+        },
+        else => {
+            anchor.* = 0;
+            caret.* = text.len;
+        },
+    }
+}
+
+/// The byte a click `col` cells into a field `w` wide lands on, with
+/// the text scrolled as `draw` scrolls it for `caret` — the grapheme
+/// under the cell, the text's end past it.
+pub fn byteAtCol(text: []const u8, caret: usize, w: u16, col: u16, method: vaxis.gwidth.Method) usize {
+    if (text.len == 0 or w == 0) return 0;
+    const c = @min(caret, text.len);
+    var caret_col: u32 = 0;
+    var it = utf8.graphemeIterator(text);
+    while (it.next()) |g| {
+        if (g.start >= c) break;
+        caret_col += @min(cellW(g.bytes(text), method), 2);
+    }
+    // The same first painted cell as `draw`.
+    var skipped: u32 = 0;
+    var it2 = utf8.graphemeIterator(text);
+    while (caret_col - skipped >= w) {
+        const g = it2.next() orelse break;
+        skipped += @min(cellW(g.bytes(text), method), 2);
+    }
+    var x: u32 = 0;
+    while (it2.next()) |g| {
+        const gw = @min(cellW(g.bytes(text), method), 2);
+        if (gw == 0) continue;
+        if (col < x + gw) return g.start;
+        x += gw;
+    }
+    return text.len;
+}
+
+fn cellW(g: []const u8, method: vaxis.gwidth.Method) u16 {
+    if (g.len == 1 and g[0] >= 0x20 and g[0] < 0x7f) return 1;
+    return utf8.width(g, method);
+}
+
 pub const DrawOptions = struct {
     style: Style,
     placeholder: ?[]const u8 = null,
@@ -209,6 +332,10 @@ pub const DrawOptions = struct {
     secret: bool = false,
     /// Show the caret (return its cell). An unfocused field returns null.
     focused: bool = true,
+    /// The selection's anchor (`selRange`): the range between it and
+    /// the caret paints in `sel_style`, the theme's selection by default.
+    anchor: ?usize = null,
+    sel_style: ?Style = null,
 };
 
 /// Paints `text` into `r` (one row) so the caret is inside it, scrolling
@@ -236,6 +363,7 @@ pub fn draw(ui: Ui, r: Rect, text: []const u8, caret: usize, opts: DrawOptions) 
         cells.append(ui.arena, .{ .start = g.start, .end = g.start + g.len, .w = @min(cw, 2) }) catch return null;
     }
     const c = @min(caret, text.len);
+    const sel = selRange(c, opts.anchor);
     // Display column of the caret.
     var caret_col: u32 = 0;
     for (cells.items) |cell| {
@@ -253,7 +381,9 @@ pub fn draw(ui: Ui, r: Rect, text: []const u8, caret: usize, opts: DrawOptions) 
     for (cells.items[first..]) |cell| {
         if (x + cell.w > r.right()) break;
         const g = if (opts.secret) "•" else text[cell.start..cell.end];
-        ui.canvas.put(x, r.y, .{ .char = .{ .grapheme = g, .width = @intCast(cell.w) }, .style = opts.style });
+        const in_sel = if (sel) |rg| cell.start >= rg[0] and cell.start < rg[1] else false;
+        const st = if (in_sel) (opts.sel_style orelse Theme.onBg(ui.theme.fg, ui.theme.selection.bg)) else opts.style;
+        ui.canvas.put(x, r.y, .{ .char = .{ .grapheme = g, .width = @intCast(cell.w) }, .style = st });
         x += cell.w;
     }
     if (!opts.focused) return null;
@@ -411,4 +541,61 @@ test "draw paints the text, the placeholder, and keeps the caret in view" {
     _ = draw(ui, r, "hunter2", 7, .{ .style = style, .secret = true });
     try f.expectRow(0, "•••••••");
     try testing.expect(draw(ui, Rect.empty, "x", 0, .{ .style = style }) == null);
+}
+
+test "a double-click takes the word under it — letters and digits and _, a blank run, a punctuation run — a triple the line; a single press drops the selection" {
+    const s = "git log --oneline foo_bar2";
+    try testing.expectEqual([2]usize{ 0, 3 }, wordBoundsAt(s, 1));
+    try testing.expectEqual([2]usize{ 18, 26 }, wordBoundsAt(s, 22));
+    try testing.expectEqual([2]usize{ 8, 10 }, wordBoundsAt(s, 9));
+    try testing.expectEqual([2]usize{ 3, 4 }, wordBoundsAt(s, 3));
+    try testing.expectEqual([2]usize{ 18, 26 }, wordBoundsAt(s, 99));
+    // A word with a non-ASCII letter is one word, cut on code points.
+    try testing.expectEqual([2]usize{ 0, 6 }, wordBoundsAt("caf\u{e9}s x", 2));
+    var caret: usize = 0;
+    var anchor: ?usize = null;
+    clickSelect(s, &caret, &anchor, 5, 2);
+    try testing.expectEqual([2]usize{ 4, 7 }, selRange(caret, anchor).?);
+    clickSelect(s, &caret, &anchor, 5, 3);
+    try testing.expectEqual([2]usize{ 0, s.len }, selRange(caret, anchor).?);
+    clickSelect(s, &caret, &anchor, 5, 1);
+    try testing.expect(selRange(caret, anchor) == null);
+    try testing.expectEqual(@as(usize, 5), caret);
+}
+
+test "over a selection a typed character or a paste replaces it, an erase deletes it, an arrow drops it" {
+    var f: Field = .{};
+    defer f.deinit();
+    try f.type_("hello brave world");
+    var anchor: ?usize = null;
+    clickSelect(f.text(), &f.caret, &anchor, 7, 2);
+    try testing.expectEqual(Edit.changed, try editKey(&f.buf, &f.caret, &anchor, testing.allocator, Key.char('X')));
+    try testing.expectEqualStrings("hello X world", f.text());
+    try testing.expect(anchor == null);
+    clickSelect(f.text(), &f.caret, &anchor, 9, 2);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, Key.named(.backspace));
+    try testing.expectEqualStrings("hello X ", f.text());
+    clickSelect(f.text(), &f.caret, &anchor, 0, 3);
+    try insertSel(&f.buf, &f.caret, &anchor, testing.allocator, "pasted");
+    try testing.expectEqualStrings("pasted", f.text());
+    clickSelect(f.text(), &f.caret, &anchor, 0, 2);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, Key.named(.left));
+    try testing.expect(anchor == null);
+    try testing.expectEqualStrings("pasted", f.text());
+}
+
+test "byteAtCol reads the same scrolled layout draw paints; the selection paints in the theme's selection" {
+    // Unscrolled: column = byte for ASCII, past the end = the end.
+    try testing.expectEqual(@as(usize, 3), byteAtCol("abcdef", 0, 10, 3, .unicode));
+    try testing.expectEqual(@as(usize, 6), byteAtCol("abcdef", 0, 10, 9, .unicode));
+    // The caret at the end of a long line scrolls it: the field is
+    // 5 wide, so the first painted byte is 6 of "abcdefghij".
+    try testing.expectEqual(@as(usize, 6), byteAtCol("abcdefghij", 10, 5, 0, .unicode));
+    var f = try Fixture.init(12, 1);
+    defer f.deinit();
+    const ui = f.ui();
+    _ = draw(ui, f.full(), "one two", 7, .{ .style = f.theme.fg, .anchor = 4 });
+    try f.expectRow(0, "one two");
+    try testing.expect(f.bgEql(5, 0, f.theme.selection));
+    try testing.expect(!f.bgEql(2, 0, f.theme.selection));
 }

@@ -58,6 +58,7 @@ const settings_app = @import("settings.zig");
 const SettingsUi = @import("../ui/settings.zig");
 const first_launch = @import("first_launch.zig");
 const Prompt = app_mod.Prompt;
+const text_field = @import("../ui/text_field.zig");
 const Confirm = app_mod.Confirm;
 const Picker = app_mod.Picker;
 const FindBar = app_mod.FindBar;
@@ -70,6 +71,7 @@ const debug_panel = @import("debug_panel.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
 const CellHit = @FieldType(@import("../ui/hit.zig").HitTarget, "editor_cell");
 const sessions = @import("../sessions.zig");
+const session_attention = @import("session_attention.zig");
 const welcome_app = @import("welcome.zig");
 const dock = @import("dock.zig");
 const launcher_dock = @import("launcher_dock.zig");
@@ -1359,6 +1361,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
     const text: ?[]const u8 = switch (action) {
         .copy_text, .copy_link, .open_url, .open_path, .set_theme, .lua_bind, .lsp_install, .requests_for => |s| try app.frame.allocator().dupe(u8, s),
         .claude_account => |c| try app.frame.allocator().dupe(u8, c.name),
+        .session_focus => |f| try app.frame.allocator().dupe(u8, f.id),
         else => null,
     };
     closeOverlay(app);
@@ -1488,6 +1491,10 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .script_list_refresh => |id| if (script_list.find(app, id)) |l| try script_list.refresh(app, l),
         .script_section_show => |i| script_section.show(app, i, true),
         .switch_workspace => |root| try app.tree.switchTo(app, root),
+        .session_focus => |f| session_attention.focus(app, f.pane, if (text.?.len > 0) text.? else null) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {},
+        },
         .none => {},
     }
 }
@@ -1786,6 +1793,7 @@ fn acceptPrompt(app: *App, purpose: app_mod.PromptPurpose, text: []const u8) All
         .mount_open => try toastOnFail(app, mount_pane.acceptPrompt(app, text)),
         .term_rename => |id| try toastOnFail(app, cmd_term.renameAccept(app, id, text)),
         .grep_query => try grep.acceptQuery(app, text),
+        .session_search => try @import("session_search.zig").acceptQuery(app, text),
         .grep_replace => try grep.acceptReplace(app, text),
         .add_workspace => try tree_mod.acceptAddWorkspace(app, text),
         .terminal_glyph_svg => try toastOnFail(app, @import("terminal_glyph.zig").customAccept(app, text)),
@@ -2476,6 +2484,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
             if (wheel and app.overlay == .help) return help_app.wheel(app, signed(down, count));
             if (m.kind != .press) return;
+            // A text field's own hit: a press places the caret, a
+            // double takes the word, a triple the line (`text_field`).
+            if (m.button == .left) if (fieldPress(app, i, m)) return;
             // // changed (lua-track): right-click on a palette row — Run,
             // Bind in init.lua…, Copy id.
             if (m.button == .right and app.overlay == .picker) switch (app.overlay.picker.kind) {
@@ -2818,6 +2829,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // // changed (git-more2): a failed git op's toast: the
                     // click opens the command log at the child that failed.
                     const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, git_app.log_toast_id) else false;
+                    // A session waiting on you: the message is the
+                    // session, so the click goes to it (`Focus`).
+                    if (app.toasts.items[at].action) |action| if (action == .focus_session) {
+                        app.toasts.items[at].action = null;
+                        defer action.deinit(app.gpa);
+                        app.dismissToastAt(at);
+                        return app.runToastAction(action);
+                    };
                     app.dismissToastAt(at);
                     if (is_script) try script_diag.jump(app);
                     if (is_git_log) git_app.runToast(app, git_app.openCommandLog(app, null));
@@ -3199,6 +3218,32 @@ fn pressOutside(app: *App) void {
         },
         else => {},
     }
+}
+
+// ── a text field: click, double / triple ──
+
+/// A left press on an overlay's text field — the prompt's line
+/// (`.overlay_item(0)`) or the picker's query (`Picker.query_item`):
+/// true when it was one and was taken.
+fn fieldPress(app: *App, item: u32, m: Mouse) bool {
+    const row = hitRect(app, m.x, m.y) orelse return false;
+    const method = app.screen.width_method;
+    switch (app.overlay) {
+        .prompt => |*p| {
+            if (item != 0) return false;
+            const field = Prompt.fieldOf(row);
+            Prompt.click(&p.state, m.x -| field.x, field.w, clickCount(app, m), method);
+        },
+        .picker => |*p| {
+            if (item != Picker.query_item) return false;
+            const s = &p.state;
+            const byte = text_field.byteAtCol(s.query.items, s.caret, row.w, m.x -| row.x, method);
+            text_field.clickSelect(s.query.items, &s.caret, &s.sel_anchor, byte, clickCount(app, m));
+        },
+        else => return false,
+    }
+    app.needs_render = true;
+    return true;
 }
 
 // ── the editor: click, drag-select, double / triple ──
@@ -5752,4 +5797,62 @@ test "a menu closing after the active pane changed under it focuses the active p
     try app.openMenu("Test", items2, 2, 2);
     try app.handle(.{ .key = key_mod.Key.named(.esc) });
     try std.testing.expectEqual(app_mod.FocusId{ .pane = b }, app.focus);
+}
+
+/// The first cell whose hit is `.overlay_item(id)`, after a paint.
+fn overlayItemCell(app: *App, id: u32) !?[2]u16 {
+    try app.render();
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        while (x < app.screen.width) : (x += 1) if (app.hits.at(x, y)) |h| if (h == .overlay_item and h.overlay_item == id) return .{ x, y };
+    }
+    return null;
+}
+
+fn pressAt(app: *App, x: u16, y: u16) !void {
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = .release, .button = .left } });
+}
+
+test "the prompt's line and the picker's query: a press places the caret, a double takes the word, a triple the line — typing replaces what is selected" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    // The prompt.
+    try @import("session_search.zig").openPrompt(&app);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "alpha beta gamma") });
+    const at = (try overlayItemCell(&app, 0)).?;
+    const fx = at[0] + 1; // the field starts a cell into the row
+    const p = &app.overlay.prompt.state;
+    try pressAt(&app, fx + 7, at[1]);
+    try std.testing.expectEqual(@as(usize, 7), p.caret);
+    try std.testing.expect(text_field.selRange(p.caret, p.anchor) == null);
+    try pressAt(&app, fx + 7, at[1]);
+    try std.testing.expectEqual([2]usize{ 6, 10 }, text_field.selRange(p.caret, p.anchor).?);
+    try app.handle(.{ .key = key_mod.Key.char('B') });
+    try std.testing.expectEqualStrings("alpha B gamma", p.buf.items);
+    // A triple: the whole line, which the next character replaces.
+    try pressAt(&app, fx + 2, at[1]);
+    try pressAt(&app, fx + 2, at[1]);
+    try pressAt(&app, fx + 2, at[1]);
+    try std.testing.expect(p.select_all);
+    try app.handle(.{ .key = key_mod.Key.char('z') });
+    try std.testing.expectEqualStrings("z", p.buf.items);
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    // The picker's query: the palette.
+    app.now_ms += 1000; // out of the double-click window
+    try command.run(&app, .{ .static = .palette });
+    try std.testing.expect(app.overlay == .picker);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "git log") });
+    const q = (try overlayItemCell(&app, Picker.query_item)).?;
+    const s = &app.overlay.picker.state;
+    try pressAt(&app, q[0] + 1, q[1]);
+    try pressAt(&app, q[0] + 1, q[1]);
+    try std.testing.expectEqual([2]usize{ 0, 3 }, text_field.selRange(s.caret, s.sel_anchor).?);
+    try app.handle(.{ .key = key_mod.Key.named(.backspace) });
+    try std.testing.expectEqualStrings(" log", s.query.items);
+    try pressAt(&app, q[0] + 2, q[1]);
+    try pressAt(&app, q[0] + 2, q[1]);
+    try pressAt(&app, q[0] + 2, q[1]);
+    try std.testing.expectEqual([2]usize{ 0, 4 }, text_field.selRange(s.caret, s.sel_anchor).?);
 }

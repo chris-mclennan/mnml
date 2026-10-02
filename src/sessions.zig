@@ -100,6 +100,7 @@ const settings = @import("app/settings.zig");
 const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
 const session_worktree = @import("app/session_worktree.zig");
+const session_attention = @import("app/session_attention.zig");
 const mount_pane_mod = @import("app/mount_pane.zig");
 const session_changes = @import("app/session_changes.zig");
 const chip_mod = @import("ui/chip.zig");
@@ -771,7 +772,7 @@ fn announceEdges(app: *App, edges: []const Edge) Allocator.Error!void {
         const it = findItem(app, e.session_id) orelse continue;
         switch (e.to) {
             .waiting => if (ptyPaneOf(app, e.session_id) == null) {
-                try app.toastLevel(.warn, "session needs input: {s}", .{itemName(app, it)});
+                try session_attention.announce(app, null, it.session_id, itemName(app, it));
                 if (app.cfg.ui.session_bell) app.bell_pending = true;
             },
             .failed => try app.toastLevel(.err, "session failed: {s}", .{itemName(app, it)}),
@@ -986,7 +987,7 @@ pub fn announcedName(app: *App, pid: app_mod.PaneId) []const u8 {
 /// notification (`notifySession`) with its bell. The mark on its tab
 /// and card is `needsYou` itself.
 fn announceNeedsYou(app: *App, pid: app_mod.PaneId) Allocator.Error!void {
-    try app.toastLevel(.warn, "session needs input: {s}", .{announcedName(app, pid)});
+    try session_attention.announce(app, pid, null, announcedName(app, pid));
     try notifySession(app, pid, .waiting);
 }
 
@@ -1512,12 +1513,19 @@ fn openCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     if (currentCard(app)) |c| {
         if (app.panes.get(c.pane) == null) return app.diag.fail(arena, "sessions: the pane is gone", .{});
-        app.showPane(c.pane);
-        app.focus = .{ .pane = c.pane };
-        app.needs_render = true;
+        focusCardPane(app, c.pane);
         return;
     }
     return resumeItem(app, try currentOrFail(app));
+}
+
+/// A card's pane brought on screen with the keys — the card's
+/// double-click, and every other "go to that session" (the needs-input
+/// toast, the bell's waiting rows: `app/session_attention.zig`).
+pub fn focusCardPane(app: *App, pid: app_mod.PaneId) void {
+    app.showPane(pid);
+    app.focus = .{ .pane = pid };
+    app.needs_render = true;
 }
 
 /// Open `it` again: a cloud run's page, else the CLI resumed on the
@@ -1562,7 +1570,7 @@ pub fn resumable(app: *App, arena: Allocator) Allocator.Error![]const Item {
 
 /// A scan row SESSIONS lists for this workspace (`ws_name` is its
 /// basename): rooted in it, or on a worktree mnml made for a session here.
-fn isHere(app: *App, it: Item, ws_name: []const u8) bool {
+pub fn isHere(app: *App, it: Item, ws_name: []const u8) bool {
     return inWorkspaceOrTree(app, it, app.workspace, ws_name);
 }
 
