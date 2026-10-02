@@ -657,12 +657,13 @@ fn paintedEnd(ui: Ui, tabs: []const Tab, room: u16, first: usize) u16 {
 /// and says nothing about them is the bug. It never takes the `󰐕`'s
 /// room: that button has nowhere else to be.
 ///
-/// With the pager up, the chip is never given cells: the pager already
-/// says tabs are off the strip (and how many pages of them), and its
-/// pages are cut from this edge — one that moved with the chip's label
-/// would re-cut them as the window moved.
+/// With a stepper up — the pager, or a session's own control — the
+/// chip is never given cells: the stepper already says there is more
+/// than the strip shows and is the way to it, and the pager's pages are
+/// cut from this edge — one that moved with the chip's label would
+/// re-cut them as the window moved.
 fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u16 {
-    if (g.pager_form != .none) return g.tabs_right;
+    if (g.pager_form != .none or g.nav_form != .none) return g.tabs_right;
     const room = g.tabs_right -| area.x;
     const first = clampScroll(ui, tabs, room, opts.first);
     const hidden = first + (tabs.len - first - countPainted(ui, tabs, room, first)) + opts.hidden_extra;
@@ -789,7 +790,7 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
         const label = hiddenLabel(ui, hidden_total);
         const w = ui.width(label);
         // Beside the pager it takes only the cells left after the 󰐕.
-        const cx = if (g.pager_form != .none) after_plus else @max(@min(after_plus, g.pager_x -| w), area.x);
+        const cx = if (g.pager_form != .none or g.nav_form != .none) after_plus else @max(@min(after_plus, g.pager_x -| w), area.x);
         if (cx + w <= g.pager_x) {
             const r = Rect.init(cx, y, w, 1);
             _ = ui.putStr(cx, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
