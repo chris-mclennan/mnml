@@ -129,6 +129,23 @@ pub const Layout = struct {
         self.nodes.deinit(self.gpa);
     }
 
+    /// A deep copy: the same tree, node for node, its own tab lists.
+    pub fn clone(self: *const Layout) Allocator.Error!Layout {
+        var out: Layout = .{ .gpa = self.gpa, .root = self.root, .zoomed = self.zoomed };
+        errdefer out.deinit();
+        try out.nodes.ensureTotalCapacity(self.gpa, self.nodes.items.len);
+        for (self.nodes.items) |n| switch (n) {
+            .leaf => |l| {
+                var copy = l;
+                copy.tabs = .empty;
+                try copy.tabs.appendSlice(self.gpa, l.tabs.items);
+                out.nodes.appendAssumeCapacity(.{ .leaf = copy });
+            },
+            else => out.nodes.appendAssumeCapacity(n),
+        };
+        return out;
+    }
+
     pub fn isEmpty(self: *const Layout) bool {
         return self.root == null;
     }

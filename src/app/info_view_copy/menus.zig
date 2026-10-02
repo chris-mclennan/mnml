@@ -116,6 +116,20 @@ const phase_one = [_]Row{
         .keys = &.{.{ .command = .@"view.activity_sessions", .label = "Sessions" }},
         .links = &.{ .{ .command = .{ .id = .@"view.ai_layout_tabs", .label = "Use tabs" } }, .{ .settings = .{ .row = copy.settingsRow("ui.ai_layout_mode"), .label = "AI session layout" } } },
     } },
+    .{ .label = "Show side by side", .entry = .{
+        .title = "Sessions side by side",
+        .body = "How many sessions the sessions mode stands side by side — the Sessions row of the activity bar enters it: the layout is put aside, every Claude Code and Codex session goes into a column, the first ones on the rail on show and the rest stacked behind them. 1 is one session maximised. Picking a count writes `ai.session_columns` home and, in the mode, deals the sessions again.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.mode", .label = "The sessions mode" } }, .{ .settings = .{ .row = copy.settingsRow("ai.session_columns"), .label = "Sessions side by side" } } },
+    } },
+    .{ .parent = "Show side by side", .label = "1 — one maximised", .entry = columns(1) },
+    .{ .parent = "Show side by side", .label = "2 side by side", .entry = columns(2) },
+    .{ .parent = "Show side by side", .label = "3 side by side", .entry = columns(3) },
+    .{ .parent = "Show side by side", .label = "4 side by side", .entry = columns(4) },
+    .{ .label = "Sessions side by side (the sessions mode)", .entry = .{
+        .title = "The sessions mode",
+        .body = "Puts the editor layout aside and shows only the Claude Code and Codex sessions, `ai.session_columns` of them side by side, the rest stacked behind as tabs. Ctrl+Tab steps the focused column's stack, Ctrl+1…9 shows the rail's Nth session there, Ctrl+N starts a new one in it. Run it again — or click the Sessions row — and the layout comes back exactly as it was.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.mode", .label = "Enter or leave it" } }, .{ .settings = .{ .row = copy.settingsRow("ai.session_columns"), .label = "Sessions side by side" } } },
+    } },
     .{ .label = "Bake AI glyphs into MnmlSymbols", .entry = .{
         .title = "Bake the AI glyphs",
         .body = "Writes the catalog of the Nerd Font glyphs mnml draws to `nerd-glyphs.tsv` under the data root and toasts the count — it builds and installs no font. A mark of your own goes into the MnmlSymbols font through Icon ▸ Custom SVG… on the terminal or Claude chip.",
@@ -527,4 +541,14 @@ test "no two curated menu rows share a body — a row differing only by its targ
         } else try seen.put(t.allocator, r.entry.body, r.label);
     }
     try t.expectEqual(@as(usize, 0), dupes);
+}
+
+/// A row of the AI chips' *Show side by side* submenu.
+fn columns(comptime n: u8) Entry {
+    const ids = [_]command.CommandId{ .@"sessions.columns_1", .@"sessions.columns_2", .@"sessions.columns_3", .@"sessions.columns_4" };
+    return .{
+        .title = if (n == 1) "One session, maximised" else std.fmt.comptimePrint("{d} sessions side by side", .{n}),
+        .body = if (n == 1) "The sessions mode shows one session across the whole editor area, the others stacked behind it as tabs — Ctrl+Tab steps through them. Writes `ai.session_columns = 1` home; the tick is the current count." else std.fmt.comptimePrint("The sessions mode stands {d} sessions side by side, each column a stack of the rest, dealt in the rail's order. Writes `ai.session_columns = {d}` home; the tick is the current count.", .{ n, n }),
+        .links = &.{.{ .command = .{ .id = ids[n - 1], .label = "Use this count" } }},
+    };
 }

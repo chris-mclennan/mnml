@@ -259,6 +259,7 @@ pub fn shown(app: *const App) bool {
 /// has the focus.
 pub fn active(app: *App) Section {
     if (app.git_palette.active) return .git;
+    if (app.sessions_mode.active) return .sessions;
     switch (app.focus) {
         .tree => return .explorer,
         .panel => |p| if (onRail(side.sectionOfPanel(p))) |s| return s,
@@ -310,6 +311,7 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
 /// `leaving_git`), which puts the stashed layout back.
 pub fn enter(app: *App, s: Section) void {
     if (s != .git) git_palette.leave(app);
+    if (s != .sessions) @import("sessions_mode.zig").leave(app, false);
     if (s != .http) http_panel.leave(app) catch {};
 }
 
@@ -373,6 +375,9 @@ pub fn mouse(app: *App, part: Part, m: Mouse) Allocator.Error!void {
 }
 
 pub fn show(app: *App, s: Section) Allocator.Error!void {
+    // The Sessions row is the sessions mode's way in and out; the
+    // section alone is `view.activity_sessions` (`ctrl+k a`).
+    if (s == .sessions) return run(app, .@"sessions.mode");
     if (commandOf(s)) |id| return run(app, id);
     script_section.show(app, app.script_sections.active, true);
 }
@@ -409,7 +414,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .git => "click: Git rail · status · commits · branches · worktrees · stash · right-click: menu",
             .debug => "click: Debug rail · variables · watch · call stack · breakpoints · right-click: menu",
             .integrations => "click: Integrations rail · browser / mixr / integration tools · + to add · right-click: menu",
-            .sessions => "click: Sessions rail · Claude Code / Codex sessions, the cloud runs · t opens the table · right-click: menu",
+            .sessions => "click: the sessions mode — every Claude Code / Codex session side by side, the layout put aside; click again to leave · right-click: menu",
             .http => "click: HTTP rail · requests · recent · captured · envs · collections · right-click: menu",
             .notes => "click: Notes rail · .mnml/notes/*.md persistent scratch · right-click: menu",
             .todos => "click: TODOs rail · TODO / FIXME / XXX / HACK / REVIEW hits · right-click: menu",

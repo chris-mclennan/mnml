@@ -112,6 +112,7 @@ const tree_mod = @import("tree.zig");
 const info_view_app = @import("info_view.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
+const sessions_mode = @import("sessions_mode.zig");
 const pty_search = @import("pty_search.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
@@ -246,6 +247,9 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
+    // The sessions mode's chords (`Ctrl+Tab`, `Ctrl+1`…, `Ctrl+N`) are
+    // the sessions' wherever the keys are inside it.
+    if (try sessions_mode.interceptKey(app, k)) return;
     // The info view with the keys (`help.focus`): its rows walk; what
     // it does not take goes on to the chords, the palette's included.
     if (app.focus == .info_view) {
@@ -3033,13 +3037,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 // A session's ` ‹ 3/7 › `: the ring steps from the
                 // session this strip shows, whatever had the keys.
+                // In the sessions mode the arrows step this column's stack.
                 .session_prev => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"ai.focus_prev_session");
+                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_prev" else .@"ai.focus_prev_session");
                 },
                 .session_next => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"ai.focus_next_session");
+                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_next" else .@"ai.focus_next_session");
                 },
                 // The chips are the way to the SESSIONS panel; a click
                 // starts a session only when none of that product is

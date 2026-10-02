@@ -291,15 +291,15 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         },
         .session_prev => .{
             .title = "Previous session",
-            .body = "The `‹` of this session's `‹ 3/7 ›`: the session before it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Before the first it wraps to the last. `3/7` is this session's place and the count; a narrow strip drops the number first.",
+            .body = "The `‹` of this session's `‹ 3/7 ›`: the session before it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Before the first it wraps to the last. `3/7` is this session's place and the count; a narrow strip drops the number first. In the sessions mode the strip counts its column's stack instead, and `‹` shows the session stacked before this one in the same column (Ctrl+Shift+Tab there). With one session there is nothing to step and the control is gone.",
             .keys = &.{ .{ .command = .@"ai.focus_prev_session", .label = "Previous session" }, .{ .command = .@"ai.focus_next_session", .label = "Next session" } },
-            .links = &.{ .{ .command = .{ .id = .@"ai.focus_prev_session", .label = "Go back one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_prev_session", .label = "Go back one" } }, .{ .command = .{ .id = .@"sessions.mode", .label = "Sessions side by side" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
         },
         .session_next => .{
             .title = "Next session",
-            .body = "The `›` of this session's `‹ 3/7 ›`: the session after it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Past the last it wraps to the first. `3/7` is this session's place and the count; a narrow strip drops the number first.",
+            .body = "The `›` of this session's `‹ 3/7 ›`: the session after it in the ring of every Claude Code and Codex pane — page by page, then left to right, tabs in strip order — on whichever tab page holds it, which comes on screen with the keys. Past the last it wraps to the first. `3/7` is this session's place and the count; a narrow strip drops the number first. In the sessions mode the strip counts its column's stack instead, and `›` shows the session stacked after this one in the same column (Ctrl+Tab there). With one session there is nothing to step and the control is gone.",
             .keys = &.{ .{ .command = .@"ai.focus_next_session", .label = "Next session" }, .{ .command = .@"ai.focus_prev_session", .label = "Previous session" } },
-            .links = &.{ .{ .command = .{ .id = .@"ai.focus_next_session", .label = "Go forward one" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.focus_next_session", .label = "Go forward one" } }, .{ .command = .{ .id = .@"sessions.mode", .label = "Sessions side by side" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The sessions section" } } },
         },
         else => null,
     };
@@ -366,7 +366,7 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
     const dirty = p.dirty();
     return switch (p.*) {
         .pty => |*pt| blk: {
-            const claude = if (pty_pane.productOf(app, pt)) |prod| prod == .claude else false;
+            const claude = if (@import("../launch_profiles.zig").productOfPane(app, pt)) |prod| prod == .claude else false;
             // The raised hand: this tab's child is blocked on the user.
             if (sessions.needsYou(app, id)) break :blk .{
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — needs you", .{p.title()}),

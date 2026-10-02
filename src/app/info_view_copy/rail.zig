@@ -73,9 +73,9 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
         },
         .sessions => .{
             .title = "Sessions — Claude Code and Codex",
-            .body = try std.fmt.allocPrint(arena, "Every AI session this workspace has — running, waiting for your approval, ended — one card each with its branch, cwd and what the pane is showing, plus the cloud runs. Click shows the section; right-click is its menu; `t` opens the sessions table across workspaces. A card waiting on approval sorts to the top under the State order, so the thing that needs you is the first row.{s}", .{marked(app, .sessions)}),
+            .body = try std.fmt.allocPrint(arena, "Every AI session this workspace has — running, waiting for your approval, ended — one card each with its branch, cwd and what the pane is showing, plus the cloud runs; a `•` beside a card means that session is on screen now. Click enters the sessions mode: the layout is put aside and every session stands in `ai.session_columns` columns side by side, the rest stacked behind them (Ctrl+Tab steps a column's stack, Ctrl+1…9 shows a session, Ctrl+N starts one); click again and the layout comes back as it was. Right-click is its menu; `t` opens the sessions table across workspaces. A card waiting on approval sorts to the top under the State order, so the thing that needs you is the first row.{s}", .{marked(app, .sessions)}),
             .keys = &.{.{ .command = .@"view.activity_sessions", .label = "Sessions" }},
-            .links = &.{ .{ .command = .{ .id = .@"view.activity_sessions", .label = "Show sessions" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a Claude session" } }, .{ .command = .{ .id = .@"sessions.table", .label = "The sessions table" } } },
+            .links = &.{ .{ .command = .{ .id = .@"sessions.mode", .label = "Sessions side by side" } }, .{ .command = .{ .id = .@"ai.claude_code_new", .label = "Start a Claude session" } }, .{ .command = .{ .id = .@"sessions.table", .label = "The sessions table" } } },
         },
         .http => .{
             .title = "HTTP — requests",

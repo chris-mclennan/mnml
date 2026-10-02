@@ -91,6 +91,7 @@ const tasks_mod = @import("app/tasks.zig");
 const watch = @import("app/watch.zig");
 const git_app = @import("app/git.zig");
 const git_palette_app = @import("app/git_palette.zig");
+const sessions_mode_app = @import("app/sessions_mode.zig");
 const ai_app = @import("app/ai.zig");
 const copilot_app = @import("app/copilot.zig");
 const spend = @import("app/spend.zig");
@@ -1263,6 +1264,9 @@ pub const App = struct {
     git: git_app.State,
     /// Git mode: the palette in the sidebar (`app/git_palette.zig`).
     git_palette: git_palette_app.State = .{},
+    /// The sessions mode: only the sessions, side by side
+    /// (`app/sessions_mode.zig`).
+    sessions_mode: sessions_mode_app.State = .{},
     snippets: snippets.State,
     ai: ai_app.State = .{},
     copilot: copilot_app.State = .{},
@@ -2045,6 +2049,7 @@ pub const App = struct {
         self.http_panel.deinit(gpa);
         self.git.deinit(gpa, self.io);
         self.git_palette.deinit(gpa);
+        self.sessions_mode.deinit(gpa);
         self.marketplace.deinit(gpa, self.io);
         self.fonts.deinit(gpa, self.io);
         self.ipc_fx.deinit(gpa);
@@ -3083,6 +3088,8 @@ pub const App = struct {
         // closing, once the store no longer has it.
         const closed_path: ?[]const u8 = if (pane.asEditor()) |e| (if (e.buf.doc.path) |p| try self.frame.allocator().dupe(u8, p) else null) else null;
         const layout = self.layouts.current();
+        // A zoomed session closing hands the zoom on (`sessions_mode`).
+        const zoom_next = sessions_mode_app.zoomSuccessor(self, id);
         const next = layout.removePane(id);
         // Every page lets the pane go, not only this one: `view.close_others`
         // and a session ending close panes another page shows (and a
@@ -3098,6 +3105,7 @@ pub const App = struct {
         // id with it, as a tab of nothing until a new pane takes the slot
         // and is shown twice.
         git_palette_app.forgetPane(self, id);
+        sessions_mode_app.forgetPane(self, id);
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
@@ -3113,6 +3121,7 @@ pub const App = struct {
             self.active = null;
             self.setActive(fallback);
         }
+        if (zoom_next) |z| sessions_mode_app.takeZoom(self, z);
         self.needs_render = true;
     }
 
@@ -3376,6 +3385,7 @@ pub const App = struct {
 
     pub fn handle(self: *App, ev: AppEvent) Allocator.Error!void {
         defer self.checkLayoutInvariant(@tagName(ev));
+        defer sessions_mode_app.reconcile(self) catch {};
         script_task.startDeferred(self);
         // A wheel burst folds into one motion; anything else flushes
         // what is pending first so order is kept (`scroll.zig`). A

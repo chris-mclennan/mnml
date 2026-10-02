@@ -190,6 +190,7 @@ const runner_tables = .{
     @import("../app/jobs.zig"),
     @import("../app/session_changes.zig"),
     @import("../app/session_cycle.zig"),
+    @import("../app/sessions_mode.zig"),
     @import("../app/info_view.zig"),
 };
 
@@ -557,6 +558,9 @@ pub fn run(app: *App, ref: CommandRef) CommandError!void {
         .static => |id| name(id),
         .dyn => "a registered command",
     });
+    // The sessions mode keeps its shape after whatever ran: a session
+    // started joins a column, a closed column is refilled.
+    defer if (outer == null) @import("../app/sessions_mode.zig").reconcile(app) catch {};
     const result: CommandError!void = switch (ref) {
         .static => |id| if (runners.get(id)) |f| f(app) else app.diag.fail(app.frame.allocator(), "{s}: not implemented yet", .{name(id)}),
         .dyn => |slot| runDyn(app, slot),
@@ -907,7 +911,7 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1159), count);
+    try std.testing.expectEqual(@as(usize, 1176), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

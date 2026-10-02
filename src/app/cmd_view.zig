@@ -333,6 +333,7 @@ fn activityHttp(app: *App) CommandError!void {
 /// Git mode (`app/git_palette.zig`): the palette in the sidebar, one
 /// graph tab per repo.
 fn activityGit(app: *App) CommandError!void {
+    @import("sessions_mode.zig").leave(app, false);
     try git_palette.enter(app);
 }
 
@@ -608,7 +609,7 @@ fn stepSessionTab(app: *App, dir: enum { next, prev }) CommandError!bool {
 
 fn isSessionPane(app: *App, id: PaneId) bool {
     const p = app.panes.pty(id) orelse return false;
-    return pty_pane.productOf(app, p) != null;
+    return @import("launch_profiles.zig").productOfPane(app, p) != null;
 }
 
 /// `Ctrl-W t` / `Ctrl-W b` (`:help CTRL-W_t`): the first / last leaf in

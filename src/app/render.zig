@@ -1436,7 +1436,7 @@ fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color)
 /// codicon's.
 fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
     const p = app.theme.palette;
-    if (pty_pane.productOf(app, pane)) |product| return switch (product) {
+    if (@import("launch_profiles.zig").productOfPane(app, pane)) |product| return switch (product) {
         .claude => .{ .glyph = claude_mark.glyph(app, ascii), .color = pty_pane.claude_brand },
         .codex => kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
     };
@@ -1588,7 +1588,9 @@ fn modeChip(app: *App, ui: Ui, active: PaneId) ?bufferline.ModeChip {
 /// ` ‹ 3/7 › `; null on every other pane.
 fn sessionNav(app: *App, active: PaneId) Allocator.Error!?bufferline.SessionNav {
     if (!session_cycle.isSession(app, active)) return null;
-    const pos = (try session_cycle.position(app, app.frame.allocator(), active)) orelse return null;
+    // In the sessions mode: its place in its column's stack.
+    const pos = (try @import("sessions_mode.zig").stackPosition(app, active)) orelse
+        (try session_cycle.position(app, app.frame.allocator(), active)) orelse return null;
     return .{ .index = pos.index, .count = pos.count, .prev = @intFromEnum(Button.session_prev), .next = @intFromEnum(Button.session_next) };
 }
 
