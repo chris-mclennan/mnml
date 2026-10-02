@@ -667,7 +667,6 @@ instance by the current directory. About a week of agent time.
 ## 10. Open questions for the user
 
 - Should a session's "allow for this session" end when the pane closes (proposed), or persist per launch profile until revoked?
-- Close the existing gap now in phase 1 — any pane can append `run-command` / `open-pty` to `.mnml/ipc/command` today — even if it breaks integrations that rely on it?
 - Should Claude Code sessions started outside mnml see mnml in their `/ide` list (one read-only workspace-level lock), or stay unaware of it?
 - Is it fine that each mnml session appears as its own IDE (`mnml · <label>`) in an outside session's `/ide` list?
 - When you accept a diff an agent proposed, save to disk at once (as claudecode.nvim does), or leave the buffer dirty for your own save?
