@@ -587,8 +587,8 @@ pub const specs = [_]Spec{
     .{ .id = "sessions.sort_waiting", .title = "Sessions: sort the sessions that need you first (manual order under them)", .group = "sessions" },
     // The panes whose child is blocked on a question (`sessions.needsYou`),
     // in pane order, wrapping; a toast when none is.
-    .{ .id = "sessions.next_waiting", .title = "Sessions: focus the next session that needs you (wraps)", .group = "sessions", .short = "next session that needs you", .keys = .{ .vim = &.{"space a j"}, .standard = &.{"ctrl+alt+n"} } },
-    .{ .id = "sessions.prev_waiting", .title = "Sessions: focus the previous session that needs you (wraps)", .group = "sessions", .short = "previous session that needs you", .keys = .{ .vim = &.{"space a k"}, .standard = &.{"ctrl+alt+shift+n"} } },
+    .{ .id = "sessions.next_waiting", .title = "Sessions: focus the next session that is ready for you (wraps)", .group = "sessions", .short = "next session ready for you", .keys = .{ .vim = &.{"space a j"}, .standard = &.{"ctrl+alt+n"} } },
+    .{ .id = "sessions.prev_waiting", .title = "Sessions: focus the previous session that is ready for you (wraps)", .group = "sessions", .short = "previous session ready for you", .keys = .{ .vim = &.{"space a k"}, .standard = &.{"ctrl+alt+shift+n"} } },
     // // changed (sessions-merge): the table and the cloud rows.
     .{ .id = "ai.search_sessions", .title = "Search sessions… (every transcript of this workspace)", .group = "ai", .short = "search sessions" },
     .{ .id = "sessions.table", .title = "Sessions: open every session on this machine as a table (grouped by workspace)", .group = "sessions" },

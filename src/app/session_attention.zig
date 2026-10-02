@@ -1,7 +1,9 @@
 //! A session waiting on you, from wherever it is announced: the
 //! `session needs input: NAME` toast is an offer whose click goes to
 //! that session, and the bell's menu lists every session waiting right
-//! now, each row going to it.
+//! now — then every session that finished or ended since you last
+//! looked at it (the ready ring's news, `app/session_ready.zig`) —
+//! each row going to it.
 //!
 //! "Going to a session" is the SESSIONS card's own path
 //! (`sessions.focusCardPane`) when a pane here runs it; a session the
@@ -20,10 +22,15 @@ const CommandError = command.CommandError;
 const MenuItem = command.MenuItem;
 const sessions = @import("../sessions.zig");
 const sessions_table = @import("sessions_table.zig");
+const session_ready = @import("session_ready.zig");
 
 /// The toast's button and the bell rows' prefix.
 pub const toast_label = "Focus";
 pub const bell_row_prefix = "Needs input: ";
+/// The bell rows of the ready ring's news: a turn that ended, a child
+/// that exited, since you last looked.
+pub const bell_finished_prefix = "Finished: ";
+pub const bell_ended_prefix = "Ended: ";
 
 /// Raise the warn toast for a session that started waiting, carrying
 /// the offer to go to it. `pane` when a pane here runs it, else the
@@ -92,16 +99,32 @@ pub fn waiting(app: *App, arena: Allocator) Allocator.Error![]Waiting {
     return out.items;
 }
 
-/// The bell menu's leading rows: one per waiting session, on `arena`
-/// (the menu's own `mem`, which owns the ids the rows carry).
+/// The bell menu's leading rows, on `arena` (the menu's own `mem`,
+/// which owns the ids the rows carry): one per waiting session, then
+/// one per session with news you have not looked at, in the ready
+/// ring's order (oldest first) under its own word.
 pub fn bellRows(app: *App, arena: Allocator) Allocator.Error![]MenuItem {
     const list = try waiting(app, arena);
-    const rows = try arena.alloc(MenuItem, list.len);
-    for (list, rows) |w, *r| r.* = .{
+    var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
+    for (list) |w| try rows.append(arena, .{
         .label = try std.fmt.allocPrint(arena, bell_row_prefix ++ "{s}", .{w.name}),
         .action = .{ .session_focus = .{ .pane = w.pane, .id = w.session_id orelse "" } },
-    };
-    return rows;
+    });
+    for (try session_ready.ring(app, arena)) |e| {
+        const prefix = switch (e.kind) {
+            .needs_you => continue,
+            .finished => bell_finished_prefix,
+            .ended => bell_ended_prefix,
+        };
+        try rows.append(arena, .{
+            .label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, sessions.announcedName(app, e.key.pane) }),
+            .action = .{ .session_focus = .{ .pane = e.key.pane, .id = "" } },
+            // The card's ready mark, not the raised hand a waiting row wears.
+            .icon = sessions.ready_glyph,
+            .icon_ascii = sessions.ready_ascii,
+        });
+    }
+    return rows.items;
 }
 
 /// The toast a toast button id (`ui/toast.zig`'s body, offer or close
@@ -265,4 +288,45 @@ test "the bell menu leads with every waiting session — panes first, then the l
     try app.handle(.{ .key = @import("../core/key.zig").Key.named(.down) });
     try app.handle(.{ .key = @import("../core/key.zig").Key.named(.enter) });
     try testing.expectEqualStrings("new-2", sessions_table.focused(app).?.selectedItem(app).?.session_id);
+}
+
+test "the bell lists the ready ring's news after the waiting sessions — Finished / Ended, oldest first — and a row goes to it; a looked-at one is gone" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const ask = try f.shell();
+    const late = try f.shell();
+    const early = try f.shell();
+    const gone = try f.shell();
+    const other = try f.shell();
+    app.panes.pty(ask).?.needs_you = true;
+    app.panes.pty(late).?.unseen = .finished;
+    app.panes.pty(late).?.ready_at_ms = 30;
+    app.panes.pty(early).?.unseen = .finished;
+    app.panes.pty(early).?.ready_at_ms = 10;
+    app.panes.pty(gone).?.unseen = .ended;
+    app.panes.pty(gone).?.ready_at_ms = 20;
+    app.showPane(other);
+    app.focus = .{ .pane = other };
+    try context_menus.openBellMenu(app, 5, 5);
+    const rows = app.overlay.menu.items;
+    try testing.expectEqual(@as(usize, 6), rows.len);
+    try testing.expect(std.mem.startsWith(u8, rows[0].label, bell_row_prefix));
+    try testing.expectEqual(@as(?u32, ask), rows[0].action.session_focus.pane);
+    try testing.expect(std.mem.startsWith(u8, rows[1].label, bell_finished_prefix));
+    try testing.expectEqual(@as(?u32, early), rows[1].action.session_focus.pane);
+    try testing.expect(std.mem.startsWith(u8, rows[2].label, bell_ended_prefix));
+    try testing.expectEqual(@as(?u32, gone), rows[2].action.session_focus.pane);
+    try testing.expect(std.mem.startsWith(u8, rows[3].label, bell_finished_prefix));
+    try testing.expectEqual(@as(?u32, late), rows[3].action.session_focus.pane);
+    try testing.expectEqualStrings("Show messages", rows[4].label);
+    try testing.expectEqualStrings(sessions.ready_glyph, rows[1].icon.?);
+    try testing.expect(rows[0].icon == null);
+    try dispatch.runMenuActionForTest(app, rows[1].action);
+    try testing.expectEqual(@as(?PaneId, early), app.active);
+    // The frame that shows it is the look: its row is gone.
+    try app.render();
+    try context_menus.openBellMenu(app, 5, 5);
+    try testing.expectEqual(@as(usize, 5), app.overlay.menu.items.len);
+    for (app.overlay.menu.items) |r| if (r.action == .session_focus) try testing.expect(r.action.session_focus.pane != early);
 }

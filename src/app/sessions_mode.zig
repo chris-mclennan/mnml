@@ -671,21 +671,44 @@ pub fn previewCard(app: *App, id: PaneId) Allocator.Error!bool {
     if (showing(app)) {
         try placeInFocused(app, id);
     } else {
-        const layout = app.layouts.current();
-        const z = app.zoomedPane() orelse return false;
-        if (layout.leafOf(id) == null) {
-            const zl = layout.leafOf(z).?;
-            for (app.layouts.layouts.items) |*l| while (l.leafOf(id) != null) {
-                _ = l.removePane(id);
-            };
-            _ = try layout.showIn(zl, id);
-        }
-        layout.leaf(layout.leafOf(id).?).?.active = id;
-        layout.zoomed = id;
-        app.setActive(id);
+        if (app.zoomedPane() == null) return false;
+        try intoZoom(app, id);
     }
     @import("../sessions.zig").focusPanel(app);
     return true;
+}
+
+/// `id` takes the zoom of the page on screen: shown in the zoomed
+/// pane's leaf (brought there from wherever it was) and zoomed, with
+/// the keys. The caller knows a pane is zoomed.
+fn intoZoom(app: *App, id: PaneId) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const z = app.zoomedPane().?;
+    if (layout.leafOf(id) == null) {
+        const zl = layout.leafOf(z).?;
+        for (app.layouts.layouts.items) |*l| while (l.leafOf(id) != null) {
+            _ = l.removePane(id);
+        };
+        _ = try layout.showIn(zl, id);
+    }
+    layout.leaf(layout.leafOf(id).?).?.active = id;
+    layout.zoomed = id;
+    app.setActive(id);
+}
+
+/// The ready ring's step (`app/session_ready.zig`): `id` on show with
+/// the keys, by the same rule a card's click uses — in the mode,
+/// swapped into the focused column (`Ctrl+1..9`'s primitive), so the
+/// mode stays; on a zoomed page, into the zoom; else wherever
+/// `showPane` puts it. A docked session is shown in the dock.
+pub fn showReady(app: *App, id: PaneId) Allocator.Error!void {
+    const bottom = @import("bottom.zig");
+    if (app.panes.get(id) == null) return;
+    if (!bottom.hosts(app, id)) {
+        if (showing(app)) return placeInFocused(app, id);
+        if (app.zoomedPane()) |z| if (z != id) return intoZoom(app, id);
+    }
+    app.showPane(id);
 }
 
 fn showRunner(comptime n: usize) command.CommandFn {

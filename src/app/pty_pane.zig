@@ -132,6 +132,10 @@ const Wire = struct {
     }
 };
 
+/// News a session pane has for the user (`app/session_ready.zig`):
+/// a turn that ended, or the child that exited, since they last looked.
+pub const Unseen = enum { none, finished, ended };
+
 pub const PtyPane = struct {
     /// The child and its pty — `null` on a DORMANT pane: one restored
     /// from `.mnml/session.zon`, which comes back with its tab, its
@@ -175,6 +179,17 @@ pub const PtyPane = struct {
     /// The AI session's end was announced (`sessions.trackNeedsYou`):
     /// once per run — a restart clears it.
     needs_you_ended: bool = false,
+    /// The ready ring (`app/session_ready.zig`): when `needs_you` last
+    /// rose (the awake clock; the ring's needs-you order is oldest wait
+    /// first), whether the last read found the session working (a
+    /// thinking row on its screen — the edge a turn ends on), and the
+    /// news the user has not looked at yet with the clock it arrived
+    /// on. `ready_at_ms` outlives the look: it is where the pane sits in
+    /// the ring, so a step from it goes on to the next one.
+    needs_you_since_ms: i64 = 0,
+    turn_working: bool = false,
+    unseen: Unseen = .none,
+    ready_at_ms: i64 = 0,
     /// Neovim's terminal-normal mode (`:help CTRL-\_CTRL-N`): the keys
     /// are the app's — the leader, the `Ctrl-W` family, `i` / `a` back
     /// to the child — and nothing reaches the child. vim profile only.
