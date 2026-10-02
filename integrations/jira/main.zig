@@ -225,7 +225,11 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (args.install) {
-        for (specs) |s| {
+        // The issue links' `{site_url}`: this config's site, when it has
+        // one — mnml cannot read config.zon, so the manifest carries it.
+        const site = installSite(arena, io, env, args);
+        for (specs) |s_in| {
+            const s = if (site) |url| try sdk.manifest.bindLinks(arena, s_in, "site_url", url) else s_in;
             const path = sdk.manifest.write(gpa, io, env, s) catch |err| {
                 try stderr.print("mnml-jira: could not write the {s} manifest: {s}\n", .{ s.id, @errorName(err) });
                 return 1;
@@ -280,6 +284,19 @@ pub fn main(init: std.process.Init) !u8 {
         else => return err,
     };
     return pane(gpa, io, env, arena, mount, args, data_root);
+}
+
+/// The site `--install` writes into the issue links: the config's
+/// `.jira_url` (`$JIRA_BASE_URL` wins, as everywhere), or null when there
+/// is none yet — mnml then binds it from `$JIRA_URL`, or leaves the
+/// links off until the integration is set up and installed again.
+pub fn installSite(arena: Allocator, io: Io, env: *const std.process.Environ.Map, args: Args) ?[]const u8 {
+    const p = configPath(arena, io, env, args) catch return null;
+    const loaded = config.loadWithEnv(arena, io, env, p) catch return null;
+    if (loaded.base_url_error != null or loaded.parse_error != null) return null;
+    const url = loaded.config.jira_url;
+    if (!(std.mem.startsWith(u8, url, "https://") or std.mem.startsWith(u8, url, "http://"))) return null;
+    return url;
 }
 
 /// Where the config is: `--config`, `$MNML_JIRA_CONFIG`, the workspace's
@@ -1461,6 +1478,34 @@ test "the three manifests: one binary, three families, the Work chip carries the
     try testing.expectEqualStrings(segment_id, "jira_work." ++ "assigned");
     try testing.expectEqualStrings(qa_segment_id, "jira_work." ++ "qa_actionable");
     try testing.expectEqual(@as(usize, 0), spec_boards.statusline.len);
+    // The issue key links, on the Work chip alone, any project's key.
+    try testing.expectEqual(@as(usize, 1), spec_work.links.len);
+    try testing.expectEqualStrings("[A-Z][A-Z0-9]+-\\d+", spec_work.links[0].pattern);
+    try testing.expectEqualStrings("{site_url}/browse/{0}", spec_work.links[0].url);
+    try testing.expectEqual(@as(usize, 0), spec_boards.links.len);
+    try testing.expectEqual(@as(usize, 0), spec_fix_versions.links.len);
+}
+
+test "--install writes the configured site into the issue links; without a site the template stays for mnml to bind" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", root);
+    const args = parseArgs(&.{ "mnml-jira", "--install" });
+    // No config yet: nothing to bind.
+    try testing.expect(installSite(arena, testing.io, &env, args) == null);
+    try tmp.dir.createDirPath(testing.io, "integrations/jira");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/jira/config.zon", .data = ".{ .jira_url = \"https://acme.example.com/\", .email = \"me@example.com\" }" });
+    const site = installSite(arena, testing.io, &env, args).?;
+    try testing.expectEqualStrings("https://acme.example.com", site);
+    const bound = try sdk.manifest.bindLinks(arena, spec_work, "site_url", site);
+    try testing.expectEqualStrings("https://acme.example.com/browse/{0}", bound.links[0].url);
 }
 
 test "the arguments parse as the reference's, and a bad --only is named" {
