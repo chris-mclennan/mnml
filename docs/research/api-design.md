@@ -283,11 +283,7 @@ read your files and signal your processes. The socket directory is
 0700 and the socket 0600, so another user is out; within one user, the
 gate makes mnml an *audited, asked* actuator rather than a silent one.
 
-Today's gap, read in this tree: any pane child knows `MNML_WORKSPACE`,
-`<ws>/.mnml/ipc/command` is a file it can append to, and the live loop
-takes `run-command` and `open-pty` from it unconditionally
-(`ipc.effects.isInput` exempts both; `Config.Ipc` says so on purpose,
-for integrations). §5.7 closes it.
+The file channel is held to the same gate: §5.7.
 
 ### 5.2 Identity — who is calling
 
@@ -417,16 +413,15 @@ diagnostics, git, sessions) and nothing else — not screen or terminal
 text, not the selection — or nothing at all with *Unknown clients:
 refused*. It appears in CONNECTED like anyone else.
 
-### 5.7 Closing the file-channel gap
+### 5.7 The file channel goes through the same gate
 
-Once the socket exists, the live terminal loop routes the file channel's
-`run-command` and `open-pty` through the same classes with identity
-`file-channel`: a `view` command still runs, anything else prompts. The
-headless loop is the test driver and is untouched. Integrations that
-run commands move to their mount (`{"command":{"id":…}}` already exists
-on the Bridge) or to the socket with their integration identity. This
-breaks any integration that relies on the silent path, which is why it
-is a question for the user (§10) and a late phase.
+The live terminal loop routes the file channel's `run-command` and
+`open-pty` through the same classes with identity `file-channel`: a
+`view` command still runs, anything else prompts. The headless loop is
+the test driver and is untouched. Integrations that run commands move
+to their mount (`{"command":{"id":…}}` already exists on the Bridge) or
+to the socket with their integration identity. The user chose to do
+this in phase 1 and update the few integrations that need it.
 
 ## 6. The agent face
 
@@ -656,10 +651,10 @@ Target: a round trip under 2 ms at rest and under one paced frame
 
 | phase | what | agent-days |
 |---|---|---|
-| **1 — try it** | `src/api/`: the socket and its directory + per-instance marker; NDJSON JSON-RPC, `initialize`, `ping`; the verb table with `editor.open`, `commands.list`, `commands.run`, `state.status`, `layout.panes`; per-pane tokens in `pty_env.build`; `Spec.effect` by group with the exceptions table and its test; the grant prompt (toast → confirm → reverse channel) with session-long memory; `audit.jsonl`; `mnml remote open / run / status / panes / instances` with `--json` and the exit codes; Settings `API: on / off`; `tools/api-bench.sh`; the §8 checks | 4–5 |
+| **1 — try it** | `src/api/`: the socket and its directory + per-instance marker; NDJSON JSON-RPC, `initialize`, `ping`; the verb table with `editor.open`, `commands.list`, `commands.run`, `state.status`, `layout.panes`; per-pane tokens in `pty_env.build`; `Spec.effect` by group with the exceptions table and its test; the grant prompt (toast → confirm → reverse channel) with session-long memory; `audit.jsonl`; `mnml remote open / run / status / panes / instances` with `--json` and the exit codes; Settings `API: on / off`; `tools/api-bench.sh`; the §8 checks the file channel through the same gate (§5.7) | 4–5 |
 | **2 — the agent face** | the IDE adapter: per-session-pane WebSocket listener on `http/ws.zig`, lock file, env on spawn, MCP `initialize` / `tools/*` over it, ping; `editor.selection`, `editor.save`, `state.diagnostics`, `ui.diff` on `ai_apply` with the blocking reverse channel, `layout.close`, `events.subscribe`; `selection_changed`, `ai.send_selection` → `at_mentioned`; `.agent_face` on launch profiles; the card mark and the `⇄` chip; the two verifications in §6.2; a `.test` driving a fake IDE client | 5–7 |
 | **3 — the rest** | the remaining methods (`sessions.*`, `terminal.*`, `ui.ask / toast / progress`, `state.screen / git / terminal`, `layout.focus / split / zoom`, `editor.reveal / set_selection / text`, `commands.ex`); `mnml mcp` with the twelve tools; the Codex profile; allowlist clients and `remote token`; the CONNECTED section; Lua re-pointed at the verb table; the rest of the `remote` verbs | 5–7 |
-| **4 — attach and hardening** | `attach.begin` on this socket (two-monitors phase 0 lands on it); the peer-pid check; the file-channel gap (§5.7) if the user wants it; Windows parity (owner-only ACL, the attach relay) | 3–4, plus two-monitors' own phases |
+| **4 — attach and hardening** | `attach.begin` on this socket (two-monitors phase 0 lands on it); the peer-pid check; Windows parity (owner-only ACL, the attach relay) | 3–4, plus two-monitors' own phases |
 
 **Phase 1 is what the user can try**: in a shell pane, `mnml remote open
 src/main.zig:120` jumps the editor there; `mnml remote run
