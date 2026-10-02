@@ -1,0 +1,106 @@
+# sizes: all
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The ready ring (`app/session_ready.zig`): `sessions.next_waiting` /
+# `prev_waiting` walk the sessions that are ready for you and skip the
+# rest. Four stand-in sessions, numbered through the window title as in
+# `sessions_mode.test`: 1 never works (never ready); 2 and 4 think — a
+# Claude spinner row with an ellipsis — then clear to an answer, 2 first
+# (finished news); 3 thinks, then stops on a permission question (needs
+# you). Each of 2 and 4 runs one more turn whenever `go-N-K` appears.
+# The order is needs-you first, then the finished, oldest first; a
+# finished one you have looked at is skipped until its next turn ends;
+# the card wears a `◆` for news unseen. Both profiles' chords; in the
+# sessions mode the step swaps the ready session into the focused
+# column and the mode stays.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nthink() { printf '\\342\\234\\273 Thinking\\342\\200\\246 (esc to interrupt)\\n'; sleep $1; }\ncase $n in\n  1) exec sleep 600 ;;\n  3) sleep 1; think 3; printf '\\033[2J\\033[HDo you want to proceed?\\n\\342\\235\\257 1. Yes\\n  2. No\\n'; exec sleep 600 ;;\nesac\nsleep 1; think $((n / 2 + 1)); printf '\\033[2J\\033[Hanswer %s.0\\n' $n\nk=1; i=0\nwhile [ $i -lt 3000 ]; do\n  if [ -e go-$n-$k ]; then think 1; printf '\\033[2J\\033[Hanswer %s.%s\\n' $n $k; k=$((k+1)); fi\n  sleep 0.2; i=$((i+1))\ndone\n
+shell chmod +x bin/claude
+write b.txt "bravo bravo"
+open b.txt
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+open b.txt
+command view.activity_sessions
+open b.txt
+expect pane b.txt
+# Every turn over, none of them looked at.
+expect within 20000 screen contains "answer 4.0"
+expect within 20000 screen contains "Do you want to proc"
+expect screen contains "answer 2.0"
+expect screen contains "◆▌ claude 2"
+expect screen contains "◆▌ claude 4"
+expect screen lacks "◆▌ claude 1"
+expect screen lacks "◆▌ claude 3"
+# standard: needs you first, then the finished oldest first.
+key ctrl+alt+n
+expect pane claude 3
+expect screen contains "needs you: claude 3 (3 ready)"
+key ctrl+alt+n
+expect pane claude 2
+expect screen contains "finished: claude 2 (3 ready)"
+key ctrl+alt+n
+expect pane claude 4
+# 2 was looked at: one fewer.
+expect screen contains "finished: claude 4 (2 ready)"
+expect screen lacks "◆▌ claude 2"
+# Both finished ones seen; 1 never had news: the ring is 3 alone.
+key ctrl+alt+n
+expect pane claude 3
+expect screen contains "needs you: claude 3 (1 ready)"
+key ctrl+alt+shift+n
+expect pane claude 3
+# Another turn of 4's ends while you are elsewhere: ready again.
+open b.txt
+shell touch go-4-1
+expect within 10000 screen contains "answer 4.1"
+expect screen contains "◆▌ claude 4"
+key ctrl+alt+n
+expect pane claude 3
+key ctrl+alt+n
+expect pane claude 4
+expect screen contains "finished: claude 4 (2 ready)"
+# vim: the leader chords, from the editor.
+command editor.use_vim
+open b.txt
+shell touch go-2-1
+expect within 10000 screen contains "answer 2.1"
+key space
+key a
+key k
+expect pane claude 2
+expect screen contains "finished: claude 2 (2 ready)"
+open b.txt
+key space
+key a
+key j
+expect pane claude 3
+expect screen contains "needs you: claude 3 (1 ready)"
+# The sessions mode: the ready one comes into the focused column and
+# the mode stays (each column's strip counts its own stack, ` ‹ 1/2 › `).
+# The rail's order deals 3 2 | 1 4: 3 on show with the keys, 4 stacked
+# behind 1. The step trades 4 into 3's place, so 3's question leaves
+# the screen — had the keys merely gone to 4's column, it would stay.
+command sessions.mode
+wait 300
+expect screen contains "‹ 1/2 ›"
+expect pane claude 3
+expect screen contains "│▌Do you want to proceed?"
+expect screen contains "│▌fake claude 1"
+shell touch go-4-2
+expect within 10000 screen contains "answer 4.2"
+command sessions.next_waiting
+expect pane claude 4
+expect screen contains "finished: claude 4 (2 ready)"
+expect screen contains "│▌answer 4.2"
+expect screen lacks "│▌Do you want to proceed?"
+expect screen contains "│▌fake claude 1"
+expect screen contains "‹ 1/2 ›"
+command sessions.mode
+wait 200
+expect screen lacks "‹ 1/2 ›"
