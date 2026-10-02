@@ -17,6 +17,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const key_mod = @import("../core/key.zig");
+const hit = @import("hit.zig");
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -222,6 +223,17 @@ pub fn selRange(caret: usize, anchor: ?usize) ?[2]usize {
 /// erase replaces the selected text; any other key drops the selection
 /// and edits as usual.
 pub fn editKey(buf: *Buf, caret: *usize, anchor: *?usize, gpa: Allocator, key: Key) Allocator.Error!Edit {
+    // Shift with a motion grows the selection from where it started.
+    if (key.mods.shift and !key.mods.super) switch (key.code) {
+        .left, .right, .home, .end => {
+            const from = caret.*;
+            const e = try handleKey(buf, caret, gpa, key);
+            if (anchor.* == null) anchor.* = from;
+            if (anchor.* == caret.*) anchor.* = null;
+            return e;
+        },
+        else => {},
+    };
     if (selRange(caret.*, anchor.*)) |r| {
         const typed = if (key.typed()) |cp| cp >= 0x20 and cp != 0x7f and !key.mods.ctrl and !key.mods.alt else false;
         const erase = (key.code == .backspace or key.code == .delete) and !key.mods.ctrl and !key.mods.alt;
@@ -267,6 +279,15 @@ pub fn wordBoundsAt(text: []const u8, at_in: usize) [2]usize {
     while (lo > 0 and (text[lo] & 0xC0) == 0x80) lo -= 1;
     while (hi < text.len and (text[hi] & 0xC0) == 0x80) hi += 1;
     return .{ lo, hi };
+}
+
+/// A shift-press at `byte`: the selection runs from where it started
+/// (the caret, when there was none) to the press.
+pub fn extendTo(text: []const u8, caret: *usize, anchor: *?usize, byte: usize) void {
+    const b = @min(byte, text.len);
+    if (anchor.* == null) anchor.* = caret.*;
+    caret.* = b;
+    if (anchor.* == b) anchor.* = null;
 }
 
 /// A press `clicks` deep (1, 2, 3 — `dispatch.clickCount`) at byte
@@ -336,12 +357,17 @@ pub const DrawOptions = struct {
     /// the caret paints in `sel_style`, the theme's selection by default.
     anchor: ?usize = null,
     sel_style: ?Style = null,
+    /// What a press on the text edits (`hit.FieldId`): registered with
+    /// the rect, so a click, a double and a triple land through the
+    /// same layout this paint used (`HitMap.fieldAt`, `byteAtCol`).
+    field: ?hit.FieldId = null,
 };
 
 /// Paints `text` into `r` (one row) so the caret is inside it, scrolling
 /// the text left when needed. Returns the caret's cell when focused.
 pub fn draw(ui: Ui, r: Rect, text: []const u8, caret: usize, opts: DrawOptions) ?Caret {
     if (r.isEmpty()) return null;
+    if (opts.field) |id| ui.hits.addField(ui.arena, r, id) catch {};
     ui.fill(r, opts.style);
     const w = r.w;
     if (text.len == 0) {
@@ -598,4 +624,39 @@ test "byteAtCol reads the same scrolled layout draw paints; the selection paints
     try f.expectRow(0, "one two");
     try testing.expect(f.bgEql(5, 0, f.theme.selection));
     try testing.expect(!f.bgEql(2, 0, f.theme.selection));
+}
+
+test "shift with an arrow, Home or End grows a selection from the caret; a plain arrow drops it; a shift-press extends to the press" {
+    var f: Field = .{};
+    defer f.deinit();
+    try f.type_("one two");
+    var anchor: ?usize = null;
+    const shift_left: Key = .{ .code = .left, .mods = .{ .shift = true } };
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, shift_left);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, shift_left);
+    try testing.expectEqual([2]usize{ 5, 7 }, selRange(f.caret, anchor).?);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, .{ .code = .home, .mods = .{ .shift = true } });
+    try testing.expectEqual([2]usize{ 0, 7 }, selRange(f.caret, anchor).?);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, Key.char('x'));
+    try testing.expectEqualStrings("x", f.text());
+    try testing.expect(anchor == null);
+    // Back to where it started: no selection left.
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, shift_left);
+    _ = try editKey(&f.buf, &f.caret, &anchor, testing.allocator, .{ .code = .right, .mods = .{ .shift = true } });
+    try testing.expect(anchor == null);
+    // A shift-press.
+    f.caret = 1;
+    extendTo(f.text(), &f.caret, &anchor, 0);
+    try testing.expectEqual([2]usize{ 0, 1 }, selRange(f.caret, anchor).?);
+}
+
+test "a field with an id registers its rect for the pointer; one without does not" {
+    var f = try Fixture.init(12, 2);
+    defer f.deinit();
+    const ui = f.ui();
+    _ = draw(ui, Rect.init(2, 0, 8, 1), "abc", 3, .{ .style = f.theme.fg, .field = .find_query });
+    _ = draw(ui, Rect.init(2, 1, 8, 1), "abc", 3, .{ .style = f.theme.fg });
+    try testing.expectEqual(hit.FieldId.find_query, f.hits.fieldAt(4, 0).?.id);
+    try testing.expect(f.hits.fieldAt(1, 0) == null);
+    try testing.expect(f.hits.fieldAt(4, 1) == null);
 }

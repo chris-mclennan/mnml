@@ -281,15 +281,74 @@ pub const HitTarget = union(enum) {
     }
 };
 
+/// A one-row text field painted this frame (`text_field.DrawOptions.field`):
+/// which buffer a press on it edits. The app turns it into the live
+/// buffer, caret and selection anchor at the press (`dispatch.fieldRef`)
+/// — the map holds only the name, never a pointer into a pane.
+pub const FieldId = union(enum) {
+    prompt,
+    picker_query,
+    settings_filter,
+    find_query,
+    find_replace,
+    /// The app's own `:` line (`app/cmdline.zig`).
+    cmdline,
+    /// A list panel's filter pill — SEARCH's query among them.
+    panel_filter: PanelId,
+    /// A filter pill a pane hosts (FILES, a ZON view, the browser's, the
+    /// grep pane's, the sessions table's).
+    pane_filter: PaneId,
+    /// A pane's own field, `sub` naming which (`PaneField`).
+    pane_field: struct { pane: PaneId, sub: PaneField },
+};
+
+/// The text fields a pane paints besides a filter pill.
+pub const PaneField = enum { request_url, request_draft_key, request_draft_value, ws_input, dap_input, zon_value };
+
 pub const HitMap = struct {
     pub const Entry = struct { rect: Rect, target: HitTarget };
+    /// A field's rect, and how many hits were registered before it: a
+    /// hit registered after the field and over the cell covers it.
+    pub const Field = struct { rect: Rect, id: FieldId, order: u32 };
 
     items: std.ArrayListUnmanaged(Entry) = .empty,
+    fields: std.ArrayListUnmanaged(Field) = .empty,
 
     /// Frame start. The entries lived on the frame arena, which the app
     /// resets; the list only forgets them.
     pub fn reset(h: *HitMap) void {
         h.items = .empty;
+        h.fields = .empty;
+    }
+
+    /// Registers a text field's rect — the cells its text paints in —
+    /// beside the hit its owner registered for it.
+    pub fn addField(h: *HitMap, arena: Allocator, r: Rect, id: FieldId) Allocator.Error!void {
+        if (r.isEmpty()) return;
+        try h.fields.append(arena, .{ .rect = r, .id = id, .order = @intCast(h.items.items.len) });
+    }
+
+    /// The field under `x, y` when nothing painted after it covers the
+    /// cell: the topmost field, and only while no later hit is on top.
+    pub fn fieldAt(h: *const HitMap, x: u16, y: u16) ?Field {
+        var top: ?usize = null;
+        var i = h.items.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (h.items.items[i].rect.contains(x, y)) {
+                top = i;
+                break;
+            }
+        }
+        var j = h.fields.items.len;
+        while (j > 0) {
+            j -= 1;
+            const f = h.fields.items[j];
+            if (!f.rect.contains(x, y)) continue;
+            if (top) |t| if (t >= f.order) return null;
+            return f;
+        }
+        return null;
     }
 
     /// Registers `t` for `r`. Empty rects are skipped: they cannot be
@@ -394,6 +453,29 @@ test "at scans back to front so the last painted target wins" {
     h.reset();
     try testing.expect(h.at(0, 0) == null);
 }
+
+test "fieldAt: the field under the cell, unless a hit painted after it covers the cell" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var h: HitMap = .{};
+    // A pill's hit, then its field inside it.
+    try h.add(arena, Rect.init(0, 1, 20, 1), .{ .filter_input = .sessions });
+    try h.addField(arena, Rect.init(3, 1, 16, 1), .{ .panel_filter = .sessions });
+    try testing.expectEqual(hit_field_sessions, h.fieldAt(5, 1).?.id);
+    try testing.expect(h.fieldAt(1, 1) == null); // the pill's glyph, not the text
+    // A menu painted later over the same cell takes it.
+    try h.add(arena, Rect.init(4, 0, 4, 3), .{ .menu_item = .{ .menu = 0, .idx = 1 } });
+    try testing.expect(h.fieldAt(5, 1) == null);
+    try testing.expectEqual(hit_field_sessions, h.fieldAt(10, 1).?.id);
+    // A field painted over the menu (an overlay's own field) is on top.
+    try h.addField(arena, Rect.init(4, 1, 2, 1), .prompt);
+    try testing.expectEqual(FieldId.prompt, h.fieldAt(5, 1).?.id);
+    h.reset();
+    try testing.expect(h.fieldAt(10, 1) == null);
+}
+
+const hit_field_sessions: FieldId = .{ .panel_filter = .sessions };
 
 test "empty rects are not registered" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);

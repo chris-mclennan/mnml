@@ -2079,6 +2079,15 @@ fn inspectClick(app: *App, m: Mouse) Allocator.Error!void {
 }
 
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
+    // A left press on a text field: read off the frame the user clicked
+    // (before the press re-lays anything out), routed like any press so
+    // the owner takes the focus, then placed in the text (`fieldPress`).
+    const field = if (m.kind == .press and m.button == .left and app.firing_button == null) app.hits.fieldAt(m.x, m.y) else null;
+    try mouseRoute(app, m, count);
+    if (field) |f| fieldPress(app, f, m);
+}
+
+fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     app.hover_live = m.kind == .motion or m.kind == .drag;
@@ -2504,9 +2513,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
             if (wheel and app.overlay == .help) return help_app.wheel(app, signed(down, count));
             if (m.kind != .press) return;
-            // A text field's own hit: a press places the caret, a
-            // double takes the word, a triple the line (`text_field`).
-            if (m.button == .left) if (fieldPress(app, i, m)) return;
+            // The prompt's line and the picker's query are text fields:
+            // `mouse` places the press in them (`fieldPress`).
+            if (m.button == .left and ((app.overlay == .prompt and i == 0) or (app.overlay == .picker and i == Picker.query_item))) return;
             // // changed (lua-track): right-click on a palette row — Run,
             // Bind in init.lua…, Copy id.
             if (m.button == .right and app.overlay == .picker) switch (app.overlay.picker.kind) {
@@ -3249,28 +3258,48 @@ fn pressOutside(app: *App) void {
 
 // ── a text field: click, double / triple ──
 
-/// A left press on an overlay's text field — the prompt's line
-/// (`.overlay_item(0)`) or the picker's query (`Picker.query_item`):
-/// true when it was one and was taken.
-fn fieldPress(app: *App, item: u32, m: Mouse) bool {
-    const row = hitRect(app, m.x, m.y) orelse return false;
-    const method = app.screen.width_method;
-    switch (app.overlay) {
-        .prompt => |*p| {
-            if (item != 0) return false;
-            const field = Prompt.fieldOf(row);
-            Prompt.click(&p.state, m.x -| field.x, field.w, clickCount(app, m), method);
+/// The live text, caret and selection anchor behind a field's id. A
+/// field with a whole-text selection flag of its own (the prompt's
+/// seeded name, the find bar's second Ctrl+F) hands that over too, so
+/// a press clears it. Resolved at the press: never stored.
+pub const FieldRef = struct {
+    buf: *text_field.Buf,
+    caret: *usize,
+    anchor: *?usize,
+    select_all: ?*bool = null,
+};
+
+/// `id` resolved against the app as it is now, or null when what it
+/// named is gone. A field that needs the press to take the keys first
+/// (the find bar's two) is focused here.
+pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
+    switch (id) {
+        .prompt => {
+            if (app.overlay != .prompt) return null;
+            const p = &app.overlay.prompt.state;
+            return .{ .buf = &p.buf, .caret = &p.caret, .anchor = &p.anchor, .select_all = &p.select_all };
         },
-        .picker => |*p| {
-            if (item != Picker.query_item) return false;
-            const s = &p.state;
-            const byte = text_field.byteAtCol(s.query.items, s.caret, row.w, m.x -| row.x, method);
-            text_field.clickSelect(s.query.items, &s.caret, &s.sel_anchor, byte, clickCount(app, m));
+        .picker_query => {
+            if (app.overlay != .picker) return null;
+            const s = &app.overlay.picker.state;
+            return .{ .buf = &s.query, .caret = &s.caret, .anchor = &s.sel_anchor };
         },
-        else => return false,
+        else => return null,
     }
+}
+
+/// A left press on a field (`HitMap.fieldAt`): the caret there, a
+/// double the word, a triple the whole field; Shift extends the
+/// selection to the press.
+fn fieldPress(app: *App, f: hit_mod.HitMap.Field, m: Mouse) void {
+    const ref = fieldRef(app, f.id) orelse return;
+    if (ref.select_all) |sa| sa.* = false;
+    const text = ref.buf.items;
+    const byte = text_field.byteAtCol(text, ref.caret.*, f.rect.w, m.x -| f.rect.x, app.screen.width_method);
+    if (m.mods.shift) {
+        text_field.extendTo(text, ref.caret, ref.anchor, byte);
+    } else text_field.clickSelect(text, ref.caret, ref.anchor, byte, clickCount(app, m));
     app.needs_render = true;
-    return true;
 }
 
 // ── the editor: click, drag-select, double / triple ──
@@ -5862,7 +5891,7 @@ test "the prompt's line and the picker's query: a press places the caret, a doub
     try pressAt(&app, fx + 2, at[1]);
     try pressAt(&app, fx + 2, at[1]);
     try pressAt(&app, fx + 2, at[1]);
-    try std.testing.expect(p.select_all);
+    try std.testing.expectEqual([2]usize{ 0, 13 }, text_field.selRange(p.caret, p.anchor).?);
     try app.handle(.{ .key = key_mod.Key.char('z') });
     try std.testing.expectEqualStrings("z", p.buf.items);
     try app.handle(.{ .key = key_mod.Key.named(.esc) });
