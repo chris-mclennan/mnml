@@ -188,6 +188,9 @@ pub fn ListPanel(comptime Row: type) type {
             cursor: usize = 0,
             filter: text_field.Buf = .empty,
             filter_caret: usize = 0,
+            /// The filter's selection (`text_field.clickSelect`): from
+            /// here to the caret; typing or a paste replaces it.
+            filter_anchor: ?usize = null,
             filter_focused: bool = false,
             /// The cursor sits on the ` + New … ` row above row 0.
             on_new: bool = false,
@@ -208,6 +211,11 @@ pub fn ListPanel(comptime Row: type) type {
 
             pub fn filterText(s: *const State) []const u8 {
                 return s.filter.items;
+            }
+
+            /// The filter as a field the pointer edits (`dispatch.fieldRef`).
+            pub fn filterField(s: *State) text_field.Ref {
+                return .{ .buf = &s.filter, .caret = &s.filter_caret, .anchor = &s.filter_anchor };
             }
         };
 
@@ -331,6 +339,7 @@ pub fn ListPanel(comptime Row: type) type {
                     .panel = p.panel,
                     .text = st.filter.items,
                     .caret = st.filter_caret,
+                    .anchor = st.filter_anchor,
                     .focused = st.filter_focused,
                     .bg = ground,
                     .pane = p.pane,
@@ -480,6 +489,7 @@ pub fn ListPanel(comptime Row: type) type {
             if (st.filter_focused) {
                 switch (key.code) {
                     .esc => {
+                        st.filter_anchor = null;
                         if (st.filter.items.len > 0) {
                             st.filter.clearRetainingCapacity();
                             st.filter_caret = 0;
@@ -506,7 +516,7 @@ pub fn ListPanel(comptime Row: type) type {
                     },
                     else => {},
                 }
-                return switch (try text_field.handleKey(&st.filter, &st.filter_caret, gpa, key)) {
+                return switch (try text_field.editKey(&st.filter, &st.filter_caret, &st.filter_anchor, gpa, key)) {
                     .ignored => .ignored,
                     .moved => .consumed,
                     .changed => blk: {
@@ -537,6 +547,7 @@ pub fn ListPanel(comptime Row: type) type {
                     if (st.filter.items.len == 0) return .ignored;
                     st.filter.clearRetainingCapacity();
                     st.filter_caret = 0;
+                    st.filter_anchor = null;
                     st.cursor = 0;
                     st.on_new = false;
                     return .filter_changed;

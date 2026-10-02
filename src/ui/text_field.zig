@@ -202,6 +202,18 @@ pub fn nextWord(text: []const u8, at: usize) usize {
     return i;
 }
 
+/// A field's live text, caret and selection anchor, as its owner keeps
+/// them — what a press edits (`dispatch.fieldRef`). A field with a
+/// whole-text selection flag of its own (the prompt's seeded name, the
+/// find bar's second Ctrl+F) hands that over too, so a press clears it.
+/// Built at the press and used at once: never stored.
+pub const Ref = struct {
+    buf: *Buf,
+    caret: *usize,
+    anchor: *?usize,
+    select_all: ?*bool = null,
+};
+
 // ── selection and the pointer ──
 //
 // A field's selection is a byte `anchor` beside its caret: the range

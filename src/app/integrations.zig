@@ -2469,6 +2469,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .show_dev = showDev(app),
         .filter = st.panel.filterText(),
         .filter_caret = st.panel.filter_caret,
+        .filter_anchor = st.panel.filter_anchor,
         .filter_focused = st.panel.filter_focused,
         .sort_label = sortLabel(app),
         .sort_widest = sortWidest(app),

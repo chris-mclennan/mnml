@@ -1,0 +1,21 @@
+# width: 160
+# height: 40
+# The SESSIONS filter pill is a text field: a click puts the caret
+# where it lands, a double-click takes the word under the pointer and a
+# triple the whole filter; the next character replaces the selection.
+# At the shipped width the pill's text starts at column 8 of row 2.
+command view.activity_sessions
+wait 300
+key /
+type aaaa bbbb cccc
+click 10 2
+type X
+expect screen contains "󰍉 aaXaa bbbb cccc"
+doubleclick 15 2
+type Z
+expect screen contains "󰍉 aaXaa Z cccc"
+click 9 2
+doubleclick 9 2
+type q
+expect screen contains "󰍉 q "
+expect screen lacks "cccc"

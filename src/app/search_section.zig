@@ -95,6 +95,8 @@ pub const State = struct {
     generation: u32 = 0,
     query: text_field.Buf = .empty,
     caret: usize = 0,
+    /// The query's selection (`text_field.clickSelect`), to the caret.
+    query_anchor: ?usize = null,
     /// The keys go into the query; else to the rows.
     query_focused: bool = false,
     /// The query the hits answer — owned; the worker reads it, so a
@@ -490,6 +492,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     if (st.query_focused) {
         switch (k.code) {
             .esc => {
+                st.query_anchor = null;
                 if (st.query.items.len > 0) {
                     st.query.clearRetainingCapacity();
                     st.caret = 0;
@@ -512,7 +515,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             },
             else => {},
         }
-        return switch (try text_field.handleKey(&st.query, &st.caret, app.gpa, k)) {
+        return switch (try text_field.editKey(&st.query, &st.caret, &st.query_anchor, app.gpa, k)) {
             .ignored => false,
             .moved, .changed => true,
         };
@@ -716,6 +719,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
             .panel = .search,
             .text = st.query.items,
             .caret = st.caret,
+            .anchor = st.query_anchor,
             .focused = st.query_focused and focused,
             .bg = ui.theme.panel_bg,
             .noun = "search",

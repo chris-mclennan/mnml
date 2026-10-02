@@ -2021,6 +2021,8 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
         else => {},
     }
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
+    // A panel with its filter focused takes the paste there.
+    if (app.focus == .panel) if (try panelFilterPaste(app, app.focus.panel, text)) return;
     if (app.active) |id| if (app.panes.pty(id)) |p| {
         if (app.focus == .pane) return pty_pane.paste(app, p, text);
     };
@@ -3258,16 +3260,7 @@ fn pressOutside(app: *App) void {
 
 // ── a text field: click, double / triple ──
 
-/// The live text, caret and selection anchor behind a field's id. A
-/// field with a whole-text selection flag of its own (the prompt's
-/// seeded name, the find bar's second Ctrl+F) hands that over too, so
-/// a press clears it. Resolved at the press: never stored.
-pub const FieldRef = struct {
-    buf: *text_field.Buf,
-    caret: *usize,
-    anchor: *?usize,
-    select_all: ?*bool = null,
-};
+pub const FieldRef = text_field.Ref;
 
 /// `id` resolved against the app as it is now, or null when what it
 /// named is gone. A field that needs the press to take the keys first
@@ -3284,8 +3277,88 @@ pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
             const s = &app.overlay.picker.state;
             return .{ .buf = &s.query, .caret = &s.caret, .anchor = &s.sel_anchor };
         },
+        .panel_filter => |p| return panelFilter(app, p),
         else => return null,
     }
+}
+
+/// A list panel's filter pill — SEARCH's query and the git palette's
+/// own filter among them.
+fn panelFilter(app: *App, p: hit_mod.PanelId) ?FieldRef {
+    return switch (p) {
+        .todos => app.todos.list.filterField(),
+        .notes => app.notes.list.filterField(),
+        .findings => app.findings.list.filterField(),
+        .sessions => app.sessions.list.filterField(),
+        .debug => app.debug_panel.list.filterField(),
+        .diagnostics => app.lsp.panel.filterField(),
+        .http => app.http_panel.list.filterField(),
+        .integrations => app.integrations.panel.filterField(),
+        .scripts => app.scripts_panel.panel.filterField(),
+        .script => if (script_section.activeList(app)) |l| l.panel.filterField() else null,
+        .search => .{ .buf = &app.search_section.query, .caret = &app.search_section.caret, .anchor = &app.search_section.query_anchor },
+        .git => .{ .buf = &app.git_palette.filter, .caret = &app.git_palette.filter_caret, .anchor = &app.git_palette.filter_anchor },
+        .outline, .jobs => null,
+    };
+}
+
+/// A paste while a panel has the keys: into its filter when the filter
+/// has them, over the filter's selection, and the rows re-filtered as a
+/// typed character would. False when the panel's filter is not focused.
+fn panelFilterPaste(app: *App, p: hit_mod.PanelId, text: []const u8) Allocator.Error!bool {
+    const focused = switch (p) {
+        .search => app.search_section.query_focused,
+        .git => app.git_palette.filter_focused,
+        .todos => app.todos.list.filter_focused,
+        .notes => app.notes.list.filter_focused,
+        .findings => app.findings.list.filter_focused,
+        .sessions => app.sessions.list.filter_focused,
+        .debug => app.debug_panel.list.filter_focused,
+        .diagnostics => app.lsp.panel.filter_focused,
+        .http => app.http_panel.list.filter_focused,
+        .integrations => app.integrations.panel.filter_focused,
+        .scripts => app.scripts_panel.panel.filter_focused,
+        .script => if (script_section.activeList(app)) |l| l.panel.filter_focused else false,
+        .outline, .jobs => false,
+    };
+    if (!focused) return false;
+    const ref = panelFilter(app, p) orelse return false;
+    try text_field.insertSel(ref.buf, ref.caret, ref.anchor, app.gpa, text);
+    app.needs_render = true;
+    // As a typed character: the cursor back to the first row, the
+    // rows filtered again.
+    switch (p) {
+        .todos => {
+            app.todos.list.cursor = 0;
+            try todos.refilter(app);
+        },
+        .notes => {
+            app.notes.list.cursor = 0;
+            try notes.refilter(app);
+        },
+        .findings => {
+            app.findings.list.cursor = 0;
+            try findings.refilter(app);
+        },
+        .sessions => {
+            app.sessions.list.cursor = 0;
+            try sessions.refilter(app);
+        },
+        .http => {
+            app.http_panel.list.cursor = 0;
+            try http_panel.rebuild(app);
+        },
+        .git => app.git_palette.cursor = 0,
+        .integrations => app.integrations.panel.cursor = 0,
+        .scripts => app.scripts_panel.panel.cursor = 0,
+        .debug => app.debug_panel.list.cursor = 0,
+        .diagnostics => app.lsp.panel.cursor = 0,
+        .script => if (script_section.activeList(app)) |l| {
+            l.panel.cursor = 0;
+        },
+        .search, .outline, .jobs => {},
+    }
+    return true;
 }
 
 /// A left press on a field (`HitMap.fieldAt`): the caret there, a
@@ -5911,4 +5984,39 @@ test "the prompt's line and the picker's query: a press places the caret, a doub
     try pressAt(&app, q[0] + 2, q[1]);
     try pressAt(&app, q[0] + 2, q[1]);
     try std.testing.expectEqual([2]usize{ 0, 4 }, text_field.selRange(s.caret, s.sel_anchor).?);
+}
+
+/// The first cell of the field `id` painted this frame.
+fn fieldCell(app: *App, id: hit_mod.FieldId) !?[2]u16 {
+    try app.render();
+    for (app.hits.fields.items) |f| if (std.meta.eql(f.id, id)) return .{ f.rect.x, f.rect.y };
+    return null;
+}
+
+test "a list panel's filter pill: a double-click takes the word, a paste replaces it and re-filters, a triple takes the filter" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 160, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_sessions" });
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("alpha beta gamma") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const st = &app.sessions.list;
+    try std.testing.expectEqualStrings("alpha beta gamma", st.filterText());
+    const at = (try fieldCell(&app, .{ .panel_filter = .sessions })).?;
+    try pressAt(&app, at[0] + 7, at[1]);
+    try pressAt(&app, at[0] + 7, at[1]);
+    try std.testing.expectEqual([2]usize{ 6, 10 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
+    // The selection paints in the theme's selection.
+    try app.render();
+    const cell = app.screen.readCell(at[0] + 7, at[1]).?;
+    try std.testing.expect(@import("vaxis").Color.eql(cell.style.bg, app.theme.selection.bg));
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "B") });
+    try std.testing.expectEqualStrings("alpha B gamma", st.filterText());
+    try std.testing.expect(app.focus == .panel);
+    app.now_ms += 1000;
+    try pressAt(&app, at[0] + 1, at[1]);
+    try pressAt(&app, at[0] + 1, at[1]);
+    try pressAt(&app, at[0] + 1, at[1]);
+    try std.testing.expectEqual([2]usize{ 0, 13 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
+    try app.handle(.{ .key = key_mod.Key.named(.backspace) });
+    try std.testing.expectEqualStrings("", st.filterText());
 }

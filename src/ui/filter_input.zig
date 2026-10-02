@@ -6,7 +6,8 @@
 //!
 //! The whole pill registers a `.filter_input(panel)` hit in the same
 //! statement as its paint; the text itself is a `text_field`, so the
-//! caret, arrows, paste and word deletes come for free.
+//! caret, arrows, paste and word deletes come for free — and a click,
+//! a double-click and a triple, through the field it registers.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
@@ -45,6 +46,9 @@ pub const Props = struct {
     panel: PanelId,
     text: []const u8,
     caret: usize,
+    /// The text's selection (`text_field.selRange`), painted in the
+    /// theme's selection.
+    anchor: ?usize = null,
     focused: bool,
     /// The panel's ground, painted at the pill's edges.
     bg: Style,
@@ -75,6 +79,10 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
         .style = style,
         .placeholder = placeholder(ui, p.focused, p.noun),
         .focused = p.focused,
+        .anchor = p.anchor,
+        // A press on the text: caret, word, the whole filter
+        // (`dispatch.fieldPress`), read off the owner of the pill.
+        .field = if (p.pane) |id| .{ .pane_filter = id } else .{ .panel_filter = p.panel },
     });
 }
 
