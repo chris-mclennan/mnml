@@ -903,6 +903,9 @@ test "menus print the mode's chords in the mode: Ctrl+N is the new session's the
     try t.expectEqualStrings(new_file, (try chordOf(app, arena, .@"sessions.mode_new")).?);
     try t.expect((try chordOf(app, arena, .@"sessions.column_next")) != null);
     try t.expect((try chordOf(app, arena, .@"buffer.last")) == null);
+    // The standard input handler's own keys go through the same mask;
+    // the mode takes none of them, so Cut keeps Ctrl+X.
+    try t.expectEqualStrings("Ctrl+X", (try chordOf(app, arena, .@"editor.cut")).?);
     try command.run(app, .{ .static = .@"sessions.mode" });
     try t.expectEqualStrings(new_file, (try chordOf(app, arena, .@"file.new")).?);
 }

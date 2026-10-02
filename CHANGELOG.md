@@ -59,6 +59,16 @@ the release ships one file), and one line per change a user can see.
   for the profile you are in (`Ctrl+N` under standard, the vim chord under
   vim). A row with no binding shows none, and a row too narrow for both drops
   the chord rather than clip its label.
+- Under the standard profile those chords include the editor's own keys:
+  the right-click menu's Cut, Copy, Paste, Undo and Select all read Ctrl+X,
+  Ctrl+C, Ctrl+V, Ctrl+Z and Ctrl+A, and the hover help names them too. A
+  command reached only through the leader (`Space a e`) prints no chord on
+  a standard menu; its hover help names the leader row instead. The vim
+  profile's menus are unchanged.
+- The standard profile has VS Code's AI chords: Ctrl+Alt+I (Open Chat)
+  opens or focuses a Claude Code session, and Ctrl+Alt+Shift+L (Open Quick
+  Chat) asks Claude a question. The `Space a c` / `Space a a` leader rows
+  still work.
 
 ### Sandbox and demo
 

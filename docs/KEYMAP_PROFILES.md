@@ -45,6 +45,12 @@ and `.keys.vim` / `.keys.standard` add to or override their own.
    chord instead of disappearing.
 6. **Back / forward** (`nav.back` / `nav.forward`) are on `Alt+←` /
    `Alt+→`, except on macOS, where those two keys are left unbound.
+7. **A menu row prints the profile's chord.** In standard that
+   includes the keys the editor answers itself — Cut `Ctrl+X`, Copy
+   `Ctrl+C`, Paste `Ctrl+V`, Undo `Ctrl+Z`, Select all `Ctrl+A`, Toggle
+   comment `Ctrl+/` — and never a leader chord: a command whose only
+   chord is a `Space …` row prints none, and the hover help says which
+   leader row reaches it. The vim profile prints its leader chords.
 
 ## Chords that differ between the profiles
 
@@ -80,6 +86,7 @@ and `.keys.vim` / `.keys.standard` add to or override their own.
 | `view.move_split_left` / `_right` / `_up` / `_down` / `view.split_down` / `view.split_goto_definition` | `ctrl+k ←` / `→` / `↑` / `↓` / `ctrl+k ctrl+\` / `ctrl+k f12` | standard | VS Code: Move Editor Group, Split Editor Orthogonal, Open Definition to the Side |
 | `editor.jump_prev_edit` / `lsp.next_diagnostic` / `lsp.prev_diagnostic` / `lsp.goto_implementation` / `lsp.incoming_calls` / `view.toggle_wrap` / `editor.select_all_occurrences` / `nav.back` / `view.toggle_right_panel` / `find.grep_replace` / `view.menu_bar_open` / `file.copy_path` / `lsp.peek_definition_overlay` | `ctrl+k ctrl+q` / `alt+f8` / `shift+alt+f8` / `ctrl+f12` / `shift+alt+h` / `alt+z` / `ctrl+f2` / `ctrl+alt+minus` / `ctrl+alt+b` / `ctrl+shift+h` / `alt+f10` / `ctrl+alt+c`, `ctrl+k ctrl+alt+c` / `ctrl+shift+f10` | standard | VS Code's Linux defaults for the same commands |
 | `view.toggle_tree` | `ctrl+b` | standard | vim: `Ctrl-B` is page-back |
+| `ai.claude_code` / `ai.ask` | `ctrl+alt+i` / `ctrl+alt+shift+l` | standard | VS Code: Open Chat, Open Quick Chat. Both keep their `space a c` / `space a a` leader rows |
 | `picker.files` | `ctrl+o` | standard | vim: `Ctrl-O` is the jumplist in normal mode and one normal-mode command in insert mode. `ctrl+p` opens the picker in both profiles |
 | `picker.files` / `picker.buffers` | `space f f` / `space f b` | both | NvChad `<leader>ff` / `<leader>fb` |
 | `find.grep` | `space f w` | vim | NvChad `<leader>fw` |

@@ -2283,7 +2283,8 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expect(std.mem.indexOf(u8, closed, "Scratch buffer") == null);
     // → opens New's child hung from its row: the frame's top on the
     // row, the rows below, Rust's glyph rule on each leaf, each
-    // leaf's chord at its right edge (the frame grew by the widest), no
+    // leaf's chord at its right edge (the frame grew by the widest; Browser
+    // tab's leader chord is not one), no
     // highlight until an arrow; the frame registers its rows.
     try app.handle(.{ .key = app_mod.Key.named(.right) });
     try t.expect(m.sub != null);
@@ -2292,11 +2293,14 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     try t.expect(!m.sub.?.highlight);
     const open = try screenOf(&app);
     defer t.allocator.free(open);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f15b}  New   ▸ │┌───────────────────────────┐") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Open  ▸ ││ \u{f067}  Scratch buffer         │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f04b}  From clipboard         │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f120}  Shell     Ctrl+Shift+` │") != null);
-    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Browser tab    Space B │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f15b}  New   ▸ │┌──────────────────────────┐") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Open  ▸ ││ \u{f067}  Scratch buffer        │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f04b}  From clipboard        │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f120}  Shell    Ctrl+Shift+` │") != null);
+    // Its one chord is the leader's `Space B`: a standard menu row
+    // prints no leader chord, so it ends bare.
+    try t.expect(std.mem.indexOf(u8, open, "│ \u{f07c}  Browser tab           │") != null);
+    try t.expect(std.mem.indexOf(u8, open, "Space B") == null);
     try t.expect(std.mem.indexOf(u8, open, "⋮") == null);
     var child_hits: usize = 0;
     for (app.hits.items.items) |h| if (h.target == .menu_item and h.target.menu_item.menu == 1) {
@@ -2315,13 +2319,13 @@ test "the + menu is Rust's Create… tree: New / Open / AI / Dock ▸ rows with 
     defer t.allocator.free(lit);
     // The frame grew for the chords, so the label leaves the kebab
     // its room here now.
-    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer         │") != null);
-    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f04b}  From clipboard       ⋮ │") != null);
+    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f067}  Scratch buffer        │") != null);
+    try t.expect(std.mem.indexOf(u8, lit, "│ \u{f04b}  From clipboard      ⋮ │") != null);
     try app.handle(.{ .key = app_mod.Key.char('j') });
     try t.expectEqual(@as(usize, 2), m.sub.?.cursor);
     const lit2 = try screenOf(&app);
     defer t.allocator.free(lit2);
-    try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request         ⋮ │") != null);
+    try t.expect(std.mem.indexOf(u8, lit2, "│ \u{f067}  HTTP request        ⋮ │") != null);
     // ← closes it, the parent cursor stays.
     try app.handle(.{ .key = app_mod.Key.named(.left) });
     try t.expect(m.sub == null);

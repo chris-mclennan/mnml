@@ -1,0 +1,30 @@
+# The editor's right-click menu prints the chord each row's command has
+# under the ACTIVE profile (`info_view_copy.chordOf`). Under standard,
+# Cut / Copy / Paste / Undo / Select all are keys the input handler
+# answers itself (`input/standard.zig`'s `own_keys`), not keymap
+# bindings, and the rows print them; Explain with Claude is bound only
+# through the leader (`space a e`), and a standard row prints no leader
+# chord. Under vim the rows read the keymap alone, as before: the
+# clipboard rows end bare and the leader chords are printed.
+write doc.txt "ED01\nED02\nED03"
+open doc.txt
+command view.toggle_tree
+rightclick 40 5
+expect screen contains "Cut                           Ctrl+X │"
+expect screen contains "Copy                          Ctrl+C │"
+expect screen contains "Paste                         Ctrl+V │"
+expect screen contains "Undo                          Ctrl+Z │"
+expect screen contains "Redo                    Ctrl+Shift+Z │"
+expect screen contains "Select all                    Ctrl+A │"
+expect screen contains "Explain with Claude                  │"
+expect screen lacks "Space a"
+key esc
+command editor.use_vim
+rightclick 40 5
+expect screen contains "Cut                                  │"
+expect screen contains "Undo                                 │"
+expect screen contains "Redo                    Ctrl+Shift+Z │"
+expect screen contains "Explain with Claude        Space a e │"
+expect screen lacks "Ctrl+X"
+expect screen lacks "Ctrl+Z │"
+key esc

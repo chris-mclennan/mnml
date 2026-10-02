@@ -1,0 +1,19 @@
+# The standard profile gives the AI verbs a VS Code user reaches for
+# VS Code's own chords: Ask Claude… is Open Quick Chat's
+# Ctrl+Alt+Shift+L, and the editor menu's row prints it. The chord
+# runs the row's command: the Ask Claude prompt opens.
+write doc.txt "ED01\nED02\nED03"
+open doc.txt
+command view.toggle_tree
+rightclick 40 5
+expect screen contains "Ask Claude…         Ctrl+Alt+Shift+L │"
+key esc
+expect screen lacks "Ask Claude…"
+key ctrl+alt+shift+l
+expect screen contains "Ask Claude"
+key esc
+command editor.use_vim
+rightclick 40 5
+expect screen contains "Ask Claude…                Space a a │"
+expect screen lacks "Ctrl+Alt+Shift+L"
+key esc
