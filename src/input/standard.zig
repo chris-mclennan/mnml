@@ -3,6 +3,8 @@
 //! word motions; Ctrl+Backspace/Delete delete words; Ctrl+/ toggles a
 //! line comment; Alt+↑/↓ move the line; Ctrl+S saves; Esc clears a
 //! selection. Anything else is `.ignored` so the keymap gets it.
+//! `own_keys` names the modified chords it answers itself, so a menu
+//! row can print them (`info_view_copy.chordOf`).
 //!
 //! `[keys.standard]` overrides are a config-phase item. TODO(config)
 
@@ -14,6 +16,34 @@ const EditOp = input.EditOp;
 const EditCtx = input.EditCtx;
 const InputResult = input.InputResult;
 const ops = input.ops;
+
+/// A modified chord the handler answers itself, and the command that
+/// does the same from a menu or the palette (null: none does).
+pub const OwnKey = struct {
+    spec: []const u8,
+    command: ?input.CommandId,
+};
+
+/// Every Ctrl chord `handleKey` acts on, by key spec. The keymap does
+/// not bind most of them — the handler owns them — so this is how the
+/// menus, the hover help and the welcome screen learn that Cut is
+/// Ctrl+X under this profile. `Ctrl+S` and `Ctrl+D` are bound in the
+/// keymap too, to the same commands; the keymap reaches them first. A
+/// test below holds the table to the switch in both directions.
+pub const own_keys = [_]OwnKey{
+    .{ .spec = "ctrl+x", .command = .@"editor.cut" },
+    .{ .spec = "ctrl+c", .command = .@"editor.copy" },
+    .{ .spec = "ctrl+v", .command = .@"editor.paste" },
+    .{ .spec = "ctrl+z", .command = .@"editor.undo" },
+    .{ .spec = "ctrl+y", .command = .@"editor.redo" },
+    .{ .spec = "ctrl+shift+z", .command = .@"editor.redo" },
+    .{ .spec = "ctrl+a", .command = .@"editor.select_all" },
+    .{ .spec = "ctrl+/", .command = .@"editor.toggle_line_comment" },
+    .{ .spec = "ctrl+s", .command = .@"file.save" },
+    .{ .spec = "ctrl+d", .command = .@"editor.add_cursor_at_next_word" },
+    // Select to the line's end: no command runs it.
+    .{ .spec = "ctrl+l", .command = null },
+};
 
 pub const Standard = struct {
     tab_width: usize,
@@ -157,6 +187,7 @@ fn spaces(arena: Allocator, n: usize) Allocator.Error![]const u8 {
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
+const Chord = @import("../core/key.zig").Chord;
 
 /// The `"+` hint that opens every Ctrl+C / Ctrl+X / Ctrl+V op list.
 const os_reg: EditOp = .{ .set_register_hint = '+' };
@@ -235,4 +266,74 @@ test "standard: ctrl chords, save, ctrl+l, alt+shift duplicate, esc" {
     // Unknown chords fall through to the keymap.
     try testing.expectEqual(InputResult.ignored, try h.handleKey(Key.ctrl('p'), .{}, a));
     try testing.expectEqual(InputResult.ignored, try h.handleKey(.{ .code = .{ .f = 5 } }, .{}, a));
+}
+
+test "own_keys is the handler's own Ctrl chords: every row is a key it acts on, as its command does, and every Ctrl key it acts on is a row" {
+    const keymap = @import("../core/keymap.zig");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var h = Standard.init(.{});
+    const sel: EditCtx = .{ .has_selection = true };
+    // Each row's key does what its command does: the op the command's
+    // runner applies to a selection (`app/cmd_editor.zig`), or the
+    // same command run through the registry.
+    for (own_keys) |row| {
+        var buf: [keymap.max_seq]Chord = undefined;
+        const seq = keymap.parseKeySeqBuf(row.spec, &buf) orelse return error.UnparsedSpec;
+        try testing.expectEqual(@as(usize, 1), seq.len);
+        const r = try h.handleKey(.{ .code = seq[0].code, .mods = seq[0].mods }, sel, a);
+        try testing.expect(r != .ignored);
+        const id = row.command orelse continue;
+        const want: ?std.meta.Tag(EditOp) = switch (id) {
+            .@"editor.cut" => .cut_selection,
+            .@"editor.copy" => .yank_selection,
+            .@"editor.paste" => .paste,
+            .@"editor.undo" => .undo,
+            .@"editor.redo" => .redo,
+            .@"editor.select_all" => .select_all,
+            .@"editor.toggle_line_comment" => .toggle_line_comment,
+            else => null,
+        };
+        if (want) |tag| {
+            var found = false;
+            for (r.ops) |op| found = found or std.meta.activeTag(op) == tag;
+            try testing.expect(found);
+        } else switch (r.app) {
+            .save => try testing.expectEqual(input.CommandId.@"file.save", id),
+            .run_command => |c| try testing.expectEqual(id, c),
+            else => return error.UnexpectedAppCommand,
+        }
+    }
+    // The other way: every Ctrl+<char> the switch answers is a row, and
+    // so is every Ctrl+Shift+<char> that means something its unshifted
+    // twin does not (Ctrl+Shift+Z is redo, not undo).
+    var c: u8 = 0x21;
+    while (c < 0x7F) : (c += 1) {
+        if (std.ascii.isUpper(c)) continue;
+        const plain = try h.handleKey(Key.ctrl(c), sel, a);
+        if (plain != .ignored) try testing.expect(ownKeyOf(.{ .code = .{ .char = c }, .mods = .{ .ctrl = true } }));
+        if (!std.ascii.isLower(c)) continue;
+        const shifted = try h.handleKey(.{ .code = .{ .char = std.ascii.toUpper(c) }, .mods = .{ .ctrl = true, .shift = true } }, sel, a);
+        const same = std.meta.eql(std.meta.activeTag(plain), std.meta.activeTag(shifted)) and switch (plain) {
+            .ops => |p| p.len == shifted.ops.len and for (p, shifted.ops) |x, y| {
+                if (std.meta.activeTag(x) != std.meta.activeTag(y)) break false;
+            } else true,
+            else => true,
+        };
+        if (!same and shifted != .ignored) try testing.expect(ownKeyOf(.{ .code = .{ .char = c }, .mods = .{ .ctrl = true, .shift = true } }));
+    }
+}
+
+/// Whether `own_keys` has a row for the chord `k` normalises to.
+fn ownKeyOf(k: Key) bool {
+    const keymap = @import("../core/keymap.zig");
+    const want = Chord.of(k);
+    for (own_keys) |row| {
+        var buf: [keymap.max_seq]Chord = undefined;
+        const seq = keymap.parseKeySeqBuf(row.spec, &buf) orelse continue;
+        if (seq.len == 1 and seq[0].eql(want)) return true;
+    }
+    std.debug.print("standard handler acts on {any} but own_keys has no row for it\n", .{want});
+    return false;
 }
