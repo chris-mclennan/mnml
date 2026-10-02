@@ -283,6 +283,8 @@ test "one product test: a bare, a path-qualified and a shell-run claude; a wrapp
     try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{ "/bin/sh", "-c", "make && claude" }));
     try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{"/bin/zsh"}));
     try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{"my-claude-wrapper"}));
+    // The pty pane's own answer (its accent, its tab) is this one.
+    try t.expectEqual(@as(?Product, .claude), pty_pane.productOfArgv(&app, &.{ "/bin/sh", "-c", "./bin/claude" }));
     // A wrapper (`my-claude-wrapper` execs the CLI): the child's title.
     try t.expectEqual(@as(?Product, .claude), productOfTitle("\u{2733} fix the parser"));
     try t.expectEqual(@as(?Product, .claude), productOfTitle("\u{2810} Thinking"));
