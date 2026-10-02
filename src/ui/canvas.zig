@@ -138,6 +138,24 @@ pub fn put(c: Canvas, x: u16, y: u16, cell_in: Cell) void {
     c.screen.writeCell(x, y, cell);
 }
 
+/// What `restyle` changes in a cell; a null field is left as painted.
+pub const StylePatch = struct {
+    fg: ?vaxis.Color = null,
+    ul_style: ?Style.Underline = null,
+};
+
+/// Changes the style of the cell at (`x`, `y`) in place, keeping its
+/// glyph — a mark laid over text already painted (`link_span.zig`).
+/// Clipped like `put`.
+pub fn restyle(c: Canvas, x: u16, y: u16, patch: StylePatch) void {
+    if (!c.clip.contains(x, y)) return;
+    var cell = c.screen.readCell(x, y) orelse return;
+    if (patch.fg) |fg| cell.style.fg = fg;
+    if (patch.ul_style) |u| cell.style.ul_style = u;
+    if (c.quantize) cell.style = color.quantizeStyle(cell.style);
+    c.screen.writeCell(x, y, cell);
+}
+
 /// If the cell left of `x` is a wide head, its tail is `x`: blank the head so
 /// the terminal never sees a torn glyph.
 fn breakWideBefore(c: Canvas, x: u16, y: u16) void {

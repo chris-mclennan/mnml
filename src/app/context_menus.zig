@@ -965,7 +965,10 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .integrations => app.integrations.panel.cursor,
                 .search => app.search_section.list.cursor,
                 .script => if (@import("script_section.zig").activeList(app)) |l| l.panel.cursor else return app.diag.fail(arena, "no script section", .{}),
-                .notes, .findings, .sessions, .outline, .scripts, .jobs => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
+                // The card's menu — its links among the rows, so the
+                // keyboard reaches what a click on one would open.
+                .sessions => app.sessions.list.cursor,
+                .notes, .findings, .outline, .scripts, .jobs => return app.diag.fail(arena, "{s}: no menu in this build", .{@tagName(which)}),
             };
             const r = rectOf(app, .{ .row = .{ .panel = which, .idx = @intCast(cursor) } });
             const m: Mouse = .{ .x = r.x, .y = r.y, .kind = .press, .button = .left };
@@ -978,7 +981,11 @@ fn contextMenuAtFocus(app: *App) CommandError!void {
                 .debug => try @import("debug_panel.zig").kebabMouse(app, @intCast(cursor), m),
                 .integrations => try @import("integrations.zig").kebabMouse(app, @intCast(cursor), m),
                 .script => try @import("script_section.zig").kebabMouse(app, @intCast(cursor), m),
-                .notes, .findings, .sessions, .outline, .scripts, .jobs => {},
+                .sessions => {
+                    if (cursor >= app.sessions.filtered.items.len) return app.diag.fail(arena, "no session under the cursor", .{});
+                    try @import("../sessions.zig").openRowMenu(app, r.x, r.y);
+                },
+                .notes, .findings, .outline, .scripts, .jobs => {},
             }
         },
         .pane => |id| {
@@ -1402,9 +1409,10 @@ pub fn openLinkMenu(app: *App, url: []const u8, x: u16, y: u16) Allocator.Error!
     errdefer mem.deinit();
     const arena = mem.allocator();
     const copy = try arena.dupe(u8, url);
+    // The rows a terminal pane's right-click on a link has, in its order.
     const rows = try items(app, &.{
-        .{ .label = "Open in browser", .action = .{ .open_url = copy } },
-        .{ .label = "Copy URL", .action = .{ .copy_text = copy } },
+        .{ .label = "Copy link", .action = .{ .copy_link = copy } },
+        .{ .label = "Open link", .action = .{ .open_url = copy } },
     });
     errdefer app.gpa.free(rows);
     try openOwned(app, "Link", rows, x, y, mem);

@@ -85,6 +85,10 @@ const Ui = @import("ui/context.zig");
 const Theme = @import("ui/theme.zig");
 const hit = @import("ui/hit.zig");
 const list_panel = @import("ui/list_panel.zig");
+const link_span = @import("ui/link_span.zig");
+const clip_mod = @import("ui/clip.zig");
+const link_rules = @import("app/link_rules.zig");
+const integrations_mod = @import("app/integrations.zig");
 const todos = @import("todos.zig");
 const agents = @import("app/agents.zig");
 const cloud_agents = @import("app/cloud_agents.zig");
@@ -2176,7 +2180,15 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
         try items.append(app.gpa, .{ .label = if (card != null) "Focus session" else "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true });
         // sessiondiff: the review step, for a card whose session has a base.
         if (card) |c| if (session_changes.recordOf(app, c.pane) != null) try items.append(app.gpa, .{ .label = "What did this session change", .action = .{ .command = .@"sessions.changes" } });
-        try items.append(app.gpa, .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" } });
+        // The links the session shows — a URL, a key an integration
+        // declared — one row each, so the keyboard reaches them too.
+        const links = try menuLinks(app, arena, card, it);
+        for (links, 0..) |l, k| try items.append(app.gpa, .{
+            .label = try std.fmt.allocPrint(arena, "Open {s}", .{try clip_mod.clipCells(arena, l.text, link_label_max, .{ .ellipsis = clip_mod.ellipsisFor(app.cfg.ui.ascii_icons) })}),
+            .action = .{ .open_url = l.url },
+            .separator_before = k == 0,
+        });
+        try items.append(app.gpa, .{ .label = "Open transcript", .action = .{ .command = .@"sessions.open_transcript" }, .separator_before = links.len > 0 });
         try items.append(app.gpa, .{ .label = "Copy session id", .action = .{ .command = .@"sessions.copy_id" } });
         try items.append(app.gpa, .{ .label = "Copy working directory", .action = .{ .command = .@"sessions.copy_cwd" } });
         try items.append(app.gpa, .{ .label = "Export as markdown…", .action = .{ .command = .@"sessions.export" } });
@@ -2194,6 +2206,30 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
     const owned = try items.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
     try context_menus.openOwned(app, title, owned, x, y, mem);
+}
+
+/// A link row of a session's menu is cut here (`Open https://…`).
+pub const link_label_max: u16 = 48;
+/// At most this many link rows.
+pub const menu_links_max: usize = 6;
+
+/// The links a session's menu lists: on a card, what the card shows —
+/// the name, the summary rows, the ticket chip; in the table, the
+/// session's name, branch and last exchange.
+pub fn menuLinks(app: *App, arena: Allocator, card: ?Card, it: ?Item) Allocator.Error![]const link_rules.Found {
+    var texts: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (card) |c| {
+        const v = try cardView(app, arena, c);
+        try texts.append(arena, v.name);
+        for (v.lines) |l| try texts.append(arena, l.text);
+        if (v.ticket) |tk| try texts.append(arena, tk);
+    } else if (it) |i| {
+        try texts.append(arena, itemName(app, i));
+        if (i.git_branch) |b| try texts.append(arena, b);
+        if (i.last_user_msg) |m| try texts.append(arena, m);
+        if (i.last_assistant_msg) |m| try texts.append(arena, m);
+    }
+    return link_rules.collect(app, arena, texts.items, menu_links_max);
 }
 
 /// The `+ New session` menu: a local session, a batch (Rust's ×2 / ×4
@@ -2976,6 +3012,8 @@ pub fn detectTicket(prefixes: []const []const u8, candidates: []const []const u8
 /// the name after a pin `󰐃 ` (bold when active, clipped hard at the
 /// edge), and up to three summary rows clipped to `width − 6` with `…`,
 /// the first with ` · TICKET` when one was detected. No bell, no ports.
+/// A URL, or a key an installed integration declares, in the name, a
+/// summary row or the ticket is a link (`ui/link_span.zig`).
 fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     const t = ui.theme;
     const bg = t.panel_bg;
@@ -3004,7 +3042,9 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     }
     var name_style = Theme.withFg(bg, t.fg.fg);
     name_style.bold = row.active;
-    x += ui.putStr(x, r.y, end -| x, row.name, name_style);
+    const name_w = ui.putStr(x, r.y, end -| x, row.name, name_style);
+    link_span.mark(ui, x, r.y, name_w, row.name);
+    x += name_w;
     if (row.worktree) |wt| {
         const tag = worktreeTag(ui.arena, wt, ui.ascii) catch "";
         x += ui.putStr(x, r.y, end -| x, " ", bg);
@@ -3027,10 +3067,12 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
         const yy = r.y + 1 + @as(u16, @intCast(i));
         var xx = r.x + 2;
         xx += ui.putStr(xx, yy, end -| xx, " ", bg);
-        xx += paintLine(ui, xx, yy, end, max_cells, line, bg, color);
+        const line_w = paintLine(ui, xx, yy, end, max_cells, line, bg, color);
+        link_span.mark(ui, xx, yy, line_w, line.text);
+        xx += line_w;
         if (i == 0) if (row.ticket) |tk| {
             xx += ui.putStr(xx, yy, end -| xx, " · ", Theme.withFg(bg, t.muted.fg));
-            _ = ui.putStr(xx, yy, end -| xx, tk, Theme.withFg(bg, t.palette.cyan));
+            link_span.mark(ui, xx, yy, ui.putStr(xx, yy, end -| xx, tk, Theme.withFg(bg, t.palette.cyan)), tk);
         };
     }
 }
@@ -3076,7 +3118,8 @@ const session_file = @import("app/session.zig");
 /// pane's grid holds. Its session id picks the act — `exit-*` exits at
 /// once, `think-*` paints Claude's spinner row, `ask-*` an approval
 /// prompt, anything else the startup banner — and every other act stays
-/// up. `--session-id` / `--resume` are read the way the CLI reads them.
+/// up. `link-*` prints a URL and a ticket key. `--session-id` /
+/// `--resume` are read the way the CLI reads them.
 const fake_claude =
     \\#!/bin/sh
     \\sid=""
@@ -3088,6 +3131,7 @@ const fake_claude =
     \\  turn-*) printf 'Claude Code v9 (fake)\n\342\234\273 Thinking\342\200\246\n'; sleep 1; printf '\033[2J\033[HDone.\n'; sleep 30 ;;
     \\  ask-*) printf 'Do you want to proceed?\n'; sleep 30 ;;
     \\  title-*) printf '\033]0;\342\234\263 ship the parser\007Claude Code v9 (fake)\n'; sleep 30 ;;
+    \\  link-*) printf '\033]0;fix ENG-7\007see https://example.com/x\nENG-123 is open\n'; sleep 30 ;;
     \\  *) printf 'Claude Code v9 (fake)\nOpus 5 (fake) \302\267 Claude Max\n~/Projects/fake\n'; sleep 30 ;;
     \\esac
     \\
@@ -4913,4 +4957,57 @@ test "a transcript is this workspace's by path component: a sibling with a suffi
         try testing.expectEqual(c.here, inWorkspace(it, ws, "app"));
     }
     try testing.expect(pathWithin("/anything", "/"));
+}
+
+test "a card's links: its menu lists one Open row per address it shows, after Focus session, in the order the card shows them; the row opens through the app's opener; the rows have their hover copy" {
+    var f = try Fixture.init(100, 24);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    // An integration declares the key shape; core knows none.
+    var list = [_]integrations_mod.Installed{.{
+        .manifest = .{ .id = "acme", .label = "Acme", .links = &.{.{ .pattern = "[A-Z][A-Z0-9]+-[0-9]+", .url = "https://tracker.example.com/browse/{0}" }} },
+        .path = "",
+        .source = .home,
+        .binary_found = true,
+        .slots = &.{},
+    }};
+    app.integrations.list = &list;
+    defer app.integrations.list = &.{};
+    try link_rules.rebuild(app);
+    const pid = try f.openCard("link-1");
+    try f.adopt(&.{});
+    try testing.expect(try f.waitGrid(pid, "ENG-123 is open", 5000));
+    try refilter(app);
+    app.sessions.list.cursor = 0;
+    try openRowMenuFor(app, .section, 0, 0);
+    const its = app.overlay.menu.items;
+    var focus: ?usize = null;
+    var first: ?usize = null;
+    for (its, 0..) |mi, i| {
+        if (std.mem.eql(u8, mi.label, "Focus session")) focus = i;
+        if (first == null and mi.action == .open_url) first = i;
+    }
+    const k = first.?;
+    // After Focus session (and the changes row, when the session has one).
+    try testing.expect(k > focus.?);
+    try testing.expectEqualStrings("Open ENG-7", its[k].label);
+    try testing.expectEqualStrings("https://tracker.example.com/browse/ENG-7", its[k].action.open_url);
+    try testing.expect(its[k].separator_before);
+    try testing.expectEqualStrings("Open https://example.com/x", its[k + 1].label);
+    try testing.expectEqualStrings("https://example.com/x", its[k + 1].action.open_url);
+    try testing.expectEqualStrings("Open ENG-123", its[k + 2].label);
+    try testing.expectEqualStrings("Open transcript", its[k + 3].label);
+    try testing.expect(its[k + 3].separator_before);
+    // The row's hover copy is the curated one.
+    const entry = @import("app/info_view_copy/menus.zig").lookupItem("Session", null, its[k + 2].label, its[k + 2].action).?;
+    try testing.expectEqualStrings("Open a link the session shows", entry.title);
+    // Enter on it: the address goes to the app's opener (logged here).
+    const log = try std.fs.path.join(testing.allocator, &.{ f.root, "opened.log" });
+    defer testing.allocator.free(log);
+    try app.env.put("MNML_OPEN_URL", log);
+    try @import("app/dispatch.zig").runMenuActionForTest(app, its[k + 2].action);
+    const text = try Io.Dir.cwd().readFileAlloc(testing.io, log, testing.allocator, .limited(4096));
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "https://tracker.example.com/browse/ENG-123") != null);
 }

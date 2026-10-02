@@ -576,19 +576,7 @@ pub fn linkAtCursor(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
 }
 
 /// A `scheme://` token of `line` covering `col`.
-pub fn urlAt(line: []const u8, col: usize) ?[]const u8 {
-    var start: usize = 0;
-    while (std.mem.indexOfPos(u8, line, start, "://")) |p| {
-        var a = p;
-        while (a > 0 and std.ascii.isAlphabetic(line[a - 1])) a -= 1;
-        var b = p + 3;
-        while (b < line.len and !std.ascii.isWhitespace(line[b]) and line[b] != '"' and line[b] != '\'' and line[b] != '>' and line[b] != ')' and line[b] != ']') b += 1;
-        while (b > p + 3 and (line[b - 1] == '.' or line[b - 1] == ',' or line[b - 1] == ';')) b -= 1;
-        if (a < p and col >= a and col < b) return line[a..b];
-        start = b;
-    }
-    return null;
-}
+pub const urlAt = @import("../ui/link_span.zig").urlAt;
 
 /// `editor.open_url_at_cursor` (`gx`): the link under the cursor, in
 /// the OS browser.

@@ -44,6 +44,17 @@ the release ships one file), and one line per change a user can see.
   sessions open: a session left in the background, or started through a
   shell (`:term ./bin/claude`) or a wrapper script, now counts everywhere
   the tab mark does.
+- A URL or a ticket key on a SESSIONS card — in its name, its output, its
+  ticket chip — or in the sessions table's summary is a link: a dotted
+  underline marks it, the pointer lights it, a click opens it in the
+  browser, and a right-click offers *Copy link* / *Open link*. The card's
+  menu lists each one as an `Open …` row, and Shift+F10 on the focused
+  card now opens that menu.
+- A ticket key links only because an installed integration says what one
+  looks like: a manifest's new `links[]` pairs a pattern with the address
+  it opens (`docs/SDK.md`, *Links*). The Jira integration declares the
+  issue key and writes your site in at `--install` (reinstall it to pick
+  this up); with no integration declaring one, only URLs link.
 
 ### Tabs
 

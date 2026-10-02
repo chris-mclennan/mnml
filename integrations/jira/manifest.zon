@@ -32,4 +32,13 @@
     .values_sources = .{
         .{ .id = "jira_work_values", .command = "mnml-jira --values --only work", .poll_interval_secs = 300 },
     },
+    // An issue key in text mnml shows — a session card's name or its
+    // output — links to the issue on your site. Any project's key: the
+    // shape is Jira's, never a project's. `{site_url}` is filled in by
+    // `--install` from config.zon's `.jira_url`, else by mnml from
+    // $JIRA_URL (the site_url field's fallback above). Only this chip
+    // declares it: the other two are the same site.
+    .links = .{
+        .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}" },
+    },
 }

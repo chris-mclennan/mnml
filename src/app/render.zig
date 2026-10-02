@@ -626,6 +626,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // them after the cells are out).
     app.image_paints = .empty;
     const arena = app.frame.allocator();
+    app.link_rules.beginFrame(app.gpa);
     const ui: Ui = .{
         .canvas = Canvas.init(screen, .{}),
         .hits = &app.hits,
@@ -636,6 +637,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .ascii = app.cfg.ui.ascii_icons,
         .triangle = app.cfg.ui.expand_indicator == .triangle,
         .focus_cue = app.cfg.ui.focus_cue,
+        .links = @import("link_rules.zig").finder(app),
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);

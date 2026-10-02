@@ -130,6 +130,7 @@ What each component owns (`src/ui/` unless noted):
 | `empty_state.zig` | "nothing here" copy with its glyph and its style |
 | `list_panel.zig` | the whole list panel: header + chips + filter + rows + marker + kebab + scrollbar |
 | `scrollbar.zig` | every scrollbar (`.glyph` and `.solid` looks) and its hit |
+| `link_span.zig` | a link inside text already painted — the `.link` hit, the dotted / lit look — and the one URL matcher (`nextUrl`, `urlAt`); what else links is the app's finder (`app/link_rules.zig`: the installed integrations' `links[]`) on `Ui.links` |
 | `render.zig`'s `drawMenu` (`src/app/`) | the context menu: rows, separator rules, the `menu_item` hits |
 | `toast.zig` · `prompt.zig` · `confirm.zig` · `tooltip.zig` · `which_key.zig` | one transient each, opened through `overlay.box` |
 | `bufferline.zig` | the file tabs (the tab strip in core) |
