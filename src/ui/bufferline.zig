@@ -642,17 +642,12 @@ fn clampScroll(ui: Ui, tabs: []const Tab, room: u16, raw: usize) usize {
     return @min(want, max_scroll);
 }
 
-/// How many chips from `first` paint (whole or cut) in `room` cells.
-fn countPainted(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
-    var x: u16 = 0;
-    var n: usize = 0;
-    var i = first;
-    while (i < tabs.len) : (i += 1) {
-        if (x >= room) break;
-        x += @min(chipWidth(ui, tabs[i]), room - x) + 1;
-        n += 1;
-    }
-    return n;
+/// How many chips from `first` paint WHOLE in `room` cells — a chip
+/// cut at the edge is not in view: its badge, and often its name, are
+/// not on the strip. The first chip always counts, as a page of one
+/// does when it is wider than the strip.
+fn countWhole(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
+    return pageEnd(ui, tabs, room, first) - first;
 }
 
 /// The fewest cells the tabs may be left before the furniture gives way.
@@ -685,8 +680,11 @@ fn narrowWidth(area: Rect) u16 {
 }
 
 /// The offset to paint from when the active tab changed: `current` when
-/// the active tab is already in view, else the active tab itself (the
-/// clamp pulls it back so the tail fills the strip).
+/// the active tab is already in view, whole, else the active tab itself
+/// (the clamp pulls it back so the tail fills the strip). A tab cut at
+/// the right edge is not in view: opening the tab after the last whole
+/// one used to leave it cut there, its name lost, with the window never
+/// moving to it.
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
     const g = geometry(ui, area, tabs, opts);
@@ -697,7 +695,7 @@ pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Op
     for (tabs, 0..) |tab, i| if (tab.active) {
         active = i;
     };
-    if (active >= first and active < first + countPainted(ui, tabs, room, first)) return first;
+    if (active >= first and active < first + countWhole(ui, tabs, room, first)) return first;
     return clampScroll(ui, tabs, room, active);
 }
 
@@ -1633,4 +1631,22 @@ test "at the shipped sizes the ` ⋯ ` stands beside the pager and the active ta
         try f.expectContains(nav_next_glyph ++ "  \u{22ef}  " ++ ghost_glyph);
         try testing.expect(hasButton(&f, 8) and hasButton(&f, 70));
     }
+}
+
+test "the tab after the last whole one, opened, is brought into view whole — a chip cut at the edge is not in view" {
+    // 40 cells: t1 and t2 whole, t3 cut at the edge.
+    const tabs = [_]Tab{
+        .{ .id = 1, .title = "t1.txt", .glyph = "x" },
+        .{ .id = 2, .title = "t2.txt", .glyph = "x" },
+        .{ .id = 3, .title = "t3.txt", .glyph = "x", .active = true },
+    };
+    var f = try Fixture.init(40, 1);
+    defer f.deinit();
+    const o: Opts = .{ .new_tab = 77 };
+    const first = fitActive(f.ui(), f.full(), &tabs, 0, o);
+    try testing.expectEqual(@as(usize, 1), first);
+    var at = o;
+    at.first = first;
+    _ = draw(f.ui(), f.full(), &tabs, at);
+    try f.expectContains(" x t3.txt " ++ close_glyph);
 }
