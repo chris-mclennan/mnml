@@ -4,7 +4,8 @@
 # `New ▸` opens its child hung from the row (its first row one below);
 # the child paints no highlight until a row is hovered, then a row
 # whose label leaves room carries a `⋮` kebab in its last two cells
-# (the longest rows keep their label, as on Rust's screen); the kebab's menu offers
+# (the frame is wide enough for the rows' chords, so every leaf has the
+# room); the kebab's menu offers
 # Pin / Hide / Copy; a right-click on a child row offers the same, and
 # Enter pins it — the pinned row then leads the menu.
 write alpha.zig "const alpha = 1;\n"
@@ -13,13 +14,12 @@ rightclick 47 1
 expect screen contains "┌ Create…"
 hover 50 3
 expect screen contains "Scratch buffer"
-expect screen lacks "HTTP request ⋮"
+expect screen lacks "HTTP request         ⋮"
 hover 72 4
-expect screen contains "Scratch buffer │"
-expect screen lacks "Scratch buffer ⋮"
+expect screen contains "Scratch buffer       ⋮ │"
 hover 72 6
-expect screen contains "HTTP request ⋮"
-click 86 6
+expect screen contains "HTTP request         ⋮"
+click 94 6
 expect screen contains "Pin to top"
 expect screen lacks "Rename…"
 key esc

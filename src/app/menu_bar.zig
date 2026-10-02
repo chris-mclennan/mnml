@@ -721,8 +721,8 @@ test "menu bar: a click drops the menu in Rust's dropdown shape with the recent 
     try t.expectEqual(@as(?u8, 3), app.menu_bar.first_hidden);
     // A click on File drops it in the dropdown shape — Rust's
     // `rust-menu-file-120x40.txt` rows: no title, a two-cell marker
-    // column, the icon, two cells of air, the label; ` ▸` ends the
-    // recent-files row; no highlight until a hover or an arrow.
+    // column, the icon, two cells of air, the label, the chord; ` ▸`
+    // ends the recent-files row; no highlight until a hover or an arrow.
     try app.handle(.{ .mouse = .{ .x = 12, .y = 0, .kind = .press, .button = .left } });
     try t.expect(app.overlay == .menu);
     try t.expect(app.overlay.menu.dropdown);
@@ -736,11 +736,14 @@ test "menu bar: a click drops the menu in Rust's dropdown shape with the recent 
     const dropped = try screen.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(dropped);
     try t.expect(std.mem.indexOf(u8, dropped, "╭ File") == null);
-    try t.expect(std.mem.indexOf(u8, dropped, "┌─────────────────────────────┐") != null);
-    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F0224}  New file                │") != null);
-    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F1DA}  Open recent file       ▸│") != null);
-    try t.expect(std.mem.indexOf(u8, dropped, "│─────────────────────────────│") != null);
-    try t.expect(std.mem.indexOf(u8, dropped, "ctrl+s") == null);
+    try t.expect(std.mem.indexOf(u8, dropped, "┌──────────────────────────────────────┐") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F0224}  New file                  Ctrl+N │") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│  \u{F1DA}  Open recent file                ▸│") != null);
+    try t.expect(std.mem.indexOf(u8, dropped, "│──────────────────────────────────────│") != null);
+    // Each row's chord under the active profile sits at its right
+    // edge, one cell short of the border (`render.zig`'s `menuChords`);
+    // the frame grew by the widest, `Switch workspace…  Ctrl+K Ctrl+O`.
+    try t.expect(std.mem.indexOf(u8, dropped, "Save                      Ctrl+S │") != null);
     // The first ↓ only turns the highlight on (row 0); the marker
     // column shows it; the next ↓ moves.
     try app.handle(.{ .key = app_mod.Key.named(.down) });

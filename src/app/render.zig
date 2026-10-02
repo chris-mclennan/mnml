@@ -2873,7 +2873,7 @@ fn drawOverlay(app: *App, ui: Ui, fr: FrameRects) Allocator.Error!void {
 /// by the widest one, and a row too narrow for label, gap and chord
 /// drops the chord, never the label.
 fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState, chords: MenuChords) void {
-    const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, chords.rows, m.dropdown);
+    const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, chords.rows, m.dropdown, m.curatable);
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
     const x = @min(m.x, (screen.x + screen.w) -| w);
@@ -2894,7 +2894,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState, chords: MenuChords) voi
     const sub = if (m.sub) |*s| s else return;
     // The child: a context menu's hangs from the parent row (its first
     // row one below it), a dropdown's lines its first row up with it.
-    const child = menuSize(ui, null, sub.items, chords.sub, m.dropdown);
+    const child = menuSize(ui, null, sub.items, chords.sub, m.dropdown, m.curatable);
     const cw: u16 = @min(child.w, screen.w);
     const ch: u16 = @min(child.h, screen.h);
     const row_y = inner.y + (parent_row.get(sub.parent) orelse 0);
@@ -2986,7 +2986,7 @@ fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
 
 /// Frame + rows, in the shape Rust sizes them (`ContextMenu::
 /// content_width`; `menu_bar.rs`'s `w` / `sub_w`).
-fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords: []const ?[]const u8, dropdown: bool) MenuSize {
+fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords: []const ?[]const u8, dropdown: bool, curatable: bool) MenuSize {
     var rows: u16 = 0;
     var widest: u16 = 0;
     var any_icon = false;
@@ -2998,7 +2998,14 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords:
         // The chord grows the row by itself and its gap; the frame is
         // clamped to the screen after, and a row the clamp leaves too
         // narrow drops the chord (`paintMenuRows`).
-        const chord_w: u16 = if (chordAt(chords, i)) |c| chord_gap + ui.width(c) else 0;
+        // A dropdown's row has no air of its own at the right; the
+        // chord brings its one cell.
+        // On a curatable menu the focused command row's kebab sits
+        // past the chord, so a chorded row keeps it room as well.
+        const chord_w: u16 = if (chordAt(chords, i)) |c|
+            chord_gap + ui.width(c) + @intFromBool(dropdown) + (if (curatable and it.action == .command) marker_w else 0)
+        else
+            0;
         widest = @max(widest, label_w + chord_w);
     }
     if (dropdown) {
@@ -3592,14 +3599,15 @@ fn findOnScreen(app: *App, text: []const u8) ?[2]u16 {
     return null;
 }
 
-/// The cells from `x` to the row's border, as text.
+/// The ASCII cells from `x` up to the row's border, as text.
 fn rowTail(app: *App, x: u16, y: u16, buf: []u8) []const u8 {
     var n: usize = 0;
     var cx = x;
     while (cx < app.screen.width and n < buf.len) : (cx += 1) {
         const g = app.screen.readCell(cx, y).?.char.grapheme;
-        if (std.mem.eql(u8, g, "\u{2502}")) break;
-        buf[n] = if (g.len == 1) g[0] else '?';
+        // The frame's edge is the first cell that is not ASCII.
+        if (g.len != 1) break;
+        buf[n] = g[0];
         n += 1;
     }
     return buf[0..n];
@@ -3674,6 +3682,24 @@ test "menu chords: the menu grows by the widest chord; a row too narrow for labe
     const f = findOnScreen(&wide, "F12").?;
     try t.expectEqual(l[1], f[1]);
     try t.expect(f[0] >= l[0] + long.len + chord_gap);
+}
+
+test "menu chords: a menu-bar dropdown's rows carry their chords too" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openChordMenu(&app, &.{
+        .{ .label = "Settings…", .action = .{ .command = .@"view.settings" } },
+        .{ .label = "Quit mnml", .action = .{ .command = .@"app.quit" } },
+    });
+    app.overlay.menu.dropdown = true;
+    app.overlay.menu.highlight = false;
+    try app.render();
+    const quit = findOnScreen(&app, "Quit mnml").?;
+    const chord = findOnScreen(&app, "Ctrl+Q").?;
+    try t.expectEqual(quit[1], chord[1]);
+    try t.expect(chord[0] >= quit[0] + 9 + chord_gap);
+    try t.expect(findOnScreen(&app, "Ctrl+,") != null);
 }
 
 test "menu chords: the selected row keeps its highlight and paints its chord in the highlight's ink" {
