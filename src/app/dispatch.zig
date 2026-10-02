@@ -3278,6 +3278,23 @@ pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
             const s = &app.overlay.picker.state;
             return .{ .buf = &s.query, .caret = &s.caret, .anchor = &s.sel_anchor };
         },
+        .settings_filter => {
+            if (app.overlay != .settings) return null;
+            const f = &app.overlay.settings.ui.filter;
+            return .{ .buf = &f.buf, .caret = &f.caret, .anchor = &f.anchor };
+        },
+        // A press on either find field gives it the keys.
+        .find_query => {
+            const fb = if (app.find_bar) |*b| &b.state else return null;
+            fb.focus = .query;
+            return .{ .buf = &fb.query, .caret = &fb.caret, .anchor = &fb.anchor, .select_all = &fb.select_all };
+        },
+        .find_replace => {
+            const fb = if (app.find_bar) |*b| &b.state else return null;
+            if (!fb.show_replace) return null;
+            fb.focus = .replace;
+            return .{ .buf = &fb.replace, .caret = &fb.replace_caret, .anchor = &fb.replace_anchor, .select_all = &fb.select_all };
+        },
         .panel_filter => |p| return panelFilter(app, p),
         .pane_filter => |pane| return (paneFilter(app, pane) orelse return null).ref,
         else => return null,
@@ -6084,4 +6101,48 @@ test "a pane's own filter pill (FILES): a double-click takes the word, a paste r
     try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "x") });
     try std.testing.expectEqualStrings("zzz x", f.filter.items);
     try std.testing.expect(f.filter_anchor == null);
+}
+
+test "the settings box's filter and the find bar's two fields: a double-click takes the word, the next key replaces it; a press on a find field gives it the keys" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(std.testing.io, "ws/.mnml");
+    const ws = try std.fs.path.join(std.testing.allocator, &.{ root, "ws" });
+    defer std.testing.allocator.free(ws);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    // Settings.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("dock bar") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const f = &app.overlay.settings.ui.filter;
+    const sat = (try fieldCell(&app, .settings_filter)).?;
+    try pressAt(&app, sat[0] + 6, sat[1]);
+    try pressAt(&app, sat[0] + 6, sat[1]);
+    try std.testing.expectEqual([2]usize{ 5, 8 }, text_field.selRange(f.caret, f.anchor).?);
+    try app.handle(.{ .key = key_mod.Key.char('x') });
+    try std.testing.expectEqualStrings("dock x", f.text());
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expect(app.overlay == .none);
+    // The find bar, Replace row up, the keys in Replace.
+    app.now_ms += 1000;
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    try app.handle(.{ .key = key_mod.Key.ctrl('h') });
+    const fb = &app.find_bar.?.state;
+    try std.testing.expect(fb.show_replace);
+    for ("one two") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    try app.handle(.{ .key = key_mod.Key.named(.tab) });
+    try std.testing.expectEqual(FindBar.Focus.replace, fb.focus);
+    const q = (try fieldCell(&app, .find_query)).?;
+    try pressAt(&app, q[0] + 5, q[1]);
+    try pressAt(&app, q[0] + 5, q[1]);
+    try std.testing.expectEqual(FindBar.Focus.query, fb.focus);
+    try std.testing.expectEqual([2]usize{ 4, 7 }, text_field.selRange(fb.caret, fb.anchor).?);
+    try app.handle(.{ .key = key_mod.Key.char('Z') });
+    try std.testing.expectEqualStrings("one Z", fb.queryText());
 }

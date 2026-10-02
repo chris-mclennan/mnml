@@ -57,6 +57,10 @@ pub const Props = struct {
     /// unless the pane names its own.
     pane: ?hit.PaneId = null,
     pane_hit: u32 = hit.ListHit.filter_id,
+    /// A pill outside any panel or pane (the settings box's) names its
+    /// own hit and field outright.
+    hit: ?hit.HitTarget = null,
+    field: ?hit.FieldId = null,
     /// // changed (panel-consistency): what the placeholder calls the
     /// thing being typed — `filter` everywhere but SEARCH.
     noun: []const u8 = default_noun,
@@ -76,7 +80,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
     x += ui.putStr(x, pill.y, pill.right() - x, glyph(ui), Theme.withFg(style, t.accent.fg));
     x += ui.putStr(x, pill.y, pill.right() - x, " ", style);
     const field = Rect.init(x, pill.y, (pill.right() - 1) -| x, 1);
-    if (p.pane) |id| ui.hit(pill, .{ .script_hit = .{ .pane = id, .id = p.pane_hit } }) else ui.hit(pill, .{ .filter_input = p.panel });
+    if (p.hit) |h| ui.hit(pill, h) else if (p.pane) |id| ui.hit(pill, .{ .script_hit = .{ .pane = id, .id = p.pane_hit } }) else ui.hit(pill, .{ .filter_input = p.panel });
     return text_field.draw(ui, field, p.text, p.caret, .{
         .style = style,
         .placeholder = placeholder(ui, p.focused, p.noun),
@@ -84,7 +88,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
         .anchor = p.anchor,
         // A press on the text: caret, word, the whole filter
         // (`dispatch.fieldPress`), read off the owner of the pill.
-        .field = if (p.pane) |id| .{ .pane_filter = id } else .{ .panel_filter = p.panel },
+        .field = p.field orelse if (p.pane) |id| .{ .pane_filter = id } else .{ .panel_filter = p.panel },
     });
 }
 

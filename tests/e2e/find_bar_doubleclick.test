@@ -1,0 +1,23 @@
+# The find bar's two fields take the mouse: a double-click selects the
+# word under the pointer and gives that field the keys, the next typed
+# text replaces the word; three presses take the whole field. At 120x40
+# the Find text starts at column 38 of row 36, Replace at 41 of row 37.
+write a.txt "alpha beta\nbeta gamma\nalpha\n"
+open a.txt
+command editor.use_standard
+key ctrl+h
+type alpha beta
+key tab
+type one two
+doubleclick 45 36
+type gamma
+expect screen contains "Find  alpha gamma"
+expect screen contains "no matches"
+doubleclick 46 37
+type three
+expect screen contains "Replace  one three"
+click 39 36
+doubleclick 39 36
+type beta
+expect screen contains "Find  beta "
+expect screen contains "match 1/2"

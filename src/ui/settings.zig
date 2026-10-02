@@ -139,6 +139,8 @@ pub const Filter = struct {
     focused: bool = false,
     buf: text_field.Buf = .empty,
     caret: usize = 0,
+    /// The query's selection (`text_field.clickSelect`), to the caret.
+    anchor: ?usize = null,
 
     pub fn deinit(f: *Filter, gpa: Allocator) void {
         f.buf.deinit(gpa);
@@ -157,7 +159,7 @@ pub const Filter = struct {
 
     /// A paste into the query, at the caret.
     pub fn insert(f: *Filter, gpa: Allocator, str: []const u8) Allocator.Error!void {
-        try text_field.insert(&f.buf, &f.caret, gpa, str);
+        try text_field.insertSel(&f.buf, &f.caret, &f.anchor, gpa, str);
     }
 
     /// Esc's first press: the query goes, the pill goes, the keys are
@@ -165,6 +167,7 @@ pub const Filter = struct {
     pub fn clear(f: *Filter) void {
         f.buf.clearRetainingCapacity();
         f.caret = 0;
+        f.anchor = null;
         f.open = false;
         f.focused = false;
     }
@@ -542,7 +545,7 @@ fn filterKey(s: *State, key: Key, items: []const Item, opts: KeyOpts) Allocator.
         },
         else => {},
     }
-    return switch (try text_field.handleKey(&s.filter.buf, &s.filter.caret, opts.gpa, key)) {
+    return switch (try text_field.editKey(&s.filter.buf, &s.filter.caret, &s.filter.anchor, opts.gpa, key)) {
         .changed => .refilter,
         .moved => .consumed,
         .ignored => null,
@@ -991,22 +994,19 @@ pub fn elideLeft(ui: Ui, s: []const u8, max: u16) []const u8 {
 /// hit, so a click puts the keys back in it.
 fn drawFilter(ui: Ui, r: Rect, s: *State, bg: vaxis.Color) ?Caret {
     _ = bg;
-    const t = ui.theme;
-    ui.fill(r, t.overlay_bg);
-    if (r.w < 6) return null;
-    const pill = Rect.init(r.x + 1, r.y, r.w - 2, 1);
-    const style = if (s.filter.focused) Theme.withFg(t.chip, t.fg.fg) else t.chip;
-    ui.fill(pill, style);
-    var x = pill.x;
-    x += ui.putStr(x, pill.y, pill.w, " ", style);
-    x += ui.putStr(x, pill.y, pill.right() - x, filter_input.glyph(ui), Theme.withFg(style, t.accent.fg));
-    x += ui.putStr(x, pill.y, pill.right() - x, " ", style);
-    ui.hit(pill, .{ .overlay_item = filter_id });
-    const field = Rect.init(x, pill.y, (pill.right() - 1) -| x, 1);
-    return text_field.draw(ui, field, s.filter.text(), s.filter.caret, .{
-        .style = style,
-        .placeholder = filter_input.placeholder(ui, s.filter.focused, filter_input.default_noun),
+    if (r.w < 6) {
+        ui.fill(r, ui.theme.overlay_bg);
+        return null;
+    }
+    return filter_input.draw(ui, r, .{
+        .panel = .todos,
+        .text = s.filter.text(),
+        .caret = s.filter.caret,
+        .anchor = s.filter.anchor,
         .focused = s.filter.focused,
+        .bg = ui.theme.overlay_bg,
+        .hit = .{ .overlay_item = filter_id },
+        .field = .settings_filter,
     });
 }
 
