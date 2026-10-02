@@ -368,8 +368,21 @@ pub const rows = [_]Row{
         .links = &.{ .{ .command = .{ .id = .@"picker.recent", .label = "Open the picker" } }, .{ .command = .{ .id = .@"file.clear_recent", .label = "Clear the list" } }, .{ .command = .{ .id = .@"picker.buffers", .label = "Open buffers instead" } } },
     } },
 
-    // ── a link (`openLinkMenu`, titled `Link`) — the same two rows
-    // serve the PR chip's menu, so neither is qualified by menu ──
+    // ── a link (`openLinkMenu`, titled `Link`): a URL or an
+    // integration-declared key in painted text — a session card, the
+    // sessions table's summary. The same two rows a terminal pane's
+    // right-click on a link has, written for where they are ──
+    .{ .menu = "Link", .label = "Copy link", .kind = .copy_link, .entry = .{
+        .title = "Copy link",
+        .body = "Puts the link's whole address on the clipboard and toasts *link copied* — the register a `p` in an editor pastes, and the system clipboard. For a key an integration links (`ENG-123`), that is the page it opens, not the key's own text; for a URL cut short on a card, the whole URL.",
+        .links = &.{.{ .settings = .{ .row = copy.settingsRow("editor.clipboard"), .label = "Clipboard in Settings" } }},
+    } },
+    .{ .menu = "Link", .label = "Open link", .kind = .open_url, .entry = .{
+        .title = "Open link",
+        .body = "Opens the link in the OS browser, or the one `ui.external_browser` names — what a left click on it does. Only `http` and `https` addresses go out. A key links because an installed integration declares its shape and its page; mnml itself knows no key.",
+        .links = &.{.{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }},
+    } },
+    // ── the PR chip's menu (`openPrMenu`) — not qualified by menu ──
     .{ .label = "Open in browser", .kind = .open_url, .entry = .{
         .title = "Open in browser",
         .body = "Hands the URL this row carries to the OS's default browser — or the one `ui.external_browser` names — and mnml keeps the focus it had. It is the whole of what a left click on the link does — the menu exists for the copy beside it. An address the OS has no handler for silently does nothing, which is what a missing browser looks like from here.",
@@ -593,6 +606,14 @@ pub const rows = [_]Row{
         .title = "What did this session change",
         .body = "Opens the files this session changed since its pane started, as a git status pane scoped to them: what is still uncommitted (unstaged and staged) and what it committed since. Enter diffs a file, `s` / `u` stage it, the Commit… row commits with the session's title as the message. A file another session also touched names that session.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.changes", .label = "Open it" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Read git again" } } },
+    } },
+    // ── a SESSIONS card's (or the table's) links: one `Open <words>`
+    // row per address the session shows ──
+    .{ .menu = "Session", .label = "Open ", .prefix = true, .kind = .open_url, .entry = .{
+        .title = "Open a link the session shows",
+        .body = "Opens one of the links on this session — a URL in its output or its name, or a key an installed integration declares (a ticket such as `ENG-123` opens that integration's page for it) — in the OS browser, or the one `ui.external_browser` names. One row per address, at most six; the same as clicking the underlined words on the card. A key links only when an integration's manifest declares its shape, so with none installed only URLs are listed.",
+        .keys = &.{.{ .command = .@"view.context_menu_at_focus", .label = "This menu, on the focused card" }},
+        .links = &.{.{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }},
     } },
     // ── sessiondiff: the changes view's row menu (`Session changes`) ──
     .{ .menu = "Session changes", .label = "Open diff", .entry = .{

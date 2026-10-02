@@ -1,0 +1,56 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# env: ACME_SITE=https://tracker.example.com
+# A session card links what it shows. A URL links on its own; a ticket
+# key links only because an installed integration's manifest declares
+# its shape (`links[]`) — core knows no key. Here a stand-in "acme"
+# launcher declares `[A-Z][A-Z0-9]+-[0-9]+` → `{site_url}/browse/{0}`,
+# its site bound from the env var its auth field falls back to.
+write bin/claude #!/bin/bash\nprintf '\\033]0;fix ENG-7\\007'\nprintf 'see https://example.com/x\\nENG-123 is open\\n'\nexec sleep 600
+shell chmod +x bin/claude
+write acme.zon ".{ .id = \"acme\", .label = \"Acme\", .commands = .{ .{ .id = \"acme.hello\", .title = \"Acme: hello\", .run = \":echo hi\" } }, .auth = .{ .{ .key = \"site_url\", .label = \"Site\", .kind = .url, .env_fallback = \"ACME_SITE\" } }, .links = .{ .{ .pattern = \"[A-Z][A-Z0-9]+-[0-9]+\", .url = \"{site_url}/browse/{0}\" } } }"
+shell mkdir -p "$MNML_DATA_ROOT/integrations" && cp acme.zon "$MNML_DATA_ROOT/integrations/acme.zon"
+command integrations.refresh
+command ai.claude_code_new
+wait 500
+command view.activity_sessions
+expect within 5000 screen contains "ENG-123 is open"
+# The card: the name (`fix ENG-7`) on row 6, then `see https://example…` and
+# `ENG-123 is open` on rows 7 and 8, all from column 7.
+expect screen contains "▌ ENG-123 is open"
+# At rest a link keeps its colours (a dotted underline is the cue).
+expect color 9 8 fg not #61afef
+# Under the pointer it takes the accent, the whole key and nothing past it.
+hover 9 8
+expect color 7 8 fg #61afef
+expect color 13 8 fg #61afef
+expect color 15 8 fg not #61afef
+# A click opens the integration's address through the app's opener
+# (the runner's MNML_OPEN_URL logs it rather than starting a browser).
+click 9 8
+expect file opened-urls.log contains "https://tracker.example.com/browse/ENG-123"
+# The key in the card's name links the same way.
+click 13 6
+expect file opened-urls.log contains "https://tracker.example.com/browse/ENG-7"
+# A URL needs no integration; clipped on the card, it opens whole.
+click 14 7
+expect file opened-urls.log contains "https://example.com/x"
+# Right-click on a link: the Link menu, the rows a terminal's link has.
+rightclick 9 8
+expect screen contains "Copy link"
+expect screen contains "Open link"
+key enter
+expect screen contains "link copied"
+# The card's own menu lists its links, so the keyboard reaches them.
+rightclick 20 9
+expect screen contains "Open ENG-7"
+expect screen contains "Open ENG-123"
+expect screen contains "Open https://example.com/x"
+key escape
+# The keyboard's way: Shift+F10 on the focused card opens the same
+# menu, and its link rows run like any row.
+command view.activity_sessions
+expect screen lacks "Open ENG-123"
+key shift+f10
+expect screen contains "Open ENG-123"
+key esc

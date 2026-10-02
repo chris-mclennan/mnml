@@ -601,8 +601,8 @@ pub fn sessionChangesHit(app: *App, v: *const session_changes.ChangesPane, id: u
 pub fn link(arena: Allocator, url: []const u8) Allocator.Error!Entry {
     return .{
         .title = try std.fmt.allocPrint(arena, "Link: {s}", .{url}),
-        .body = "A web link in a markdown preview, a help page or a session's output. Click opens it in the OS browser (`ui.external_browser` names which); right-click copies the URL instead. Only http and https go out — anything else is a toast, not a launch.",
-        .keys = &.{.{ .chord = "Right-click", .label = "Copy the URL" }},
+        .body = "A link in text mnml painted — a URL on a session's card or in the sessions table's summary, or a key an installed integration declares (a ticket such as `ENG-123`, which opens that integration's page for it). Click opens it in the OS browser (`ui.external_browser` names which); right-click offers Copy link and Open link. Only http and https go out — anything else is a toast, not a launch.",
+        .keys = &.{.{ .chord = "Right-click", .label = "Copy link / Open link" }},
         .links = &.{.{ .command = .{ .id = .@"browser.open_url", .label = "Open it in the browser pane" } }},
     };
 }

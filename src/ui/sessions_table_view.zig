@@ -25,6 +25,7 @@ const table = @import("../app/sessions_table.zig");
 const transcript = @import("../ai/transcript.zig");
 const accent_color = @import("accent_color.zig");
 const bufferline = @import("bufferline.zig");
+const link_span = @import("link_span.zig");
 
 pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
@@ -383,7 +384,9 @@ fn drawSummary(ui: Ui, pane: PaneId, area: Rect, props: Props) void {
     const branch_part = if (it.git_branch) |b| ui.fmt(" · {s} {s}", .{ g.pick(ui.ascii, "\u{F062C}", "@"), b }) else "";
     const where_part = if (it.where == .cloud) (if (it.cloud) |c| ui.fmt(" · cloud {s}{s}", .{ c.raw_state, if (c.pr_url) |u| ui.fmt(" · {s}", .{u}) else "" }) else " · cloud") else "";
     const line2 = ui.fmt("  {s} · {s} {s} · {s}{s}{s}{s} · {s}", .{ v.name, sourceGlyph(ui.ascii, it.source), it.source.label(), it.model orelse "?", pid_part, branch_part, where_part, it.cwd orelse it.workspace });
-    _ = ui.putStr(r2.x, r2.y, r2.w, ui.clipStr(line2, r2.w), Theme.withFg(bg, th.fg.fg));
+    // A cloud run's PR, a URL or a ticket key in the exchange: links
+    // (`link_span`), like the same words on a card.
+    link_span.mark(ui, r2.x, r2.y, ui.putStr(r2.x, r2.y, r2.w, ui.clipStr(line2, r2.w), Theme.withFg(bg, th.fg.fg)), line2);
     if (area.h < 5) return;
     const r3 = area.row(3);
     const r4 = area.row(4);
@@ -393,8 +396,8 @@ fn drawSummary(ui: Ui, pane: PaneId, area: Rect, props: Props) void {
     };
     const you = ui.fmt("  you: {s}", .{collapsed(ui, it.last_user_msg orelse "—")});
     const them = ui.fmt("  {s}: {s}", .{ who, collapsed(ui, it.last_assistant_msg orelse "—") });
-    _ = ui.putStr(r3.x, r3.y, r3.w, ui.clipStr(you, r3.w), Theme.withFg(bg, th.muted.fg));
-    _ = ui.putStr(r4.x, r4.y, r4.w, ui.clipStr(them, r4.w), Theme.withFg(bg, th.muted.fg));
+    link_span.mark(ui, r3.x, r3.y, ui.putStr(r3.x, r3.y, r3.w, ui.clipStr(you, r3.w), Theme.withFg(bg, th.muted.fg)), you);
+    link_span.mark(ui, r4.x, r4.y, ui.putStr(r4.x, r4.y, r4.w, ui.clipStr(them, r4.w), Theme.withFg(bg, th.muted.fg)), them);
 }
 
 /// Newlines and runs of whitespace as one space.
@@ -534,4 +537,36 @@ test "colors: a session row's first cell is the `▌` in its accent; a tick take
         const c = f.ui().width(line[0..at]);
         if (col) |want| try testing.expectEqual(want, c) else col = c;
     }
+}
+
+test "the summary block links what the selected session's exchange holds: the URL takes a `.link` hit over its cells" {
+    var f = try Fixture.init(80, 6);
+    defer f.deinit();
+    // A finder that knows URLs alone — no integration installed.
+    const Urls = struct {
+        var buf: [4]link_span.Span = undefined;
+        fn find(_: *anyopaque, text: []const u8) []const link_span.Span {
+            var n: usize = 0;
+            var from: usize = 0;
+            while (link_span.nextUrl(text, from)) |r| : (from = r.end) {
+                if (n == buf.len) break;
+                buf[n] = .{ .start = r.start, .end = r.end, .url = text[r.start..r.end] };
+                n += 1;
+            }
+            return buf[0..n];
+        }
+    };
+    var dummy: u8 = 0;
+    var ui = f.ui();
+    ui.links = .{ .ctx = &dummy, .find = Urls.find };
+    var it = sessions.testItem("aaaaaaaa-1111", .idle, 1_000_000, "mnml", "see https://example.com/x please");
+    it.last_assistant_msg = "Done.";
+    const props: Props = .{ .rows = &.{}, .focused = true, .now_s = 1_000_000, .now_ms = 0, .agg = .{}, .selected = .{ .it = it, .name = "fix it", .ticked = false, .active = false, .pinned = false }, .total = 1, .scanning = false, .cloud_configured = false, .home_missing = false };
+    drawSummary(ui, 1, Rect.init(0, 0, 80, 5), props);
+    var buf: [256]u8 = undefined;
+    const you = f.row(3, &buf);
+    const at = std.mem.indexOf(u8, you, "https://").?;
+    try testing.expectEqualStrings("https://example.com/x", f.hits.at(@intCast(at), 3).?.link.url);
+    try testing.expectEqualStrings("https://example.com/x", f.hits.at(@intCast(at + 20), 3).?.link.url);
+    try testing.expect(f.hits.at(@intCast(at + 21), 3).? != .link);
 }

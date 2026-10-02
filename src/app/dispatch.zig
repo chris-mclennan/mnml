@@ -3084,11 +3084,15 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 else => {},
             }
         },
-        // right-click: a link's open / copy rows (Rust copies the URL
-        // of a detail pane's link row).
+        // A link in painted text (`ui/link_span.zig` — a URL or a key an
+        // integration declared): a click opens it, a right-click is
+        // the Link menu (Copy link / Open link).
         .link => |l| if (m.kind == .press and m.button == .right) {
             if (app.overlay != .none) closeOverlay(app);
             try context_menus.openLinkMenu(app, l.url, m.x, m.y);
+        } else if (m.kind == .press and m.button == .left) {
+            if (app.overlay != .none) closeOverlay(app);
+            git_app.openExternal(app, l.url);
         },
         // The AI grid's open slot: a press opens the next session in it.
         .ai_placeholder => if (m.kind == .press and m.button == .left) {
