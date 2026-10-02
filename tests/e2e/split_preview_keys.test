@@ -48,14 +48,14 @@ command editor.use_standard
 
 # A rendered glance dragged from its chip (the third in the strip, from
 # column 55) into the pane's right edge: it lands kept in its own half,
-# the two editors' strip on the left ending in the `+` (the narrower
-# leaf drops b.txt's close glyph).
+# the two editors' strip on the left ending in the `+` (both tabs fit, so
+# no pager takes cells and b.txt keeps its close glyph).
 click 14 4
 expect pane "README.md"
 expect screen contains "second line"
 expect status contains "{\"title\":\"README.md\",\"dirty\":false,\"preview\":true}"
 drag 62 1 112 15
 expect screen contains "second line"
-expect screen contains "b.txt 󰐕"
+expect screen contains "b.txt 󰅖   󰐕"
 expect status contains "{\"title\":\"README.md\",\"dirty\":false,\"preview\":false}"
 expect status lacks "\"preview\":true"

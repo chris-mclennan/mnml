@@ -7,8 +7,11 @@
 # overflow case (the last chip cut at the right edge) there was none,
 # so twelve buffers at 120 columns said nothing about the missing ones.
 # `stripRight` decides the chips' right edge before anything is painted:
-# the chip takes the leftover cells where there are some (a whole tail
-# lays out exactly as before), and is GIVEN cells where there are not.
+# the chip takes the leftover cells where there are some, and is GIVEN
+# cells where there are not. On a leaf strip the pager ` ‹ n/m › `
+# (`ui/stepper.zig`) now says it instead — the page on show of how many —
+# and the chip takes only cells left over beside it, which twelve tabs
+# at 120 columns do not leave.
 write file01name.txt x
 write file02name.txt x
 write file03name.txt x
@@ -34,4 +37,4 @@ open file10name.txt
 open file11name.txt
 open file12name.txt
 expect screen contains "file12name.txt"
-expect screen contains " hidden "
+expect screen contains "file12name.txt 󰅖  󰐕  ‹ 4/4 ›"
