@@ -283,6 +283,8 @@ fn walkButtons(w: *Walk) Allocator.Error!void {
     // …and the bell's rows for the sessions waiting, which need a
     // waiting session to appear in the real menu.
     try w.probeEntry("menu:bell/Needs input: …", copy.menus.lookupItem("Messages", null, "Needs input: audit", .{ .session_focus = .{ .id = "audit-session" } }));
+    try w.probeEntry("menu:bell/Finished: …", copy.menus.lookupItem("Messages", null, "Finished: audit", .{ .session_focus = .{ .pane = 0, .id = "" } }));
+    try w.probeEntry("menu:bell/Ended: …", copy.menus.lookupItem("Messages", null, "Ended: audit", .{ .session_focus = .{ .pane = 0, .id = "" } }));
     try w.probe("button:undo", .{ .button = toast_mod.undo_button });
     const chips = try @import("integrations.zig").chips(w.app, w.arena);
     if (chips.len > 0) try w.probe("button:integration_chip", .{ .button = integrations_view.chip_base });

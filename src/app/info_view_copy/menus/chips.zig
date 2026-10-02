@@ -356,7 +356,17 @@ pub const rows = [_]Row{
     .{ .menu = "Messages", .label = "Needs input: ", .prefix = true, .kind = .session_focus, .entry = .{
         .title = "Go to the session that needs input",
         .body = "One row per Claude Code or Codex session waiting on you right now — stopped at a permission, a choice or a question. The row brings its pane on screen with the keys, as a double-click on its SESSIONS card does; a session another terminal runs is shown selected in the sessions table, since there is no pane here to give the keys. The rows are read when the menu opens, so one that stopped waiting since is simply gone.",
-        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session that needs you" } }, .{ .command = .{ .id = .@"sessions.table", .label = "Open the sessions table" } }, ask },
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"sessions.table", .label = "Open the sessions table" } }, ask },
+    } },
+    .{ .menu = "Messages", .label = "Finished: ", .prefix = true, .kind = .session_focus, .entry = .{
+        .title = "Go to the session that finished",
+        .body = "One row per Claude Code or Codex session in this window that finished a turn since you last looked at it — it was working, and now it is idle with its prompt ready for the next instruction. The row brings its pane on screen with the keys; once a frame has shown it to you as the active pane, it is seen and its row goes. The same sessions wear the `◆` beside their SESSIONS card, and the ready-ring keys step through them after the ones waiting on you.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } }, ask },
+    } },
+    .{ .menu = "Messages", .label = "Ended: ", .prefix = true, .kind = .session_focus, .entry = .{
+        .title = "Go to the session that ended",
+        .body = "One row per Claude Code or Codex session in this window whose program exited since you last looked at it. The row brings its pane on screen — with the exit status and the restart offer — and once you have seen it the row goes; an exit is news once.",
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } }, ask },
     } },
     .{ .label = "Clear history", .command = .@"messages.clear", .entry = .{
         .title = "Clear history",
