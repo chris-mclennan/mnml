@@ -41,6 +41,10 @@ click 63 1
 expect screen contains "‹ 1/4 ›"
 expect screen contains " t1.txt 󰅖"
 expect screen lacks "t12.txt"
+# A page is whole tabs: page 1's last, t4, wears its close button, and
+# the next one does not start, cut, before the 󰐕.
+expect screen contains "t4.txt 󰅖   󰐕"
+expect screen lacks "t5"
 # `›` again: page 2; `‹` (56-58) back to 1; `‹` before the first: the last.
 click 63 1
 expect screen contains "‹ 2/4 ›"

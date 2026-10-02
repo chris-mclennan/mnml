@@ -1,0 +1,47 @@
+# width: 160
+# height: 40
+# env: PATH=
+# A page of tabs holds whole tabs only. Twelve tabs in one split at 160
+# columns, the sidebar open: page 1 has room for seven whole chips and
+# a few cells more. Those cells used to paint t8 cut at the strip's
+# edge — no close button, its name lost — though the pager already
+# counted t8 on page 2. Now nothing is painted there; t8 starts page 2.
+write t1.txt "t1\n"
+write t2.txt "t2\n"
+write t3.txt "t3\n"
+write t4.txt "t4\n"
+write t5.txt "t5\n"
+write t6.txt "t6\n"
+write t7.txt "t7\n"
+write t8.txt "t8\n"
+write t9.txt "t9\n"
+write t10.txt "t10\n"
+write t11.txt "t11\n"
+write t12.txt "t12\n"
+open t1.txt
+open t2.txt
+open t3.txt
+open t4.txt
+open t5.txt
+open t6.txt
+open t7.txt
+open t8.txt
+open t9.txt
+open t10.txt
+open t11.txt
+open t12.txt
+open t1.txt
+expect screen contains "‹ 1/2 ›"
+expect screen contains "t7.txt 󰅖   󰐕"
+expect screen lacks "t8"
+# Page 2 starts at t8, whole.
+command buffer.next
+command buffer.next
+command buffer.next
+command buffer.next
+command buffer.next
+command buffer.next
+command buffer.next
+expect pane t8.txt
+expect screen contains "‹ 2/2 ›"
+expect screen contains "t8.txt 󰅖"

@@ -68,6 +68,9 @@ the release ships one file), and one line per change a user can see.
   every page a click away, nothing is hidden.
 - Opening the tab just past the strip's last whole tab brings it into view
   whole; it used to stay cut at the edge, its name and close button lost.
+- A page of tabs holds whole tabs only: the tab that would be cut at the
+  strip's edge, before the new-tab `+`, is not painted there and starts
+  the next page, as the page count already said.
 - Double-click a tab to zoom its pane; double-click again to put the splits
   back.
 
