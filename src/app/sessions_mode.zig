@@ -496,6 +496,8 @@ pub fn takeZoom(app: *App, next: PaneId) void {
 
 const Intercept = struct { chord: []const Chord, id: command.CommandId };
 
+const intercept_specs = [_][]const u8{ "ctrl+tab", "ctrl+shift+tab", "ctrl+n", "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9" };
+
 const intercepts = blk: {
     @setEvalBranchQuota(100_000);
     break :blk [_]Intercept{
@@ -521,6 +523,26 @@ pub fn chordCommand(app: *const App, k: Key) ?command.CommandId {
     const c = Chord.of(k);
     for (intercepts) |ic| if (ic.chord[0].eql(c)) return ic.id;
     return null;
+}
+
+/// The chord a sessions-mode verb answers to while the mode shows —
+/// what a menu row or the hover copy prints for it — or null.
+pub fn contextualSpec(app: *const App, id: command.CommandId) ?[]const u8 {
+    if (!showing(app)) return null;
+    for (intercepts, 0..) |ic, i| if (ic.id == id) return intercept_specs[i];
+    return null;
+}
+
+/// Whether the mode has taken `spec` from whatever it is bound to — a
+/// menu row must not print `Ctrl+N` beside *New file* while Ctrl+N
+/// starts a session.
+pub fn takesSpec(app: *const App, spec: []const u8) bool {
+    if (!showing(app)) return false;
+    var buf: [keymap.max_seq]Chord = undefined;
+    const seq = keymap.parseKeySeqBuf(spec, &buf) orelse return false;
+    if (seq.len != 1) return false;
+    for (intercepts) |ic| if (ic.chord[0].eql(seq[0])) return true;
+    return false;
 }
 
 /// `dispatch.keyInner`'s hook, ahead of every pane and panel: in the
@@ -862,4 +884,25 @@ test "a zoomed session closing hands the zoom to the next session, out of the mo
     try t.expectEqual(@as(?PaneId, s1), app.zoomedPane());
     try t.expectEqual(s1, app.active.?);
     try t.expect(app.layoutFault() == null);
+}
+
+test "menus print the mode's chords in the mode: Ctrl+N is the new session's there and no longer New file's; outside, the other way round" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init();
+    defer f.app.deinit();
+    const app = &f.app;
+    try app.setInputStyle(.standard);
+    const chordOf = @import("info_view_copy.zig").chordOf;
+    const arena = app.frame.allocator();
+    _ = try f.run(.@"ai.claude_code_new_right");
+    const new_file = (try chordOf(app, arena, .@"file.new")).?;
+    try t.expect(std.mem.indexOf(u8, new_file, "N") != null);
+    try t.expect((try chordOf(app, arena, .@"sessions.mode_new")) == null);
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    try t.expect((try chordOf(app, arena, .@"file.new")) == null);
+    try t.expectEqualStrings(new_file, (try chordOf(app, arena, .@"sessions.mode_new")).?);
+    try t.expect((try chordOf(app, arena, .@"sessions.column_next")) != null);
+    try t.expect((try chordOf(app, arena, .@"buffer.last")) == null);
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    try t.expectEqualStrings(new_file, (try chordOf(app, arena, .@"file.new")).?);
 }

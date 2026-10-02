@@ -244,11 +244,18 @@ pub fn chordOf(app: *const App, arena: Allocator, id: CommandId) Allocator.Error
         .standard => .{ keys.both, keys.standard, &.{} },
     };
     const standard = App.profileOf(app.input_style) == .standard;
+    // The sessions mode's chords mean its verbs while it shows: theirs
+    // are printed there, and nothing else claims them.
+    const sessions_mode = @import("sessions_mode.zig");
+    if (sessions_mode.contextualSpec(app, id)) |spec| return try chordDisplay(arena, spec);
     for (lists) |list| for (list) |spec| {
         if (standard and isLeaderChord(spec)) continue;
+        if (sessions_mode.takesSpec(app, spec)) continue;
         return try chordDisplay(arena, spec);
     };
-    for (lists) |list| if (list.len > 0) return try chordDisplay(arena, list[0]);
+    for (lists) |list| for (list) |spec| {
+        if (!sessions_mode.takesSpec(app, spec)) return try chordDisplay(arena, spec);
+    };
     return null;
 }
 
