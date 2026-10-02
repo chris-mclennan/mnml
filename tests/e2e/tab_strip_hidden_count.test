@@ -1,17 +1,12 @@
 # width: 120
 # height: 40
-# The tab strip's ` +N hidden ` chip paints whenever ANY tab is off the
-# strip — not only when the strip happens to be scrolled to a tail that
-# fits whole. The chip used to be painted after the last chip with
-# whatever room was left before the chevrons, and in the ordinary
-# overflow case (the last chip cut at the right edge) there was none,
-# so twelve buffers at 120 columns said nothing about the missing ones.
-# `stripRight` decides the chips' right edge before anything is painted:
-# the chip takes the leftover cells where there are some, and is GIVEN
-# cells where there are not. On a leaf strip the pager ` ‹ n/m › `
-# (`ui/stepper.zig`) now says it instead — the page on show of how many —
-# and the chip takes only cells left over beside it, which twelve tabs
-# at 120 columns do not leave.
+# Twelve buffers at 120 columns overflow the strip, and the strip says
+# so whatever its window: the pager ` ‹ n/m › ` (`ui/stepper.zig`) —
+# the page on show, of how many — and after it the ` ⋯ ` that opens the
+# buffer picker. It once took a ` +N hidden ` count chip, painted only
+# when the window happened to leave it room, so twelve buffers said
+# nothing about the missing ones; nothing is hidden now (every page is
+# a click away), so no count is painted at all.
 write file01name.txt x
 write file02name.txt x
 write file03name.txt x
@@ -37,4 +32,6 @@ open file10name.txt
 open file11name.txt
 open file12name.txt
 expect screen contains "file12name.txt"
-expect screen contains "file12name.txt 󰅖  󰐕  ‹ 4/4 ›"
+expect screen contains "file12name.txt 󰅖   󰐕"
+expect screen contains "‹ 6/6 ›  ⋯"
+expect screen lacks "hidden"

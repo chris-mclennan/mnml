@@ -3064,7 +3064,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 },
                 // Full screen's corner mark: the click leaves.
                 .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
-                .hidden_tabs => try runCmd(app, .@"picker.buffers"),
+                .all_tabs => try runCmd(app, .@"picker.buffers"),
                 // A session's ` ‹ 3/7 › `: the ring steps from the
                 // session this strip shows, whatever had the keys.
                 // In the sessions mode the arrows step this column's stack.

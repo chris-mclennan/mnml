@@ -2,9 +2,8 @@
 # Five files whose chips are 17 cells each overflow a leaf's strip: the
 # last three fill the tab room and the first two are off the left edge.
 # The pager ` ‹ n/m › ` (src/ui/stepper.zig) says so — the last page of
-# two — and stands where ` +N hidden ` used to be given cells; its `‹`
-# turns back to the first page, and the buffer picker still lists every
-# tab.
+# two; its `‹` turns back to the first page — and the ` ⋯ ` after it
+# opens the buffer picker, which lists every tab, on the page or not.
 write file-aaa.rs "a\n"
 write file-bbb.rs "b\n"
 write file-ccc.rs "c\n"
@@ -18,10 +17,13 @@ open file-eee.rs
 expect screen contains "file-eee.rs"
 expect screen contains "‹ 2/2 ›"
 expect screen lacks "file-aaa.rs 󰅖"
-# `‹`: the first page, from file-aaa.
-click 96 1
+# `‹` (columns 93-95; the cluster and its AI chip end the strip): the
+# first page, from file-aaa.
+click 94 1
 expect screen contains "‹ 1/2 ›"
 expect screen contains "file-aaa.rs 󰅖"
-command picker.buffers
+# ` ⋯ ` (102-104): the buffer picker, file-eee among them though it is on
+# the other page.
+click 103 1
 expect screen contains "Buffers"
-expect screen contains "file-aaa.rs"
+expect screen contains "file-eee.rs"

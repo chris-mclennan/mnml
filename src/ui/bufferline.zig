@@ -27,9 +27,13 @@
 //! show, its arrows paging through the hidden ones. It is not painted
 //! when there is nothing to step — one session, tabs that all fit — and
 //! on a short strip the number, then the arrows, give way before the
-//! active tab would be cut. A session strip wears the session control
-//! and no pager: its arrows bring a hidden tab into view by stepping to
-//! it, and ` +N hidden ` still lists the rest.
+//! active tab would be cut. Beside the pager, right of it, ` ⋯ ` opens
+//! the buffer picker: every tab, by name — the one jump to a tab pages
+//! away. It is the pager's companion and nothing more: no pager, no
+//! ` ⋯ `; and on a strip short of room it gives way first, before the
+//! pager's number, and the active tab stays whole. A session strip
+//! wears the session control and neither: its arrows bring a hidden tab
+//! into view by stepping to it, and the sessions rail lists the rest.
 //!
 //! The strip is a window: `Opts.first` is the scroll offset (the caller
 //! keeps it on the leaf, the wheel and the pager move it). `draw`
@@ -52,6 +56,7 @@ const brand = @import("brand.zig");
 const ids = @import("../core/ids.zig");
 const focus_cue = @import("focus_cue.zig");
 const stepper = @import("stepper.zig");
+const list_panel = @import("list_panel.zig");
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -153,10 +158,9 @@ pub const Opts = struct {
     scroll_right: ?u32 = null,
     split: ?SplitIds = null,
     mode_chip: ?ModeChip = null,
-    /// Tabs the caller kept off the strip; they count into ` +N hidden `.
-    hidden_extra: usize = 0,
-    /// The `.button` the ` +N hidden ` chip registers (a buffer picker).
-    hidden_button: ?u32 = null,
+    /// The `.button` the ` ⋯ ` beside the pager registers (the buffer
+    /// picker). Null paints none; it paints only with the pager.
+    all_tabs: ?u32 = null,
     /// The leaf is zoomed: the maximize button shows the restore glyph.
     zoomed: bool = false,
     /// The leaf's pane has the keys. False puts the active chip's name
@@ -191,6 +195,12 @@ pub const plus_w: u16 = 3;
 pub const arrow_w: u16 = 3;
 /// One split button.
 pub const split_button_w: u16 = 3;
+/// ` ⋯ ` — the all-tabs chip beside the pager, one stepper button wide.
+pub const all_tabs_w: u16 = stepper.button_w;
+/// The face it wears: the "more" ellipsis every list row's kebab wears
+/// (`list_panel.zig`), and its `--ascii` twin.
+pub const all_tabs_glyph = list_panel.kebab_glyph;
+pub const all_tabs_ascii = list_panel.kebab_ascii;
 /// The four split buttons.
 pub const split_buttons_w: u16 = 4 * split_button_w;
 
@@ -460,6 +470,8 @@ const Geometry = struct {
     pager_x: u16,
     pager_w: u16 = 0,
     pager_form: NavForm = .none,
+    /// The ` ⋯ ` after the pager: shown only with it, and only with room.
+    all_tabs: bool = false,
     mode_x: u16,
     split_x: u16,
     n_ai: usize,
@@ -484,8 +496,9 @@ fn activeWidth(ui: Ui, tabs: []const Tab) u16 {
     return 0;
 }
 
-/// The furniture with `pager_w` cells given to the pager.
-fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, pager_form: NavForm) Geometry {
+/// The furniture with `pager_w` cells given to the pager, and the ` ⋯ `
+/// after it when `all_tabs`.
+fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, pager_form: NavForm, all_tabs: bool) Geometry {
     var n_ai: usize = if (opts.split) |s| s.ai.len else 0;
     const base: u16 = if (opts.split) |sp| (if (sp.max != null) split_buttons_w else split_buttons_w - split_button_w) else 0;
     while (n_ai > 0 and area.w < base + @as(u16, @intCast(n_ai)) * split_button_w) n_ai -= 1;
@@ -495,12 +508,14 @@ fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, p
     const nav_w: u16 = if (opts.session_nav) |nav| stepper.width(ui, nav, nav_form) else 0;
     const right = area.right();
     const tabs_right0 = right -| (split_total + mode_w + nav_w);
-    const pager_x = @max(tabs_right0 -| pager_w, area.x);
+    const more_w: u16 = if (all_tabs) all_tabs_w else 0;
+    const pager_x = @max(tabs_right0 -| (pager_w + more_w), area.x);
     return .{
         .tabs_right = @max(pager_x -| plus_w, area.x),
         .pager_x = pager_x,
         .pager_w = pager_w,
         .pager_form = pager_form,
+        .all_tabs = all_tabs,
         .mode_x = @max(right -| (split_total + mode_w), area.x),
         .split_x = @max(right -| split_total, area.x),
         .n_ai = n_ai,
@@ -512,28 +527,43 @@ fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, p
 /// The furniture, the pager included when the tabs overflow: its cells
 /// are taken from the tabs only then, so a strip whose tabs all fit is
 /// laid out as if there were no pager. A session strip has its own
-/// control and no pager.
+/// control and no pager. The ` ⋯ ` rides with the pager when the strip
+/// holds the whole ` ‹ n/m › `, the ` ⋯ ` and still the active tab
+/// (`keep`): short of room it is the first to go — before the number,
+/// then the arrows — so the strip only ever loses it as it narrows.
 fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
-    const g0 = layoutWith(ui, area, tabs, opts, 0, .none);
+    const g0 = layoutWith(ui, area, tabs, opts, 0, .none, false);
     if (opts.scroll_left == null or opts.scroll_right == null) return g0;
     if (g0.nav_form != .none) return g0;
     const room0 = g0.tabs_right -| area.x;
     if (allWidth(ui, tabs) <= room0) return g0;
-    // The label's width rides on the page count, which rides on the
-    // room the pager leaves: two rounds settle it. The widest label
-    // (`m/m`) is what is reserved, so paging never reflows the strip.
     const keep = @max(narrow_room, activeWidth(ui, tabs));
-    var m = @max(pageCount(ui, tabs, room0), 2);
+    const alone = pagerFit(ui, tabs, room0, keep);
+    if (alone.form == .none) return g0;
+    if (opts.all_tabs != null and alone.form == .full) {
+        const with = pagerFit(ui, tabs, room0 -| all_tabs_w, keep);
+        if (with.form == .full) return layoutWith(ui, area, tabs, opts, with.w, with.form, true);
+    }
+    return layoutWith(ui, area, tabs, opts, alone.w, alone.form, false);
+}
+
+const PagerFit = struct { form: NavForm, w: u16 };
+
+/// The pager's form and cells in `room`, leaving the tabs `keep`. The
+/// label's width rides on the page count, which rides on the room the
+/// pager leaves: two rounds settle it. The widest label (`m/m`) is
+/// what is reserved, so paging never reflows the strip.
+fn pagerFit(ui: Ui, tabs: []const Tab, room: u16, keep: u16) PagerFit {
+    var m = @max(pageCount(ui, tabs, room), 2);
     var form: NavForm = .none;
     var w: u16 = 0;
     for (0..2) |_| {
         const widest: stepper.Stepper = .{ .index = m - 1, .count = m, .prev = 0, .next = 0 };
-        form = stepper.fit(ui, widest, room0 -| keep);
+        form = stepper.fit(ui, widest, room -| keep);
         w = stepper.width(ui, widest, form);
-        m = @max(pageCount(ui, tabs, room0 -| w), 2);
+        m = @max(pageCount(ui, tabs, room -| w), 2);
     }
-    if (form == .none) return g0;
-    return layoutWith(ui, area, tabs, opts, w, form);
+    return .{ .form = form, .w = w };
 }
 
 /// Every chip at its natural width, a cell between them.
@@ -625,57 +655,6 @@ fn countPainted(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
     return n;
 }
 
-/// The label the ` +N hidden ` chip would carry for `n` tabs off the
-/// strip — one spelling, so the room measured for it and the string
-/// painted into that room can never disagree.
-fn hiddenLabel(ui: Ui, n: usize) []const u8 {
-    return ui.fmt(" +{d} hidden ", .{n});
-}
-
-/// Where the chips end: `room` cells from `first`, chips measured whole
-/// and cut at the edge, a cell of gap between them. The paint loop's
-/// arithmetic, without the paint — so the layout can be decided before
-/// a cell is touched.
-fn paintedEnd(ui: Ui, tabs: []const Tab, room: u16, first: usize) u16 {
-    var x: u16 = 0;
-    var i = first;
-    while (i < tabs.len) : (i += 1) {
-        if (x >= room) break;
-        x += @min(chipWidth(ui, tabs[i]), room - x) + 1;
-    }
-    return x;
-}
-
-/// The right edge the chips lay out against.
-///
-/// Normally the strip's own (`g.tabs_right`): ` +N hidden ` takes the
-/// cells left over after the last chip and the `󰐕`, which is where it
-/// has always gone, so a strip scrolled to a whole tail is laid out
-/// cell for cell as before. When there are none — the ordinary overflow
-/// case, the last chip cut at the right edge — the chip is GIVEN its
-/// cells instead of going unpainted, because a strip that hides tabs
-/// and says nothing about them is the bug. It never takes the `󰐕`'s
-/// room: that button has nowhere else to be.
-///
-/// With a stepper up — the pager, or a session's own control — the
-/// chip is never given cells: the stepper already says there is more
-/// than the strip shows and is the way to it, and the pager's pages are
-/// cut from this edge — one that moved with the chip's label would
-/// re-cut them as the window moved.
-fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u16 {
-    if (g.pager_form != .none or g.nav_form != .none) return g.tabs_right;
-    const room = g.tabs_right -| area.x;
-    const first = clampScroll(ui, tabs, room, opts.first);
-    const hidden = first + (tabs.len - first - countPainted(ui, tabs, room, first)) + opts.hidden_extra;
-    if (hidden == 0) return g.tabs_right;
-    const w = ui.width(hiddenLabel(ui, hidden));
-    const plus_slot: u16 = if (opts.new_tab != null) plus_w else 0;
-    const end = area.x + paintedEnd(ui, tabs, room, first);
-    const after_plus = @min(end, g.pager_x -| plus_slot) + plus_slot;
-    if (after_plus + w <= g.pager_x) return g.tabs_right;
-    return @max(g.tabs_right -| w, area.x);
-}
-
 /// The fewest cells the tabs may be left before the furniture gives way.
 const narrow_room: u16 = 12;
 
@@ -686,11 +665,11 @@ const narrow_room: u16 = 12;
 /// pane's, and the other tabs are elided. Null when the strip is wide
 /// enough, when dropping the furniture would gain nothing, or when
 /// nothing is active.
-fn narrowActive(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) ?usize {
+fn narrowActive(ui: Ui, area: Rect, tabs: []const Tab, g: Geometry) ?usize {
     const active = for (tabs, 0..) |tab, i| {
         if (tab.active) break i;
     } else return null;
-    const room = stripRight(ui, area, tabs, opts, g) -| area.x;
+    const room = g.tabs_right -| area.x;
     if (room >= @min(chipWidth(ui, tabs[active]), narrow_room)) return null;
     // Nothing to give way: the strip is already all the tabs have (the
     // 󰐕's slot stays carved, as it always is).
@@ -711,8 +690,8 @@ fn narrowWidth(area: Rect) u16 {
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
     const g = geometry(ui, area, tabs, opts);
-    if (narrowActive(ui, area, tabs, opts, g)) |a| return a;
-    const room = stripRight(ui, area, tabs, opts, g) -| area.x;
+    if (narrowActive(ui, area, tabs, g)) |a| return a;
+    const room = g.tabs_right -| area.x;
     const first = clampScroll(ui, tabs, room, current);
     var active: usize = 0;
     for (tabs, 0..) |tab, i| if (tab.active) {
@@ -729,14 +708,13 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     if (area.isEmpty()) return .{};
     const y = area.y;
     const g = geometry(ui, area, tabs, opts);
-    if (narrowActive(ui, area, tabs, opts, g)) |a| {
+    if (narrowActive(ui, area, tabs, g)) |a| {
         _ = paintChip(ui, area.x, y, narrowWidth(area), tabs[a], opts.leaf, @intCast(a), opts.focused);
         return .{ .first = a, .painted = 1, .hidden_left = a, .hidden_right = tabs.len - a - 1 };
     }
 
-    // The tabs from the clamped offset, a cell of strip between chips —
-    // against the edge ` +N hidden ` leaves them (`stripRight`).
-    const tabs_right = stripRight(ui, area, tabs, opts, g);
+    // The tabs from the clamped offset, a cell of strip between chips.
+    const tabs_right = g.tabs_right;
     const first = clampScroll(ui, tabs, tabs_right -| area.x, opts.first);
     var x = area.x;
     var painted: usize = 0;
@@ -758,10 +736,11 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
         const pager: stepper.Stepper = .{ .index = pages.index, .count = pages.count, .prev = opts.scroll_left.?, .next = opts.scroll_right.? };
         const w = stepper.width(ui, pager, g.pager_form);
         _ = stepper.draw(ui, g.pager_x + (g.pager_w -| w), y, area.right(), pager, g.pager_form);
+        // ` ⋯ ` after it: the buffer picker, every tab by name.
+        if (g.all_tabs) stepper.button(ui, g.pager_x + g.pager_w, y, if (ui.ascii) all_tabs_ascii else all_tabs_glyph, opts.all_tabs.?);
     }
 
     // ` 󰐕 ` after the last chip, in its own slot before the pager.
-    var after_plus = x;
     if (opts.new_tab) |id| {
         const plus_x = @max(@min(x, g.pager_x -| plus_w), area.x);
         if (plus_x + plus_w <= g.pager_x) {
@@ -769,35 +748,8 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
             ui.fill(r, .{ .bg = p.bg });
             _ = ui.putStr(plus_x + 1, y, 1, if (ui.ascii) plus_ascii else plus_glyph, .{ .fg = p.green, .bg = p.bg, .bold = true });
             ui.hit(r, .{ .button = id });
-            after_plus = plus_x + plus_w;
         }
     }
-    // ` +N hidden `: the tabs that are still there — off either edge of
-    // the window (Rust's `tabs.len() - painted_count`, which counts the
-    // scrolled-off left as well as the right) and the ones the caller
-    // kept off the strip.
-    //
-    // It PAINTS whenever any tab is off the strip. It used to sit after
-    // the last chip and only if what was left before the pager
-    // happened to hold it — which is room only when the strip is
-    // scrolled to a tail that fits whole. In the ordinary overflow case
-    // the last chip is cut at the right edge, nothing is left, and the
-    // one piece of chrome that says tabs are missing never painted.
-    // `stripRight` gives it the cells in exactly that case, and leaves
-    // the strip alone in the other.
-    const hidden_total = first + hidden_right + opts.hidden_extra;
-    if (hidden_total > 0) {
-        const label = hiddenLabel(ui, hidden_total);
-        const w = ui.width(label);
-        // Beside the pager it takes only the cells left after the 󰐕.
-        const cx = if (g.pager_form != .none or g.nav_form != .none) after_plus else @max(@min(after_plus, g.pager_x -| w), area.x);
-        if (cx + w <= g.pager_x) {
-            const r = Rect.init(cx, y, w, 1);
-            _ = ui.putStr(cx, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
-            if (opts.hidden_button) |id| ui.hit(r, .{ .button = id });
-        }
-    }
-
     if (opts.mode_chip) |m| {
         const w = ui.width(m.label);
         if (g.mode_x + w <= area.right()) {
@@ -1212,9 +1164,8 @@ test "an overflowing strip: the offset clamps to what fills it, the pager ` ‹ 
     };
     const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 };
     // From the start: three tabs are off the strip. The pager says so
-    // — page 1 of 4, two whole chips to a page here — and ` +N hidden `
-    // is not given cells beside it (`stripRight`): the pager is the
-    // overflow's one word, and the + keeps its reserved slot.
+    // — page 1 of 4, two whole chips to a page here — and the + keeps
+    // its reserved slot.
     const w0 = draw(f.ui(), f.full(), &tabs, opts);
     try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "  " ++ nav_prev_glyph ++ " 1/4 " ++ nav_next_glyph);
     try testing.expectEqual(@as(usize, 0), w0.first);
@@ -1245,7 +1196,9 @@ test "an overflowing strip: the offset clamps to what fills it, the pager ` ‹ 
     try testing.expect(hasTab(&g, 4));
     // A stale offset past that is pulled back; the active tab already in
     // view keeps the offset.
-    try testing.expectEqual(@as(usize, 4), draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .first = 4 }).first);
+    var stale = opts;
+    stale.first = 9;
+    try testing.expectEqual(@as(usize, 4), draw(g.ui(), g.full(), &tabs, stale).first);
     try testing.expectEqual(@as(usize, 4), fitActive(g.ui(), g.full(), &tabs, 4, opts));
     // Everything fits: no pager at all — no cells, no buttons.
     var k = try Fixture.init(90, 1);
@@ -1267,7 +1220,7 @@ test "the pager pages: whole chips per page from the first tab, `›` to the nex
     const names = [_][]const u8{ "t1.txt", "t2.txt", "t3.txt", "t4.txt", "t5.txt", "t6.txt", "t7.txt", "t8.txt", "t9.txt", "t10.tx", "t11.tx", "t12.tx" };
     var tabs: [12]Tab = undefined;
     for (names, 0..) |n, i| tabs[i] = .{ .id = @intCast(i + 1), .title = n, .glyph = "x", .active = i == 0 };
-    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .hidden_button = 8 };
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 };
     // 80 cells, no cluster: the reading at each page start.
     const Want = struct { first: usize, label: []const u8, prev: usize, next: usize };
     var f = try Fixture.init(80, 1);
@@ -1320,41 +1273,7 @@ test "the pager pages: whole chips per page from the first tab, `›` to the nex
     try testing.expect(hasButton(&u, 70) and hasButton(&u, 71));
 }
 
-test "the hidden chip counts the tabs scrolled off the left edge too, and clicks through to its button" {
-    // Five tabs, the strip scrolled to its tail: 66 cells hold the last
-    // three chips whole (the clamp pulls a stale offset back to them),
-    // two sit off the left edge and the chip says so where Rust's does —
-    // after the `+`.
-    var f = try Fixture.init(66, 1);
-    defer f.deinit();
-    const tabs = [_]Tab{
-        .{ .id = 1, .title = "one.txt", .glyph = "x" },
-        .{ .id = 2, .title = "two.txt", .glyph = "x" },
-        .{ .id = 3, .title = "three.txt", .glyph = "x" },
-        .{ .id = 4, .title = "four.txt", .glyph = "x" },
-        .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
-    };
-    // No pager here (the strip of a host that has none): the chip is
-    // the only word about the overflow, so it is given its cells.
-    const w = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8, .first = 3 });
-    try testing.expectEqual(@as(usize, 2), w.first);
-    try testing.expectEqual(@as(usize, 2), w.hidden_left);
-    try testing.expectEqual(@as(usize, 0), w.hidden_right);
-    try f.expectContains(plus_glyph ++ "  +2 hidden");
-    try testing.expectEqual(@as(u32, 8), f.hits.at(50, 0).?.button);
-    // The filtered-out tabs add to the same count.
-    var g = try Fixture.init(66, 1);
-    defer g.deinit();
-    _ = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8, .hidden_extra = 2, .first = 3 });
-    try g.expectContains(" +4 hidden");
-    // Nothing hidden: no chip.
-    var k = try Fixture.init(90, 1);
-    defer k.deinit();
-    _ = draw(k.ui(), k.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8 });
-    try testing.expect(!hasButton(&k, 8));
-}
-
-test "the hidden chip counts the filtered tabs; the mode chip sits before the cluster; AI chips drop first" {
+test "the mode chip sits before the cluster; AI chips drop first" {
     var f = try Fixture.init(56, 1);
     defer f.deinit();
     const tabs = [_]Tab{.{ .id = 1, .title = "a.md", .glyph = "x", .active = true }};
@@ -1366,13 +1285,11 @@ test "the hidden chip counts the filtered tabs; the mode chip sits before the cl
     };
     _ = draw(f.ui(), f.full(), &tabs, .{
         .new_tab = 9,
-        .hidden_extra = 3,
-        .hidden_button = 8,
         .mode_chip = .{ .label = " " ++ preview_glyph ++ " Preview ", .button = 5, .kind = .edit_md },
         .split = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &ai },
     });
-    try f.expectRow(0, std.mem.trimEnd(u8, " x a.md " ++ close_glyph ++ "   " ++ plus_glyph ++ "  +3 hidden    " ++ preview_glyph ++ " Preview  ✳  ❯ " ++ split_cluster, " "));
-    try testing.expectEqual(@as(u32, 8), f.hits.at(15, 0).?.button);
+    try f.expectRow(0, std.mem.trimEnd(u8, " x a.md " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 15 ++ preview_glyph ++ " Preview  ✳  ❯ " ++ split_cluster, " "));
+    try testing.expect(f.hits.at(15, 0) == null);
     try testing.expectEqual(@as(u32, 5), f.hits.at(30, 0).?.button);
     try testing.expect(f.bgEql(30, 0, .{ .bg = f.theme.palette.purple }));
     try testing.expectEqual(@as(u32, 40), f.hits.at(39, 0).?.button);
@@ -1580,8 +1497,8 @@ test "a 20-column leaf always shows its active tab, whole or cut, and elides the
         .{ .id = 3, .title = "charlie.txt", .glyph = "x" },
     };
     // As render hands it over: the + , the chevrons, the split cluster
-    // and the hidden chip's button — more furniture than 20 cells hold.
-    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .split = split_ids, .hidden_button = 8 };
+    // and the ` ⋯ `'s button — more furniture than 20 cells hold.
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .split = split_ids, .all_tabs = 8 };
     for ([_]usize{ 0, 1, 2 }) |stale| {
         var f = try Fixture.init(20, 1);
         defer f.deinit();
@@ -1605,4 +1522,115 @@ test "a 20-column leaf always shows its active tab, whole or cut, and elides the
     _ = draw(g.ui(), g.full(), &tabs, o);
     try g.expectContains("bravo");
     try g.expectLacks("alpha");
+}
+
+/// Twelve `tN.txt` tabs, `active` the one with the keys: the strip
+/// `tab_strip_pager.test` opens.
+fn twelveTabs(active: usize) [12]Tab {
+    const names = [_][]const u8{ "t1.txt", "t2.txt", "t3.txt", "t4.txt", "t5.txt", "t6.txt", "t7.txt", "t8.txt", "t9.txt", "t10.txt", "t11.txt", "t12.txt" };
+    var tabs: [12]Tab = undefined;
+    for (names, 0..) |n, i| tabs[i] = .{ .id = @intCast(i + 1), .title = n, .glyph = "x", .active = i == active };
+    return tabs;
+}
+
+const all_tabs_opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .all_tabs = 8 };
+
+test "the ` ⋯ ` rides with the pager: right of ` ‹ n/m › `, a stepper button whose hit is the buffer picker's, lit under the pointer, `...` under --ascii; tabs that all fit have neither" {
+    const tabs = twelveTabs(0);
+    var f = try Fixture.init(80, 1);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), &tabs, all_tabs_opts);
+    try f.expectContains(nav_prev_glyph ++ " 1/");
+    try f.expectContains(nav_next_glyph ++ "  " ++ "\u{22ef}");
+    // The last three cells, the strip having no cluster: the chip's, a
+    // button wide, after the `›`.
+    for ([_]u16{ 77, 78, 79 }) |x| try testing.expectEqual(@as(u32, 8), f.hits.at(x, 0).?.button);
+    try testing.expectEqual(@as(u32, 71), f.hits.at(76, 0).?.button);
+    // The stepper's own look: its ground, its bold glyph; the pointer lights it.
+    try testing.expect(f.bgEql(78, 0, .{ .bg = f.theme.palette.bg_darker }));
+    try testing.expect(f.style(78, 0).bold);
+    var ui = f.ui();
+    ui.hover = .{ .x = 78, .y = 0 };
+    _ = draw(ui, f.full(), &tabs, all_tabs_opts);
+    try testing.expect(f.bgEql(77, 0, .{ .bg = f.theme.palette.bg2 }));
+    // `--ascii`: the list rows' twin.
+    var a = try Fixture.init(80, 1);
+    defer a.deinit();
+    var aui = a.ui();
+    aui.ascii = true;
+    _ = draw(aui, a.full(), &tabs, all_tabs_opts);
+    try a.expectContains(nav_next_ascii ++ " " ++ all_tabs_ascii);
+    try testing.expectEqual(@as(u32, 8), a.hits.at(77, 0).?.button);
+    // Five tabs that fit: no pager, no ` ⋯ `, no cells taken.
+    var k = try Fixture.init(90, 1);
+    defer k.deinit();
+    _ = draw(k.ui(), k.full(), tabs[0..5], all_tabs_opts);
+    try testing.expect(!hasButton(&k, 8));
+    try k.expectLacks("\u{22ef}");
+    // A strip with no pager to wear (no arrows' ids) has no ` ⋯ ` either.
+    var n = try Fixture.init(80, 1);
+    defer n.deinit();
+    _ = draw(n.ui(), n.full(), &tabs, .{ .new_tab = 77, .all_tabs = 8 });
+    try testing.expect(!hasButton(&n, 8));
+}
+
+test "a session strip wears its session control and no ` ⋯ ` — sessions have the rail; one session, no control, and the pager and its ` ⋯ ` are back" {
+    const tabs = twelveTabs(0);
+    var o = all_tabs_opts;
+    o.session_nav = .{ .index = 1, .count = 3, .prev = 60, .next = 61 };
+    var s = try Fixture.init(80, 1);
+    defer s.deinit();
+    _ = draw(s.ui(), s.full(), &tabs, o);
+    try s.expectContains(nav_prev_glyph ++ " 2/3 " ++ nav_next_glyph);
+    try testing.expect(!hasButton(&s, 8));
+    try s.expectLacks("\u{22ef}");
+    o.session_nav = .{ .index = 0, .count = 1, .prev = 60, .next = 61 };
+    var u = try Fixture.init(80, 1);
+    defer u.deinit();
+    _ = draw(u.ui(), u.full(), &tabs, o);
+    try testing.expect(hasButton(&u, 70) and hasButton(&u, 8));
+}
+
+test "short of room the ` ⋯ ` goes first — before the pager's number, then its arrows — and the active tab stays whole" {
+    const tabs = twelveTabs(0);
+    // 29 cells: the chip, the pager whole, the active tab whole.
+    var f = try Fixture.init(29, 1);
+    defer f.deinit();
+    _ = draw(f.ui(), f.full(), &tabs, all_tabs_opts);
+    try f.expectRow(0, " x t1.txt " ++ close_glyph ++ "  " ++ plus_glyph ++ "   " ++ nav_prev_glyph ++ " 1/12 " ++ nav_next_glyph ++ "  \u{22ef}");
+    // One cell short: the ` ⋯ ` yields, the pager keeps its number.
+    var g = try Fixture.init(28, 1);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), &tabs, all_tabs_opts);
+    try g.expectContains(nav_prev_glyph ++ " 1/12 " ++ nav_next_glyph);
+    try testing.expect(!hasButton(&g, 8));
+    try g.expectContains(" x t1.txt " ++ close_glyph);
+    // Narrower: the number goes, the arrows stay, the chip stays gone —
+    // it never comes back as the strip shrinks.
+    var w: u16 = 25;
+    while (w >= 21) : (w -= 1) {
+        var h = try Fixture.init(w, 1);
+        defer h.deinit();
+        _ = draw(h.ui(), h.full(), &tabs, all_tabs_opts);
+        try h.expectLacks("1/12");
+        try testing.expect(hasButton(&h, 70) and !hasButton(&h, 8));
+        try h.expectContains(" x t1.txt " ++ close_glyph);
+    }
+}
+
+test "at the shipped sizes the ` ⋯ ` stands beside the pager and the active tab is whole: 160 columns with the 32-cell tree, 120x40, 200x60" {
+    // The leaf strip at each size (the tree and its rail take 33 cells):
+    // 120 → 87, 160 → 127, 200 → 167; the split cluster at its end.
+    for ([_]u16{ 87, 127, 167 }) |wd| {
+        const tabs = twelveTabs(11);
+        var f = try Fixture.init(wd, 1);
+        defer f.deinit();
+        var o = all_tabs_opts;
+        o.split = split_ids;
+        o.first = fitActive(f.ui(), f.full(), &tabs, 0, o);
+        _ = draw(f.ui(), f.full(), &tabs, o);
+        try f.expectContains(" x t12.txt " ++ close_glyph);
+        try f.expectContains(nav_next_glyph ++ "  \u{22ef}  " ++ ghost_glyph);
+        try testing.expect(hasButton(&f, 8) and hasButton(&f, 70));
+    }
 }

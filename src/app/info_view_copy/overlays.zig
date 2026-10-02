@@ -189,7 +189,7 @@ fn picker(app: *App, arena: Allocator, kind: app_mod.PickerKind, idx: u32) Alloc
     const what: []const u8 = switch (kind) {
         .files => "a file of the workspace, matched fuzzily against what you typed — Enter opens it in the active pane; the tree excludes `.git/` and this picker does too",
         .commands => "a palette command — Enter runs it; the chord on the right is the active profile's binding, empty when the command has none. `>` in the file picker gets here too",
-        .buffers => "an open buffer, shown or hidden in the strip — Enter shows it; the hidden ones are the `+N hidden` chip's",
+        .buffers => "an open buffer, on the strip's page or another — Enter shows it; the strip's `⋯` opens this list",
         .recent => "a recently opened file, newest first — Enter opens it; `file.clear_recent` empties the list",
         .themes => "a theme — the list previews it as the cursor moves and Enter keeps it (`ui.theme`); Esc puts the one you came in with back",
         .tabs => "a tab page — Enter switches to it; Alt+1..9 do the same by number",
