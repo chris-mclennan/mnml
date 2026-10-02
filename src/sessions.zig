@@ -101,6 +101,7 @@ const Config = @import("config/Config.zig");
 const accent_color = @import("ui/accent_color.zig");
 const session_worktree = @import("app/session_worktree.zig");
 const session_attention = @import("app/session_attention.zig");
+const session_ready = @import("app/session_ready.zig");
 const mount_pane_mod = @import("app/mount_pane.zig");
 const session_changes = @import("app/session_changes.zig");
 const chip_mod = @import("ui/chip.zig");
@@ -250,11 +251,42 @@ pub const RowView = struct {
     /// page in view, the zoomed one, the dock's — and wears the `•` in
     /// the column left of its card (`sessions_mode.onScreen`).
     on_screen: bool = false,
+    /// The session finished a turn or ended since you last looked at
+    /// it (`app/session_ready.zig`): the ready mark in that same column,
+    /// which it takes over from the on-screen dot — the news is what
+    /// the step to it is for.
+    ready: bool = false,
 };
 
 /// The on-screen mark beside a card, and its `--ascii` twin.
 pub const on_screen_glyph = "\u{2022}";
 pub const on_screen_ascii = "*";
+/// The ready mark — finished or ended since you last looked — and its
+/// `--ascii` twin.
+pub const ready_glyph = "\u{25C6}";
+pub const ready_ascii = "+";
+
+/// The one mark the column left of a card's name row carries: the
+/// news first, else where it is.
+pub const GutterMark = enum {
+    none,
+    on_screen,
+    ready,
+
+    pub fn of(row: RowView) GutterMark {
+        if (row.ready) return .ready;
+        if (row.on_screen) return .on_screen;
+        return .none;
+    }
+
+    pub fn glyph(m: GutterMark, ascii: bool) []const u8 {
+        return switch (m) {
+            .none => " ",
+            .on_screen => if (ascii) on_screen_ascii else on_screen_glyph,
+            .ready => if (ascii) ready_ascii else ready_glyph,
+        };
+    }
+};
 
 pub const Summary = enum { exited, none, text };
 
@@ -846,7 +878,7 @@ pub const needs_you_ttl_ms: i64 = 250;
 
 /// THE answer to "is this pane's child blocked on you?" — the tab
 /// strip's mark, the SESSIONS card's, the `needs_you` sort, the dock's
-/// running mark and `sessions.next_waiting` all ask here. It reads what
+/// running mark and the ready ring (`app/session_ready.zig`) all ask here. It reads what
 /// `trackNeedsYou` last found (`evalNeedsYou`), so every surface agrees
 /// within a frame and none walks a grid of its own.
 pub fn needsYou(app: *App, pid: app_mod.PaneId) bool {
@@ -887,10 +919,12 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
             // dormant never ran, so it has nothing to say.
             if (!p.needs_you_ended) {
                 p.needs_you_ended = true;
+                session_ready.noteExit(app, pid);
                 if (!p.dormant and @import("app/launch_profiles.zig").productOfPane(app, p) != null) try notifySession(app, pid, if (e.ok()) .finished else .failed);
             }
             continue;
         }
+        if (p.needs_you_ended) session_ready.noteRestart(p);
         p.needs_you_ended = false;
         const moved = p.fed_gen != p.needs_you_gen or app.sessions.adoptions != p.needs_you_adopted;
         if (!moved and p.needs_you_at_ms != 0) continue;
@@ -900,6 +934,7 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
         p.needs_you_at_ms = @max(app.now_ms, 1);
         const was = p.needs_you;
         p.needs_you = evalNeedsYou(app, pid);
+        session_ready.noteRead(app, pid, p.needs_you and !was);
         if (p.needs_you and !was) try announceNeedsYou(app, pid);
         if (p.needs_you != was) {
             app.needs_render = true;
@@ -930,25 +965,6 @@ fn needsYouDeadlineMs(app: *const App) ?i64 {
     return next;
 }
 
-/// The waiting pane to land on from `from`: the first of `waiting`
-/// (ascending pane ids) past it — or before it, `forward = false` —
-/// wrapping round; `from` itself when it is the only one. Null when
-/// nothing waits.
-pub fn waitingStep(waiting: []const app_mod.PaneId, from: ?app_mod.PaneId, forward: bool) ?app_mod.PaneId {
-    if (waiting.len == 0) return null;
-    const at = from orelse return if (forward) waiting[0] else waiting[waiting.len - 1];
-    if (forward) {
-        for (waiting) |id| if (id > at) return id;
-        return waiting[0];
-    }
-    var i = waiting.len;
-    while (i > 0) {
-        i -= 1;
-        if (waiting[i] < at) return waiting[i];
-    }
-    return waiting[waiting.len - 1];
-}
-
 /// Every pane that needs you, in pane order, on `arena`.
 pub fn waitingPanes(app: *App, arena: Allocator) Allocator.Error![]app_mod.PaneId {
     var out: std.ArrayListUnmanaged(app_mod.PaneId) = .empty;
@@ -961,26 +977,11 @@ pub fn waitingPanes(app: *App, arena: Allocator) Allocator.Error![]app_mod.PaneI
 }
 
 fn nextWaitingCmd(app: *App) CommandError!void {
-    return jumpWaiting(app, true);
+    return session_ready.jump(app, true);
 }
 
 fn prevWaitingCmd(app: *App) CommandError!void {
-    return jumpWaiting(app, false);
-}
-
-/// `sessions.next_waiting` / `prev_waiting`: focus the next / previous
-/// pane that needs you after the active one, wrapping; a toast when
-/// none does.
-fn jumpWaiting(app: *App, forward: bool) CommandError!void {
-    const waiting = try waitingPanes(app, app.frame.allocator());
-    const to = waitingStep(waiting, app.active, forward) orelse {
-        app.toast("no session needs you", .{});
-        return;
-    };
-    app.showPane(to);
-    app.focus = .{ .pane = to };
-    app.needs_render = true;
-    if (waiting.len > 1) app.toast("needs you: {s} ({d} waiting)", .{ announcedName(app, to), waiting.len });
+    return session_ready.jump(app, false);
 }
 
 /// What a pane is called when it is announced: the session name its
@@ -2419,6 +2420,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .needs_you = needsYou(app, c.pane),
         .changes = if (session_changes.recordOf(app, c.pane)) |r| r.count() else 0,
         .on_screen = @import("app/sessions_mode.zig").onScreen(app, c.pane),
+        .ready = session_ready.unseen(app, c.pane),
     };
 }
 
@@ -2487,7 +2489,9 @@ pub fn hoverTip(app: *App, arena: Allocator, idx: u32) Allocator.Error!?@import(
     }
     return .{
         .title = try arena.dupe(u8, cardName(app, c)),
-        .detail = if (@import("app/sessions_mode.zig").onScreen(app, c.pane))
+        .detail = if (session_ready.unseen(app, c.pane))
+            "\u{25C6} finished or ended since you last looked · click: focus session (zoomed, or in the sessions mode: show it) · right-click: row menu"
+        else if (@import("app/sessions_mode.zig").onScreen(app, c.pane))
             "• on screen · click: focus session (zoomed, or in the sessions mode: show it) · right-click: row menu"
         else
             "click: focus session (zoomed, or in the sessions mode: show it) · right-click: row menu",
@@ -2983,7 +2987,13 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     var y: u16 = 0;
     while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 1, r.y + y, 1, bar, Theme.withFg(bg, accent));
     // On screen now: a dot in the gutter beside the name row.
-    if (row.on_screen) _ = ui.putStr(r.x, r.y, 1, if (ui.ascii) on_screen_ascii else on_screen_glyph, Theme.withFg(bg, t.palette.green));
+    // The gutter beside the name row: on screen now, or news since you
+    // last looked (`GutterMark`).
+    switch (GutterMark.of(row)) {
+        .none => {},
+        .on_screen => _ = ui.putStr(r.x, r.y, 1, GutterMark.on_screen.glyph(ui.ascii), Theme.withFg(bg, t.palette.green)),
+        .ready => _ = ui.putStr(r.x, r.y, 1, GutterMark.ready.glyph(ui.ascii), Theme.withFg(bg, t.palette.yellow)),
+    }
     const end = r.right();
     var x = r.x + 2;
     x += ui.putStr(x, r.y, end -| x, " ", bg);
@@ -3075,6 +3085,7 @@ const fake_claude =
     \\  exit-*) exit 0 ;;
     \\  fail-*) exit 3 ;;
     \\  think-*) printf 'Claude Code v9 (fake)\n\342\234\273 Thinking\342\200\246\n'; sleep 30 ;;
+    \\  turn-*) printf 'Claude Code v9 (fake)\n\342\234\273 Thinking\342\200\246\n'; sleep 1; printf '\033[2J\033[HDone.\n'; sleep 30 ;;
     \\  ask-*) printf 'Do you want to proceed?\n'; sleep 30 ;;
     \\  title-*) printf '\033]0;\342\234\263 ship the parser\007Claude Code v9 (fake)\n'; sleep 30 ;;
     \\  *) printf 'Claude Code v9 (fake)\nOpus 5 (fake) \302\267 Claude Max\n~/Projects/fake\n'; sleep 30 ;;
@@ -3718,24 +3729,7 @@ test "a session pane that starts needing you, or ends, notifies through the term
     try testing.expectEqual(@as(usize, 1), hostCount(app, "\x1b]9;mnml — session finished: "));
 }
 
-test "waitingStep: the next waiting pane past the active one, or the one before it, wrapping; the only one is itself; none is null" {
-    const w = [_]app_mod.PaneId{ 2, 5, 9 };
-    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 2, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 5), waitingStep(&w, 3, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 9, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 12, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, 5, false));
-    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 2, false));
-    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, 0, false));
-    try testing.expectEqual(@as(?app_mod.PaneId, 2), waitingStep(&w, null, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 9), waitingStep(&w, null, false));
-    const one = [_]app_mod.PaneId{4};
-    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, true));
-    try testing.expectEqual(@as(?app_mod.PaneId, 4), waitingStep(&one, 4, false));
-    try testing.expectEqual(@as(?app_mod.PaneId, null), waitingStep(&.{}, 4, true));
-}
-
-test "sessions.next_waiting / prev_waiting focus the panes that need you in pane order, wrapping, past panes that do not; none waiting toasts" {
+test "sessions.next_waiting / prev_waiting walk the panes that need you, oldest wait first, wrapping, past panes that do not; nothing ready toasts" {
     var f = try Fixture.init(100, 30);
     defer f.deinit();
     try f.fakeClaude();
@@ -3749,30 +3743,63 @@ test "sessions.next_waiting / prev_waiting focus the panes that need you in pane
     try testing.expect(try f.waitNeedsYou(ask_b, true, 5000));
     try testing.expect(try f.waitGrid(plain, "Claude Code v9", 5000));
     try testing.expect(!needsYou(app, plain) and !needsYou(app, other));
+    // Which rose first is the scheduler's; pin it, ask_a the older wait.
+    app.panes.pty(ask_a).?.needs_you_since_ms = 1;
+    app.panes.pty(ask_b).?.needs_you_since_ms = 2;
     const next: command.CommandRef = .{ .static = .@"sessions.next_waiting" };
     const prev: command.CommandRef = .{ .static = .@"sessions.prev_waiting" };
     app.showPane(plain);
     try command.run(app, next);
     try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
     try testing.expect(app.focus == .pane and app.focus.pane == ask_a);
-    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "2 waiting") != null);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "needs you: ") != null);
+    try testing.expect(std.mem.indexOf(u8, app.lastToast().?, "(2 ready)") != null);
     try command.run(app, next);
     try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
     try command.run(app, next);
     try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
     try command.run(app, prev);
     try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
+    // From a pane with no place in the ring, back is the tail.
     app.showPane(other);
     try command.run(app, prev);
-    try testing.expectEqual(@as(?app_mod.PaneId, ask_a), app.active);
+    try testing.expectEqual(@as(?app_mod.PaneId, ask_b), app.active);
     // Nothing waits: the focus stays and a toast says so.
     for ([_]app_mod.PaneId{ ask_a, ask_b }) |id| app.panes.pty(id).?.needs_you = false;
     app.showPane(plain);
     try command.run(app, next);
     try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
-    try testing.expectEqualStrings("no session needs you", app.lastToast().?);
+    try testing.expectEqualStrings("no session is ready for you", app.lastToast().?);
     try command.run(app, prev);
     try testing.expectEqual(@as(?app_mod.PaneId, plain), app.active);
+}
+
+test "the tracker reads a session's turn ending off its screen: thinking, then not — finished news while you look elsewhere, none while you look at it" {
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const away = try f.openCard("turn-1");
+    const here = try f.openCard("turn-2");
+    const plain = try f.openCard("plain-1");
+    try f.adopt(&.{});
+    app.showPane(here);
+    // Working: no news, never ready.
+    try testing.expect(try f.waitGrid(away, "Thinking", 5000));
+    try f.app.tick(App.nowMs(testing.io) + needs_you_ttl_ms);
+    try testing.expect(app.panes.pty(away).?.turn_working);
+    try testing.expect(session_ready.entryOf(app, away) == null);
+    // The turn ends: the one looked at is seen as the frame shows it.
+    var waited: u32 = 0;
+    while (waited < 8000 and (app.panes.pty(away).?.unseen == .none or app.panes.pty(here).?.turn_working)) : (waited += 20) {
+        try f.app.tick(App.nowMs(testing.io));
+        try f.app.render();
+        testing.io.sleep(.fromMilliseconds(20), .awake) catch {};
+    }
+    try testing.expectEqual(session_ready.Kind.finished, session_ready.entryOf(app, away).?.kind);
+    try testing.expect(session_ready.entryOf(app, here) == null);
+    // A session that never worked has no news.
+    try testing.expect(session_ready.entryOf(app, plain) == null);
 }
 
 test "the sort is Rust's priority: an approval prompt first, then thinking, idle, exited; pins lead; Manual follows the order list then the pane order" {
@@ -4425,6 +4452,53 @@ test "sessiondiff: a card whose session changed files wears ` N files ` after it
     try g.expectRow(10, " \u{258c} fix tests");
     try testing.expectEqualStrings(" 1 file ", (try session_changes.chipText(g.arena_state.allocator(), 1)).?);
     try testing.expect((try session_changes.chipText(g.arena_state.allocator(), 0)) == null);
+}
+
+test "the gutter left of a card's name: the on-screen dot in green, the ready mark in yellow over it, `*` / `+` under --ascii; the card reads the pane's news" {
+    var rows = specCards();
+    rows[0].on_screen = true;
+    rows[1].ready = true;
+    rows[2].on_screen = true;
+    rows[2].ready = true;
+    var f = try UiFixture.init(30, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    try f.expectRow(5, on_screen_glyph ++ "\u{258c} \u{F0403} write the release notes f");
+    try testing.expect(f.fgEql(0, 5, .{ .fg = f.theme.palette.green }));
+    try f.expectRow(10, ready_glyph ++ "\u{258c} fix the failing tests in sr");
+    try testing.expect(f.fgEql(0, 10, .{ .fg = f.theme.palette.yellow }));
+    // Both: the news wins the one cell.
+    try f.expectRow(15, ready_glyph ++ "\u{258c} release train");
+    var g = try UiFixture.init(30, 20);
+    defer g.deinit();
+    g.ascii = true;
+    _ = Panel.draw(&st, g.ui(), g.full(), cardProps(&rows));
+    var buf: [1024]u8 = undefined;
+    try testing.expect(std.mem.startsWith(u8, g.row(5, &buf), on_screen_ascii));
+    try testing.expect(std.mem.startsWith(u8, g.row(10, &buf), ready_ascii));
+}
+
+test "a card's ready flag is the pane's unseen news, and the hover says so" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    try f.fakeClaude();
+    const app = &f.app;
+    const pid = try f.openCard("plain-9");
+    const other = try f.openCard("plain-8");
+    try f.adopt(&.{});
+    try refilter(app);
+    app.showPane(other);
+    const idx: u32 = for (app.sessions.filtered.items, 0..) |ci, k| {
+        if (app.sessions.cards.items[ci].pane == pid) break @intCast(k);
+    } else unreachable;
+    const card = app.sessions.cards.items[app.sessions.filtered.items[idx]];
+    try testing.expect(!(try cardView(app, app.frame.allocator(), card)).ready);
+    app.panes.pty(pid).?.unseen = .finished;
+    try testing.expect((try cardView(app, app.frame.allocator(), card)).ready);
+    const tip = (try hoverTip(app, app.frame.allocator(), idx)).?;
+    try testing.expect(std.mem.startsWith(u8, tip.detail.?, ready_glyph ++ " finished or ended since you last looked"));
 }
 
 test "the summary rows: the ticket chip from ui.ticket_prefixes, hidden by an alias; the pin; the colour off the pane" {

@@ -3704,6 +3704,9 @@ pub const App = struct {
     /// terminal's).
     pub fn renderInto(self: *App, screen: *vaxis.Screen) Allocator.Error!void {
         self.keepEditedPreviews();
+        // The frame about to show the active pane is the look that
+        // makes a session's news seen (`app/session_ready.zig`).
+        @import("app/session_ready.zig").markSeen(self);
         const t0 = Io.Timestamp.now(self.io, .awake);
         try render_mod.render(self, screen);
         const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
@@ -3878,6 +3881,7 @@ test {
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
     _ = @import("app/session_attention.zig");
+    _ = @import("app/session_ready.zig");
     _ = @import("app/session_search.zig");
     _ = @import("app/welcome.zig");
     _ = @import("app/cloud_agents.zig");

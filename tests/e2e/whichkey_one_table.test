@@ -40,12 +40,12 @@ key s
 key z
 wait 300
 expect screen lacks " zoom "
-# The needs-you jumps live with the sessions, not the splits.
+# The ready-ring jumps live with the sessions, not the splits.
 key space
 wait 700
 key a
 wait 300
-expect screen contains "j → next session that needs you"
+expect screen contains "j → next session ready for you"
 key esc
 # NvChad's <leader>fw is the grep, in the popup too.
 key space
