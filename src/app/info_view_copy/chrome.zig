@@ -86,7 +86,7 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
     if (@import("../session_attention.zig").isSessionToast(app, id)) return .{
         .title = "A session needs input",
         .body = "A Claude Code or Codex session stopped to ask you something — a permission, a choice, a question. Click the box (or its Focus button) to go to it: its pane comes on screen with the keys, the same as a double-click on its SESSIONS card; a session no pane here runs is shown selected in the sessions table instead. The bell's right-click lists every session waiting right now.",
-        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session that needs you" } }, .{ .command = .{ .id = .@"toast.dismiss_current", .label = "Dismiss" } }, ask },
+        .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"toast.dismiss_current", .label = "Dismiss" } }, ask },
     };
     if (id >= toast_mod.button_base) return .{
         .title = "Toast",
@@ -371,7 +371,7 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
             if (sessions.needsYou(app, id)) break :blk .{
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — needs you", .{p.title()}),
                 .body = "The raised hand after the name: the program in this pane is stopped on a question — a permission prompt, a `(y/n)`, a numbered choice — or its session's transcript says it is waiting. It stays up until the screen stops asking. Click shows it so you can answer; the jump keys walk every tab wearing it, the SESSIONS card wears the same mark, and the Waiting sort puts every such session first.",
-                .keys = &.{ .{ .command = .@"sessions.next_waiting", .label = "Next that needs you" }, .{ .command = .@"sessions.prev_waiting", .label = "Previous that needs you" } },
+                .keys = &.{ .{ .command = .@"sessions.next_waiting", .label = "Next ready for you" }, .{ .command = .@"sessions.prev_waiting", .label = "Previous ready for you" } },
                 .links = &.{ .{ .command = .{ .id = .@"sessions.sort_waiting", .label = "Sort SESSIONS waiting first" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } } },
             };
             break :blk .{
