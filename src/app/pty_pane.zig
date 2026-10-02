@@ -2908,3 +2908,51 @@ test "a new terminal pane's child starts at the size the layout gives it: a righ
     const below = try openSized(&solo, .below);
     try expectBornFitted(&solo, below, 88, 17);
 }
+
+/// A press and a release on the child's first line, `x` cells in.
+fn clickAt(app: *App, p: *PtyPane, x: u16, shift: bool) !void {
+    const b = p.body;
+    for ([_]key_mod.MouseKind{ .press, .release }) |kind|
+        try app.handle(.{ .mouse = .{ .x = b.x + x, .y = b.y, .kind = kind, .button = .left, .mods = .{ .shift = shift } } });
+}
+
+test "a double-click takes the word and a triple the line, copied only under copy on select; a child tracking the mouse gets the clicks unless Shift is held" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const p = try openSelectable(&app, .standard);
+    // ON (the default): the double copies `SELECTME`, the triple the line.
+    try clickAt(&app, p, 8, false);
+    try clickAt(&app, p, 8, false);
+    try t.expect(hasSelection(p));
+    try t.expectEqualStrings("SELECTME", app.clipboard.text());
+    try clickAt(&app, p, 8, false);
+    try t.expectEqualStrings("ready SELECTME", std.mem.trimEnd(u8, app.clipboard.text(), " \n"));
+    // OFF: selected, not copied.
+    app.now_ms += 1000;
+    app.cfg.ui.copy_on_select = false;
+    try app.clipboard.setYank("before", false);
+    try clickAt(&app, p, 8, false);
+    try clickAt(&app, p, 8, false);
+    try t.expect(hasSelection(p));
+    try t.expectEqualStrings("before", app.clipboard.text());
+    // A child that asks for mouse reports: the clicks are its, no selection.
+    app.cfg.ui.copy_on_select = true;
+    app.now_ms += 1000;
+    try app.clipboard.setYank("before", false);
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "stty -echo -icanon -isig; printf '\\033[?1000hready MOUSEME\\n'; cat -v" }, .label = "mouse" });
+    try t.expect(try tickUntilScreen(&app, "ready MOUSEME", 5000));
+    const m = app.panes.pty(id).?;
+    try t.expect(m.encoding().mouse != .none);
+    try clickAt(&app, m, 8, false);
+    try clickAt(&app, m, 8, false);
+    try t.expect(!hasSelection(m));
+    try t.expectEqualStrings("before", app.clipboard.text());
+    // Shift is the bypass, as for a drag: the word.
+    app.now_ms += 1000;
+    try clickAt(&app, m, 8, true);
+    try clickAt(&app, m, 8, true);
+    try t.expect(hasSelection(m));
+    try t.expectEqualStrings("MOUSEME", app.clipboard.text());
+}
