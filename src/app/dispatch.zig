@@ -2445,9 +2445,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .right => try context_menus.openTabMenu(app, pane, m.x, m.y),
                 else => {
                     // A double-click on the tab keeps a preview, as in
-                    // VS Code — the same gesture as on the tree row.
-                    if (clickCount(app, m) >= 2) if (app.panes.get(pane)) |p| p.setPreview(false);
+                    // VS Code — the same gesture as on the tree row —
+                    // and zooms its pane; the next double-click puts
+                    // the splits back as they were (the zoom leaves the
+                    // tree alone).
+                    const double = clickCount(app, m) == 2;
+                    if (double) if (app.panes.get(pane)) |p| p.setPreview(false);
                     app.showPane(pane);
+                    if (double) return runCmd(app, .@"view.toggle_zoom");
                     app.drag = .{ .tab = .{ .pane = pane, .x = m.x, .y = m.y } };
                 },
             }

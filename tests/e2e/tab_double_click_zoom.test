@@ -1,0 +1,37 @@
+# width: 120
+# height: 40
+# Double-click on a tab zooms its pane — the leaf alone over the whole
+# editor area, the statusline's ` zoom ` up — and the next double-click
+# on it puts the splits back exactly as they were. Any tab, any pane.
+write a.txt "alpha alpha\n"
+write b.txt "bravo bravo\n"
+write c.txt "charlie charlie\n"
+open a.txt
+command view.split_right
+open b.txt
+command view.split_down
+open c.txt
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+expect screen contains "charlie charlie"
+expect screen lacks " zoom "
+# b.txt's tab, in the top-right split.
+doubleclick 90 1
+expect pane b.txt
+expect screen contains " zoom "
+expect screen contains "bravo bravo"
+expect screen lacks "alpha alpha"
+expect screen lacks "charlie charlie"
+# Zoomed, b.txt's tab is the one strip's second. Again: the three splits
+# are back, the focus still on b.
+doubleclick 44 1
+expect pane b.txt
+expect screen lacks " zoom "
+expect screen contains "alpha alpha"
+expect screen contains "bravo bravo"
+expect screen contains "charlie charlie"
+# Any pane: c.txt's tab, bottom right.
+doubleclick 91 20
+expect pane c.txt
+expect screen contains " zoom "
+expect screen lacks "bravo bravo"
