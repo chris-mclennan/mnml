@@ -98,6 +98,29 @@ the release ships one file), and one line per change a user can see.
   caret there, a double-click selects the word under the pointer and a
   triple the whole line; typing or a paste replaces the selection,
   Backspace deletes it.
+- The same now holds for every other text input: the filter at the top of
+  every sidebar list (SESSIONS, TODOS, NOTES, SEARCH and the rest) and of
+  the Files, ZON, browser, grep and sessions-table panes, the find bar's
+  Find and Replace fields, the `:` line, the settings filter, the HTTP
+  pane's URL and its Params / Headers name and value cells, a WebSocket's
+  message line, the debug console and a ZON field being edited.
+  Shift+click and Shift with the arrows, Home or End grow a selection.
+- A paste goes where you are typing: into a sidebar list's filter or a
+  pane's filter, the `:` line and the debug console — before, those sent
+  it to the editor underneath.
+- A click on a find field gives it the keys; a click inside a ZON field
+  being edited keeps editing instead of closing it.
+- In a terminal or AI session pane a double-click selects a word and a
+  triple-click the line, copied when "copy on select" is on, as a drag
+  is (Shift-click when the program takes the mouse).
+
+### Terminal panes
+
+- A terminal's scrollback has a scrollbar over the pane's right column.
+  It shows while you are scrolled back, or when the pointer is on that
+  column; drag the thumb through the history, click the track to page.
+  It never takes a column from the program, so nothing resizes when it
+  appears, and full-screen programs (no scrollback) never show it.
 
 ### Fixes
 

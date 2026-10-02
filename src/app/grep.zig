@@ -236,6 +236,8 @@ pub const GrepPane = struct {
     scroll: usize = 0,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_active: bool = false,
     loading: bool = false,
     truncated: bool = false,
@@ -1320,6 +1322,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *GrepPane, k: Key) Allocator.Error!bo
                 p.filter_active = false;
                 p.filter.clearRetainingCapacity();
                 p.filter_caret = 0;
+                p.filter_anchor = null;
                 try p.rebuild();
                 return true;
             },
@@ -1329,7 +1332,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *GrepPane, k: Key) Allocator.Error!bo
             },
             else => {},
         }
-        switch (try text_field.handleKey(&p.filter, &p.filter_caret, app.gpa, k)) {
+        switch (try text_field.editKey(&p.filter, &p.filter_caret, &p.filter_anchor, app.gpa, k)) {
             .changed => {
                 try p.rebuild();
                 return true;

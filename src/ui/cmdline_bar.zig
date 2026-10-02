@@ -31,6 +31,9 @@ const Style = vaxis.Style;
 pub const Model = struct {
     /// An open `:` line, already in its `:<text>▏` display form.
     line: ?[]const u8 = null,
+    /// The line's selection, a byte range of `line`, painted in the
+    /// theme's selection the way a text field paints one.
+    sel: ?[2]usize = null,
     /// The newest toast, echoed when no `:` line is open.
     toast: ?[]const u8 = null,
     /// `bench (12/100 · 5s), sync (3s)` — the names only; the row adds
@@ -87,6 +90,10 @@ pub fn draw(ui: Ui, area: Rect, model: Model, hits: Hits) ?struct { x: u16, y: u
         var style = Theme.onBg(t.warn_fg, bg);
         style.bold = true;
         _ = ui.putStr(area.x, area.y, area.w, ui.clipStr(line, area.w), style);
+        if (model.sel) |s| if (s[0] < s[1] and s[1] <= line.len) {
+            const sx = area.x + ui.width(line[0..s[0]]);
+            if (sx < area.right()) _ = ui.putStr(sx, area.y, area.right() - sx, line[s[0]..s[1]], Theme.onBg(t.fg, t.selection.bg));
+        };
         const caret_mark: []const u8 = if (ui.ascii) "|" else "▏";
         const before = std.mem.indexOf(u8, line, caret_mark) orelse line.len;
         const cx = area.x + @min(ui.width(line[0..before]), area.w -| 1);

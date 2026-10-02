@@ -79,6 +79,8 @@ pub const Edit = struct {
     kind: EditKind,
     buf: text_field.Buf = .empty,
     caret: usize = 0,
+    /// The field's selection (`text_field.clickSelect`), to the caret.
+    anchor: ?usize = null,
 };
 
 pub const Pick = struct {
@@ -114,6 +116,8 @@ pub const ZonPane = struct {
     rows_h: usize = 0,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     editing: ?Edit = null,
     picker: ?Pick = null,
@@ -834,6 +838,7 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
             if (z.filter.items.len > 0) {
                 z.filter.clearRetainingCapacity();
                 z.filter_caret = 0;
+                z.filter_anchor = null;
                 z.stale = true;
                 app.needs_render = true;
                 return true;
@@ -884,7 +889,7 @@ fn editKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
     switch (k.code) {
         .esc => cancelEdit(app, z),
         .enter => try commitEdit(app, z),
-        else => switch (try text_field.handleKey(&e.buf, &e.caret, z.gpa, k)) {
+        else => switch (try text_field.editKey(&e.buf, &e.caret, &e.anchor, z.gpa, k)) {
             .ignored => return false,
             .moved, .changed => app.needs_render = true,
         },
@@ -923,6 +928,7 @@ fn filterKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
             if (z.filter.items.len > 0) {
                 z.filter.clearRetainingCapacity();
                 z.filter_caret = 0;
+                z.filter_anchor = null;
                 z.stale = true;
             } else z.filter_focused = false;
         },
@@ -931,7 +937,7 @@ fn filterKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
             if (k.code == .down) moveCursor(app, z, 1);
             if (k.code == .up) moveCursor(app, z, -1);
         },
-        else => switch (try text_field.handleKey(&z.filter, &z.filter_caret, z.gpa, k)) {
+        else => switch (try text_field.editKey(&z.filter, &z.filter_caret, &z.filter_anchor, z.gpa, k)) {
             .ignored => return false,
             .moved => {},
             .changed => {
@@ -947,9 +953,9 @@ fn filterKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
 /// A paste lands in the open field or the filter.
 pub fn paste(app: *App, z: *ZonPane, text: []const u8) Allocator.Error!void {
     if (z.editing) |*e| {
-        try text_field.insert(&e.buf, &e.caret, z.gpa, text);
+        try text_field.insertSel(&e.buf, &e.caret, &e.anchor, z.gpa, text);
     } else if (z.filter_focused) {
-        try text_field.insert(&z.filter, &z.filter_caret, z.gpa, text);
+        try text_field.insertSel(&z.filter, &z.filter_caret, &z.filter_anchor, z.gpa, text);
         z.stale = true;
     } else return;
     app.needs_render = true;
@@ -971,6 +977,8 @@ pub const Hit = struct {
     pub const crumb_base: u32 = 0x3000_0000;
     pub const body: u32 = 0x4000_0000;
     pub const filter: u32 = 0x4000_0001;
+    /// The open text field over a value cell: a press stays in it.
+    pub const field: u32 = 0x4000_0002;
     pub const pick_base: u32 = 0x5000_0000;
 
     pub const Kind = union(enum) {
@@ -984,6 +992,7 @@ pub const Hit = struct {
         crumb: usize,
         body,
         filter,
+        field,
         pick: usize,
     };
 
@@ -1001,6 +1010,7 @@ pub const Hit = struct {
         if (id < body) return .{ .crumb = id - crumb_base };
         if (id == body) return .body;
         if (id == filter) return .filter;
+        if (id == field) return .field;
         return .{ .pick = id - pick_base };
     }
 };
@@ -1021,6 +1031,9 @@ pub fn click(app: *App, id: PaneId, z: *ZonPane, hit: u32, m: Mouse) Allocator.E
             return true;
         }
     }.f;
+    // A press in the open field keeps editing: it moves the caret or
+    // selects (`dispatch.fieldPress`). Anywhere else ends the edit.
+    if (Hit.decode(hit) == .field) return;
     if (z.editing != null) cancelEdit(app, z);
     z.filter_focused = false;
     switch (Hit.decode(hit)) {
@@ -1074,7 +1087,7 @@ pub fn click(app: *App, id: PaneId, z: *ZonPane, hit: u32, m: Mouse) Allocator.E
             };
         },
         .filter => z.filter_focused = true,
-        .body => {},
+        .body, .field => {},
         .pick => |i| if (!right) try pick(app, id, i),
     }
     app.needs_render = true;

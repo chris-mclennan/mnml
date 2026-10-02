@@ -1,0 +1,25 @@
+# The request pane's text fields take the mouse: a double-click in the
+# URL selects the path segment under the pointer and the next typed
+# text replaces it; the Params draft row's name cell does the same, and
+# three presses take the whole cell. At 120x40 the URL's `alpha` sits
+# at column 68 of row 4, the draft's name at column 37 of row 12.
+write anchor.txt anchor
+open anchor.txt
+command http.new
+type "https://example.com/alpha/beta"
+doubleclick 70 4
+type gamma
+expect screen contains "https://example.com/gamma/beta"
+command http.params_add
+type "userid"
+doubleclick 39 12
+type token
+expect screen contains "│ token "
+expect screen lacks "userid"
+click 38 12
+doubleclick 38 12
+type id
+key tab
+type 42
+key enter
+expect screen contains "id=42"

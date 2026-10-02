@@ -1,0 +1,23 @@
+# width: 120
+# height: 40
+# The app's own `:` line takes the mouse like any text field: a click
+# puts the caret where it lands, a double-click selects the word under
+# the pointer and the next typed text replaces it, three presses take
+# the whole line. The line starts at column 0 of the bottom row (`:` is
+# cell 0, the text cell 1 on).
+write notes.txt "alpha beta gamma\n"
+open notes.txt
+key ctrl+;
+type echo alpha beta
+expect screen contains ":echo alpha beta▏"
+doubleclick 13 39
+type gamma
+expect screen contains ":echo alpha gamma▏"
+click 3 39
+type X
+expect screen contains ":ecX▏ho alpha gamma"
+click 7 39
+doubleclick 7 39
+type noh
+expect screen contains ":noh▏"
+expect screen lacks "gamma▏"

@@ -148,6 +148,7 @@ pub const Props = struct {
     viewing: usize,
     filter: []const u8 = "",
     filter_caret: usize = 0,
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     /// The keyboard cursor over `rows`.
     cursor: usize = 0,
@@ -269,6 +270,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Painted {
             .panel = .git,
             .text = p.filter,
             .caret = p.filter_caret,
+            .anchor = p.filter_anchor,
             .focused = p.filter_focused,
             .bg = bg,
         });

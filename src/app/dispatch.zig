@@ -2005,6 +2005,8 @@ fn widgetFallthrough(app: *App, k: Key) Allocator.Error!void {
 // ─── paste ──────────────────────────────────────────────────────────────
 
 pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
+    // The app's own `:` line has the keys while it is open.
+    if (app.cmdline != null and app.overlay == .none) return cmdline_mod.insert(app, text);
     switch (app.overlay) {
         .prompt => |*p| return Prompt.paste(&p.state, app.gpa, text),
         .picker => |*p| {
@@ -2021,6 +2023,8 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
         else => {},
     }
     if (app.find_bar) |*fb| return FindBar.paste(&fb.state, app.gpa, text);
+    // A panel with its filter focused takes the paste there.
+    if (app.focus == .panel) if (try panelFilterPaste(app, app.focus.panel, text)) return;
     if (app.active) |id| if (app.panes.pty(id)) |p| {
         if (app.focus == .pane) return pty_pane.paste(app, p, text);
     };
@@ -2035,6 +2039,14 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     };
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asZon()) |z| {
         if (app.focus == .pane) return zon_pane.paste(app, z, text);
+    };
+    if (app.active) |id| if (app.focus == .pane) if (try paneFilterPaste(app, id, text)) return;
+    // The debug console's input line, over its selection.
+    if (app.active) |id| if (app.focus == .pane) if (app.panes.get(id)) |p| if (p.* == .debug) {
+        const c = &app.dap.console;
+        try text_field.insertSel(&c.input, &c.caret, &c.anchor, app.gpa, text);
+        app.needs_render = true;
+        return;
     };
     // The graph's commit box: a pasted message keeps its lines.
     if (try git_app.pasteIntoCommitBox(app, text)) return;
@@ -2079,6 +2091,15 @@ fn inspectClick(app: *App, m: Mouse) Allocator.Error!void {
 }
 
 pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
+    // A left press on a text field: read off the frame the user clicked
+    // (before the press re-lays anything out), routed like any press so
+    // the owner takes the focus, then placed in the text (`fieldPress`).
+    const field = if (m.kind == .press and m.button == .left and app.firing_button == null) app.hits.fieldAt(m.x, m.y) else null;
+    try mouseRoute(app, m, count);
+    if (field) |f| fieldPress(app, f, m);
+}
+
+fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     app.hover_live = m.kind == .motion or m.kind == .drag;
@@ -2295,6 +2316,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .pane => |id| {
                     if (!grab) return;
                     if (app.panes.editor(id) != null) return beginScrollbarDrag(app, id, track, m.y);
+                    // A terminal's scrollback: the thumb is grabbed where
+                    // it was taken, the track pages.
+                    if (app.panes.pty(id)) |p| {
+                        focusOnPress(app, id);
+                        if (pty_pane.barPress(app, p, track, m.y)) |g| app.drag = .{ .scrollbar = .{ .pane = id, .grab = g } };
+                        return;
+                    }
                     try paneBarJump(app, id, track, m.y);
                 },
             }
@@ -2504,9 +2532,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             }
             if (wheel and app.overlay == .help) return help_app.wheel(app, signed(down, count));
             if (m.kind != .press) return;
-            // A text field's own hit: a press places the caret, a
-            // double takes the word, a triple the line (`text_field`).
-            if (m.button == .left) if (fieldPress(app, i, m)) return;
+            // The prompt's line and the picker's query are text fields:
+            // `mouse` places the press in them (`fieldPress`).
+            if (m.button == .left and ((app.overlay == .prompt and i == 0) or (app.overlay == .picker and i == Picker.query_item))) return;
             // // changed (lua-track): right-click on a palette row — Run,
             // Bind in init.lua…, Copy id.
             if (m.button == .right and app.overlay == .picker) switch (app.overlay.picker.kind) {
@@ -2627,7 +2655,7 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .ai_usage => |*u| try usage_pane.click(app, u, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
-                .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
+                .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m),
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
@@ -2876,7 +2904,9 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // The bar: opens the `:` line. Already open, a click is
                 // a no-op — the user is typing on it.
                 .cmdline_bar => {
-                    if (app.cmdline == null) cmdline_mod.open(app);
+                    if (app.cmdline == null) return cmdline_mod.open(app);
+                    // On the open line: the caret, the word, the line.
+                    if (m.button == .left) if (hitRect(app, m.x, m.y)) |r| cmdline_mod.click(app, m.x -| r.x, clickCount(app, m), m.mods.shift, app.screen.width_method);
                     return;
                 },
                 // The `⟳ … running…` indicator: stop what it reports.
@@ -3249,28 +3279,209 @@ fn pressOutside(app: *App) void {
 
 // ── a text field: click, double / triple ──
 
-/// A left press on an overlay's text field — the prompt's line
-/// (`.overlay_item(0)`) or the picker's query (`Picker.query_item`):
-/// true when it was one and was taken.
-fn fieldPress(app: *App, item: u32, m: Mouse) bool {
-    const row = hitRect(app, m.x, m.y) orelse return false;
-    const method = app.screen.width_method;
-    switch (app.overlay) {
-        .prompt => |*p| {
-            if (item != 0) return false;
-            const field = Prompt.fieldOf(row);
-            Prompt.click(&p.state, m.x -| field.x, field.w, clickCount(app, m), method);
+pub const FieldRef = text_field.Ref;
+
+/// `id` resolved against the app as it is now, or null when what it
+/// named is gone. A field that needs the press to take the keys first
+/// (the find bar's two) is focused here.
+pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
+    switch (id) {
+        .prompt => {
+            if (app.overlay != .prompt) return null;
+            const p = &app.overlay.prompt.state;
+            return .{ .buf = &p.buf, .caret = &p.caret, .anchor = &p.anchor, .select_all = &p.select_all };
         },
-        .picker => |*p| {
-            if (item != Picker.query_item) return false;
-            const s = &p.state;
-            const byte = text_field.byteAtCol(s.query.items, s.caret, row.w, m.x -| row.x, method);
-            text_field.clickSelect(s.query.items, &s.caret, &s.sel_anchor, byte, clickCount(app, m));
+        .picker_query => {
+            if (app.overlay != .picker) return null;
+            const s = &app.overlay.picker.state;
+            return .{ .buf = &s.query, .caret = &s.caret, .anchor = &s.sel_anchor };
         },
-        else => return false,
+        .settings_filter => {
+            if (app.overlay != .settings) return null;
+            const f = &app.overlay.settings.ui.filter;
+            return .{ .buf = &f.buf, .caret = &f.caret, .anchor = &f.anchor };
+        },
+        // A press on either find field gives it the keys.
+        .find_query => {
+            const fb = if (app.find_bar) |*b| &b.state else return null;
+            fb.focus = .query;
+            return .{ .buf = &fb.query, .caret = &fb.caret, .anchor = &fb.anchor, .select_all = &fb.select_all };
+        },
+        .find_replace => {
+            const fb = if (app.find_bar) |*b| &b.state else return null;
+            if (!fb.show_replace) return null;
+            fb.focus = .replace;
+            return .{ .buf = &fb.replace, .caret = &fb.replace_caret, .anchor = &fb.replace_anchor, .select_all = &fb.select_all };
+        },
+        .panel_filter => |p| return panelFilter(app, p),
+        .pane_filter => |pane| return (paneFilter(app, pane) orelse return null).ref,
+        .pane_field => |pf| return paneField(app, pf.pane, pf.sub),
     }
+}
+
+/// A pane's own text field — the HTTP pane's URL and its draft row's
+/// two cells, a WebSocket's message line, the debug console's input, a
+/// ZON field open for editing.
+fn paneField(app: *App, id: PaneId, sub: hit_mod.PaneField) ?FieldRef {
+    const pane = app.panes.get(id) orelse return null;
+    switch (pane.*) {
+        .request => |*rp| switch (sub) {
+            .request_url => return .{ .buf = &rp.url, .caret = &rp.url_caret, .anchor = &rp.url_anchor },
+            .request_draft_key, .request_draft_value => {
+                const d = if (rp.draft) |*d| d else return null;
+                if (sub == .request_draft_value) return .{ .buf = &d.value, .caret = &d.value_caret, .anchor = &d.value_anchor };
+                return .{ .buf = &d.key, .caret = &d.key_caret, .anchor = &d.key_anchor };
+            },
+            else => return null,
+        },
+        .websocket => |*w| return if (sub == .ws_input) .{ .buf = &w.input, .caret = &w.input_caret, .anchor = &w.input_anchor } else null,
+        .debug => return if (sub == .dap_input) .{ .buf = &app.dap.console.input, .caret = &app.dap.console.caret, .anchor = &app.dap.console.anchor } else null,
+        .zon => |*z| {
+            if (sub != .zon_value) return null;
+            const e = if (z.editing) |*e| e else return null;
+            return .{ .buf = &e.buf, .caret = &e.caret, .anchor = &e.anchor };
+        },
+        else => return null,
+    }
+}
+
+/// A filter pill a pane hosts, and whether it has the keys.
+fn paneFilter(app: *App, id: PaneId) ?struct { ref: FieldRef, focused: bool } {
+    const pane = app.panes.get(id) orelse return null;
+    return switch (pane.*) {
+        .files => |*f| .{ .ref = .{ .buf = &f.filter, .caret = &f.filter_caret, .anchor = &f.filter_anchor }, .focused = f.filter_focused },
+        .zon => |*z| .{ .ref = .{ .buf = &z.filter, .caret = &z.filter_caret, .anchor = &z.filter_anchor }, .focused = z.filter_focused },
+        .browser => |*b| .{ .ref = .{ .buf = &b.filter, .caret = &b.filter_caret, .anchor = &b.filter_anchor }, .focused = b.filter_focused },
+        .grep => |*g| .{ .ref = .{ .buf = &g.filter, .caret = &g.filter_caret, .anchor = &g.filter_anchor }, .focused = g.filter_active },
+        .sessions_table => |*tp| .{ .ref = tp.list.filterField(), .focused = tp.list.filter_focused },
+        .script => |*sp| blk: {
+            const l = (if (sp.list != 0) script_list.find(app, sp.list) else null) orelse break :blk null;
+            break :blk .{ .ref = l.panel.filterField(), .focused = l.panel.filter_focused };
+        },
+        else => null,
+    };
+}
+
+/// A paste while a pane's own filter has the keys: into the filter,
+/// over its selection, the rows narrowed again as a typed character
+/// would. False when the pane has no focused filter. (A ZON view takes
+/// its pastes itself, its open field first.)
+fn paneFilterPaste(app: *App, id: PaneId, text: []const u8) Allocator.Error!bool {
+    const pf = paneFilter(app, id) orelse return false;
+    if (!pf.focused) return false;
+    try text_field.insertSel(pf.ref.buf, pf.ref.caret, pf.ref.anchor, app.gpa, text);
     app.needs_render = true;
+    const pane = app.panes.get(id) orelse return true;
+    switch (pane.*) {
+        .files => |*f| {
+            f.cursor = 0;
+            try f.applyFilter();
+        },
+        .browser => |*b| try browser_pane.filterChanged(b),
+        .grep => |*g| try g.rebuild(),
+        .sessions_table => |*tp| {
+            tp.list.cursor = 0;
+            try sessions_table.refilter(app, tp);
+        },
+        .script => |*sp| if (script_list.find(app, sp.list)) |l| {
+            l.panel.cursor = 0;
+        },
+        else => {},
+    }
     return true;
+}
+
+/// A list panel's filter pill — SEARCH's query and the git palette's
+/// own filter among them.
+fn panelFilter(app: *App, p: hit_mod.PanelId) ?FieldRef {
+    return switch (p) {
+        .todos => app.todos.list.filterField(),
+        .notes => app.notes.list.filterField(),
+        .findings => app.findings.list.filterField(),
+        .sessions => app.sessions.list.filterField(),
+        .debug => app.debug_panel.list.filterField(),
+        .diagnostics => app.lsp.panel.filterField(),
+        .http => app.http_panel.list.filterField(),
+        .integrations => app.integrations.panel.filterField(),
+        .scripts => app.scripts_panel.panel.filterField(),
+        .script => if (script_section.activeList(app)) |l| l.panel.filterField() else null,
+        .search => .{ .buf = &app.search_section.query, .caret = &app.search_section.caret, .anchor = &app.search_section.query_anchor },
+        .git => .{ .buf = &app.git_palette.filter, .caret = &app.git_palette.filter_caret, .anchor = &app.git_palette.filter_anchor },
+        .outline, .jobs => null,
+    };
+}
+
+/// A paste while a panel has the keys: into its filter when the filter
+/// has them, over the filter's selection, and the rows re-filtered as a
+/// typed character would. False when the panel's filter is not focused.
+fn panelFilterPaste(app: *App, p: hit_mod.PanelId, text: []const u8) Allocator.Error!bool {
+    const focused = switch (p) {
+        .search => app.search_section.query_focused,
+        .git => app.git_palette.filter_focused,
+        .todos => app.todos.list.filter_focused,
+        .notes => app.notes.list.filter_focused,
+        .findings => app.findings.list.filter_focused,
+        .sessions => app.sessions.list.filter_focused,
+        .debug => app.debug_panel.list.filter_focused,
+        .diagnostics => app.lsp.panel.filter_focused,
+        .http => app.http_panel.list.filter_focused,
+        .integrations => app.integrations.panel.filter_focused,
+        .scripts => app.scripts_panel.panel.filter_focused,
+        .script => if (script_section.activeList(app)) |l| l.panel.filter_focused else false,
+        .outline, .jobs => false,
+    };
+    if (!focused) return false;
+    const ref = panelFilter(app, p) orelse return false;
+    try text_field.insertSel(ref.buf, ref.caret, ref.anchor, app.gpa, text);
+    app.needs_render = true;
+    // As a typed character: the cursor back to the first row, the
+    // rows filtered again.
+    switch (p) {
+        .todos => {
+            app.todos.list.cursor = 0;
+            try todos.refilter(app);
+        },
+        .notes => {
+            app.notes.list.cursor = 0;
+            try notes.refilter(app);
+        },
+        .findings => {
+            app.findings.list.cursor = 0;
+            try findings.refilter(app);
+        },
+        .sessions => {
+            app.sessions.list.cursor = 0;
+            try sessions.refilter(app);
+        },
+        .http => {
+            app.http_panel.list.cursor = 0;
+            try http_panel.rebuild(app);
+        },
+        .git => app.git_palette.cursor = 0,
+        .integrations => app.integrations.panel.cursor = 0,
+        .scripts => app.scripts_panel.panel.cursor = 0,
+        .debug => app.debug_panel.list.cursor = 0,
+        .diagnostics => app.lsp.panel.cursor = 0,
+        .script => if (script_section.activeList(app)) |l| {
+            l.panel.cursor = 0;
+        },
+        .search, .outline, .jobs => {},
+    }
+    return true;
+}
+
+/// A left press on a field (`HitMap.fieldAt`): the caret there, a
+/// double the word, a triple the whole field; Shift extends the
+/// selection to the press.
+fn fieldPress(app: *App, f: hit_mod.HitMap.Field, m: Mouse) void {
+    const ref = fieldRef(app, f.id) orelse return;
+    if (ref.select_all) |sa| sa.* = false;
+    const text = ref.buf.items;
+    const byte = text_field.byteAtCol(text, ref.caret.*, f.rect.w, m.x -| f.rect.x, app.screen.width_method);
+    if (m.mods.shift) {
+        text_field.extendTo(text, ref.caret, ref.anchor, byte);
+    } else text_field.clickSelect(text, ref.caret, ref.anchor, byte, clickCount(app, m));
+    app.needs_render = true;
 }
 
 // ── the editor: click, drag-select, double / triple ──
@@ -3679,6 +3890,10 @@ fn beginScrollbarDrag(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Erro
 /// cursor goes to the row the thumb names (as the wheel would move
 /// it); otherwise the view moves and pins, the cursor stays.
 fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) Allocator.Error!void {
+    if (app.panes.pty(id)) |p| {
+        const track = scrollbarTrackOf(app, .{ .pane = id }) orelse return;
+        return pty_pane.barDrag(app, p, track, grab, y);
+    }
     const e = app.panes.editor(id) orelse return;
     const track = scrollbarTrackOf(app, .{ .pane = id }) orelse return;
     const total = e.buf.editor.lineCount();
@@ -5862,7 +6077,7 @@ test "the prompt's line and the picker's query: a press places the caret, a doub
     try pressAt(&app, fx + 2, at[1]);
     try pressAt(&app, fx + 2, at[1]);
     try pressAt(&app, fx + 2, at[1]);
-    try std.testing.expect(p.select_all);
+    try std.testing.expectEqual([2]usize{ 0, 13 }, text_field.selRange(p.caret, p.anchor).?);
     try app.handle(.{ .key = key_mod.Key.char('z') });
     try std.testing.expectEqualStrings("z", p.buf.items);
     try app.handle(.{ .key = key_mod.Key.named(.esc) });
@@ -5882,4 +6097,119 @@ test "the prompt's line and the picker's query: a press places the caret, a doub
     try pressAt(&app, q[0] + 2, q[1]);
     try pressAt(&app, q[0] + 2, q[1]);
     try std.testing.expectEqual([2]usize{ 0, 4 }, text_field.selRange(s.caret, s.sel_anchor).?);
+}
+
+/// The first cell of the field `id` painted this frame.
+fn fieldCell(app: *App, id: hit_mod.FieldId) !?[2]u16 {
+    try app.render();
+    for (app.hits.fields.items) |f| if (std.meta.eql(f.id, id)) return .{ f.rect.x, f.rect.y };
+    return null;
+}
+
+test "a list panel's filter pill: a double-click takes the word, a paste replaces it and re-filters, a triple takes the filter" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 160, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.activity_sessions" });
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("alpha beta gamma") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const st = &app.sessions.list;
+    try std.testing.expectEqualStrings("alpha beta gamma", st.filterText());
+    const at = (try fieldCell(&app, .{ .panel_filter = .sessions })).?;
+    try pressAt(&app, at[0] + 7, at[1]);
+    try pressAt(&app, at[0] + 7, at[1]);
+    try std.testing.expectEqual([2]usize{ 6, 10 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
+    // The selection paints on the accent: the theme's selection ground
+    // is a step off the pill's grey and would not show on it.
+    try app.render();
+    const cell = app.screen.readCell(at[0] + 7, at[1]).?;
+    try std.testing.expect(@import("vaxis").Color.eql(cell.style.bg, app.theme.accent.fg));
+    try std.testing.expect(!@import("vaxis").Color.eql(app.screen.readCell(at[0] + 2, at[1]).?.style.bg, app.theme.accent.fg));
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "B") });
+    try std.testing.expectEqualStrings("alpha B gamma", st.filterText());
+    try std.testing.expect(app.focus == .panel);
+    app.now_ms += 1000;
+    try pressAt(&app, at[0] + 1, at[1]);
+    try pressAt(&app, at[0] + 1, at[1]);
+    try pressAt(&app, at[0] + 1, at[1]);
+    try std.testing.expectEqual([2]usize{ 0, 13 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
+    try app.handle(.{ .key = key_mod.Key.named(.backspace) });
+    try std.testing.expectEqualStrings("", st.filterText());
+}
+
+test "a pane's own filter pill (FILES): a double-click takes the word, a paste replaces it and narrows the rows" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 160, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"files.open" });
+    const id = app.active.?;
+    const f = app.panes.get(id).?.asFiles().?;
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("zzz qqq") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const at = (try fieldCell(&app, .{ .pane_filter = id })).?;
+    try pressAt(&app, at[0] + 5, at[1]);
+    try pressAt(&app, at[0] + 5, at[1]);
+    try std.testing.expectEqual([2]usize{ 4, 7 }, text_field.selRange(f.filter_caret, f.filter_anchor).?);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "x") });
+    try std.testing.expectEqualStrings("zzz x", f.filter.items);
+    try std.testing.expect(f.filter_anchor == null);
+}
+
+test "the settings box's filter and the find bar's two fields: a double-click takes the word, the next key replaces it; a press on a find field gives it the keys" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(std.testing.io, "ws/.mnml");
+    const ws = try std.fs.path.join(std.testing.allocator, &.{ root, "ws" });
+    defer std.testing.allocator.free(ws);
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = ws, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    // Settings.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("dock bar") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const f = &app.overlay.settings.ui.filter;
+    const sat = (try fieldCell(&app, .settings_filter)).?;
+    try pressAt(&app, sat[0] + 6, sat[1]);
+    try pressAt(&app, sat[0] + 6, sat[1]);
+    try std.testing.expectEqual([2]usize{ 5, 8 }, text_field.selRange(f.caret, f.anchor).?);
+    try app.handle(.{ .key = key_mod.Key.char('x') });
+    try std.testing.expectEqualStrings("dock x", f.text());
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try app.handle(.{ .key = key_mod.Key.named(.esc) });
+    try std.testing.expect(app.overlay == .none);
+    // The find bar, Replace row up, the keys in Replace.
+    app.now_ms += 1000;
+    try command.run(&app, .{ .static = .@"editor.use_standard" });
+    try app.handle(.{ .key = key_mod.Key.ctrl('h') });
+    const fb = &app.find_bar.?.state;
+    try std.testing.expect(fb.show_replace);
+    for ("one two") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    try app.handle(.{ .key = key_mod.Key.named(.tab) });
+    try std.testing.expectEqual(FindBar.Focus.replace, fb.focus);
+    const q = (try fieldCell(&app, .find_query)).?;
+    try pressAt(&app, q[0] + 5, q[1]);
+    try pressAt(&app, q[0] + 5, q[1]);
+    try std.testing.expectEqual(FindBar.Focus.query, fb.focus);
+    try std.testing.expectEqual([2]usize{ 4, 7 }, text_field.selRange(fb.caret, fb.anchor).?);
+    try app.handle(.{ .key = key_mod.Key.char('Z') });
+    try std.testing.expectEqualStrings("one Z", fb.queryText());
+}
+
+test "the debug console's input: a double-click takes the word, a paste replaces it" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"dap.repl" });
+    const id = app.active.?;
+    try std.testing.expect(app.panes.get(id).?.* == .debug);
+    for ("foo.bar + baz") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const c = &app.dap.console;
+    try std.testing.expectEqualStrings("foo.bar + baz", c.input.items);
+    const at = (try fieldCell(&app, .{ .pane_field = .{ .pane = id, .sub = .dap_input } })).?;
+    try pressAt(&app, at[0] + 11, at[1]);
+    try pressAt(&app, at[0] + 11, at[1]);
+    try std.testing.expectEqual([2]usize{ 10, 13 }, text_field.selRange(c.caret, c.anchor).?);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "qux") });
+    try std.testing.expectEqualStrings("foo.bar + qux", c.input.items);
 }

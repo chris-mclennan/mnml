@@ -1913,6 +1913,7 @@ pub fn revealInMarketplace(app: *App, id: []const u8) CommandError!void {
     st.panel.filter.clearRetainingCapacity();
     try st.panel.filter.appendSlice(app.gpa, id);
     st.panel.filter_caret = st.panel.filter.items.len;
+    st.panel.filter_anchor = null;
     st.panel.cursor = 0;
     st.panel.scroll = 0;
     app.needs_render = true;
@@ -2469,6 +2470,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .show_dev = showDev(app),
         .filter = st.panel.filterText(),
         .filter_caret = st.panel.filter_caret,
+        .filter_anchor = st.panel.filter_anchor,
         .filter_focused = st.panel.filter_focused,
         .sort_label = sortLabel(app),
         .sort_widest = sortWidest(app),

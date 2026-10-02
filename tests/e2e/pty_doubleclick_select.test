@@ -1,0 +1,18 @@
+# A terminal pane: a double-click selects the word under the pointer and
+# a triple the whole line, and with `ui.copy_on_select` (on by default)
+# the selection is copied as a drag's is — Ctrl+Shift+V pastes it back
+# into the child, which echoes it. The child's first line is row 21 of
+# the split at 120x40, its text from column 1.
+write a.txt "x\n"
+open a.txt
+command view.toggle_tree
+ex term sh -c "printf 'alpha SELECTME omega\n'; exec cat"
+wait 500
+expect screen contains "alpha SELECTME omega"
+doubleclick 9 21
+key ctrl+shift+v
+expect within 3000 screen contains "▌SELECTME "
+click 3 21
+doubleclick 3 21
+key ctrl+shift+v
+expect within 3000 screen contains "▌SELECTMEalpha SELECTME omega"

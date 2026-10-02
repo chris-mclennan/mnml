@@ -427,6 +427,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .show_dev = showDev(app),
         .filter = q,
         .filter_caret = st.panel.filter_caret,
+        .filter_anchor = st.panel.filter_anchor,
         .filter_focused = st.panel.filter_focused,
         .sort_label = st.sort.label(),
         .sort_widest = Sort.widest_label,

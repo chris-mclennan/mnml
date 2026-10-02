@@ -176,21 +176,6 @@ pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void {
     try text_field.insertSel(&s.buf, &s.caret, &s.anchor, gpa, text);
 }
 
-/// A press `clicks` deep on the field `col` cells in: the caret there,
-/// the word (a double), the whole line (a triple — the seeded-name
-/// selection, so typing replaces it).
-pub fn click(s: *State, col: u16, field_w: u16, clicks: u8, method: @import("vaxis").gwidth.Method) void {
-    const byte = text_field.byteAtCol(s.buf.items, s.caret, field_w, col, method);
-    s.select_all = false;
-    if (clicks >= 3) {
-        s.anchor = null;
-        s.select_all = s.buf.items.len > 0;
-        s.caret = s.buf.items.len;
-        return;
-    }
-    text_field.clickSelect(s.buf.items, &s.caret, &s.anchor, byte, clicks);
-}
-
 /// The field's rect inside the row `draw` registers as `.overlay_item(0)`.
 pub fn fieldOf(row: Rect) Rect {
     return Rect.init(row.x + 1, row.y, row.w -| 2, 1);
@@ -220,6 +205,8 @@ pub fn draw(ui: Ui, area: Rect, s: *const State) ?Caret {
         },
         .secret = s.secret,
         .anchor = s.anchor,
+        // A press on the line: caret, word, line (`dispatch.fieldPress`).
+        .field = .prompt,
     });
     overlay.hint(ui, inner.row(1), hint_text);
     return caret;

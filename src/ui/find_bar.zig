@@ -29,8 +29,11 @@ pub const Focus = enum { query, replace };
 pub const State = struct {
     query: text_field.Buf = .empty,
     caret: usize = 0,
+    /// Each field's selection (`text_field.clickSelect`), to its caret.
+    anchor: ?usize = null,
     replace: text_field.Buf = .empty,
     replace_caret: usize = 0,
+    replace_anchor: ?usize = null,
     focus: Focus = .query,
     regex: bool = false,
     match_case: bool = false,
@@ -61,6 +64,7 @@ pub const State = struct {
         s.query.clearRetainingCapacity();
         try s.query.appendSlice(gpa, value);
         s.caret = s.query.items.len;
+        s.anchor = null;
     }
 };
 
@@ -153,9 +157,9 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
         }
     }
     const edit = if (s.focus == .query)
-        try text_field.handleKey(&s.query, &s.caret, gpa, key)
+        try text_field.editKey(&s.query, &s.caret, &s.anchor, gpa, key)
     else
-        try text_field.handleKey(&s.replace, &s.replace_caret, gpa, key);
+        try text_field.editKey(&s.replace, &s.replace_caret, &s.replace_anchor, gpa, key);
     return switch (edit) {
         .changed => .changed,
         .moved => .consumed,
@@ -166,9 +170,9 @@ pub fn handleKey(s: *State, gpa: Allocator, key: Key) Allocator.Error!Outcome {
 /// Into the focused field.
 pub fn paste(s: *State, gpa: Allocator, text: []const u8) Allocator.Error!void {
     if (s.focus == .query) {
-        try text_field.insert(&s.query, &s.caret, gpa, text);
+        try text_field.insertSel(&s.query, &s.caret, &s.anchor, gpa, text);
     } else {
-        try text_field.insert(&s.replace, &s.replace_caret, gpa, text);
+        try text_field.insertSel(&s.replace, &s.replace_caret, &s.replace_anchor, gpa, text);
     }
 }
 
@@ -229,7 +233,7 @@ pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) ?Caret {
     const qf = Rect.init(x, r0.y, right -| x, 1);
     ui.hit(qf, .{ .overlay_item = hit_query });
     const query_style = if (s.select_all and s.query.items.len > 0) t.selection else field_style;
-    const qc = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = query_style, .focused = s.focus == .query });
+    const qc = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = query_style, .focused = s.focus == .query, .anchor = s.anchor, .sel_style = text_field.chipSelStyle(ui), .field = .find_query });
     if (s.focus == .query) caret = qc;
 
     // ── row 1: Replace ──
@@ -241,7 +245,7 @@ pub fn draw(ui: Ui, area: Rect, s: *const State, info: Info) ?Caret {
         rx1 += ui.putStr(rx1, r1.y, r1.right() -| rx1, " ", t.statusline);
         const rf = Rect.init(rx1, r1.y, (r1.right() -| 1) -| rx1, 1);
         ui.hit(rf, .{ .overlay_item = hit_replace });
-        const rc = text_field.draw(ui, rf, s.replace.items, s.replace_caret, .{ .style = field_style, .focused = s.focus == .replace });
+        const rc = text_field.draw(ui, rf, s.replace.items, s.replace_caret, .{ .style = field_style, .focused = s.focus == .replace, .anchor = s.replace_anchor, .sel_style = text_field.chipSelStyle(ui), .field = .find_replace });
         if (s.focus == .replace) caret = rc;
     }
     return caret;

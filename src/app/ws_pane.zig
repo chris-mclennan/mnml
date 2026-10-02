@@ -77,6 +77,8 @@ pub const WebsocketPane = struct {
     log: std.ArrayListUnmanaged(Entry) = .empty,
     input: std.ArrayListUnmanaged(u8) = .empty,
     input_caret: usize = 0,
+    /// The message line's selection (`text_field.clickSelect`), to the caret.
+    input_anchor: ?usize = null,
     /// Rows from the bottom; 0 follows the tail.
     scroll: usize = 0,
     shared: *Shared,
@@ -457,6 +459,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *WebsocketPane, k: Key) Allocator.Err
             };
             p.input.clearRetainingCapacity();
             p.input_caret = 0;
+            p.input_anchor = null;
             return true;
         },
         .esc => {
@@ -487,12 +490,12 @@ pub fn handleKey(app: *App, id: PaneId, p: *WebsocketPane, k: Key) Allocator.Err
         },
         else => {},
     }
-    const edit = try text_field.handleKey(&p.input, &p.input_caret, app.gpa, k);
+    const edit = try text_field.editKey(&p.input, &p.input_caret, &p.input_anchor, app.gpa, k);
     return edit != .ignored;
 }
 
 pub fn paste(app: *App, p: *WebsocketPane, text: []const u8) Allocator.Error!void {
-    try text_field.insert(&p.input, &p.input_caret, app.gpa, std.mem.trimEnd(u8, std.mem.sliceTo(text, '\n'), "\r"));
+    try text_field.insertSel(&p.input, &p.input_caret, &p.input_anchor, app.gpa, std.mem.trimEnd(u8, std.mem.sliceTo(text, '\n'), "\r"));
     app.needs_render = true;
 }
 
@@ -515,6 +518,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *WebsocketPane, area: Rect) Alloca
         .entries = entries,
         .input = p.input.items,
         .input_caret = p.input_caret,
+        .input_anchor = p.input_anchor,
         .scroll = &p.scroll,
         .focused = focused,
     });
@@ -557,6 +561,7 @@ fn sendMessageCmd(app: *App) CommandError!void {
         try send(app, p, text);
         p.input.clearRetainingCapacity();
         p.input_caret = 0;
+        p.input_anchor = null;
         return;
     }
     app.overlay.deinit(app.gpa);

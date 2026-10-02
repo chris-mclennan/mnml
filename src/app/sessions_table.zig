@@ -648,6 +648,7 @@ pub fn handleKey(app: *App, id: PaneId, tp: *TablePane, k: Key) Allocator.Error!
                 'l' => {
                     tp.list.filter.clearRetainingCapacity();
                     tp.list.filter_caret = 0;
+                    tp.list.filter_anchor = null;
                     tp.state_filter = null;
                     tp.where_filter = null;
                     try refilter(app, tp);

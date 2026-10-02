@@ -100,6 +100,7 @@ const cmd_view = @import("cmd_view.zig");
 const cheatsheet = @import("cheatsheet.zig");
 const script_pane = @import("script_pane.zig");
 const pty_view = @import("../ui/pty_view.zig");
+const scrollbar = @import("../ui/scrollbar.zig");
 const pty_search = @import("pty_search.zig");
 const pty_pane = @import("pty_pane.zig");
 const session_cycle = @import("session_cycle.zig");
@@ -1903,6 +1904,16 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         // The scrollback search's matches in view (`pty_search.zig`).
         .marks = try pty_search.marks(app, id, p),
     });
+    // The scrollback's bar over the last column when it has something to
+    // say (`pty_pane.barShown`): never a column of the child's, so its
+    // size does not change with it.
+    if (body.w > 1) if (pty_pane.barOf(p)) |b| {
+        const col = body.right() - 1;
+        if (pty_pane.barShown(app, id, p, b, col, p.body)) {
+            const h = if (exit_label != null) body.h -| 1 else body.h;
+            scrollbar.drawVerticalLook(ui, Rect.init(col, body.y, 1, h), .{ .pane = id }, b.total, b.len, b.offset, .solid);
+        }
+    };
     // Its bar lies over the last row: the child keeps its size.
     pty_search.drawBar(app, ui, id, p, body);
     if (app.active == id) {
@@ -2629,6 +2640,7 @@ fn drawCmdline(app: *App, ui: Ui, row: Rect, line: ?[]const u8, dock_x: ?u16) Al
     if (area.isEmpty()) return;
     const model: cmdline_bar.Model = .{
         .line = line,
+        .sel = if (line != null) cmdline_mod.displaySel(app, ui.ascii) else null,
         // No echo under an open overlay: the toast paints beneath the
         // overlay, so its words must not surface on the row below it.
         .toast = if (line == null and app.overlay == .none) app.lastToast() else null,

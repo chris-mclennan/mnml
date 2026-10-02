@@ -49,16 +49,18 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
 
     // ── row 1: the filter pill ──
     const fr = rest.splitTop(1);
+    // The pill's hit is the pane's own id: this pane routes clicks by
+    // pane.
     var caret = filter_input.draw(ui, fr.top, .{
         .panel = .todos,
         .text = z.filter.items,
         .caret = z.filter_caret,
+        .anchor = z.filter_anchor,
         .focused = z.filter_focused and focused,
         .bg = t.bg,
+        .pane = pane,
+        .pane_hit = Hit.filter,
     });
-    // The pill registers a `.filter_input` for its panel; this pane
-    // routes clicks by pane, so cover it with the pane's own id.
-    ui.hit(fr.top, .{ .script_hit = .{ .pane = pane, .id = Hit.filter } });
     rest = fr.rest;
     if (rest.isEmpty()) return caret;
 
@@ -123,7 +125,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
         if (x >= tr.right()) continue;
         const value = Rect.init(x, r.y, tr.right() - x, 1);
         if (z.editing) |e| if (e.node == row.node) {
-            const c = drawField(ui, value, e, focused);
+            const c = drawField(ui, pane, value, e, focused);
             if (c) |cc| caret = cc;
             continue;
         };
@@ -176,11 +178,14 @@ fn crumb(ui: Ui, pane: PaneId, r: Rect, x: u16, text: []const u8, style: Style, 
 }
 
 /// The open text field over the value cell.
-fn drawField(ui: Ui, value: Rect, e: zon_pane.Edit, focused: bool) ?Caret {
+fn drawField(ui: Ui, pane: PaneId, value: Rect, e: zon_pane.Edit, focused: bool) ?Caret {
     const t = ui.theme;
     const w: u16 = @min(value.w, @max(@as(u16, 12), ui.width(e.buf.items) + 2));
     const field = Rect.init(value.x, value.y, w, 1);
+    ui.hit(field, .{ .script_hit = .{ .pane = pane, .id = Hit.field } });
     return text_field.draw(ui, field, e.buf.items, e.caret, .{
+        .anchor = e.anchor,
+        .field = .{ .pane_field = .{ .pane = pane, .sub = .zon_value } },
         .style = Theme.onBg(Theme.withFg(t.chip_active, t.fg.fg), t.chip_active.bg),
         .focused = focused,
         .placeholder = switch (e.kind) {

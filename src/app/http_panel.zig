@@ -806,6 +806,7 @@ pub fn chipAction(app: *App, section: Section, kind: ChipKind) CommandError!void
             else => {
                 st.list.filter.clearRetainingCapacity();
                 st.list.filter_caret = 0;
+                st.list.filter_anchor = null;
                 st.list.filter_focused = false;
                 try rebuild(app);
             },

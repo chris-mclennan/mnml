@@ -58,6 +58,7 @@ fn writeLine(app: *App, text: []const u8) Allocator.Error!void {
         c.text.clearRetainingCapacity();
         try c.text.appendSlice(app.gpa, text);
         c.caret = c.text.items.len;
+        c.anchor = null;
         app.needs_render = true;
         return;
     }

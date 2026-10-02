@@ -1,0 +1,22 @@
+# A ZON field open for editing takes the mouse: a press inside it moves
+# the caret or selects rather than closing the field; a double-click
+# takes the word under the pointer and the next typed text replaces it.
+# A press anywhere else still ends the edit. At 120x40 the open field
+# starts at column 44 of row 7.
+write .mnml/config.zon .{\n    .editor = .{ .tab_width = 4 },\n    .ui = .{\n        .theme = "one-dark", // the look\n    },\n}\n
+open .mnml/config.zon
+command zon.view
+key j
+key j
+key j
+expect screen contains "config.zon › ui › theme"
+key enter
+doubleclick 45 7
+type night
+key enter
+expect screen contains "\"night-dark\" *"
+key enter
+click 48 7
+type X
+key enter
+expect screen contains "\"nighXt-dark\" *"

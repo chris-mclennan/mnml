@@ -79,6 +79,7 @@ pub const Model = struct {
     device: ?[]const u8,
     filter: []const u8,
     filter_caret: usize,
+    filter_anchor: ?usize = null,
     filter_focused: bool,
     /// The kind of JavaScript dialog the page is parked on, if one.
     dialog: ?[]const u8 = null,
@@ -240,23 +241,17 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) Outcome {
 /// placeholder), one cell of the pane's ground on each side. The whole
 /// pill is a `script_hit` — a pane has no `PanelId` for `.filter_input`.
 fn drawFilter(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
-    const t = ui.theme;
-    ui.fill(area, t.bg);
-    if (area.isEmpty() or area.w < 4) return null;
-    const pill = Rect.init(area.x + 1, area.y, area.w - 2, 1);
-    const style = if (m.filter_focused) Theme.withFg(t.chip, t.fg.fg) else t.chip;
-    ui.fill(pill, style);
-    var x = pill.x;
-    x += ui.putStr(x, pill.y, pill.w, " ", style);
-    x += ui.putStr(x, pill.y, pill.right() - x, filter_input.glyph(ui), Theme.withFg(style, t.accent.fg));
-    x += ui.putStr(x, pill.y, pill.right() - x, " ", style);
-    const field = Rect.init(x, pill.y, (pill.right() - 1) -| x, 1);
-    ui.hit(pill, .{ .script_hit = .{ .pane = pane, .id = hit_filter } });
-    return text_field.draw(ui, field, m.filter, m.filter_caret, .{
-        .style = style,
-        .placeholder = filter_input.placeholder(ui, m.filter_focused, filter_input.default_noun),
-        .focused = m.filter_focused and m.focused,
+    const caret = filter_input.draw(ui, area, .{
+        .panel = .todos,
+        .text = m.filter,
+        .caret = m.filter_caret,
+        .anchor = m.filter_anchor,
+        .focused = m.filter_focused,
+        .bg = ui.theme.bg,
+        .pane = pane,
+        .pane_hit = hit_filter,
     });
+    return if (m.focused) caret else null;
 }
 
 /// Where `sel` sits in the narrowed order; 0 when it was filtered out.

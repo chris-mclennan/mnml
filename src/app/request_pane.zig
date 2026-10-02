@@ -107,6 +107,9 @@ pub const Draft = struct {
     value: Buf = .empty,
     key_caret: usize = 0,
     value_caret: usize = 0,
+    /// Each cell's selection (`text_field.clickSelect`), to its caret.
+    key_anchor: ?usize = null,
+    value_anchor: ?usize = null,
     on_value: bool = false,
     /// The Headers row being edited in place; null for a new row.
     edit_row: ?usize = null,
@@ -190,6 +193,8 @@ pub const RequestPane = struct {
     request: Request,
     url: Buf = .empty,
     url_caret: usize = 0,
+    /// The URL's selection (`text_field.clickSelect`), to the caret.
+    url_anchor: ?usize = null,
     body: Buf = .empty,
     body_caret: usize = 0,
     headers_text: Buf = .empty,
@@ -336,6 +341,7 @@ pub const RequestPane = struct {
         errdefer incoming.deinit(gpa);
         try self.url.replaceRange(gpa, 0, self.url.items.len, incoming.url);
         self.url_caret = self.url.items.len;
+        self.url_anchor = null;
         try self.body.replaceRange(gpa, 0, self.body.items.len, incoming.body orelse "");
         self.body_caret = self.body.items.len;
         const ht = try parse.headersToText(gpa, incoming.headers.items);
@@ -703,6 +709,7 @@ pub const RequestPane = struct {
         const gpa = self.gpa;
         self.url.clearRetainingCapacity();
         self.url_caret = 0;
+        self.url_anchor = null;
         self.body.clearRetainingCapacity();
         self.body_caret = 0;
         self.headers_text.clearRetainingCapacity();
@@ -757,6 +764,7 @@ pub const RequestPane = struct {
         }
         if (n > 0) {
             self.url_caret = @min(self.url_caret, self.url.items.len);
+            self.url_anchor = null;
             self.body_caret = @min(self.body_caret, self.body.items.len);
             self.headers_caret = @min(self.headers_caret, self.headers_text.items.len);
             self.edited = true;
@@ -771,6 +779,7 @@ pub const RequestPane = struct {
         self.block = .request;
         self.field = .url;
         self.url_caret = self.url.items.len;
+        self.url_anchor = null;
         self.editing = true;
     }
 
@@ -917,6 +926,7 @@ pub const RequestPane = struct {
         try self.request.addParam(self.gpa, key, std.mem.trim(u8, d.value.items, " \t"));
         try self.url.replaceRange(self.gpa, 0, self.url.items.len, self.request.url);
         self.url_caret = self.url.items.len;
+        self.url_anchor = null;
         self.cancelDraft();
         self.edited = true;
         try self.refreshTitle();
@@ -953,6 +963,7 @@ pub const RequestPane = struct {
         try out.appendSlice(a, base[hash..]);
         try self.url.replaceRange(self.gpa, 0, self.url.items.len, out.items);
         self.url_caret = @min(self.url_caret, self.url.items.len);
+        self.url_anchor = null;
         try self.commit();
         self.edited = true;
     }
@@ -1128,7 +1139,7 @@ fn requestBlockKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Er
                 rp.field = .content;
                 return true;
             }
-            const edit = try text_field.handleKey(&rp.url, &rp.url_caret, gpa, k);
+            const edit = try text_field.editKey(&rp.url, &rp.url_caret, &rp.url_anchor, gpa, k);
             if (edit == .changed) {
                 rp.edited = true;
                 try rp.commit();
@@ -1262,7 +1273,8 @@ fn paramsKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!bo
         }
         const buf = if (d.on_value) &d.value else &d.key;
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
-        const edit = try text_field.handleKey(buf, caret, gpa, k);
+        const anchor = if (d.on_value) &d.value_anchor else &d.key_anchor;
+        const edit = try text_field.editKey(buf, caret, anchor, gpa, k);
         if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
         return edit != .ignored;
     }
@@ -1346,7 +1358,8 @@ fn headersKey(app: *App, id: PaneId, rp: *RequestPane, k: Key) Allocator.Error!b
         }
         const buf = if (d.on_value) &d.value else &d.key;
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
-        const edit = try text_field.handleKey(buf, caret, gpa, k);
+        const anchor = if (d.on_value) &d.value_anchor else &d.key_anchor;
+        const edit = try text_field.editKey(buf, caret, anchor, gpa, k);
         if (edit == .changed) try refreshCompletion(app, rp);
         // A `{{` in a value: the variable popup, over the value table's.
         if (edit != .ignored) try http.afterFieldEdit(app, id, rp);
@@ -1513,7 +1526,8 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
     if (rp.draft) |*d| {
         const buf = if (d.on_value) &d.value else &d.key;
         const caret = if (d.on_value) &d.value_caret else &d.key_caret;
-        try text_field.insert(buf, caret, app.gpa, text);
+        const anchor = if (d.on_value) &d.value_anchor else &d.key_anchor;
+        try text_field.insertSel(buf, caret, anchor, app.gpa, text);
         return;
     }
     if (rp.field == .content and rp.edit_tab == .headers) {
@@ -1529,9 +1543,11 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
         return;
     }
     const f = rp.activeBuf() orelse return;
-    // A single-line field takes the first line only.
+    // A single-line field takes the first line only, over its selection.
     const chunk = if (rp.field == .url) (std.mem.sliceTo(text, '\n')) else text;
-    try text_field.insert(f.buf, f.caret, app.gpa, std.mem.trimEnd(u8, chunk, "\r"));
+    if (rp.field == .url) {
+        try text_field.insertSel(f.buf, f.caret, &rp.url_anchor, app.gpa, std.mem.trimEnd(u8, chunk, "\r"));
+    } else try text_field.insert(f.buf, f.caret, app.gpa, std.mem.trimEnd(u8, chunk, "\r"));
     rp.edited = true;
     if (rp.field == .url) try rp.commit();
     app.needs_render = true;
@@ -1540,7 +1556,7 @@ pub fn paste(app: *App, rp: *RequestPane, text: []const u8) Allocator.Error!void
 // ─── mouse ──────────────────────────────────────────────────────────────
 
 /// A press on one of the view's hits.
-pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit_rect: ?Rect) Allocator.Error!void {
+pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     defer if (rp.isSending() and rp.block == .request) {
         rp.moved_since_send = true;
     };
@@ -1707,12 +1723,9 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse, hit
                 try @import("context_menus.zig").openRequestFieldMenu(app, .url, m.x, m.y);
                 return;
             }
+            // The caret, the word, the line: the URL is a text field
+            // (`dispatch.fieldPress`).
             rp.editing = true;
-            if (hit_rect) |r| {
-                // The box's text starts one cell in.
-                const col: usize = m.x -| (r.x + 1);
-                rp.url_caret = byteAtCol(rp.url.items, col);
-            }
         },
         view.hit_send => http.fire(app, id) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1748,13 +1761,6 @@ fn runCmd(app: *App, id: command.CommandId) Allocator.Error!void {
     };
 }
 
-fn byteAtCol(text: []const u8, col: usize) usize {
-    var i: usize = 0;
-    var c: usize = 0;
-    while (i < text.len and c < col) : (c += 1) i = text_field.nextCp(text, i);
-    return i;
-}
-
 // ─── the frame ──────────────────────────────────────────────────────────
 
 /// Assemble the view's model on the frame arena and paint.
@@ -1778,7 +1784,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
     }
     var path_list: std.ArrayListUnmanaged(view.Pair) = .empty;
     for (try parse.pathParamNames(arena, rp.url.items)) |name| try path_list.append(arena, .{ .key = name, .value = parse.pathParamValue(&rp.request, name) orelse "" });
-    const draft: ?view.Draft = if (rp.draft) |d| .{ .key = d.key.items, .value = d.value.items, .key_caret = d.key_caret, .value_caret = d.value_caret, .on_value = d.on_value } else null;
+    const draft: ?view.Draft = if (rp.draft) |d| .{ .key = d.key.items, .value = d.value.items, .key_caret = d.key_caret, .value_caret = d.value_caret, .key_anchor = d.key_anchor, .value_anchor = d.value_anchor, .on_value = d.on_value } else null;
     // The Headers table reads the tab's text live, like Params reads the URL.
     const header_rows = try rp.headerRowsOn(arena);
     const headers = try arena.alloc(view.Pair, header_rows.len);
@@ -1848,6 +1854,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, rp: *RequestPane, area_in: Rect) Allo
         .method = rp.request.method,
         .url = rp.url.items,
         .url_caret = rp.url_caret,
+        .url_anchor = rp.url_anchor,
         .block = rp.block,
         .field = rp.field,
         .edit_tab = rp.edit_tab,
@@ -2287,7 +2294,7 @@ test "Params tab with path params: the cursor walks path rows then query rows, E
     defer out.deinit(testing.allocator);
     try testing.expectEqualStrings("https://x/users/:id/p/9?q=1", out.url);
     // A click on a path row opens the prompt straight away.
-    try click(&app, id, rp, view.hit_path_row + 1, .{ .x = 5, .y = 5, .kind = .press, .button = .left }, null);
+    try click(&app, id, rp, view.hit_path_row + 1, .{ .x = 5, .y = 5, .kind = .press, .button = .left });
     try testing.expect(app.overlay == .prompt);
     try testing.expect(std.mem.indexOf(u8, app.overlay.prompt.state.title, "Value for :pid") != null);
     try app.handle(.{ .key = Key.named(.esc) });

@@ -179,6 +179,7 @@ pub const SectionProps = struct {
     show_dev: bool,
     filter: []const u8,
     filter_caret: usize,
+    filter_anchor: ?usize = null,
     filter_focused: bool,
     /// The active tab's sort, short (`A-Z`).
     sort_label: []const u8,
@@ -351,6 +352,7 @@ pub fn drawSection(ui: Ui, area: Rect, p: SectionProps) ?Caret {
         .panel = p.panel,
         .text = p.filter,
         .caret = p.filter_caret,
+        .anchor = p.filter_anchor,
         .focused = p.filter_focused,
         .bg = t.panel_bg,
     });

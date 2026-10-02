@@ -2222,6 +2222,7 @@ fn paramsClearCmd(app: *App) CommandError!void {
     const bare = try rp.request.urlWithoutQuery(arena.allocator());
     try rp.url.replaceRange(app.gpa, 0, rp.url.items.len, bare);
     rp.url_caret = @min(rp.url_caret, rp.url.items.len);
+    rp.url_anchor = null;
     try rp.commit();
     rp.edited = true;
     rp.row_cursor = 0;
@@ -3065,7 +3066,7 @@ test "the Response strip's type chip opens the body menu, not a toast" {
     const gpa = testing.allocator;
     try rp.setResponse(.{ .status = 200, .status_text = try gpa.dupe(u8, "OK"), .final_url = try gpa.dupe(u8, "http://x/"), .headers = &.{}, .body = try gpa.dupe(u8, "{}") });
     // A press on the chip is what opens it.
-    try @import("request_pane.zig").click(&app, id, rp, @import("../ui/request_view.zig").hit_type, .{ .x = 10, .y = 10, .kind = .press, .button = .left }, null);
+    try @import("request_pane.zig").click(&app, id, rp, @import("../ui/request_view.zig").hit_type, .{ .x = 10, .y = 10, .kind = .press, .button = .left });
     try testing.expect(app.overlay == .menu);
     try testing.expectEqual(@as(usize, 4), app.overlay.menu.items.len);
     try testing.expectEqual(command.CommandId.@"http.copy_response_body", app.overlay.menu.items[0].action.command);

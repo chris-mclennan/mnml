@@ -377,9 +377,9 @@ pub fn draw(ui: Ui, area: Rect, s: *State, items: []const Item) ?Caret {
     }
     const qf = Rect.init(qr.x + 2, qr.y, field_w, 1);
     // The query's own hit, over the field: a click places the caret, a
-    // double takes a word, a triple the query (`dispatch`).
+    // double takes a word, a triple the query (`dispatch.fieldPress`).
     ui.hit(qf, .{ .overlay_item = query_item });
-    const caret = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = Theme.onBg(t.fg, bg), .anchor = s.sel_anchor });
+    const caret = text_field.draw(ui, qf, s.query.items, s.caret, .{ .style = Theme.onBg(t.fg, bg), .anchor = s.sel_anchor, .field = .picker_query });
     if (inner.h < 2) return caret;
 
     // ── the preview column ──

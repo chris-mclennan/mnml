@@ -118,6 +118,8 @@ pub const State = struct {
     all: bool = false,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     /// The last selected ref's name (a click, Enter). Owned.
     selected: ?[]u8 = null,
@@ -962,6 +964,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         .viewing = viewing(list),
         .filter = st.filter.items,
         .filter_caret = st.filter_caret,
+        .filter_anchor = st.filter_anchor,
         .filter_focused = st.filter_focused,
         .cursor = st.cursor,
         .scroll = st.scroll,
@@ -1794,6 +1797,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
     if (st.filter_focused) {
         switch (k.code) {
             .esc => {
+                st.filter_anchor = null;
                 if (st.filter.items.len > 0) {
                     st.filter.clearRetainingCapacity();
                     st.filter_caret = 0;
@@ -1805,7 +1809,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             else => {
                 if (k.mods.ctrl and k.code == .char and (k.code.char == 'n' or k.code.char == 'p')) {
                     st.cursor = step(list, st.cursor, k.code.char == 'n', 1);
-                } else switch (try text_field.handleKey(&st.filter, &st.filter_caret, app.gpa, k)) {
+                } else switch (try text_field.editKey(&st.filter, &st.filter_caret, &st.filter_anchor, app.gpa, k)) {
                     .ignored => return false,
                     .moved => {},
                     .changed => st.cursor = 0,
@@ -1827,6 +1831,7 @@ pub fn handleKey(app: *App, k: Key) Allocator.Error!bool {
             if (st.filter.items.len > 0) {
                 st.filter.clearRetainingCapacity();
                 st.filter_caret = 0;
+                st.filter_anchor = null;
                 st.cursor = 0;
             } else if (app.active) |a| app.focus = .{ .pane = a };
         },

@@ -138,6 +138,8 @@ pub const Draft = struct {
     value: []const u8,
     key_caret: usize,
     value_caret: usize,
+    key_anchor: ?usize = null,
+    value_anchor: ?usize = null,
     on_value: bool,
 };
 
@@ -265,6 +267,7 @@ pub const Model = struct {
     method: []const u8,
     url: []const u8,
     url_caret: usize,
+    url_anchor: ?usize = null,
     block: Block,
     field: Field,
     edit_tab: EditTab,
@@ -588,13 +591,17 @@ fn drawTopBar(ui: Ui, pane: PaneId, z: Zones, m: Model) ?Caret {
             const focused = m.focused and m.block == .request and m.field == .url;
             const style: Style = .{ .fg = p.fg, .bg = p.bg_dark };
             ui.hit(inner, .{ .script_hit = .{ .pane = pane, .id = hit_url } });
-            if (m.url.len == 0) {
-                _ = ui.putStr(field.x, field.y, field.w, "Enter request URL", .{ .fg = p.comment, .bg = p.bg_dark, .italic = true });
-                if (focused) caret = .{ .x = field.x, .y = field.y };
-            } else {
-                if (text_field.draw(ui, field, m.url, m.url_caret, .{ .style = style, .placeholder = "", .focused = focused })) |c| caret = c;
-                paintVarsOnField(ui, pane, field, m.url, if (focused) m.url_caret else 0, m.url_vars, p.bg_dark);
-            }
+            // A text field: a press puts the caret under it, a double
+            // takes a word, a triple the URL (`dispatch.fieldPress`).
+            if (text_field.draw(ui, field, m.url, m.url_caret, .{
+                .style = style,
+                .placeholder = "Enter request URL",
+                .placeholder_style = .{ .fg = p.comment, .bg = p.bg_dark, .italic = true },
+                .focused = focused,
+                .anchor = m.url_anchor,
+                .field = .{ .pane_field = .{ .pane = pane, .sub = .request_url } },
+            })) |c| caret = c;
+            if (m.url.len > 0) paintVarsOnField(ui, pane, field, m.url, if (focused) m.url_caret else 0, m.url_vars, p.bg_dark);
         }
     }
     if (z.tier == .small) return caret;
@@ -759,8 +766,8 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
         },
         .params => {
             if (m.path_params.len == 0) {
-                _ = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor, .focused = focused });
-                return null;
+                const t = drawKvTable(ui, pane, content, m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor, .focused = focused });
+                return if (focused) t.caret else null;
             }
             // Two groups: `Path` — the URL's `:name` segments, a value
             // each from `# @path` — over `Query`; the cursor runs down
@@ -774,8 +781,8 @@ fn drawEdit(ui: Ui, pane: PaneId, r: Rect, tab: EditTab, m: Model, focused: bool
             y += pt.rows;
             if (y < content.bottom()) _ = ui.putStr(content.x + 2, y, content.w -| 2, "Query", group);
             y += 1;
-            _ = drawKvTable(ui, pane, Rect.init(content.x, y, content.w, content.bottom() -| y), m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor -| n_path, .focused = focused and m.row_cursor >= n_path });
-            return null;
+            const qt = drawKvTable(ui, pane, Rect.init(content.x, y, content.w, content.bottom() -| y), m.params, if (secondary) null else m.draft, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = !secondary, .cursor = m.row_cursor -| n_path, .focused = focused and m.row_cursor >= n_path });
+            return if (focused) qt.caret else null;
         },
         .auth => {
             drawAuth(ui, pane, content, m, focused);
@@ -967,8 +974,8 @@ const KvOpts = struct {
     tip: ?[]const u8 = null,
 };
 
-/// What the table painted: its rows, and the draft cell's caret (the
-/// Headers table only — the completion popup anchors on it).
+/// What the table painted: its rows, and the draft cell's caret (where
+/// the terminal cursor goes, and the Headers completion popup hangs).
 const KvPainted = struct { rows: u16, caret: ?Caret = null };
 
 /// Rust's `render_kv_table`: `┌──┬──┬───┐`, a Name / Value header, one
@@ -1090,21 +1097,35 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
         }
     }
     if (draft) |d| if (ry < r.h) {
-        const mark: []const u8 = if (ascii) "|" else "\u{258F}";
-        const key_display = if (d.key.len == 0 and !d.on_value) mark else if (d.key.len == 0) "(name)" else if (!d.on_value) ui.fmt("{s}{s}", .{ d.key, mark }) else d.key;
-        const val_display = if (d.value.len == 0 and d.on_value) mark else if (d.value.len == 0) "(value)" else if (d.on_value) ui.fmt("{s}{s}", .{ d.value, mark }) else d.value;
         const active: Style = .{ .fg = p.yellow, .bg = p.bg_dark, .bold = true };
         const ready = std.mem.trim(u8, d.key, " ").len > 0 and std.mem.trim(u8, d.value, " ").len > 0;
-        const cells = c.cells(ry, key_display, if (d.on_value) dim(p) else active, val_display, if (d.on_value) active else dim(p), if (ascii) " v " else " \u{2713} ", .{ .fg = if (ready) p.green else p.comment, .bg = p.bg_dark, .bold = true });
+        const cells = c.cells(ry, "", dim(p), "", dim(p), if (ascii) " v " else " \u{2713} ", .{ .fg = if (ready) p.green else p.comment, .bg = p.bg_dark, .bold = true });
         const rr = r.row(ry);
-        ui.hit(Rect.init(cells.key_x, rr.y, name_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
-        ui.hit(Rect.init(cells.value_x, rr.y, value_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_value } });
+        const key_r = Rect.init(cells.key_x, rr.y, @min(name_w, r.right() -| cells.key_x), 1);
+        const value_r = Rect.init(cells.value_x, rr.y, @min(value_w, r.right() -| cells.value_x), 1);
+        ui.hit(key_r, .{ .script_hit = .{ .pane = pane, .id = hit_draft_key } });
+        ui.hit(value_r, .{ .script_hit = .{ .pane = pane, .id = hit_draft_value } });
         ui.hit(Rect.init(cells.x_x, rr.y, x_col_w, 1), .{ .script_hit = .{ .pane = pane, .id = hit_draft_commit } });
-        if (kind == .headers and focused) {
-            // The mark's cell: where the popup hangs from.
-            const cx = if (d.on_value) cells.value_x + @min(ui.width(d.value), value_w -| 1) else cells.key_x + @min(ui.width(d.key), name_w -| 1);
-            out.caret = .{ .x = @min(cx, r.right() -| 1), .y = rr.y };
-        }
+        // Both cells are text fields: the one being typed in carries the
+        // caret (where the completion popup hangs from), the other its
+        // placeholder; a press on either puts the caret under it.
+        const key_caret = text_field.draw(ui, key_r, d.key, d.key_caret, .{
+            .style = if (d.on_value) dim(p) else active,
+            .placeholder = if (d.on_value) "(name)" else null,
+            .placeholder_style = dim(p),
+            .focused = !d.on_value,
+            .anchor = d.key_anchor,
+            .field = .{ .pane_field = .{ .pane = pane, .sub = .request_draft_key } },
+        });
+        const value_caret = text_field.draw(ui, value_r, d.value, d.value_caret, .{
+            .style = if (d.on_value) active else dim(p),
+            .placeholder = if (d.on_value) null else "(value)",
+            .placeholder_style = dim(p),
+            .focused = d.on_value,
+            .anchor = d.value_anchor,
+            .field = .{ .pane_field = .{ .pane = pane, .sub = .request_draft_value } },
+        });
+        if (focused) out.caret = if (d.on_value) value_caret else key_caret;
         ry += 1;
     };
     c.rule(ry, "\u{2514}", "\u{2534}", "\u{2518}"); // chrome-audit: allow — as above
@@ -2130,11 +2151,11 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     try testing.expectEqual(hit_param_del, fx.hits.at(85, 10).?.script_hit.id);
     try testing.expectEqual(hit_add_row, fx.hits.at(5, 12).?.script_hit.id);
     try testing.expectEqual(hit_var_base, fx.hits.at(24, 2).?.script_hit.id);
-    // The draft row: the caret mark in the name, `✓` dim until both
-    // cells hold text.
+    // The draft row: the name a field with the caret, the value its
+    // placeholder, `✓` dim until both cells hold text.
     m.draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false };
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(12, "\u{2502}  \u{2502} \u{258F}" ++ " " ** 25 ++ " \u{2502} (value)" ++ " " ** 42 ++ " \u{2502} \u{2713} \u{2502}");
+    try fx.expectRow(12, "\u{2502}  \u{2502} " ++ " " ** 26 ++ " \u{2502} (value)" ++ " " ** 42 ++ " \u{2502} \u{2713} \u{2502}");
     try testing.expectEqual(hit_draft_commit, fx.hits.at(85, 12).?.script_hit.id);
     try testing.expectEqual(hit_draft_value, fx.hits.at(40, 12).?.script_hit.id);
     try testing.expect(fx.fgEql(85, 12, .{ .fg = fx.theme.palette.comment }));
@@ -2230,18 +2251,20 @@ test "the Headers table: rows in cells with their `{{VAR}}` spans, the draft's c
     try testing.expectEqual(hit_header_row + 1, fx.hits.at(4, 5).?.script_hit.id);
     // The tip hangs under the cursor row (row 5 → row 6).
     try testing.expect(std.mem.indexOf(u8, fx.row(6, &buf), "Authorization \u{2014} Credentials") != null);
-    // A draft: the caret sits at the mark's cell, for the popup.
+    // A draft: the caret sits after the typed name, for the popup.
     var fx2 = try fixture.init(70, 14);
     defer fx2.deinit();
     const d: Draft = .{ .key = "Conte", .value = "", .key_caret = 5, .value_caret = 0, .on_value = false };
     const t2 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .headers, .row_hit = hit_header_row, .del_hit = hit_header_del, .add = true, .cursor = 0, .focused = true });
     try testing.expect(t2.caret != null);
     try testing.expectEqual(@as(u16, 7), t2.caret.?.y);
-    try testing.expect(std.mem.indexOf(u8, fx2.row(7, &buf), "Conte\u{258F}") != null);
+    try testing.expect(std.mem.indexOf(u8, fx2.row(7, &buf), "Conte ") != null);
     try testing.expectEqual(@as(u16, 4 + 5), t2.caret.?.x);
-    // Params never returns one.
+    // Params puts the terminal cursor there too; unfocused, neither does.
     const t3 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = true, .cursor = 0, .focused = true });
-    try testing.expect(t3.caret == null);
+    try testing.expectEqual(t2.caret.?, t3.caret.?);
+    const t4 = drawKvTable(fx2.ui(), 0, r, &rows, d, .{ .kind = .params, .row_hit = hit_param_row, .del_hit = hit_param_del, .add = true, .cursor = 0, .focused = false });
+    try testing.expect(t4.caret == null);
 }
 
 test "the Params tab with path params: the Path group over Query, the unset value's words, the path rows' hits; without any the query table alone" {

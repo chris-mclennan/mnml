@@ -50,6 +50,7 @@ pub const Props = struct {
     scroll: usize,
     input: []const u8,
     caret: usize,
+    anchor: ?usize = null,
     state: toolbar.SessionState,
     focused: bool,
     show_toolbar: bool = true,
@@ -89,12 +90,14 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: Props) ?Caret {
     const input_row = rest.row(rest.h - 1);
     const pw = ui.putStr(input_row.x + 1, input_row.y, input_row.w -| 1, prompt, Theme.onBg(t.accent, bg));
     const field = Rect.init(input_row.x + 1 + pw, input_row.y, input_row.w -| (1 + pw), 1);
+    ui.hit(input_row, .{ .script_hit = .{ .pane = pane, .id = input_hit } });
     const caret = text_field.draw(ui, field, p.input, p.caret, .{
         .style = Theme.onBg(t.fg, bg),
         .placeholder = if (p.state == .stopped) "expression \u{2014} Tab completes, \u{2191}\u{2193} history" else "expression (evaluates once stopped)",
         .focused = p.focused,
+        .anchor = p.anchor,
+        .field = .{ .pane_field = .{ .pane = pane, .sub = .dap_input } },
     });
-    ui.hit(input_row, .{ .script_hit = .{ .pane = pane, .id = input_hit } });
     if (rest.h < 2) return caret;
     // The scrollback: the last `body.h` lines before the scroll offset.
     const body = Rect.init(rest.x, rest.y, rest.w, rest.h - 1);
