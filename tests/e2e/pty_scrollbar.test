@@ -1,0 +1,21 @@
+# A terminal's scrollback has a bar over the pane's last column — never
+# a column of the child's own, so the child's size never changes. At the
+# live bottom it stays out of the way (a press on that column is the
+# terminal's); with the pointer on the column it shows: the thumb drags
+# the view through the history, a press on the track pages. The pane
+# fills rows 2..37 at 120x40, its last column is 119.
+command view.toggle_tree
+ex term sh -c "seq 1 200; exec cat"
+wait 500
+expect screen contains "▌200 "
+expect screen contains "▌166 "
+hover 40 10
+click 119 3
+expect screen contains "▌200 "
+hover 119 10
+drag 119 37 119 2
+expect screen contains "▌1 "
+expect screen lacks "▌200 "
+click 119 37
+expect screen contains "▌36 "
+expect screen lacks "▌1 "

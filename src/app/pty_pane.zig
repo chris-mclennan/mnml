@@ -1219,6 +1219,71 @@ pub fn wheel(app: *App, p: *PtyPane, down: bool, rows: usize, lines: usize) void
     p.scrollBy(if (down) delta else -delta);
 }
 
+// ─── the scrollback's bar ───────────────────────────────────────────────
+//
+// The bar lies over the pane's last column; it never takes a column of
+// its own, so the child's size never changes when it comes or goes (a
+// resize on the first line of scrollback would reflow every shell).
+// Over the child's cells it shows only when it has something to say:
+// the view is scrolled back, the pointer is on that column, or its
+// thumb is held. At the live bottom with the pointer elsewhere the
+// child's last column is the child's.
+
+/// The scrollback's extent in rows: everything, the first row in view,
+/// the rows in view. Null when there is nothing to scroll — the
+/// alternate screen keeps no history, and a short one fits.
+pub const Bar = struct { total: usize, offset: usize, len: usize };
+
+pub fn barOf(p: *PtyPane) ?Bar {
+    const session = p.session orelse return null;
+    const term = session.terminal();
+    if (term.screens.active_key == .alternate) return null;
+    // Amortised O(1): the total is kept as rows arrive and the offset is
+    // cached between scrolls (`PageList.scrollbar`).
+    const sb = term.screens.active.pages.scrollbar();
+    if (sb.total <= sb.len) return null;
+    return .{ .total = sb.total, .offset = sb.offset, .len = sb.len };
+}
+
+/// Whether the bar paints this frame over `col` (the pane's last
+/// column): scrolled back from the live bottom, the pointer on that
+/// column (unless the child takes the mouse), or a drag holding it.
+pub fn barShown(app: *const App, id: PaneId, p: *PtyPane, b: Bar, col: u16, rows: Body) bool {
+    if (b.offset + b.len < b.total) return true;
+    if (app.drag) |d| if (d == .scrollbar and d.scrollbar.pane == id) return true;
+    const h = app.hover orelse return false;
+    if (h.x != col or h.y < rows.y or h.y >= rows.y + rows.h) return false;
+    return p.encoding().mouse == .none;
+}
+
+/// A left press on the bar's `track`: on the thumb it grabs it (the
+/// return is the row of the thumb it was taken by, for `barDrag`); on
+/// the track above or below it pages the view a screenful that way.
+pub fn barPress(app: *App, p: *PtyPane, track: Rect, y: u16) ?u16 {
+    const b = barOf(p) orelse return null;
+    const th = @import("../ui/scrollbar.zig").thumb(track.h, b.total, b.len, b.offset) orelse return null;
+    const rel = y -| track.y;
+    app.needs_render = true;
+    if (rel >= th.start and rel < th.start + th.len) return rel - th.start;
+    const page: isize = @intCast(@max(b.len, 2) - 1);
+    p.scrollBy(if (rel < th.start) -page else page);
+    return null;
+}
+
+/// The held thumb follows the pointer: the row `grab` cells into it
+/// stays under it, and the view lands where the thumb now says.
+pub fn barDrag(app: *App, p: *PtyPane, track: Rect, grab: u16, y: u16) void {
+    const b = barOf(p) orelse return;
+    const th = @import("../ui/scrollbar.zig").thumb(track.h, b.total, b.len, b.offset) orelse return;
+    const max_start = track.h - th.len;
+    const start: u16 = @min((y -| track.y) -| grab, max_start);
+    const max_scroll = b.total - b.len;
+    const row: usize = if (max_start == 0) 0 else (@as(usize, start) * max_scroll) / max_start;
+    const session = p.session orelse return;
+    session.terminal().scrollViewport(if (row >= max_scroll) .bottom else .{ .row = row });
+    app.needs_render = true;
+}
+
 /// A mouse event inside the pane's rect: a report to the child when it
 /// tracks the mouse, else the wheel follows `wheel`'s rule.
 pub fn mouse(app: *App, p: *PtyPane, m: Mouse, origin: struct { x: u16, y: u16 }) void {
@@ -2955,4 +3020,75 @@ test "a double-click takes the word and a triple the line, copied only under cop
     try clickAt(&app, m, 8, true);
     try t.expect(hasSelection(m));
     try t.expectEqualStrings("MOUSEME", app.clipboard.text());
+}
+
+/// The `.scrollbar` hit over column `x` of the pane, if one was painted.
+fn barHitAt(app: *App, id: PaneId, x: u16, y: u16) bool {
+    const h = app.hits.at(x, y) orelse return false;
+    return h == .scrollbar and h.scrollbar.owner == .pane and h.scrollbar.owner.pane == id;
+}
+
+test "the scrollback's bar: over the last column only when scrolled back or pointed at, never on the alternate screen, the child's size the same throughout; the track pages, the thumb drags" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "i=1; while [ $i -le 200 ]; do echo line $i; i=$((i+1)); done; echo DONE; exec cat" }, .label = "bar" });
+    try t.expect(try tickUntilScreen(&app, "DONE", 5000));
+    const p = app.panes.pty(id).?;
+    const cols = p.cols;
+    const rows = p.rows;
+    const b = p.body;
+    const col = b.x + b.w - 1;
+    // Live at the bottom, the pointer elsewhere: no bar, the column is the child's.
+    const live = barOf(p).?;
+    try t.expect(live.total > live.len);
+    try t.expectEqual(live.total - live.len, live.offset);
+    try app.render();
+    try t.expect(!barHitAt(&app, id, col, b.y + 1));
+    // Pointed at: the bar, its thumb at the bottom.
+    try app.handle(.{ .mouse = .{ .x = col, .y = b.y + 2, .kind = .motion } });
+    try app.render();
+    try t.expect(barHitAt(&app, id, col, b.y + 1));
+    try t.expect(@import("vaxis").Color.eql(app.screen.readCell(col, b.y + b.h - 1).?.style.bg, app.theme.muted.fg));
+    try app.handle(.{ .mouse = .{ .x = b.x + 2, .y = b.y + 2, .kind = .motion } });
+    try app.render();
+    try t.expect(!barHitAt(&app, id, col, b.y + 1));
+    // Scrolled back by the wheel: shown wherever the pointer is.
+    app.now_ms += 1000;
+    for (0..5) |_| try app.handle(.{ .mouse = .{ .x = b.x + 2, .y = b.y + 2, .kind = .scroll_up } });
+    try app.tick(app.now_ms);
+    try app.render();
+    try t.expect(barOf(p).?.offset < live.offset);
+    try t.expect(barHitAt(&app, id, col, b.y + 1));
+    try t.expectEqual(cols, p.cols);
+    try t.expectEqual(rows, p.rows);
+    // A press on the track above the thumb pages up a screenful less one.
+    const before = barOf(p).?.offset;
+    try app.handle(.{ .mouse = .{ .x = col, .y = b.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = col, .y = b.y, .kind = .release, .button = .left } });
+    try t.expectEqual(before - (b.h - 1), barOf(p).?.offset);
+    // The thumb, grabbed and dragged to the top: the oldest line in view.
+    try app.render();
+    const sb = @import("../ui/scrollbar.zig");
+    const th = sb.thumb(b.h, barOf(p).?.total, barOf(p).?.len, barOf(p).?.offset).?;
+    app.now_ms += 1000;
+    try app.handle(.{ .mouse = .{ .x = col, .y = b.y + th.start, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = col, .y = 0, .kind = .drag, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = col, .y = 0, .kind = .release, .button = .left } });
+    try t.expectEqual(@as(usize, 0), barOf(p).?.offset);
+    try app.render();
+    try t.expect(try tickUntilScreen(&app, "line 1 ", 2000));
+    try t.expectEqual(cols, p.cols);
+    try t.expectEqual(rows, p.rows);
+    // The alternate screen keeps no history: no bar, pointed at or not.
+    const alt = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "i=1; while [ $i -le 200 ]; do echo line $i; i=$((i+1)); done; printf '\\033[?1049hALTSCREEN\\n'; exec cat" }, .label = "alt" });
+    try t.expect(try tickUntilScreen(&app, "ALTSCREEN", 5000));
+    const ap = app.panes.pty(alt).?;
+    try t.expect(barOf(ap) == null);
+    const ab = ap.body;
+    try app.handle(.{ .mouse = .{ .x = ab.x + ab.w - 1, .y = ab.y + 1, .kind = .motion } });
+    try app.render();
+    try t.expect(!barHitAt(&app, alt, ab.x + ab.w - 1, ab.y + 1));
 }

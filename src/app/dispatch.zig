@@ -2316,6 +2316,13 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .pane => |id| {
                     if (!grab) return;
                     if (app.panes.editor(id) != null) return beginScrollbarDrag(app, id, track, m.y);
+                    // A terminal's scrollback: the thumb is grabbed where
+                    // it was taken, the track pages.
+                    if (app.panes.pty(id)) |p| {
+                        focusOnPress(app, id);
+                        if (pty_pane.barPress(app, p, track, m.y)) |g| app.drag = .{ .scrollbar = .{ .pane = id, .grab = g } };
+                        return;
+                    }
                     try paneBarJump(app, id, track, m.y);
                 },
             }
@@ -3883,6 +3890,10 @@ fn beginScrollbarDrag(app: *App, id: PaneId, track: Rect, y: u16) Allocator.Erro
 /// cursor goes to the row the thumb names (as the wheel would move
 /// it); otherwise the view moves and pins, the cursor stays.
 fn dragScrollbar(app: *App, id: PaneId, grab: u16, y: u16) Allocator.Error!void {
+    if (app.panes.pty(id)) |p| {
+        const track = scrollbarTrackOf(app, .{ .pane = id }) orelse return;
+        return pty_pane.barDrag(app, p, track, grab, y);
+    }
     const e = app.panes.editor(id) orelse return;
     const track = scrollbarTrackOf(app, .{ .pane = id }) orelse return;
     const total = e.buf.editor.lineCount();
