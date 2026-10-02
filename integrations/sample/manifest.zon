@@ -24,4 +24,12 @@
     .settings = .{
         .{ .key = "mood", .label = "Mood", .options = .{ "calm", "eager", "sleepy" }, .default = "calm", .help = "Reaches the binary as MNML_SETTING_MOOD" },
     },
+    // A shape of text this integration knows how to link (docs/SDK.md,
+    // *Links*): `SAMPLE-12` on a session card underlines, and a click
+    // opens the address. `{0}` is the match. A real tracker's address
+    // names its site as `{site_url}`, a key of `auth[]` or `settings[]`
+    // that `--install` (or mnml, from the field's `env_fallback`) fills.
+    .links = .{
+        .{ .pattern = "SAMPLE-\\d+", .url = "https://example.com/sample/{0}" },
+    },
 }
