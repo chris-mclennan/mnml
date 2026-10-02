@@ -101,10 +101,14 @@ choice. When one starts waiting:
   (`ui.session_notify`: `off`, `unfocused` or `always`);
 - the terminal bell rings if you set `ui.session_bell = true`.
 
-`sessions.next_waiting` jumps straight to the next session that needs
-you — `space a j` in the vim profile, `ctrl+alt+n` in the standard one —
-and `sessions.prev_waiting` goes back (`space a k`,
-`ctrl+alt+shift+n`).
+`sessions.next_waiting` jumps straight to the next session that is
+ready for you — `space a j` in the vim profile, `ctrl+alt+n` in the
+standard one — and `sessions.prev_waiting` goes back (`space a k`,
+`ctrl+alt+shift+n`). Ready means waiting on you (those come first,
+oldest wait first), or finished a turn or ended since you last looked at
+it (oldest first, marked `◆` beside its SESSIONS card); a session still
+working, or one you have already looked at, is skipped. In the sessions
+mode the step swaps the session into the focused column.
 
 ## Every session on the machine
 

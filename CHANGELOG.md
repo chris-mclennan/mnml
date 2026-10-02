@@ -28,6 +28,18 @@ the release ships one file), and one line per change a user can see.
   sessions stacked behind the others.
 - One click on a SESSIONS card shows that session when the page is zoomed or
   in the sessions mode; a `•` beside a card marks a session on screen.
+- `sessions.next_waiting` / `prev_waiting` (`Ctrl+Alt+N` / `Ctrl+Alt+Shift+N`,
+  `space a j` / `space a k`) now walk every session that is ready for you,
+  and skip the rest: the ones waiting on you first, oldest wait first, then
+  the ones that finished a turn or ended since you last looked at them,
+  oldest first. A session still working, or one you have already looked at,
+  is passed over; it joins again when it finishes its next turn. The toast
+  says which it is — `needs you: NAME (3 ready)`, `finished: NAME (3 ready)`.
+  In the sessions mode the step swaps the session into the focused column;
+  on a zoomed page it takes the zoom.
+- A `◆` beside a SESSIONS card marks a session that finished or ended since
+  you last looked at it, and the bell's right-click lists those sessions
+  under *Finished:* / *Ended:* after the ones that need input.
 - The session count on a strip no longer reads ` ‹ 1/1 › ` with several
   sessions open: a session left in the background, or started through a
   shell (`:term ./bin/claude`) or a wrapper script, now counts everywhere
