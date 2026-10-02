@@ -205,8 +205,8 @@ pub const Button = enum(u32) {
     split_right = 14,
     split_down = 15,
     split_max = 16,
-    /// The strip's ` +N hidden ` chip: the buffer picker.
-    hidden_tabs = 17,
+    /// The strip's ` ⋯ ` beside the pager: the buffer picker.
+    all_tabs = 17,
     /// The right column's strip: its `×` closes the column, its chip
     /// focuses the column, its ` 󰐕 ` opens the add-panel menu.
     right_close = 18,
@@ -1610,7 +1610,7 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         .scroll_right = Button.tabScroll(li, .right),
         .split = try splitIds(app, ui),
         .mode_chip = modeChip(app, ui, leaf.active),
-        .hidden_button = @intFromEnum(Button.hidden_tabs),
+        .all_tabs = @intFromEnum(Button.all_tabs),
         // The maximize button reads restore while this leaf is zoomed —
         // or in full screen, where the zoom is moot and the button is
         // the way out (Rust `ui/mod.rs`).

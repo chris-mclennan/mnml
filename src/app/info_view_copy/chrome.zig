@@ -204,9 +204,9 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
                 .fullscreen => &.{ .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.maximize_click"), .label = "Maximize button in Settings" } } },
             },
         },
-        .hidden_tabs => .{
-            .title = "Hidden tabs",
-            .body = "The strip ran out of room, and this `+N` chip counts the tabs it is not showing. Click opens the buffer picker, which lists every tab shown or not, with its path; the tab scroll markers at either end walk them one at a time. Closing the tabs you are done with is the other cure.",
+        .all_tabs => .{
+            .title = "All tabs",
+            .body = "The strip has more tabs than it can show at once, so it pages them: `‹ n/m ›` beside this chip turns the page. The `⋯` jumps instead — click opens the buffer picker, every tab by name with its path, on this page or another; type to filter, Enter shows the one you pick. Closing the tabs you are done with is the other cure.",
             .keys = &.{.{ .command = .@"picker.buffers", .label = "Buffer picker" }},
             .links = &.{ .{ .command = .{ .id = .@"picker.buffers", .label = "List every tab" } }, .{ .command = .{ .id = .@"buffer.close_others", .label = "Close the other tabs" } } },
         },

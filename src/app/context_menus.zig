@@ -1953,7 +1953,7 @@ test "right-click: the chrome chips — a chip with a menu answers true, one wit
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const render = @import("render.zig");
-    try t.expect(!try openButtonMenu(&app, @intFromEnum(render.Button.hidden_tabs), 3, 3));
+    try t.expect(!try openButtonMenu(&app, @intFromEnum(render.Button.all_tabs), 3, 3));
     try t.expect(app.overlay == .none);
     try t.expect(try openButtonMenu(&app, @intFromEnum(render.Button.toggle_tree), 3, 3));
     try t.expectEqualStrings("Sidebar", app.overlay.menu.title);

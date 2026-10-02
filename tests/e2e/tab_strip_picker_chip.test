@@ -1,0 +1,59 @@
+# width: 80
+# height: 24
+# env: PATH=
+# Twelve tabs at 80 columns overflow the strip: it pages them with
+# ` ‹ n/m › ` (`ui/stepper.zig`), and after the pager stands ` ⋯ ` — a
+# stepper button, the "more" ellipsis the list rows' kebab wears — that
+# opens the buffer picker on every tab, on the page or not, so a tab
+# three pages away is one click and a few letters off. It says no count:
+# nothing is hidden, every page is a click away. PATH is empty so no AI
+# chip moves the cluster.
+write t1.txt "t1\n"
+write t2.txt "t2\n"
+write t3.txt "t3\n"
+write t4.txt "t4\n"
+write t5.txt "t5\n"
+write t6.txt "t6\n"
+write t7.txt "t7\n"
+write t8.txt "t8\n"
+write t9.txt "t9\n"
+write t10.txt "t10\n"
+write t11.txt "t11\n"
+write t12.txt "t12\n"
+open t1.txt
+open t2.txt
+open t3.txt
+open t4.txt
+open t5.txt
+open t6.txt
+open t7.txt
+open t8.txt
+open t9.txt
+open t10.txt
+open t11.txt
+open t12.txt
+# The last page, the pager and the ` ⋯ ` after it (columns 65-67).
+expect screen contains "‹ 4/4 ›  ⋯"
+expect screen lacks "t1.txt"
+expect screen lacks "hidden"
+click 66 1
+expect screen contains "Buffers"
+expect screen contains "t1.txt"
+expect screen contains "t2.txt"
+expect screen contains "t3.txt"
+expect screen contains "t4.txt"
+expect screen contains "t5.txt"
+expect screen contains "t6.txt"
+expect screen contains "t7.txt"
+expect screen contains "t8.txt"
+expect screen contains "t9.txt"
+expect screen contains "t10.txt"
+expect screen contains "t11.txt"
+expect screen contains "t12.txt"
+# Typing filters the list; Enter shows the tab, and the strip pages to it.
+type t1.txt
+key enter
+expect screen lacks "Buffers"
+expect pane t1.txt
+expect screen contains "‹ 1/4 ›  ⋯"
+expect screen contains " t1.txt 󰅖"

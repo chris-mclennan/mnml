@@ -9,7 +9,9 @@
 //!   page of tabs on show and the arrows page through the hidden ones.
 //!
 //! Each arrow is a button-wide `.button` hit, painted in the same
-//! statement as its cells; the pointer over one lights it. The number
+//! statement as its cells; the pointer over one lights it. `button` is
+//! that one cell-group on its own, for a strip that sets another button
+//! beside the control in the same look (the tab strip's ` ⋯ `). The number
 //! between them is in the dim role. With nothing to step — `m` of one,
 //! or a strip whose tabs all fit — the control is not painted and takes
 //! no cells: `width` is 0 and `draw` paints nothing.
@@ -79,22 +81,25 @@ pub fn draw(ui: Ui, x0: u16, y: u16, right: u16, s: Stepper, form: Form) u16 {
     const bg = p.bg_darker;
     var x = x0;
     if (x + button_w > right) return 0;
-    arrow(ui, x, y, if (ui.ascii) prev_ascii else prev_glyph, s.prev);
+    button(ui, x, y, if (ui.ascii) prev_ascii else prev_glyph, s.prev);
     x += button_w;
     if (form == .full) x += ui.putStr(x, y, right -| x, label(ui, s), .{ .fg = p.comment, .bg = bg });
     if (x + button_w > right) return x - x0;
-    arrow(ui, x, y, if (ui.ascii) next_ascii else next_glyph, s.next);
+    button(ui, x, y, if (ui.ascii) next_ascii else next_glyph, s.next);
     x += button_w;
     return x - x0;
 }
 
-/// One arrow: its cell, lit under the pointer, and its hit.
-fn arrow(ui: Ui, x: u16, y: u16, glyph: []const u8, id: u32) void {
+/// One button, `button_w` cells: its face centred in them (a one-cell
+/// glyph between two cells of air, or a three-cell face filling them),
+/// lit under the pointer, and its hit.
+pub fn button(ui: Ui, x: u16, y: u16, face: []const u8, id: u32) void {
     const p = ui.theme.palette;
     const r = Rect.init(x, y, button_w, 1);
     const style: Style = if (ui.hovered(r)) .{ .fg = p.fg, .bg = p.bg2, .bold = true } else .{ .fg = p.fg, .bg = p.bg_darker, .bold = true };
     ui.fill(r, .{ .bg = style.bg });
-    _ = ui.putStr(x + 1, y, 1, glyph, style);
+    const fw = @min(ui.width(face), button_w);
+    _ = ui.putStr(x + (button_w - fw) / 2, y, fw, face, style);
     ui.hit(r, .{ .button = id });
 }
 

@@ -43,7 +43,7 @@ const Color = vaxis.Color;
 /// `.button` ids of the palette-bar chips: `chip_base + index`. Kept
 /// clear of `render.Button`'s small values and its `0x40`.. bases —
 /// dispatch tests this range before the `Button` switch, so a base of
-/// `0x10` swallowed `split_max` / `hidden_tabs` / `right_close`.
+/// `0x10` swallowed `split_max` / `all_tabs` / `right_close`.
 pub const chip_base: u32 = 0x0300;
 pub const max_chips: u32 = 0x30;
 /// `.button` ids of the section's three tabs: `tab_base + @intFromEnum(tab)`.

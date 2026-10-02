@@ -38,6 +38,13 @@ the release ships one file), and one line per change a user can see.
 - A tab strip whose tabs overflow shows ` ‹ 2/5 › `: the page of tabs on
   show, its arrows turning a page. Nothing is painted when every tab fits,
   and a session strip with one session shows no ` ‹ 1/1 › `.
+- Beside the pager, ` ⋯ ` opens the buffer picker: every tab by name, on
+  the page or not, one click away. It shows only while the strip pages, is
+  the first thing to go on a strip short of room, and a session's strip
+  leaves it to the sessions rail. The ` +N hidden ` count is gone — with
+  every page a click away, nothing is hidden.
+- Opening the tab just past the strip's last whole tab brings it into view
+  whole; it used to stay cut at the edge, its name and close button lost.
 - Double-click a tab to zoom its pane; double-click again to put the splits
   back.
 

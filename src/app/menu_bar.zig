@@ -601,7 +601,7 @@ pub fn describeButton(app: *App, arena: Allocator, id: u32) Allocator.Error!?Tip
             .detail = try std.fmt.allocPrint(arena, "click: {s} · right-click: the modes · Settings → UI to change", .{command.name(zen.clickCommand(app))}),
         },
         .fullscreen_exit => .{ .title = "Exit full screen", .detail = "click: the frame comes back (view.fullscreen) · Esc Esc" },
-        .hidden_tabs => .{ .title = "Hidden tabs", .detail = "click: the buffer picker lists every tab, shown or not (picker.buffers)" },
+        .all_tabs => .{ .title = "All tabs", .detail = "click: the buffer picker lists every tab, on this page or not (picker.buffers)" },
         // The chip shows SESSIONS, and starts a session only when
         // there is none (`app/ai.zig`'s `chipClick`).
         .ai_claude => .{
