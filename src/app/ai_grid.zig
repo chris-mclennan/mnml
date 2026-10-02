@@ -132,7 +132,7 @@ pub fn countOnPage(app: *App) usize {
 fn countOn(app: *App, layout: *layout_mod.Layout) usize {
     var n: usize = 0;
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
-        .pty => |*p| if (pty_pane.productOf(app, p) == .claude and layout.leafOf(@intCast(i)) != null) {
+        .pty => |*p| if (@import("launch_profiles.zig").productOfPane(app, p) == .claude and layout.leafOf(@intCast(i)) != null) {
             n += 1;
         },
         else => {},
@@ -144,7 +144,7 @@ fn onPage(app: *App, arena: Allocator) Allocator.Error![]PaneId {
     var out: std.ArrayListUnmanaged(PaneId) = .empty;
     const layout = app.layouts.current();
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
-        .pty => |*p| if (pty_pane.productOf(app, p) == .claude and layout.leafOf(@intCast(i)) != null) try out.append(arena, @intCast(i)),
+        .pty => |*p| if (@import("launch_profiles.zig").productOfPane(app, p) == .claude and layout.leafOf(@intCast(i)) != null) try out.append(arena, @intCast(i)),
         else => {},
     };
     return out.items;
@@ -272,7 +272,7 @@ const Fixture = struct {
         var n: usize = 0;
         const layout = &f.app.layouts.layouts.items[page];
         for (f.app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
-            .pty => |*p| if (pty_pane.productOf(&f.app, p) == .claude and layout.leafOf(@intCast(i)) != null) {
+            .pty => |*p| if (@import("launch_profiles.zig").productOfPane(&f.app, p) == .claude and layout.leafOf(@intCast(i)) != null) {
                 n += 1;
             },
             else => {},

@@ -43,7 +43,7 @@ const step_toast = "session-cycle";
 /// Is `id` an AI session pane?
 pub fn isSession(app: *App, id: PaneId) bool {
     const p = app.panes.pty(id) orelse return false;
-    return pty_pane.productOf(app, p) != null;
+    return @import("launch_profiles.zig").productOfPane(app, p) != null;
 }
 
 /// Every session pane, in ring order: page by page, each page's leaves

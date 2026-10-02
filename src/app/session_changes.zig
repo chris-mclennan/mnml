@@ -163,7 +163,7 @@ fn wallMs(app: *App) i64 {
 /// Is `id` an AI session pane — the kind that gets a record?
 pub fn isSession(app: *App, id: PaneId) bool {
     const p = app.panes.pty(id) orelse return false;
-    return pty_pane.productOf(app, p) != null;
+    return @import("launch_profiles.zig").productOfPane(app, p) != null;
 }
 
 /// The repo root above `dir` (itself included), on the frame arena.
@@ -177,7 +177,7 @@ fn rootAbove(app: *App, dir: []const u8) Allocator.Error!?[]const u8 {
 pub fn onSessionStart(app: *App, id: PaneId) Allocator.Error!void {
     const p = app.panes.pty(id) orelse return;
     if (p.changes != null) return;
-    if (pty_pane.productOf(app, p) == null) return;
+    if (@import("launch_profiles.zig").productOfPane(app, p) == null) return;
     const root = (try rootAbove(app, p.cwd orelse app.workspace)) orelse return;
     // A repository made since the last walk (`git init` in the
     // workspace) is looked for once more, so the workspace's own repo

@@ -2452,7 +2452,7 @@ test "the strip's AI chip: a click shows SESSIONS, and starts a session only whe
     try t.expectEqual(first, findSession(&app, .claude).?);
     var claudes: usize = 0;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| switch (p.*) {
-        .pty => |*pt| if (pty_pane.productOf(&app, pt) == .claude) {
+        .pty => |*pt| if (@import("launch_profiles.zig").productOfPane(&app, pt) == .claude) {
             claudes += 1;
         },
         else => {},

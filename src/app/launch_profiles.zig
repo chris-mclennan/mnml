@@ -223,6 +223,73 @@ pub fn isProductArgv(app: *const App, argv0: []const u8, product: Product) bool 
     return find(app, product, name) != null;
 }
 
+/// Which AI product a command line runs — the ONE test every surface
+/// asks (the tab's mark, SESSIONS' cards, the session ring, the grid):
+/// `argv[0]`'s basename, so a path-qualified `./bin/claude` is Claude as
+/// much as `claude` is; and for a shell's `-c` line (`:term ./bin/claude`
+/// runs `/bin/sh -c ./bin/claude`) the line's first word, past `exec`,
+/// `env` and `NAME=value` words.
+pub fn productOfArgv(app: *const App, argv: []const []const u8) ?Product {
+    if (argv.len == 0) return null;
+    if (productOfWord(app, argv[0])) |p| return p;
+    if (argv.len >= 3 and isShell(argv[0]) and std.mem.startsWith(u8, argv[1], "-") and std.mem.endsWith(u8, argv[1], "c")) {
+        var words = std.mem.tokenizeAny(u8, argv[2], " \t");
+        while (words.next()) |w| {
+            if (std.mem.eql(u8, w, "exec") or std.mem.eql(u8, w, "env") or std.mem.indexOfScalar(u8, w, '=') != null) continue;
+            return productOfWord(app, std.mem.trim(u8, w, "'\""));
+        }
+    }
+    return null;
+}
+
+fn productOfWord(app: *const App, word: []const u8) ?Product {
+    for (std.enums.values(Product)) |product| if (isProductArgv(app, word, product)) return product;
+    return null;
+}
+
+fn isShell(argv0: []const u8) bool {
+    const base = std.fs.path.basename(argv0);
+    for ([_][]const u8{ "sh", "bash", "zsh", "dash", "fish", "ksh" }) |sh| if (std.mem.eql(u8, base, sh)) return true;
+    return false;
+}
+
+/// A pane's product: its command line (`productOfArgv`), else — for a
+/// session launched through a wrapper script whose name is its own —
+/// the title the child set: Claude Code titles its terminal with its
+/// `✳` mark, or a braille spinner while it works.
+pub fn productOfPane(app: *const App, p: *const pty_pane.PtyPane) ?Product {
+    if (productOfArgv(app, p.argv)) |prod| return prod;
+    return productOfTitle(p.childTitle() orelse return null);
+}
+
+pub fn productOfTitle(title: []const u8) ?Product {
+    var it = (std.unicode.Utf8View.init(title) catch return null).iterator();
+    const cp = it.nextCodepoint() orelse return null;
+    const after = it.nextCodepoint() orelse return null;
+    if (after != ' ') return null;
+    if (cp == 0x2733 or (cp >= 0x2801 and cp <= 0x28FF)) return .claude;
+    return null;
+}
+
+test "one product test: a bare, a path-qualified and a shell-run claude; a wrapper by the title it sets; a shell and a plain title are no session" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try t.expectEqual(@as(?Product, .claude), productOfArgv(&app, &.{"claude"}));
+    try t.expectEqual(@as(?Product, .claude), productOfArgv(&app, &.{"./bin/claude"}));
+    try t.expectEqual(@as(?Product, .claude), productOfArgv(&app, &.{ "/usr/local/bin/claude", "--resume", "x" }));
+    try t.expectEqual(@as(?Product, .codex), productOfArgv(&app, &.{"/opt/codex"}));
+    try t.expectEqual(@as(?Product, .claude), productOfArgv(&app, &.{ "/bin/sh", "-c", "./bin/claude" }));
+    try t.expectEqual(@as(?Product, .claude), productOfArgv(&app, &.{ "bash", "-lc", "FOO=1 exec ~/bin/claude --model x" }));
+    try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{ "/bin/sh", "-c", "make && claude" }));
+    try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{"/bin/zsh"}));
+    try t.expectEqual(@as(?Product, null), productOfArgv(&app, &.{"my-claude-wrapper"}));
+    // A wrapper (`my-claude-wrapper` execs the CLI): the child's title.
+    try t.expectEqual(@as(?Product, .claude), productOfTitle("\u{2733} fix the parser"));
+    try t.expectEqual(@as(?Product, .claude), productOfTitle("\u{2810} Thinking"));
+    try t.expectEqual(@as(?Product, null), productOfTitle("vim main.zig"));
+    try t.expectEqual(@as(?Product, null), productOfTitle("\u{2733}"));
+}
+
 /// Open one session with `name`'s profile, beside the active pane. A
 /// profile with `.worktree` opens the name prompt instead and returns
 /// null: the session starts once the worktree exists
