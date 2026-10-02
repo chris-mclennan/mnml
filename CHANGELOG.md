@@ -86,8 +86,11 @@ the release ships one file), and one line per change a user can see.
   the right-click menu's Cut, Copy, Paste, Undo and Select all read Ctrl+X,
   Ctrl+C, Ctrl+V, Ctrl+Z and Ctrl+A, and the hover help names them too. A
   command reached only through the leader (`Space a e`) prints no chord on
-  a standard menu; its hover help names the leader row instead. The vim
-  profile's menus are unchanged.
+  a standard menu; its hover help names the leader row instead.
+- Under the vim profile the same rows print Neovim's own keys: Cut `d`,
+  Copy `y`, Paste `p`, Undo `u`, Redo Ctrl+R, Select all `ggVG`, Toggle fold
+  `za` — never a VS Code chord where vim has a key of its own. Save stays
+  Ctrl+S, which NvChad binds too.
 - The standard profile has VS Code's AI chords: Ctrl+Alt+I (Open Chat)
   opens or focuses a Claude Code session, and Ctrl+Alt+Shift+L (Open Quick
   Chat) asks Claude a question. The `Space a c` / `Space a a` leader rows

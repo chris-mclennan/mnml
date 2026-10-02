@@ -4,8 +4,11 @@
 # answers itself (`input/standard.zig`'s `own_keys`), not keymap
 # bindings, and the rows print them; Explain with Claude is bound only
 # through the leader (`space a e`), and a standard row prints no leader
-# chord. Under vim the rows read the keymap alone, as before: the
-# clipboard rows end bare and the leader chords are printed.
+# chord. Under vim the rows print the vim handler's own Normal verbs
+# (`input/vim.zig`'s `own_keys`), ahead of the keymap's standard-shaped
+# chords — Redo is Ctrl+R, not Ctrl+Shift+Z; Toggle fold is za, not
+# Ctrl+Shift+[ — and the leader chords are printed. Save keeps Ctrl+S,
+# which NvChad binds too.
 write doc.txt "ED01\nED02\nED03"
 open doc.txt
 command view.toggle_tree
@@ -21,10 +24,16 @@ expect screen lacks "Space a"
 key esc
 command editor.use_vim
 rightclick 40 5
-expect screen contains "Cut                                  │"
-expect screen contains "Undo                                 │"
-expect screen contains "Redo                    Ctrl+Shift+Z │"
+expect screen contains "Cut                                d │"
+expect screen contains "Copy                               y │"
+expect screen contains "Paste                              p │"
+expect screen contains "Undo                               u │"
+expect screen contains "Redo                          Ctrl+R │"
+expect screen contains "Select all                      ggVG │"
+expect screen contains "Toggle fold                       za │"
+expect screen contains "Save                          Ctrl+S │"
 expect screen contains "Explain with Claude        Space a e │"
 expect screen lacks "Ctrl+X"
-expect screen lacks "Ctrl+Z │"
+expect screen lacks "Ctrl+Z"
+expect screen lacks "Ctrl+Shift+["
 key esc
