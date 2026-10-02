@@ -72,6 +72,9 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- `mnml --demo` lists its three earlier sessions when the workspace path
+  has a space, an underscore or a Windows drive letter: the demo names
+  Claude Code's project folder by the same rule the app reads it by.
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
 - Right-click on a link in a terminal or session pane offers "Copy link" and

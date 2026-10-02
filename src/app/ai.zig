@@ -2364,6 +2364,16 @@ test "safeRel keeps paths inside the workspace" {
     try t.expectEqualStrings("-Users-me-Projects-mnml-zig", try encodeWorkspace(arena.allocator(), "/Users/me/Projects/mnml.zig"));
 }
 
+test "encodeWorkspace and the demo's projectDirName are one rule: a planted transcript lands where the sessions scan looks, on a Windows path too" {
+    const demo = @import("../config/demo.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "/Users/me/Projects/mnml.zig", "C:\\Users\\dev\\my_ws v2", "/tmp/a+b@c~d", "D:\\a\\_temp\\.zig-cache\\tmp\\x\\ws" }) |ws| {
+        try std.testing.expectEqualStrings(try encodeWorkspace(a, ws), try demo.projectDirName(a, ws));
+    }
+}
+
 test "encodeWorkspace: every byte that is not ASCII alphanumeric becomes '-', as Claude Code names the directory" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

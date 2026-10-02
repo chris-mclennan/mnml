@@ -287,13 +287,27 @@ pub const planted = [_]Planted{
     .{ .id = "c2d86e19-7a4b-4e02-a5f3-91d0c6b8e275", .age_min = 180, .ask = "why does main print nothing for an empty list", .reply = "util.sum returns 0; main now prints a message.", .in = 31200, .out = 4870, .cache = 288000 },
 };
 
-/// Claude Code's project directory name for `ws`: every `/` and `.` a `-`.
+/// Claude Code's project directory name for `ws`: every byte that is
+/// not an ASCII letter or digit a `-` — the separators, the dots, a
+/// Windows drive's colon, a space, an underscore. The app's own
+/// `ai.encodeWorkspace` is the same rule; a test there holds the two
+/// together, since a transcript planted under any other name is one
+/// the sessions scan never finds.
 pub fn projectDirName(arena: Allocator, ws: []const u8) Allocator.Error![]u8 {
     const out = try arena.dupe(u8, ws);
-    for (out) |*c| if (c.* == '/' or c.* == '.' or c.* == '\\') {
+    for (out) |*c| if (!std.ascii.isAlphanumeric(c.*)) {
         c.* = '-';
     };
     return out;
+}
+
+test "projectDirName: a drive colon, a space and an underscore are dashes too — the name is a legal directory on every OS" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings("-home-dev-ws", try projectDirName(a, "/home/dev/ws"));
+    try std.testing.expectEqualStrings("C--Users-dev-my-ws-v2", try projectDirName(a, "C:\\Users\\dev\\my_ws v2"));
+    try std.testing.expectEqualStrings("-tmp--mnml-ws-1", try projectDirName(a, "/tmp/.mnml/ws.1"));
 }
 
 fn jsonString(w: *Io.Writer, s: []const u8) !void {
