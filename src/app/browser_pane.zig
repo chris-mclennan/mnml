@@ -231,6 +231,8 @@ pub const BrowserPane = struct {
     /// pane; switching panels keeps it.
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     /// The DOM row (unfiltered index) whose node Chrome is highlighting.
     hover_dom: ?usize = null,
@@ -1529,6 +1531,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *BrowserPane, k: Key) Allocator.Error
             if (p.filter.items.len > 0) {
                 p.filter.clearRetainingCapacity();
                 p.filter_caret = 0;
+                p.filter_anchor = null;
                 try moveSel(p, 0);
                 return true;
             }
@@ -1578,6 +1581,7 @@ fn filterKey(app: *App, p: *BrowserPane, k: Key) Allocator.Error!bool {
             if (p.filter.items.len > 0) {
                 p.filter.clearRetainingCapacity();
                 p.filter_caret = 0;
+                p.filter_anchor = null;
                 try moveSel(p, 0);
             } else p.filter_focused = false;
             return true;
@@ -1596,7 +1600,7 @@ fn filterKey(app: *App, p: *BrowserPane, k: Key) Allocator.Error!bool {
         },
         else => {},
     }
-    switch (try text_field.handleKey(&p.filter, &p.filter_caret, app.gpa, k)) {
+    switch (try text_field.editKey(&p.filter, &p.filter_caret, &p.filter_anchor, app.gpa, k)) {
         .ignored => return false,
         .moved => return true,
         .changed => {
@@ -1664,6 +1668,12 @@ fn selOf(p: *BrowserPane) ?*usize {
 /// Step the selection `delta` rows through the narrowed order; the log
 /// and perf panels scroll instead. A selection the filter hid snaps to
 /// the first visible row.
+/// The filter's text changed outside its keys (a paste): the rows
+/// narrow again, as a typed character does.
+pub fn filterChanged(p: *BrowserPane) Allocator.Error!void {
+    try moveSel(p, 0);
+}
+
 fn moveSel(p: *BrowserPane, delta: i64) Allocator.Error!void {
     const sel = selOf(p) orelse {
         if (delta < 0) p.scroll += @intCast(-delta) else p.scroll -|= @intCast(delta);
@@ -1839,6 +1849,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *BrowserPane, area: Rect) Allocato
         .device = if (p.device) |d| device_presets[d].name else null,
         .filter = p.filter.items,
         .filter_caret = p.filter_caret,
+        .filter_anchor = p.filter_anchor,
         .filter_focused = p.filter_focused,
         .dialog = if (p.dialog) |d| d.kind else null,
         .tabs = tabCount(p),

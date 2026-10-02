@@ -1913,6 +1913,7 @@ pub fn revealInMarketplace(app: *App, id: []const u8) CommandError!void {
     st.panel.filter.clearRetainingCapacity();
     try st.panel.filter.appendSlice(app.gpa, id);
     st.panel.filter_caret = st.panel.filter.items.len;
+    st.panel.filter_anchor = null;
     st.panel.cursor = 0;
     st.panel.scroll = 0;
     app.needs_render = true;

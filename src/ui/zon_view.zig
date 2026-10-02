@@ -49,16 +49,18 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, z: *ZonPane, focused: bool) ?Caret
 
     // ── row 1: the filter pill ──
     const fr = rest.splitTop(1);
+    // The pill's hit is the pane's own id: this pane routes clicks by
+    // pane.
     var caret = filter_input.draw(ui, fr.top, .{
         .panel = .todos,
         .text = z.filter.items,
         .caret = z.filter_caret,
+        .anchor = z.filter_anchor,
         .focused = z.filter_focused and focused,
         .bg = t.bg,
+        .pane = pane,
+        .pane_hit = Hit.filter,
     });
-    // The pill registers a `.filter_input` for its panel; this pane
-    // routes clicks by pane, so cover it with the pane's own id.
-    ui.hit(fr.top, .{ .script_hit = .{ .pane = pane, .id = Hit.filter } });
     rest = fr.rest;
     if (rest.isEmpty()) return caret;
 

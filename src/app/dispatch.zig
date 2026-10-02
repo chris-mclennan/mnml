@@ -2038,6 +2038,7 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.asZon()) |z| {
         if (app.focus == .pane) return zon_pane.paste(app, z, text);
     };
+    if (app.active) |id| if (app.focus == .pane) if (try paneFilterPaste(app, id, text)) return;
     // The graph's commit box: a pasted message keeps its lines.
     if (try git_app.pasteIntoCommitBox(app, text)) return;
     const e = app.activeEditor() orelse return;
@@ -3278,8 +3279,55 @@ pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
             return .{ .buf = &s.query, .caret = &s.caret, .anchor = &s.sel_anchor };
         },
         .panel_filter => |p| return panelFilter(app, p),
+        .pane_filter => |pane| return (paneFilter(app, pane) orelse return null).ref,
         else => return null,
     }
+}
+
+/// A filter pill a pane hosts, and whether it has the keys.
+fn paneFilter(app: *App, id: PaneId) ?struct { ref: FieldRef, focused: bool } {
+    const pane = app.panes.get(id) orelse return null;
+    return switch (pane.*) {
+        .files => |*f| .{ .ref = .{ .buf = &f.filter, .caret = &f.filter_caret, .anchor = &f.filter_anchor }, .focused = f.filter_focused },
+        .zon => |*z| .{ .ref = .{ .buf = &z.filter, .caret = &z.filter_caret, .anchor = &z.filter_anchor }, .focused = z.filter_focused },
+        .browser => |*b| .{ .ref = .{ .buf = &b.filter, .caret = &b.filter_caret, .anchor = &b.filter_anchor }, .focused = b.filter_focused },
+        .grep => |*g| .{ .ref = .{ .buf = &g.filter, .caret = &g.filter_caret, .anchor = &g.filter_anchor }, .focused = g.filter_active },
+        .sessions_table => |*tp| .{ .ref = tp.list.filterField(), .focused = tp.list.filter_focused },
+        .script => |*sp| blk: {
+            const l = (if (sp.list != 0) script_list.find(app, sp.list) else null) orelse break :blk null;
+            break :blk .{ .ref = l.panel.filterField(), .focused = l.panel.filter_focused };
+        },
+        else => null,
+    };
+}
+
+/// A paste while a pane's own filter has the keys: into the filter,
+/// over its selection, the rows narrowed again as a typed character
+/// would. False when the pane has no focused filter. (A ZON view takes
+/// its pastes itself, its open field first.)
+fn paneFilterPaste(app: *App, id: PaneId, text: []const u8) Allocator.Error!bool {
+    const pf = paneFilter(app, id) orelse return false;
+    if (!pf.focused) return false;
+    try text_field.insertSel(pf.ref.buf, pf.ref.caret, pf.ref.anchor, app.gpa, text);
+    app.needs_render = true;
+    const pane = app.panes.get(id) orelse return true;
+    switch (pane.*) {
+        .files => |*f| {
+            f.cursor = 0;
+            try f.applyFilter();
+        },
+        .browser => |*b| try browser_pane.filterChanged(b),
+        .grep => |*g| try g.rebuild(),
+        .sessions_table => |*tp| {
+            tp.list.cursor = 0;
+            try sessions_table.refilter(app, tp);
+        },
+        .script => |*sp| if (script_list.find(app, sp.list)) |l| {
+            l.panel.cursor = 0;
+        },
+        else => {},
+    }
+    return true;
 }
 
 /// A list panel's filter pill — SEARCH's query and the git palette's
@@ -6019,4 +6067,21 @@ test "a list panel's filter pill: a double-click takes the word, a paste replace
     try std.testing.expectEqual([2]usize{ 0, 13 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
     try app.handle(.{ .key = key_mod.Key.named(.backspace) });
     try std.testing.expectEqualStrings("", st.filterText());
+}
+
+test "a pane's own filter pill (FILES): a double-click takes the word, a paste replaces it and narrows the rows" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 160, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"files.open" });
+    const id = app.active.?;
+    const f = app.panes.get(id).?.asFiles().?;
+    try app.handle(.{ .key = key_mod.Key.char('/') });
+    for ("zzz qqq") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const at = (try fieldCell(&app, .{ .pane_filter = id })).?;
+    try pressAt(&app, at[0] + 5, at[1]);
+    try pressAt(&app, at[0] + 5, at[1]);
+    try std.testing.expectEqual([2]usize{ 4, 7 }, text_field.selRange(f.filter_caret, f.filter_anchor).?);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "x") });
+    try std.testing.expectEqualStrings("zzz x", f.filter.items);
+    try std.testing.expect(f.filter_anchor == null);
 }

@@ -118,6 +118,8 @@ pub const FilesPane = struct {
     show_hidden: bool = false,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     /// Into `visible`.
     cursor: usize = 0,
@@ -336,6 +338,7 @@ pub const FilesPane = struct {
         self.cwd = copy;
         self.filter.clearRetainingCapacity();
         self.filter_caret = 0;
+        self.filter_anchor = null;
         self.filter_focused = false;
         self.cursor = 0;
         self.scroll = 0;
@@ -955,6 +958,7 @@ pub fn handleKey(app: *App, id: PaneId, f: *FilesPane, k: Key) Allocator.Error!b
             if (f.filter.items.len > 0) {
                 f.filter.clearRetainingCapacity();
                 f.filter_caret = 0;
+                f.filter_anchor = null;
                 try f.applyFilter();
             } else if (f.marks.count() > 0) {
                 f.clearMarks();
@@ -1006,6 +1010,7 @@ fn filterKey(app: *App, f: *FilesPane, k: Key) Allocator.Error!bool {
             if (f.filter.items.len > 0) {
                 f.filter.clearRetainingCapacity();
                 f.filter_caret = 0;
+                f.filter_anchor = null;
                 try f.applyFilter();
             } else f.filter_focused = false;
             return true;
@@ -1024,7 +1029,7 @@ fn filterKey(app: *App, f: *FilesPane, k: Key) Allocator.Error!bool {
         },
         else => {},
     }
-    switch (try text_field.handleKey(&f.filter, &f.filter_caret, app.gpa, k)) {
+    switch (try text_field.editKey(&f.filter, &f.filter_caret, &f.filter_anchor, app.gpa, k)) {
         .ignored => return false,
         .moved => return true,
         .changed => {
@@ -1266,7 +1271,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, f: *FilesPane, area: Rect) Allocator.
         .sort_label = f.sort.label(),
         .sort_widest = files_view.sort_widest,
         .show_hidden = f.show_hidden,
-        .filter = .{ .text = f.filter.items, .caret = f.filter_caret, .focused = f.filter_focused },
+        .filter = .{ .text = f.filter.items, .caret = f.filter_caret, .focused = f.filter_focused, .anchor = f.filter_anchor },
         .marked = f.marks.count(),
         .total = f.entries.len,
         .err = f.err,

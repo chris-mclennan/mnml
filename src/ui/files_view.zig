@@ -72,7 +72,7 @@ pub const Row = struct {
     git: u8 = 0,
 };
 
-pub const Filter = struct { text: []const u8, caret: usize, focused: bool };
+pub const Filter = struct { text: []const u8, caret: usize, focused: bool, anchor: ?usize = null };
 
 pub const Doc = struct {
     /// The path, one segment per crumb; the last is the current dir.
@@ -164,16 +164,18 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) ?Caret {
     var caret: ?Caret = null;
     if (doc.filter.focused or doc.filter.text.len > 0) {
         const fr = rest.splitTop(1);
+        // The pill's hit is the pane's own id: the Files pane routes
+        // clicks by pane.
         caret = filter_input.draw(ui, fr.top, .{
             .panel = .todos,
             .text = doc.filter.text,
             .caret = doc.filter.caret,
+            .anchor = doc.filter.anchor,
             .focused = doc.filter.focused,
             .bg = t.bg,
+            .pane = pane,
+            .pane_hit = Hit.filter,
         });
-        // The pill registers a `.filter_input` for its panel; the Files
-        // pane routes clicks by pane, so cover it with the pane's own id.
-        ui.hit(fr.top, .{ .script_hit = .{ .pane = pane, .id = Hit.filter } });
         rest = fr.rest;
         if (rest.isEmpty()) return caret;
     }

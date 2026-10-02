@@ -401,7 +401,8 @@ pub fn draw(ui: Ui, r: Rect, text: []const u8, caret: usize, opts: DrawOptions) 
         cells.append(ui.arena, .{ .start = g.start, .end = g.start + g.len, .w = @min(cw, 2) }) catch return null;
     }
     const c = @min(caret, text.len);
-    const sel = selRange(c, opts.anchor);
+    // An anchor past the text is left over from text replaced under it.
+    const sel = if (opts.anchor) |a| (if (a <= text.len) selRange(c, a) else null) else null;
     // Display column of the caret.
     var caret_col: u32 = 0;
     for (cells.items) |cell| {

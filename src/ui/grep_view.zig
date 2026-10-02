@@ -54,13 +54,15 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *grep.GrepPane, focused: bool) 
         const label: []const u8 = "  filter: ";
         const lw = ui.putStr(fr.x, fr.y, fr.w, label, Theme.onBg(if (p.filter_active) th.accent else th.muted, th.panel_bg.bg));
         const field = Rect.init(fr.x + lw, fr.y, fr.w -| lw, 1);
+        ui.hit(fr, .{ .script_hit = .{ .pane = pane, .id = grep.hit_filter } });
         _ = text_field.draw(ui, field, p.filter.items, p.filter_caret, .{
             .style = Theme.onBg(th.fg, th.panel_bg.bg),
             .placeholder = "vim pattern over the line and the path",
             .placeholder_style = Theme.onBg(th.muted, th.panel_bg.bg),
             .focused = p.filter_active and focused,
+            .anchor = p.filter_anchor,
+            .field = .{ .pane_filter = pane },
         });
-        ui.hit(fr, .{ .script_hit = .{ .pane = pane, .id = grep.hit_filter } });
         if (body.h < 2) return;
         body = body.splitTop(1).rest;
     }

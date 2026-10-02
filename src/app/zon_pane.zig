@@ -114,6 +114,8 @@ pub const ZonPane = struct {
     rows_h: usize = 0,
     filter: text_field.Buf = .empty,
     filter_caret: usize = 0,
+    /// The filter's selection (`text_field.clickSelect`), to the caret.
+    filter_anchor: ?usize = null,
     filter_focused: bool = false,
     editing: ?Edit = null,
     picker: ?Pick = null,
@@ -834,6 +836,7 @@ pub fn handleKey(app: *App, id: PaneId, k: Key) Allocator.Error!bool {
             if (z.filter.items.len > 0) {
                 z.filter.clearRetainingCapacity();
                 z.filter_caret = 0;
+                z.filter_anchor = null;
                 z.stale = true;
                 app.needs_render = true;
                 return true;
@@ -923,6 +926,7 @@ fn filterKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
             if (z.filter.items.len > 0) {
                 z.filter.clearRetainingCapacity();
                 z.filter_caret = 0;
+                z.filter_anchor = null;
                 z.stale = true;
             } else z.filter_focused = false;
         },
@@ -931,7 +935,7 @@ fn filterKey(app: *App, z: *ZonPane, k: Key) Allocator.Error!bool {
             if (k.code == .down) moveCursor(app, z, 1);
             if (k.code == .up) moveCursor(app, z, -1);
         },
-        else => switch (try text_field.handleKey(&z.filter, &z.filter_caret, z.gpa, k)) {
+        else => switch (try text_field.editKey(&z.filter, &z.filter_caret, &z.filter_anchor, z.gpa, k)) {
             .ignored => return false,
             .moved => {},
             .changed => {
@@ -949,7 +953,7 @@ pub fn paste(app: *App, z: *ZonPane, text: []const u8) Allocator.Error!void {
     if (z.editing) |*e| {
         try text_field.insert(&e.buf, &e.caret, z.gpa, text);
     } else if (z.filter_focused) {
-        try text_field.insert(&z.filter, &z.filter_caret, z.gpa, text);
+        try text_field.insertSel(&z.filter, &z.filter_caret, &z.filter_anchor, z.gpa, text);
         z.stale = true;
     } else return;
     app.needs_render = true;
