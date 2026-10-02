@@ -432,18 +432,27 @@ pub fn ListPanel(comptime Row: type) type {
                     content = row_rect.splitLeft(marker_w).rest;
                 }
                 const hovered = p.has_kebab and ui.hovered(row_rect);
-                if (hovered and content.w > kebab_w) {
+                // The item's first row yields to the kebab a hover adds;
+                // its other rows keep the width they had at rest, so a
+                // card's body never re-clips as the pointer comes over.
+                var first = content;
+                if (content.w > air) content = content.splitRight(air).left;
+                if (hovered and first.w > kebab_w) {
                     // The kebab's own trailing cell is the air.
-                    content = content.splitRight(kebab_w).left;
-                } else if (content.w > air) {
-                    content = content.splitRight(air).left;
-                }
+                    first = first.splitRight(kebab_w).left;
+                } else first = content;
                 // The row's hit goes under the painter's own (a header's
                 // chips, a link): last painted wins.
                 // // changed (http-panel): was registered after `paintRow`,
                 // so a painter's targets could never be clicked.
                 if (p.targets) |tg| ui.hit(row_rect, tg.row(@intCast(idx))) else if (p.pane) |id| ui.hit(row_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
-                p.paintRow(ui.withClip(content), content, p.rows[idx], selected);
+                if (content.h > 1 and first.w != content.w) {
+                    // Painted twice, each pass clipped to its rows: the
+                    // first row against the narrow width, the rest
+                    // against the full one — last, so their hits win.
+                    p.paintRow(ui.withClip(first.row(0)), first, p.rows[idx], selected);
+                    p.paintRow(ui.withClip(Rect.init(content.x, content.y + 1, content.w, content.h - 1)), content, p.rows[idx], selected);
+                } else p.paintRow(ui.withClip(first), first, p.rows[idx], selected);
                 if (hovered and row_rect.w > marker_w + kebab_w) {
                     const kr = row_rect.row(0).rightCells(kebab_w);
                     const kstyle = Theme.withFg(style, t.accent.fg);
@@ -1043,6 +1052,44 @@ test "cards: row_h items with a gap, the hit over every row of one, the window c
     try testing.expectEqual(@as(usize, 1), st.visible);
     try expectRowLike(&g, 5, " \u{258c}", "█");
     for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
+}
+
+/// Every row of the card the title, cut with an ellipsis at the edge it
+/// is given: what a SESSIONS card's name and summary rows do.
+fn paintLongCard(ui: Ui, r: Rect, row: Todo, _: bool) void {
+    var y: u16 = 0;
+    while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 3, r.y + y, r.right() -| (r.x + 3), ui.clipStr(row.title, r.right() -| (r.x + 3)), ui.theme.panel_bg);
+}
+
+test "a hovered card: the kebab takes cells from the name row only — the body rows clip at the width they have at rest" {
+    var f = try Fixture.init(30, 14);
+    defer f.deinit();
+    var st: Todos.State = .{};
+    defer st.deinit(testing.allocator);
+    const rows = [_]Todo{.{ .title = "https://example.com/a/very/long/path", .done = false }};
+    var p = props(&rows);
+    p.row_h = 4;
+    p.own_marker = true;
+    p.paintRow = paintLongCard;
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    var rest: [4][256]u8 = undefined;
+    var at_rest: [4][]const u8 = undefined;
+    for (0..4) |i| at_rest[i] = try testing.allocator.dupe(u8, f.row(@intCast(2 + i), &rest[i]));
+    defer for (at_rest) |r| testing.allocator.free(r);
+    f.hits.reset();
+    f.hover = .{ .x = 10, .y = 4 };
+    _ = Todos.draw(&st, f.ui(), f.full(), p);
+    var buf: [256]u8 = undefined;
+    // The name row yields: shorter text, the kebab at its end.
+    const name = f.row(2, &buf);
+    try testing.expect(std.mem.endsWith(u8, name, "\u{22ef}"));
+    try testing.expect(!std.mem.eql(u8, name, at_rest[0]));
+    // The body rows are cell for cell what they were at rest.
+    for (1..4) |i| try testing.expectEqualStrings(at_rest[i], f.row(@intCast(2 + i), &buf));
+    try testing.expect(std.mem.indexOf(u8, at_rest[1], "\u{2026}") != null);
+    // The kebab's hit is on the name row, the card's under the rest.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(27, 2).?.kebab.idx);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(27, 3).?.row.idx);
 }
 
 test "the filter caret goes only to the focused panel: the pill still paints on one you have left" {

@@ -50,6 +50,8 @@ the release ships one file), and one line per change a user can see.
   browser, and a right-click offers *Copy link* / *Open link*. The card's
   menu lists each one as an `Open …` row, and Shift+F10 on the focused
   card now opens that menu.
+- Hovering a SESSIONS card no longer re-clips its summary lines: only the
+  name row makes room for the ` ⋯ `, and a URL below it keeps its length.
 - A ticket key links only because an installed integration says what one
   looks like: a manifest's new `links[]` pairs a pattern with the address
   it opens (`docs/SDK.md`, *Links*). The Jira integration declares the
