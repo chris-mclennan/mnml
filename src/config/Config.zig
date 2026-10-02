@@ -1049,6 +1049,9 @@ pub const ClaudeAccount = struct {
 /// a `claude -p` that never answers from holding the only in-flight
 /// slot. Both are observable in the statusline chip
 /// (`src/app/ghost_chip.zig`).
+/// The sessions mode's columns (`ai.session_columns`), clamped on load.
+pub const session_columns_min: u8 = 1;
+pub const session_columns_max: u8 = 4;
 pub const suggest_idle_ms_min: u16 = 50;
 pub const suggest_idle_ms_max: u16 = 5000;
 pub const suggest_timeout_ms_min: u32 = 500;
@@ -1112,6 +1115,10 @@ pub const Ai = struct {
     copilot_here: bool = false,
     claude_show_all_accounts: bool = false,
     claude_meter_mode: ClaudeMeterMode = .compact,
+    /// The sessions mode (`app/sessions_mode.zig`): how many Claude Code
+    /// / Codex sessions stand side by side, each column a stack of the
+    /// rest. 1 is one session maximised; clamped to 1..4 on load.
+    session_columns: u8 = 2,
     /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.
     claude_accounts: []const ClaudeAccount = &.{},
     /// Every key not named above, kept verbatim for the AI subsystems

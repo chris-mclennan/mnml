@@ -246,7 +246,15 @@ pub const RowView = struct {
     /// it started (`app/session_changes.zig`) — the ` N files ` chip after
     /// the name, when not zero.
     changes: usize = 0,
+    /// The session is on screen now — the shown tab of a split on the
+    /// page in view, the zoomed one, the dock's — and wears the `•` in
+    /// the column left of its card (`sessions_mode.onScreen`).
+    on_screen: bool = false,
 };
+
+/// The on-screen mark beside a card, and its `--ascii` twin.
+pub const on_screen_glyph = "\u{2022}";
+pub const on_screen_ascii = "*";
 
 pub const Summary = enum { exited, none, text };
 
@@ -879,7 +887,7 @@ pub fn trackNeedsYou(app: *App) Allocator.Error!void {
             // dormant never ran, so it has nothing to say.
             if (!p.needs_you_ended) {
                 p.needs_you_ended = true;
-                if (!p.dormant and pty_pane.productOf(app, p) != null) try notifySession(app, pid, if (e.ok()) .finished else .failed);
+                if (!p.dormant and @import("app/launch_profiles.zig").productOfPane(app, p) != null) try notifySession(app, pid, if (e.ok()) .finished else .failed);
             }
             continue;
         }
@@ -1067,7 +1075,7 @@ pub fn refilter(app: *App) Allocator.Error!void {
     defer owned.deinit(gpa);
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
         .pty => |*p| {
-            if (pty_pane.productOf(app, p) == null) continue;
+            if (@import("app/launch_profiles.zig").productOfPane(app, p) == null) continue;
             const pid: app_mod.PaneId = @intCast(i);
             const sid = p.sessionId();
             if (sid) |id| try owned.append(gpa, id);
@@ -1274,7 +1282,7 @@ pub fn cardName(app: *App, c: Card) []const u8 {
 /// latter; null when `pid` is not an AI session pane.
 pub fn paneKey(app: *App, pid: app_mod.PaneId, buf: []u8) ?[]const u8 {
     const p = app.panes.pty(pid) orelse return null;
-    if (pty_pane.productOf(app, p) == null) return null;
+    if (@import("app/launch_profiles.zig").productOfPane(app, p) == null) return null;
     return p.sessionId() orelse (std.fmt.bufPrint(buf, "pane:{d}", .{pid}) catch null);
 }
 
@@ -1294,7 +1302,7 @@ pub fn cardItem(app: *App, c: Card) Item {
     const p = app.panes.pty(c.pane);
     const cwd: ?[]const u8 = if (p) |pp| cardCwd(app, pp) else null;
     return .{
-        .source = if (p) |pp| (if (pty_pane.productOf(app, pp) == .codex) .codex else .claude) else .claude,
+        .source = if (p) |pp| (if (@import("app/launch_profiles.zig").productOfPane(app, pp) == .codex) .codex else .claude) else .claude,
         .session_id = c.key,
         .workspace = if (cwd) |cw| std.fs.path.basename(cw) else std.fs.path.basename(app.workspace),
         .cwd = cwd,
@@ -1876,7 +1884,7 @@ fn clearEndedCmd(app: *App) CommandError!void {
     const grace_ms: i64 = @as(i64, app.cfg.ui.session_ended_grace_min) * 60_000;
     var doomed: std.ArrayListUnmanaged(app_mod.PaneId) = .empty;
     for (app.panes.slots.items, 0..) |*slot, i| if (slot.*) |*pane| switch (pane.*) {
-        .pty => |*p| if (p.exit != null and pty_pane.productOf(app, p) != null and app.now_ms - (p.exited_at_ms orelse app.now_ms) > grace_ms) try doomed.append(arena, @intCast(i)),
+        .pty => |*p| if (p.exit != null and @import("app/launch_profiles.zig").productOfPane(app, p) != null and app.now_ms - (p.exited_at_ms orelse app.now_ms) > grace_ms) try doomed.append(arena, @intCast(i)),
         else => {},
     };
     for (doomed.items) |pid| {
@@ -2045,6 +2053,9 @@ pub fn rowMouse(app: *App, idx: u32, m: Mouse) Allocator.Error!void {
             if (again) {
                 st.last_click = null;
                 runToast(app, openCmd(app));
+            } else if (idx < st.filtered.items.len) {
+                // Zoomed, or in the sessions mode: one click shows it.
+                _ = try @import("app/sessions_mode.zig").previewCard(app, st.cards.items[st.filtered.items[idx]].pane);
             }
         },
         else => {},
@@ -2407,6 +2418,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .worktree = if (cardWorktree(app, c)) |e| try arena.dupe(u8, e.name) else null,
         .needs_you = needsYou(app, c.pane),
         .changes = if (session_changes.recordOf(app, c.pane)) |r| r.count() else 0,
+        .on_screen = @import("app/sessions_mode.zig").onScreen(app, c.pane),
     };
 }
 
@@ -2475,7 +2487,10 @@ pub fn hoverTip(app: *App, arena: Allocator, idx: u32) Allocator.Error!?@import(
     }
     return .{
         .title = try arena.dupe(u8, cardName(app, c)),
-        .detail = "click: focus session · right-click: row menu",
+        .detail = if (@import("app/sessions_mode.zig").onScreen(app, c.pane))
+            "• on screen · click: focus session (zoomed, or in the sessions mode: show it) · right-click: row menu"
+        else
+            "click: focus session (zoomed, or in the sessions mode: show it) · right-click: row menu",
         .lines = lines.items,
     };
 }
@@ -2967,6 +2982,8 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     const bar = if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph;
     var y: u16 = 0;
     while (y < r.h) : (y += 1) _ = ui.putStr(r.x + 1, r.y + y, 1, bar, Theme.withFg(bg, accent));
+    // On screen now: a dot in the gutter beside the name row.
+    if (row.on_screen) _ = ui.putStr(r.x, r.y, 1, if (ui.ascii) on_screen_ascii else on_screen_glyph, Theme.withFg(bg, t.palette.green));
     const end = r.right();
     var x = r.x + 2;
     x += ui.putStr(x, r.y, end -| x, " ", bg);

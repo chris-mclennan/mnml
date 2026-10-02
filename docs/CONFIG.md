@@ -756,6 +756,13 @@ otherwise. Copy what you need; leave the rest out.
         // session %, weekly %, both; the reset countdown — is the chip's
         // right-click (ai.chip_show_session / _weekly / _both, ai.chip_toggle_reset).
         .claude_meter_mode = .compact, // .off | .compact | .ticker
+        // The sessions mode — the Sessions row of the activity bar, or
+        // sessions.mode: the editor layout is put aside and every Claude Code
+        // / Codex session stands in this many columns side by side, each a
+        // stack of the rest; leaving puts the layout back. 1 is one session
+        // maximised. 1..4, clamped on load; the AI chips' right-click
+        // *Show side by side* sets it (sessions.columns_1 … _4).
+        .session_columns = 2,
         // The Claude Code logins the quota chip and the usage pane
         // (ai.claude_usage) poll. `token_path` is the OAuth token file the
         // CLI's keychain item was copied into (`ai.link_claude_token`, or R

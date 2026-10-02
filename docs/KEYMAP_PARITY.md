@@ -24,7 +24,7 @@ binds the chord to something else; **missing** — mnml binds nothing there
 
 mnml's own chords (bound in mnml, defined by neither oracle): **251** in the vim
 profile, **157** in the standard profile — section (c).
-Section (d) lists what the three sections miss — **3** vim and **30**
+Section (d) lists what the three sections miss — **4** vim and **31**
 standard chords `src/commands/specs.zig` binds with no verdict yet.
 `tools/keymap-parity-check.sh` diffs this page against the specs both ways
 (every chord claimed here is bound to that id; every bound chord is named
@@ -852,7 +852,7 @@ Code's F3 / Shift+F3 find next / previous, for one) and move into (a) or
 listed here so `tools/keymap-parity-check.sh` can hold the doc to the
 specs in both directions.
 
-*vim profile — 7 chords*
+*vim profile — 8 chords*
 
 | chord | command |
 |---|---|
@@ -860,11 +860,12 @@ specs in both directions.
 | `] a` | `ai.focus_next_session` |
 | `ctrl+alt+pagedown` | `ai.focus_next_session` |
 | `ctrl+alt+pageup` | `ai.focus_prev_session` |
+| `ctrl+shift+n` | `ai.claude_code_new` |
 | `space` | `whichkey.leader` |
 | `space shift+k` | `help.focus` |
 | `space t p` | `help.pin_toggle` |
 
-*standard profile — 32 chords*
+*standard profile — 33 chords*
 
 | chord | command |
 |---|---|
@@ -892,6 +893,7 @@ specs in both directions.
 | `ctrl+k shift+h` | `help.pin_toggle` |
 | `ctrl+k t` | `theme.toggle` |
 | `ctrl+shift+j` | `view.toggle_bottom_panel` |
+| `ctrl+shift+n` | `ai.claude_code_new` |
 | `ctrl+shift+x` | `view.activity_integrations` |
 | `ctrl+shift+z` | `editor.redo` |
 | `delete` | `file.delete` |
@@ -900,3 +902,26 @@ specs in both directions.
 | `shift+f10` | `view.context_menu_at_focus` |
 | `shift+f3` | `find.prev` |
 | `space` | `whichkey.leader` |
+
+## (e) The sessions mode's contextual chords (both profiles)
+
+While the sessions mode shows (`sessions.mode`, the Sessions row of the
+activity bar), five chords mean the sessions' verbs instead of their usual
+ones, whichever pane or panel has the keys, in both profiles
+(`src/app/sessions_mode.zig`, `interceptKey`). Elsewhere they keep the
+meaning the tables above give them. They are not spec bindings — the chord
+is the same, the context picks the command — so they are listed here in
+prose rather than in a table the checker holds to the specs:
+
+- Ctrl+Tab → `sessions.column_next` (elsewhere `buffer.last`): the focused
+  column's visible session gives way to the next one stacked behind it.
+- Ctrl+Shift+Tab → `sessions.column_prev` (elsewhere `buffer.prev`).
+- Ctrl+1 … Ctrl+9 → `sessions.show_1` … `sessions.show_9` (elsewhere
+  `view.focus_tab_N`): the rail's Nth session in the focused column.
+- Ctrl+N → `sessions.mode_new` (elsewhere `file.new` in the standard
+  profile, `view.toggle_tree` in the vim profile): a new Claude Code session
+  as the focused column's visible one; on a zoomed page it takes the zoom.
+
+Outside the mode, Ctrl+Shift+N opens a new Claude Code session
+(`ai.claude_code_new`, both profiles). Codex gets no chord: Ctrl+Shift+M,
+the natural twin, is `lsp.diagnostics` in both profiles.

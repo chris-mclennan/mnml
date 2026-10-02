@@ -1,0 +1,50 @@
+# sizes: all
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A keyboard way to another Claude Code session. Outside the sessions
+# mode Ctrl+Shift+N opens one (both profiles) and Ctrl+N keeps its
+# meaning; inside the mode Ctrl+N is the new session, and it lands by
+# the slot rule: the focused column's visible session, the one it
+# covers stacked behind it; on a zoomed page it takes the zoom.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "alpha alpha"
+open a.txt
+command editor.use_standard
+key ctrl+shift+n
+wait 300
+expect screen contains "fake claude 1"
+expect screen contains "alpha alpha"
+command editor.use_vim
+open a.txt
+key ctrl+shift+n
+wait 300
+expect screen contains "fake claude 2"
+# The mode: two columns, claude 1 | claude 2, the keys in claude 1's.
+command sessions.mode
+wait 200
+expect screen lacks "alpha alpha"
+command view.focus_left
+expect pane claude 1
+key ctrl+n
+wait 300
+expect pane claude 3
+expect screen contains "fake claude 3"
+expect screen contains "fake claude 2"
+expect screen contains "‹ 2/2 ›"
+# Zoomed: the new one takes the zoom.
+command view.toggle_zoom
+expect screen contains " zoom "
+command editor.use_standard
+key ctrl+n
+wait 300
+expect pane claude 4
+expect screen contains "fake claude 4"
+expect screen contains " zoom "
+expect screen lacks "│▌fake claude 3"
+# Out of the mode, Ctrl+N is a new file again (the standard profile's).
+command sessions.mode
+wait 200
+expect screen contains "alpha alpha"
+key ctrl+n
+expect screen contains "New file"

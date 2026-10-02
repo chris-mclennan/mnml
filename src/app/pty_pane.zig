@@ -540,17 +540,13 @@ fn startChild(app: *App, id: PaneId, env_extra: []const []const u8) CommandError
 /// as Rust's `integration_id` did. Null for a shell and every other
 /// command.
 pub fn productOf(app: *const App, p: *const PtyPane) ?launch_profiles.Product {
-    return productOfArgv(app, p.argv);
+    return launch_profiles.productOfPane(app, p);
 }
 
 /// The same, for a command line that has no pane yet (the accent a
 /// pane opens in is decided before it is in the store).
 pub fn productOfArgv(app: *const App, argv: []const []const u8) ?launch_profiles.Product {
-    if (argv.len == 0) return null;
-    for (std.enums.values(launch_profiles.Product)) |product| {
-        if (launch_profiles.isProductArgv(app, argv[0], product)) return product;
-    }
-    return null;
+    return launch_profiles.productOfArgv(app, argv);
 }
 
 /// A pane with no colour takes the next free slot off the shared

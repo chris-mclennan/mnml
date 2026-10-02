@@ -1,0 +1,30 @@
+# sizes: all
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# A zoomed page shows one pane, so a SESSIONS card naming another
+# session used to change nothing you could see. One click on the card
+# now swaps its session into the zoom — the page stays zoomed, the keys
+# stay on the rail — and a double-click takes the keys as it always did.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "alpha"
+open a.txt
+command ai.claude_code_new_right
+wait 300
+command ai.claude_code_new_right
+wait 300
+command view.toggle_zoom
+command view.activity_sessions
+wait 300
+expect screen contains " zoom "
+expect screen contains "│▌fake claude 2"
+expect screen lacks "│▌fake claude 1"
+# One click on claude 1's card: claude 1 takes the zoom.
+click 8 6
+expect screen contains "│▌fake claude 1"
+expect screen lacks "│▌fake claude 2"
+expect screen contains " zoom "
+# The other card: back to claude 2, still zoomed.
+click 8 11
+expect screen contains "│▌fake claude 2"
+expect screen contains " zoom "

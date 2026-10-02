@@ -222,7 +222,7 @@ pub fn railColorOf(app: *App, id: PaneId, theme: *const Theme) ?Color {
         .off => null,
         .sessions => blk: {
             if (p.* != .pty) break :blk null;
-            if (pty_pane.productOf(app, &p.pty) == null) break :blk null;
+            if (@import("launch_profiles.zig").productOfPane(app, &p.pty) == null) break :blk null;
             break :blk pty_pane.accentOf(app, &p.pty, theme);
         },
         .all => colorOf(app, id, theme),

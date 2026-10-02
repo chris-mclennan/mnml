@@ -11,6 +11,7 @@
 //! focused thing would get from a right-click.
 
 const std = @import("std");
+const sessions_mode = @import("sessions_mode.zig");
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -186,7 +187,7 @@ pub fn openTabMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!void
         try rows.append(app.gpa, .{ .label = "Color", .action = .none, .submenu = try sessions.colorMenuRows(mem.allocator(), .{ .target = .{ .pane = pane }, .name = "" }, pt.accent_color) });
         // The icon this tab is wearing, changed from the tab itself —
         // a Claude session's is the Claude one, not the terminal's.
-        const claude_tab = if (pty_pane.productOf(app, pt)) |prod| prod == .claude else false;
+        const claude_tab = if (@import("launch_profiles.zig").productOfPane(app, pt)) |prod| prod == .claude else false;
         try rows.append(app.gpa, if (claude_tab)
             .{ .label = "Icon", .action = .none, .submenu = try claudeIconRows(app, mem.allocator()) }
         else
@@ -409,6 +410,7 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
             .{ .label = "+ New cloud run…", .action = .{ .command = .@"cloud_agents.new_run" } },
             .{ .label = "Open as a table", .action = .{ .command = .@"sessions.table" } },
             .{ .label = "Search sessions…", .action = .{ .command = .@"ai.search_sessions" } },
+            .{ .label = "Sessions side by side (the sessions mode)", .action = .{ .command = .@"sessions.mode" }, .separator_before = true },
         },
         .http => &.{
             .{ .label = "+ New request", .action = .{ .command = .@"http.new" } },
@@ -1796,6 +1798,7 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "New Codex session in a new tab page", .action = .{ .command = .@"ai.codex_new_page" } },
         .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Show side by side", .action = .none, .separator_before = true, .submenu = try sessions_mode.columnsMenuRows(app, mem.allocator()) },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
         .{ .label = "Edit Codex glyph…", .action = .{ .command = .@"integrations.edit_codex_glyph" } },
     } else &.{
@@ -1808,6 +1811,7 @@ fn openAiLauncherMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "New Claude Code session in a new tab page", .action = .{ .command = .@"ai.claude_code_new_page" } },
         .{ .label = "Layout: Grid (splits)", .action = .{ .command = .@"view.ai_layout_grid" }, .checked = grid, .separator_before = true },
         .{ .label = "Layout: Tabs (stack in leaf)", .action = .{ .command = .@"view.ai_layout_tabs" }, .checked = !grid },
+        .{ .label = "Show side by side", .action = .none, .separator_before = true, .submenu = try sessions_mode.columnsMenuRows(app, mem.allocator()) },
         .{ .label = "Bake AI glyphs into MnmlSymbols", .action = .{ .command = .@"integrations.bake_ai_glyphs" }, .separator_before = true },
         // Which mark Claude wears, everywhere the chrome draws one
         // (`app/claude_mark.zig`). The row that used to sit above this

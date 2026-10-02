@@ -38,6 +38,10 @@ pub const Leaf = struct {
     /// Tabs past the window's right edge as of the last paint — what a
     /// wheel-down has to scroll into.
     strip_hidden_right: usize = 0,
+    /// The overflow pager's targets as of the last paint: the offsets
+    /// of the previous and the next page of tabs (`bufferline.Window`).
+    strip_page_prev: usize = 0,
+    strip_page_next: usize = 0,
 };
 
 pub const Node = union(enum) {
@@ -123,6 +127,23 @@ pub const Layout = struct {
             else => {},
         };
         self.nodes.deinit(self.gpa);
+    }
+
+    /// A deep copy: the same tree, node for node, its own tab lists.
+    pub fn clone(self: *const Layout) Allocator.Error!Layout {
+        var out: Layout = .{ .gpa = self.gpa, .root = self.root, .zoomed = self.zoomed };
+        errdefer out.deinit();
+        try out.nodes.ensureTotalCapacity(self.gpa, self.nodes.items.len);
+        for (self.nodes.items) |n| switch (n) {
+            .leaf => |l| {
+                var copy = l;
+                copy.tabs = .empty;
+                try copy.tabs.appendSlice(self.gpa, l.tabs.items);
+                out.nodes.appendAssumeCapacity(.{ .leaf = copy });
+            },
+            else => out.nodes.appendAssumeCapacity(n),
+        };
+        return out;
     }
 
     pub fn isEmpty(self: *const Layout) bool {

@@ -112,6 +112,7 @@ const tree_mod = @import("tree.zig");
 const info_view_app = @import("info_view.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
+const sessions_mode = @import("sessions_mode.zig");
 const pty_search = @import("pty_search.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
@@ -246,6 +247,9 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
+    // The sessions mode's chords (`Ctrl+Tab`, `Ctrl+1`…, `Ctrl+N`) are
+    // the sessions' wherever the keys are inside it.
+    if (try sessions_mode.interceptKey(app, k)) return;
     // The info view with the keys (`help.focus`): its rows walk; what
     // it does not take goes on to the chords, the palette's included.
     if (app.focus == .info_view) {
@@ -1204,6 +1208,17 @@ fn closeOverlay(app: *App) void {
 fn tabStripStep(app: *App, leaf_idx: u32, delta: i8) Allocator.Error!void {
     const lid = (try app.layouts.current().leafAt(app.frame.allocator(), leaf_idx)) orelse return;
     return tabStripStepLid(app, lid, delta);
+}
+
+/// The pager's ` ‹ ` / ` › `: the strip's window moves to the previous
+/// / next page of tabs, wrapping, as the last paint measured them.
+fn tabStripPage(app: *App, leaf_idx: u32, forward: bool) Allocator.Error!void {
+    const layout = app.layouts.current();
+    const lid = (try layout.leafAt(app.frame.allocator(), leaf_idx)) orelse return;
+    const leaf = layout.leaf(lid) orelse return;
+    leaf.strip_first = if (forward) leaf.strip_page_next else leaf.strip_page_prev;
+    leaf.strip_anchor = leaf.active;
+    app.needs_render = true;
 }
 
 /// A click on the dock's tab strip: the tab it names takes the keys,
@@ -2434,9 +2449,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .right => try context_menus.openTabMenu(app, pane, m.x, m.y),
                 else => {
                     // A double-click on the tab keeps a preview, as in
-                    // VS Code — the same gesture as on the tree row.
-                    if (clickCount(app, m) >= 2) if (app.panes.get(pane)) |p| p.setPreview(false);
+                    // VS Code — the same gesture as on the tree row —
+                    // and zooms its pane; the next double-click puts
+                    // the splits back as they were (the zoom leaves the
+                    // tree alone).
+                    const double = clickCount(app, m) == 2;
+                    if (double) if (app.panes.get(pane)) |p| p.setPreview(false);
                     app.showPane(pane);
+                    if (double) return runCmd(app, .@"view.toggle_zoom");
                     app.drag = .{ .tab = .{ .pane = pane, .x = m.x, .y = m.y } };
                 },
             }
@@ -2778,7 +2798,13 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         .button => |id| {
             // The strip's markers and `+`: a wheel scrolls the strip, a
             // press on a marker steps it.
-            if (render.Button.tabScrollOf(id)) |ts| return tabStripStep(app, @intCast(ts.leaf), if (wheel) (if (m.kind == .scroll_down) @as(i8, 1) else -1) else (if (ts.dir == .right) @as(i8, 1) else -1));
+            // A wheel over the pager steps a tab; a press on an arrow
+            // turns a page.
+            if (render.Button.tabScrollOf(id)) |ts| {
+                if (wheel) return tabStripStep(app, @intCast(ts.leaf), if (m.kind == .scroll_down) @as(i8, 1) else -1);
+                if (m.kind != .press) return;
+                return tabStripPage(app, @intCast(ts.leaf), ts.dir == .right);
+            }
             if (wheel) {
                 if (render.Button.newTabLeaf(id)) |leaf_idx| return tabStripStep(app, @intCast(leaf_idx), if (m.kind == .scroll_down) 1 else -1);
                 return;
@@ -3011,13 +3037,14 @@ pub fn mouse(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .hidden_tabs => try runCmd(app, .@"picker.buffers"),
                 // A session's ` ‹ 3/7 › `: the ring steps from the
                 // session this strip shows, whatever had the keys.
+                // In the sessions mode the arrows step this column's stack.
                 .session_prev => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"ai.focus_prev_session");
+                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_prev" else .@"ai.focus_prev_session");
                 },
                 .session_next => {
                     focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"ai.focus_next_session");
+                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_next" else .@"ai.focus_next_session");
                 },
                 // The chips are the way to the SESSIONS panel; a click
                 // starts a session only when none of that product is

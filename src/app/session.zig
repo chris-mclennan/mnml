@@ -541,7 +541,9 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
 
     // Tab pages: the node pools, compacted (free slots dropped).
     var tabs: std.ArrayListUnmanaged(Tab) = .empty;
-    for (app.layouts.layouts.items) |*l| try tabs.append(arena, try captureLayout(arena, l, index_of));
+    // The sessions mode's columns are not the layout: the trees it put
+    // aside are what a restart brings back.
+    for (app.layouts.layouts.items, 0..) |*l, page| try tabs.append(arena, try captureLayout(arena, @import("sessions_mode.zig").restingLayout(app, page, l), index_of));
     saved.tabs = tabs.items;
     saved.active_tab = app.layouts.active;
 

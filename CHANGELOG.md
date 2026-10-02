@@ -12,6 +12,35 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.2 (unreleased)
 
+### Sessions
+
+- The Sessions row of the activity bar enters the sessions mode: the editor
+  layout is put aside and every Claude Code and Codex session stands in
+  columns side by side (`ai.session_columns`, 1 to 4, default 2; the AI
+  chips' right-click *Show side by side* sets it), the rest stacked behind
+  them. Click the row again and the layout comes back exactly as it was.
+- In the sessions mode Ctrl+Tab / Ctrl+Shift+Tab step the focused column's
+  stack, Ctrl+1 to Ctrl+9 show the rail's Nth session there, and Ctrl+N
+  starts a new session in it; outside the mode those chords mean what they
+  always did. Ctrl+Shift+N starts a Claude Code session anywhere.
+- Closing a session keeps the shape: a zoomed session hands the zoom to the
+  next one, and a column whose last session closes is refilled from the
+  sessions stacked behind the others.
+- One click on a SESSIONS card shows that session when the page is zoomed or
+  in the sessions mode; a `•` beside a card marks a session on screen.
+- The session count on a strip no longer reads ` ‹ 1/1 › ` with several
+  sessions open: a session left in the background, or started through a
+  shell (`:term ./bin/claude`) or a wrapper script, now counts everywhere
+  the tab mark does.
+
+### Tabs
+
+- A tab strip whose tabs overflow shows ` ‹ 2/5 › `: the page of tabs on
+  show, its arrows turning a page. Nothing is painted when every tab fits,
+  and a session strip with one session shows no ` ‹ 1/1 › `.
+- Double-click a tab to zoom its pane; double-click again to put the splits
+  back.
+
 ### The frame
 
 - The sidebar is a fifth of the window by default — 30 cells up to 150

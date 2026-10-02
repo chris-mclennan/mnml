@@ -1,9 +1,8 @@
 # Sixteen tabs overflow the strip (Rust's chips: an icon, the name,
 # `󰅖`, three cells between). The strip ends on the active tab with
-# the `󰐕` and ` +N hidden ` after it and the `󰅁  󰅂` chevrons on the
-# right — since 2026-09-20 the chip is GIVEN its cells when the leftover
-# ones cannot hold it (`bufferline.stripRight`), which is also why the
-# last chip is whole here rather than cut at the edge; the
+# the `󰐕` after it and the pager on the right, ` ‹ 4/4 › ` — the last
+# page of four (`ui/stepper.zig`); beside the pager ` +N hidden ` is
+# not given cells, the pager being the overflow's one word. The
 # wheel over the strip scrolls it a tab at a time, back to the first
 # tab and forward again; Ctrl+Tab wraps to the first tab and reveals it.
 # The strip's right cluster paints an AI chip for a `claude` / `codex`
@@ -43,8 +42,9 @@ open t12.txt
 open t13.txt
 open t14.txt
 open t15.txt
-expect screen contains "t15.txt 󰅖   󰐕  +12 hidden "
-expect screen contains "󰅁  󰅂"
+expect screen contains "t15.txt 󰅖   󰐕"
+expect screen contains "‹ 4/4 ›"
+expect screen lacks "󰅁  󰅂"
 expect screen lacks "alpha.zig 󰅖   󰈙 t1.txt"
 scroll 60 1 up
 expect screen lacks "t15.txt 󰅖   󰐕"

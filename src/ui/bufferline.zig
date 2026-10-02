@@ -20,16 +20,19 @@
 //! The right end, from the edge inward: the four split buttons (a
 //! shell, split right, split down, maximize — each ` glyph `), before
 //! them the AI chips that are enabled (dropped one by one on a strip
-//! short of room), before those the markdown mode chip, before that a
-//! session pane's ` ‹ 3/7 › ` (its place among every Claude Code / Codex
-//! session; the number, then the arrows, give way before the active tab
-//! would be cut), and before that
-//! the ` 󰅁  󰅂 ` pair whenever the leaf holds two or more tabs — lit and
-//! registered only when there is something to scroll to, painted dim
-//! otherwise so the strip does not reflow at either end.
+//! short of room), before those the markdown mode chip, before that the
+//! strip's ` ‹ n/m › ` (`stepper.zig`, one control with two uses): on a
+//! session pane, the session's place among the sessions it steps
+//! through; on any other strip whose tabs overflow, the page of tabs on
+//! show, its arrows paging through the hidden ones. It is not painted
+//! when there is nothing to step — one session, tabs that all fit — and
+//! on a short strip the number, then the arrows, give way before the
+//! active tab would be cut. A session strip wears the session control
+//! and no pager: its arrows bring a hidden tab into view by stepping to
+//! it, and ` +N hidden ` still lists the rest.
 //!
 //! The strip is a window: `Opts.first` is the scroll offset (the caller
-//! keeps it on the leaf, the wheel and the chevrons move it). `draw`
+//! keeps it on the leaf, the wheel and the pager move it). `draw`
 //! clamps it to the smallest offset whose tail still fills the strip,
 //! so a stale offset never strands tabs off the left edge. Every chip
 //! registers `.tab{leaf, idx}` as it paints; its last two cells
@@ -48,6 +51,7 @@ const Theme = @import("theme.zig");
 const brand = @import("brand.zig");
 const ids = @import("../core/ids.zig");
 const focus_cue = @import("focus_cue.zig");
+const stepper = @import("stepper.zig");
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -105,26 +109,21 @@ pub const AiChip = struct {
     fg: Color,
 };
 
-/// A session pane's place in the session ring (`app/session_cycle.zig`):
-/// ` ‹ 3/7 › ` left of the mode chip, the two arrows `.button` hits for
-/// the previous / next session. `index` counts from zero.
-pub const SessionNav = struct {
-    index: usize,
-    count: usize,
-    prev: u32,
-    next: u32,
-};
+/// A session pane's place among the sessions its strip steps through
+/// (`app/session_cycle.zig`, `app/sessions_mode.zig`): ` ‹ 3/7 › ` left
+/// of the mode chip, drawn by the stepper.
+pub const SessionNav = stepper.Stepper;
 
 /// How much of the ` ‹ 3/7 › ` a strip has room for: the number goes
 /// first, then the arrows — the tabs keep `narrow_room` either way.
-pub const NavForm = enum { none, arrows, full };
+pub const NavForm = stepper.Form;
 
-/// ` ‹ ` / ` › ` — one session arrow, a button's width.
-pub const nav_button_w: u16 = 3;
-pub const nav_prev_glyph = "\u{2039}";
-pub const nav_next_glyph = "\u{203A}";
-pub const nav_prev_ascii = "<";
-pub const nav_next_ascii = ">";
+/// ` ‹ ` / ` › ` — the stepper's, under the names the strip's callers know.
+pub const nav_button_w: u16 = stepper.button_w;
+pub const nav_prev_glyph = stepper.prev_glyph;
+pub const nav_next_glyph = stepper.next_glyph;
+pub const nav_prev_ascii = stepper.prev_ascii;
+pub const nav_next_ascii = stepper.next_ascii;
 
 /// The split cluster's `.button` ids; `ai` paints before the four.
 /// The cluster's ids. `max` is null on the empty layout — Rust paints
@@ -148,7 +147,8 @@ pub const Opts = struct {
     new_tab: ?u32 = null,
     /// The scroll offset — the first tab painted. Clamped by `draw`.
     first: usize = 0,
-    /// The `.button` ids the chevrons register when they can scroll.
+    /// The `.button` ids the overflow pager's ` ‹ ` / ` › ` register.
+    /// Null paints no pager.
     scroll_left: ?u32 = null,
     scroll_right: ?u32 = null,
     split: ?SplitIds = null,
@@ -167,8 +167,17 @@ pub const Opts = struct {
 };
 
 /// What `draw` painted: the offset it settled on, how many chips it
-/// painted, and how many tabs sit outside the window on each side.
-pub const Window = struct { first: usize = 0, painted: usize = 0, hidden_left: usize = 0, hidden_right: usize = 0 };
+/// painted, and how many tabs sit outside the window on each side —
+/// and, for the pager, the offsets of the previous and next page of
+/// tabs (the current offset when there is none that way).
+pub const Window = struct {
+    first: usize = 0,
+    painted: usize = 0,
+    hidden_left: usize = 0,
+    hidden_right: usize = 0,
+    page_prev: usize = 0,
+    page_next: usize = 0,
+};
 
 /// The tab positions a caller needs to route a drop: the `x` each chip
 /// starts at and its width, in strip order from the offset.
@@ -178,7 +187,7 @@ pub const Slot = struct { idx: usize, x: u16, w: u16 };
 pub const name_cap: u16 = 18;
 /// ` 󰐕 `.
 pub const plus_w: u16 = 3;
-/// ` 󰅁 ` — one chevron slot.
+/// ` 󰅁 ` — one chevron slot (the git palette's repo pill wears the pair).
 pub const arrow_w: u16 = 3;
 /// One split button.
 pub const split_button_w: u16 = 3;
@@ -446,8 +455,11 @@ fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, 
 const Geometry = struct {
     /// Tabs stop here.
     tabs_right: u16,
-    arrows_x: u16,
-    arrows_w: u16,
+    /// The overflow pager (`stepper.zig`): where its cells start, how
+    /// many it was given, and its form — `.none` with nothing to page.
+    pager_x: u16,
+    pager_w: u16 = 0,
+    pager_form: NavForm = .none,
     mode_x: u16,
     split_x: u16,
     n_ai: usize,
@@ -455,61 +467,129 @@ const Geometry = struct {
     nav_form: NavForm = .none,
 };
 
-/// The ` 3/7 ` between the session arrows.
-fn navLabel(ui: Ui, nav: SessionNav) []const u8 {
-    return ui.fmt("{d}/{d}", .{ nav.index + 1, nav.count });
-}
-
-fn navWidth(ui: Ui, nav: SessionNav, form: NavForm) u16 {
-    return switch (form) {
-        .none => 0,
-        .arrows => 2 * nav_button_w,
-        .full => 2 * nav_button_w + ui.width(navLabel(ui, nav)),
-    };
-}
-
-/// The widest session-nav form that still leaves the active tab whole
-/// (and never less than `narrow_room`) next to the rest of the furniture
-/// (`fixed`: the split cluster and the mode chip; the chevrons and the
-/// 󰐕 are added here). The number gives way first, then the arrows —
-/// the session's own name on its tab outranks both.
+/// The widest session-control form that still leaves the active tab
+/// whole (and never less than `narrow_room`) next to the rest of the
+/// furniture (`fixed`: the split cluster and the mode chip; the 󰐕 is
+/// added here). The number gives way first, then the arrows — the
+/// session's own name on its tab outranks both. Nothing to step (one
+/// session) is no control at all.
 fn navFormFor(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, fixed: u16) NavForm {
     const nav = opts.session_nav orelse return .none;
-    const chevrons: u16 = if (tabs.len >= 2) 2 * arrow_w else 0;
-    var active_w: u16 = 0;
-    for (tabs) |tab| if (tab.active) {
-        active_w = chipWidth(ui, tab);
-    };
-    const reserved = fixed + chevrons + plus_w + @max(narrow_room, active_w);
-    for ([_]NavForm{ .full, .arrows }) |form| {
-        if (area.w >= reserved + navWidth(ui, nav, form)) return form;
-    }
-    return .none;
+    const reserved = fixed + plus_w + @max(narrow_room, activeWidth(ui, tabs));
+    return stepper.fit(ui, nav, area.w -| reserved);
 }
 
-fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
-    const tabs_len = tabs.len;
+fn activeWidth(ui: Ui, tabs: []const Tab) u16 {
+    for (tabs) |tab| if (tab.active) return chipWidth(ui, tab);
+    return 0;
+}
+
+/// The furniture with `pager_w` cells given to the pager.
+fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, pager_form: NavForm) Geometry {
     var n_ai: usize = if (opts.split) |s| s.ai.len else 0;
     const base: u16 = if (opts.split) |sp| (if (sp.max != null) split_buttons_w else split_buttons_w - split_button_w) else 0;
     while (n_ai > 0 and area.w < base + @as(u16, @intCast(n_ai)) * split_button_w) n_ai -= 1;
     const split_total = base + @as(u16, @intCast(n_ai)) * split_button_w;
     const mode_w: u16 = if (opts.mode_chip) |m| ui.width(m.label) else 0;
     const nav_form = navFormFor(ui, area, tabs, opts, split_total + mode_w);
-    const nav_w: u16 = if (opts.session_nav) |nav| navWidth(ui, nav, nav_form) else 0;
+    const nav_w: u16 = if (opts.session_nav) |nav| stepper.width(ui, nav, nav_form) else 0;
     const right = area.right();
     const tabs_right0 = right -| (split_total + mode_w + nav_w);
-    const arrows_w: u16 = if (tabs_len >= 2) 2 * arrow_w else 0;
-    const arrows_x = @max(tabs_right0 -| arrows_w, area.x);
+    const pager_x = @max(tabs_right0 -| pager_w, area.x);
     return .{
-        .tabs_right = @max(arrows_x -| plus_w, area.x),
-        .arrows_x = arrows_x,
-        .arrows_w = arrows_w,
+        .tabs_right = @max(pager_x -| plus_w, area.x),
+        .pager_x = pager_x,
+        .pager_w = pager_w,
+        .pager_form = pager_form,
         .mode_x = @max(right -| (split_total + mode_w), area.x),
         .split_x = @max(right -| split_total, area.x),
         .n_ai = n_ai,
         .nav_x = @max(right -| (split_total + mode_w + nav_w), area.x),
         .nav_form = nav_form,
     };
+}
+
+/// The furniture, the pager included when the tabs overflow: its cells
+/// are taken from the tabs only then, so a strip whose tabs all fit is
+/// laid out as if there were no pager. A session strip has its own
+/// control and no pager.
+fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
+    const g0 = layoutWith(ui, area, tabs, opts, 0, .none);
+    if (opts.scroll_left == null or opts.scroll_right == null) return g0;
+    if (g0.nav_form != .none) return g0;
+    const room0 = g0.tabs_right -| area.x;
+    if (allWidth(ui, tabs) <= room0) return g0;
+    // The label's width rides on the page count, which rides on the
+    // room the pager leaves: two rounds settle it. The widest label
+    // (`m/m`) is what is reserved, so paging never reflows the strip.
+    const keep = @max(narrow_room, activeWidth(ui, tabs));
+    var m = @max(pageCount(ui, tabs, room0), 2);
+    var form: NavForm = .none;
+    var w: u16 = 0;
+    for (0..2) |_| {
+        const widest: stepper.Stepper = .{ .index = m - 1, .count = m, .prev = 0, .next = 0 };
+        form = stepper.fit(ui, widest, room0 -| keep);
+        w = stepper.width(ui, widest, form);
+        m = @max(pageCount(ui, tabs, room0 -| w), 2);
+    }
+    if (form == .none) return g0;
+    return layoutWith(ui, area, tabs, opts, w, form);
+}
+
+/// Every chip at its natural width, a cell between them.
+fn allWidth(ui: Ui, tabs: []const Tab) u32 {
+    var w: u32 = 0;
+    for (tabs, 0..) |tab, i| w += chipWidth(ui, tab) + @as(u32, if (i > 0) 1 else 0);
+    return w;
+}
+
+/// The first tab of the page after the one starting at `start`: as
+/// many whole chips as `room` holds, a cell between them — never fewer
+/// than one, so a chip wider than the strip is a page of its own.
+fn pageEnd(ui: Ui, tabs: []const Tab, room: u16, start: usize) usize {
+    var x: u32 = 0;
+    var i = start;
+    while (i < tabs.len) : (i += 1) {
+        const next = x + chipWidth(ui, tabs[i]) + @as(u32, if (i > start) 1 else 0);
+        if (next > room and i > start) break;
+        x = next;
+    }
+    return i;
+}
+
+fn pageCount(ui: Ui, tabs: []const Tab, room: u16) usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < tabs.len) : (n += 1) i = pageEnd(ui, tabs, room, i);
+    return n;
+}
+
+/// The pager's reading of a window: the pages are cut from the first
+/// tab, as many whole chips each as the strip holds; `index` is the
+/// page the window starts in (the last one when nothing is hidden to
+/// the right — the clamp can start the tail's window mid-page), and
+/// `prev` / `next` the offsets one page either way. Like the session
+/// ring, the pages wrap: before the first is the last, after the last
+/// the first.
+const Pages = struct { index: usize, count: usize, prev: usize, next: usize };
+
+fn pagesAt(ui: Ui, tabs: []const Tab, room: u16, first: usize, hidden_right: usize) Pages {
+    var out: Pages = .{ .index = 0, .count = 0, .prev = 0, .next = first };
+    var last: usize = 0;
+    var i: usize = 0;
+    while (i < tabs.len) : (out.count += 1) {
+        if (i <= first) out.index = out.count;
+        if (i < first) out.prev = i;
+        if (i > first and out.next == first) out.next = i;
+        last = i;
+        i = pageEnd(ui, tabs, room, i);
+    }
+    if (hidden_right == 0) {
+        out.index = out.count -| 1;
+        out.next = 0;
+    }
+    if (first == 0) out.prev = last;
+    return out;
 }
 
 /// The smallest offset at or below `raw` whose tail still fills `room`
@@ -576,7 +656,14 @@ fn paintedEnd(ui: Ui, tabs: []const Tab, room: u16, first: usize) u16 {
 /// cells instead of going unpainted, because a strip that hides tabs
 /// and says nothing about them is the bug. It never takes the `󰐕`'s
 /// room: that button has nowhere else to be.
+///
+/// With a stepper up — the pager, or a session's own control — the
+/// chip is never given cells: the stepper already says there is more
+/// than the strip shows and is the way to it, and the pager's pages are
+/// cut from this edge — one that moved with the chip's label would
+/// re-cut them as the window moved.
 fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u16 {
+    if (g.pager_form != .none or g.nav_form != .none) return g.tabs_right;
     const room = g.tabs_right -| area.x;
     const first = clampScroll(ui, tabs, room, opts.first);
     const hidden = first + (tabs.len - first - countPainted(ui, tabs, room, first)) + opts.hidden_extra;
@@ -584,8 +671,8 @@ fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u1
     const w = ui.width(hiddenLabel(ui, hidden));
     const plus_slot: u16 = if (opts.new_tab != null) plus_w else 0;
     const end = area.x + paintedEnd(ui, tabs, room, first);
-    const after_plus = @min(end, g.arrows_x -| plus_slot) + plus_slot;
-    if (after_plus + w <= g.arrows_x) return g.tabs_right;
+    const after_plus = @min(end, g.pager_x -| plus_slot) + plus_slot;
+    if (after_plus + w <= g.pager_x) return g.tabs_right;
     return @max(g.tabs_right -| w, area.x);
 }
 
@@ -593,7 +680,7 @@ fn stripRight(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, g: Geometry) u1
 const narrow_room: u16 = 12;
 
 /// A leaf too narrow for its furniture and the active tab together —
-/// the chevrons, the 󰐕, the split cluster leave the tabs less than the
+/// the pager, the 󰐕, the split cluster leave the tabs less than the
 /// active chip (or `narrow_room`) — paints the active tab alone across
 /// the strip, cut if it must be: the name on the strip is always the
 /// pane's, and the other tabs are elided. Null when the strip is wide
@@ -663,28 +750,21 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     }
     const hidden_right = tabs.len - first - painted;
 
-    // The chevrons: lit only with somewhere to go.
-    if (g.arrows_w > 0) {
-        const pair = [_]struct { glyph: []const u8, ascii: []const u8, on: bool, id: ?u32 }{
-            .{ .glyph = arrow_left_glyph, .ascii = arrow_left_ascii, .on = first > 0, .id = opts.scroll_left },
-            .{ .glyph = arrow_right_glyph, .ascii = arrow_right_ascii, .on = hidden_right > 0, .id = opts.scroll_right },
-        };
-        for (pair, 0..) |a, slot| {
-            const ax = g.arrows_x + @as(u16, @intCast(slot)) * arrow_w;
-            if (ax + arrow_w > area.right()) break;
-            const r = Rect.init(ax, y, arrow_w, 1);
-            const style: Style = if (a.on) .{ .fg = p.fg, .bg = p.bg2 } else .{ .fg = p.comment, .bg = p.bg_darker, .dim = true };
-            ui.fill(r, style);
-            _ = ui.putStr(ax + 1, y, 1, if (ui.ascii) a.ascii else a.glyph, style);
-            if (a.on) if (a.id) |id| ui.hit(r, .{ .button = id });
-        }
+    // The pager: ` ‹ n/m › ` over the pages of tabs, right-aligned in
+    // the cells reserved for its widest label.
+    var pages: Pages = .{ .index = 0, .count = 0, .prev = first, .next = first };
+    if (g.pager_form != .none) {
+        pages = pagesAt(ui, tabs, tabs_right -| area.x, first, hidden_right);
+        const pager: stepper.Stepper = .{ .index = pages.index, .count = pages.count, .prev = opts.scroll_left.?, .next = opts.scroll_right.? };
+        const w = stepper.width(ui, pager, g.pager_form);
+        _ = stepper.draw(ui, g.pager_x + (g.pager_w -| w), y, area.right(), pager, g.pager_form);
     }
 
-    // ` 󰐕 ` after the last chip, in its own slot before the chevrons.
+    // ` 󰐕 ` after the last chip, in its own slot before the pager.
     var after_plus = x;
     if (opts.new_tab) |id| {
-        const plus_x = @max(@min(x, g.arrows_x -| plus_w), area.x);
-        if (plus_x + plus_w <= g.arrows_x) {
+        const plus_x = @max(@min(x, g.pager_x -| plus_w), area.x);
+        if (plus_x + plus_w <= g.pager_x) {
             const r = Rect.init(plus_x, y, plus_w, 1);
             ui.fill(r, .{ .bg = p.bg });
             _ = ui.putStr(plus_x + 1, y, 1, if (ui.ascii) plus_ascii else plus_glyph, .{ .fg = p.green, .bg = p.bg, .bold = true });
@@ -698,7 +778,7 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     // kept off the strip.
     //
     // It PAINTS whenever any tab is off the strip. It used to sit after
-    // the last chip and only if what was left before the chevrons
+    // the last chip and only if what was left before the pager
     // happened to hold it — which is room only when the strip is
     // scrolled to a tail that fits whole. In the ordinary overflow case
     // the last chip is cut at the right edge, nothing is left, and the
@@ -709,8 +789,9 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     if (hidden_total > 0) {
         const label = hiddenLabel(ui, hidden_total);
         const w = ui.width(label);
-        const cx = @max(@min(after_plus, g.arrows_x -| w), area.x);
-        if (cx + w <= g.arrows_x) {
+        // Beside the pager it takes only the cells left after the 󰐕.
+        const cx = if (g.pager_form != .none or g.nav_form != .none) after_plus else @max(@min(after_plus, g.pager_x -| w), area.x);
+        if (cx + w <= g.pager_x) {
             const r = Rect.init(cx, y, w, 1);
             _ = ui.putStr(cx, y, w, label, .{ .fg = p.comment, .bg = p.bg2 });
             if (opts.hidden_button) |id| ui.hit(r, .{ .button = id });
@@ -730,33 +811,11 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
         }
     }
 
-    if (opts.session_nav) |nav| if (g.nav_form != .none) drawNav(ui, g.nav_x, y, area.right(), nav, g.nav_form);
+    if (opts.session_nav) |nav| _ = stepper.draw(ui, g.nav_x, y, area.right(), nav, g.nav_form);
 
     if (opts.split) |s| drawSplit(ui, g.split_x, y, area.right(), s, g.n_ai, opts.zoomed);
 
-    return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right };
-}
-
-/// ` ‹ 3/7 › ` from `x0` (` ‹  › ` in the `.arrows` form): each arrow a
-/// button-wide `.button` hit, the position between them in the dim role.
-fn drawNav(ui: Ui, x0: u16, y: u16, right: u16, nav: SessionNav, form: NavForm) void {
-    const p = ui.theme.palette;
-    const bg = p.bg_darker;
-    var x = x0;
-    const arrow: Style = .{ .fg = p.fg, .bg = bg, .bold = true };
-    if (x + nav_button_w > right) return;
-    ui.fill(Rect.init(x, y, nav_button_w, 1), .{ .bg = bg });
-    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) nav_prev_ascii else nav_prev_glyph, arrow);
-    ui.hit(Rect.init(x, y, nav_button_w, 1), .{ .button = nav.prev });
-    x += nav_button_w;
-    if (form == .full) {
-        const label = navLabel(ui, nav);
-        x += ui.putStr(x, y, right -| x, label, .{ .fg = p.comment, .bg = bg });
-    }
-    if (x + nav_button_w > right) return;
-    ui.fill(Rect.init(x, y, nav_button_w, 1), .{ .bg = bg });
-    _ = ui.putStr(x + 1, y, 1, if (ui.ascii) nav_next_ascii else nav_next_glyph, arrow);
-    ui.hit(Rect.init(x, y, nav_button_w, 1), .{ .button = nav.next });
+    return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right, .page_prev = pages.prev, .page_next = pages.next };
 }
 
 /// The split cluster from `x`: the AI chips, then ` term `, ` right `,
@@ -984,8 +1043,10 @@ const split_cluster = " " ++ ghost_glyph ++ "  " ++ split_right_glyph ++ "  " ++
 /// The strip columns of `docs/ui-spec/rust-editor-120x40.txt` row 1
 /// (31..120): one rust file, the `+`, the split cluster.
 const spec_editor_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 61 ++ split_cluster;
-/// `rust-diff-120x40.txt` row 1: two tabs, the `+`, the chevrons.
-const spec_diff_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ diff_glyph ++ " diff: worktree " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 34 ++ " " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph ++ " " ++ split_cluster;
+/// `rust-diff-120x40.txt` row 1: two tabs and the `+` — the Rust strip's
+/// dim chevrons are gone: two tabs that fit have nothing to page, and
+/// the pager is not painted (`stepper.zig`).
+const spec_diff_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ diff_glyph ++ " diff: worktree " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 40 ++ split_cluster;
 /// `rust-request-120x40.txt` row 1: the method pill, no glyph.
 const spec_request_strip = "  GET  httpbin.org/get " ++ close_glyph ++ "   " ++ plus_glyph;
 
@@ -1016,7 +1077,7 @@ test "one file tab is the Rust editor spec's strip, cell for cell, with its hits
     try testing.expect(f.bgEql(13, 0, f.theme.bufferline));
 }
 
-test "two tabs bring the chevrons: the diff spec's strip; dim and inert with nothing to scroll" {
+test "two tabs that fit: the diff spec's strip with no pager — nothing to page is nothing painted" {
     var f = try Fixture.init(89, 1);
     defer f.deinit();
     const tabs = [_]Tab{
@@ -1027,7 +1088,7 @@ test "two tabs bring the chevrons: the diff spec's strip; dim and inert with not
     try f.expectRow(0, std.mem.trimEnd(u8, spec_diff_strip, " "));
     try testing.expect(!hasButton(&f, 70));
     try testing.expect(!hasButton(&f, 71));
-    try testing.expect(f.style(72, 0).dim);
+    try f.expectLacks(nav_prev_glyph);
     // The inactive chip's badge is the grey close glyph, and it closes.
     try testing.expect(f.fgEql(11, 0, .{ .fg = f.theme.palette.grey }));
     try testing.expectEqual(@as(u16, 0), f.hits.at(12, 0).?.tab_close.idx);
@@ -1044,14 +1105,14 @@ test "a request tab has no glyph and a method pill; a dirty tab a dot the pointe
     try testing.expect(f.bgEql(3, 0, .{ .bg = f.theme.palette.green }));
     try testing.expectEqual(@as(u32, 9), f.hits.at(27, 0).?.button);
 
-    // Two tabs: the chevron pair sits at the right end, dim.
+    // Two tabs that fit: nothing at the right end.
     var g = try Fixture.init(40, 1);
     defer g.deinit();
     const tabs = [_]Tab{
         .{ .id = 1, .title = "a.txt", .glyph = "x", .dirty = true },
         .{ .id = 2, .title = "b.txt", .glyph = "x", .pinned = true, .active = true },
     };
-    const chevrons = " " ** 13 ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph;
+    const chevrons = "";
     _ = draw(g.ui(), g.full(), &tabs, .{});
     try g.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_glyph ++ chevrons);
     try testing.expect(g.fgEql(9, 0, .{ .fg = g.theme.palette.orange }));
@@ -1068,7 +1129,7 @@ test "a request tab has no glyph and a method pill; a dirty tab a dot the pointe
     defer h.deinit();
     h.ascii = true;
     _ = draw(h.ui(), h.full(), &tabs, .{ .new_tab = 9, .split = split_ids });
-    try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ " " ** 17 ++ arrow_left_ascii ++ "  " ++ arrow_right_ascii ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
+    try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ " " ** 21 ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
     try testing.expectEqual(@as(u32, 9), h.hits.at(25, 0).?.button);
 }
 
@@ -1139,7 +1200,7 @@ test "a long name is cut to name_cap; a chip cut by the edge keeps its tab hit a
     for (g.hits.items.items) |h| try testing.expect(h.target != .tab_close);
 }
 
-test "an overflowing strip: the offset clamps to what fills it, the chevrons light with their buttons, the + stays" {
+test "an overflowing strip: the offset clamps to what fills it, the pager ` ‹ n/m › ` takes the chevrons' place, the + stays" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
     const tabs = [_]Tab{
@@ -1150,21 +1211,21 @@ test "an overflowing strip: the offset clamps to what fills it, the chevrons lig
         .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
     };
     const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71 };
-    // From the start: three tabs are off the strip, so ` +3 hidden ` is
-    // GIVEN its cells (`stripRight`) and what is left holds one chip
-    // whole and six cells of the next; the + keeps its reserved slot.
-    // The chip costs a tab of window — the trade it exists to make.
+    // From the start: three tabs are off the strip. The pager says so
+    // — page 1 of 4, two whole chips to a page here — and ` +N hidden `
+    // is not given cells beside it (`stripRight`): the pager is the
+    // overflow's one word, and the + keeps its reserved slot.
     const w0 = draw(f.ui(), f.full(), &tabs, opts);
-    try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two  " ++ plus_glyph ++ " +3 hidden  " ++ arrow_left_glyph ++ "  " ++ arrow_right_glyph);
+    try f.expectRow(0, " x one.txt " ++ close_glyph ++ "   x two.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "  " ++ nav_prev_glyph ++ " 1/4 " ++ nav_next_glyph);
     try testing.expectEqual(@as(usize, 0), w0.first);
     try testing.expectEqual(@as(usize, 2), w0.painted);
     try testing.expectEqual(@as(usize, 3), w0.hidden_right);
-    try testing.expect(!hasButton(&f, 70));
+    // Both arrows are buttons; before the first page is the last.
+    try testing.expectEqual(@as(u32, 70), f.hits.at(32, 0).?.button);
     try testing.expectEqual(@as(u32, 71), f.hits.at(38, 0).?.button);
-    try testing.expectEqual(@as(u32, 77), f.hits.at(22, 0).?.button);
-    // The cut second chip keeps its tab hit and has no close.
-    try testing.expectEqual(@as(u16, 1), f.hits.at(18, 0).?.tab.idx);
-    try testing.expect(f.hits.at(19, 0).? == .tab);
+    try testing.expectEqual(@as(usize, 2), w0.page_next);
+    try testing.expectEqual(@as(usize, 4), w0.page_prev);
+    try testing.expectEqual(@as(u32, 77), f.hits.at(29, 0).?.button);
     // The active tab is last: fitActive jumps to it and the clamp pulls
     // back to the offset whose tail fills the strip — which is the last
     // tab alone, once the chip has taken its cells.
@@ -1172,30 +1233,91 @@ test "an overflowing strip: the offset clamps to what fills it, the chevrons lig
     try testing.expectEqual(@as(usize, 4), first);
     var g = try Fixture.init(40, 1);
     defer g.deinit();
-    const w1 = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .first = first });
+    var at_tail = opts;
+    at_tail.first = first;
+    const w1 = draw(g.ui(), g.full(), &tabs, at_tail);
     try testing.expectEqual(@as(usize, 4), w1.hidden_left);
     try testing.expectEqual(@as(usize, 0), w1.hidden_right);
-    try g.expectContains(" x five.txt " ++ close_glyph ++ "   " ++ plus_glyph ++ "  +4 hidden ");
-    try testing.expectEqual(@as(u32, 70), g.hits.at(35, 0).?.button);
-    try testing.expect(!hasButton(&g, 71));
+    try g.expectContains(" x five.txt " ++ close_glyph ++ "   " ++ plus_glyph);
+    // The tail is the last page, and after it comes the first.
+    try g.expectContains(nav_prev_glyph ++ " 4/4 " ++ nav_next_glyph);
+    try testing.expectEqual(@as(usize, 0), w1.page_next);
     try testing.expect(hasTab(&g, 4));
     // A stale offset past that is pulled back; the active tab already in
     // view keeps the offset.
     try testing.expectEqual(@as(usize, 4), draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .first = 4 }).first);
     try testing.expectEqual(@as(usize, 4), fitActive(g.ui(), g.full(), &tabs, 4, opts));
-    // Everything fits: the chevrons stay, dim.
+    // Everything fits: no pager at all — no cells, no buttons.
     var k = try Fixture.init(90, 1);
     defer k.deinit();
     const w3 = draw(k.ui(), k.full(), &tabs, opts);
     try testing.expectEqual(@as(usize, 0), w3.hidden_right);
     try testing.expect(!hasButton(&k, 70) and !hasButton(&k, 71));
-    try k.expectContains(arrow_left_glyph ++ "  " ++ arrow_right_glyph);
+    try k.expectLacks(nav_prev_glyph);
+    try k.expectLacks(arrow_left_glyph);
     // No tabs: the + alone at the left.
     var e = try Fixture.init(20, 1);
     defer e.deinit();
     _ = draw(e.ui(), e.full(), &.{}, .{ .new_tab = 1 });
     try e.expectRow(0, " " ++ plus_glyph);
     _ = draw(e.ui(), Rect.empty, &.{}, .{ .new_tab = 1 });
+}
+
+test "the pager pages: whole chips per page from the first tab, `›` to the next page's offset, `‹` to the previous, wrapping at both ends; a session strip's own control leaves it out" {
+    const names = [_][]const u8{ "t1.txt", "t2.txt", "t3.txt", "t4.txt", "t5.txt", "t6.txt", "t7.txt", "t8.txt", "t9.txt", "t10.tx", "t11.tx", "t12.tx" };
+    var tabs: [12]Tab = undefined;
+    for (names, 0..) |n, i| tabs[i] = .{ .id = @intCast(i + 1), .title = n, .glyph = "x", .active = i == 0 };
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .hidden_button = 8 };
+    // 80 cells, no cluster: the reading at each page start.
+    const Want = struct { first: usize, label: []const u8, prev: usize, next: usize };
+    var f = try Fixture.init(80, 1);
+    defer f.deinit();
+    const w0 = draw(f.ui(), f.full(), &tabs, opts);
+    try testing.expectEqual(@as(usize, 0), w0.first);
+    try f.expectContains(nav_prev_glyph ++ " 1/");
+    const pages_label = blk: {
+        var buf: [1024]u8 = undefined;
+        const row = f.row(0, &buf);
+        const at = std.mem.indexOf(u8, row, " 1/").?;
+        break :blk try f.ui().arena.dupe(u8, row[at + 3 .. std.mem.indexOfScalarPos(u8, row, at + 3, ' ').?]);
+    };
+    const count = try std.fmt.parseInt(usize, pages_label, 10);
+    try testing.expect(count >= 3);
+    // Walk forward with `›`: every page, then round to the first.
+    var first: usize = 0;
+    var seen: usize = 0;
+    var steps: usize = 0;
+    while (steps < count) : (steps += 1) {
+        var g = try Fixture.init(80, 1);
+        defer g.deinit();
+        var o = opts;
+        o.first = first;
+        const w = draw(g.ui(), g.full(), &tabs, o);
+        seen += 1;
+        try g.expectContains(g.ui().fmt("{s} {d}/{d} {s}", .{ nav_prev_glyph, steps + 1, count, nav_next_glyph }));
+        // `‹` from here is where the last step came from.
+        if (steps > 0) try testing.expect(w.page_prev < w.first);
+        first = w.page_next;
+    }
+    try testing.expectEqual(count, seen);
+    try testing.expectEqual(@as(usize, 0), first);
+    _ = Want;
+    // A session strip that overflows wears its session control, no pager.
+    var s = try Fixture.init(80, 1);
+    defer s.deinit();
+    var so = opts;
+    so.session_nav = .{ .index = 1, .count = 3, .prev = 60, .next = 61 };
+    _ = draw(s.ui(), s.full(), &tabs, so);
+    try s.expectContains(nav_prev_glyph ++ " 2/3 " ++ nav_next_glyph);
+    try testing.expect(!hasButton(&s, 70) and !hasButton(&s, 71));
+    // One session — nothing to step — is no control, and the pager is back.
+    so.session_nav = .{ .index = 0, .count = 1, .prev = 60, .next = 61 };
+    var u = try Fixture.init(80, 1);
+    defer u.deinit();
+    _ = draw(u.ui(), u.full(), &tabs, so);
+    try u.expectLacks("1/1");
+    try testing.expect(!hasButton(&u, 60) and !hasButton(&u, 61));
+    try testing.expect(hasButton(&u, 70) and hasButton(&u, 71));
 }
 
 test "the hidden chip counts the tabs scrolled off the left edge too, and clicks through to its button" {
@@ -1212,17 +1334,19 @@ test "the hidden chip counts the tabs scrolled off the left edge too, and clicks
         .{ .id = 4, .title = "four.txt", .glyph = "x" },
         .{ .id = 5, .title = "five.txt", .glyph = "x", .active = true },
     };
-    const w = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .hidden_button = 8, .first = 3 });
+    // No pager here (the strip of a host that has none): the chip is
+    // the only word about the overflow, so it is given its cells.
+    const w = draw(f.ui(), f.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8, .first = 3 });
     try testing.expectEqual(@as(usize, 2), w.first);
     try testing.expectEqual(@as(usize, 2), w.hidden_left);
     try testing.expectEqual(@as(usize, 0), w.hidden_right);
-    try f.expectContains(plus_glyph ++ "  +2 hidden ");
+    try f.expectContains(plus_glyph ++ "  +2 hidden");
     try testing.expectEqual(@as(u32, 8), f.hits.at(50, 0).?.button);
     // The filtered-out tabs add to the same count.
     var g = try Fixture.init(66, 1);
     defer g.deinit();
     _ = draw(g.ui(), g.full(), &tabs, .{ .new_tab = 77, .hidden_button = 8, .hidden_extra = 2, .first = 3 });
-    try g.expectContains(" +4 hidden ");
+    try g.expectContains(" +4 hidden");
     // Nothing hidden: no chip.
     var k = try Fixture.init(90, 1);
     defer k.deinit();

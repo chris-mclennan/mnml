@@ -506,7 +506,7 @@ fn productNeedsYou(app: *App, product: launch_profiles.Product) bool {
     var pid: PaneId = 0;
     while (pid < app.panes.capacity()) : (pid += 1) {
         const p = app.panes.pty(pid) orelse continue;
-        if (pty_pane.productOf(app, p) != product) continue;
+        if (@import("launch_profiles.zig").productOfPane(app, p) != product) continue;
         if (sessions.needsYou(app, pid)) return true;
     }
     return false;
@@ -827,7 +827,7 @@ fn productLive(app: *App, id: []const u8) bool {
     var pid: PaneId = 0;
     while (pid < app.panes.capacity()) : (pid += 1) {
         const p = app.panes.pty(pid) orelse continue;
-        if (p.exit == null and pty_pane.productOf(app, p) == product) return true;
+        if (p.exit == null and @import("launch_profiles.zig").productOfPane(app, p) == product) return true;
     }
     return false;
 }
