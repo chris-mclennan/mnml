@@ -291,8 +291,6 @@ pub const FieldId = union(enum) {
     settings_filter,
     find_query,
     find_replace,
-    /// The app's own `:` line (`app/cmdline.zig`).
-    cmdline,
     /// A list panel's filter pill — SEARCH's query among them.
     panel_filter: PanelId,
     /// A filter pill a pane hosts (FILES, a ZON view, the browser's, the

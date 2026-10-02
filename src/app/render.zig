@@ -2629,6 +2629,7 @@ fn drawCmdline(app: *App, ui: Ui, row: Rect, line: ?[]const u8, dock_x: ?u16) Al
     if (area.isEmpty()) return;
     const model: cmdline_bar.Model = .{
         .line = line,
+        .sel = if (line != null) cmdline_mod.displaySel(app, ui.ascii) else null,
         // No echo under an open overlay: the toast paints beneath the
         // overlay, so its words must not surface on the row below it.
         .toast = if (line == null and app.overlay == .none) app.lastToast() else null,

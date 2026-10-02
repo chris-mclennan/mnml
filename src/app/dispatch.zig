@@ -2005,6 +2005,8 @@ fn widgetFallthrough(app: *App, k: Key) Allocator.Error!void {
 // ─── paste ──────────────────────────────────────────────────────────────
 
 pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
+    // The app's own `:` line has the keys while it is open.
+    if (app.cmdline != null and app.overlay == .none) return cmdline_mod.insert(app, text);
     switch (app.overlay) {
         .prompt => |*p| return Prompt.paste(&p.state, app.gpa, text),
         .picker => |*p| {
@@ -2888,7 +2890,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // The bar: opens the `:` line. Already open, a click is
                 // a no-op — the user is typing on it.
                 .cmdline_bar => {
-                    if (app.cmdline == null) cmdline_mod.open(app);
+                    if (app.cmdline == null) return cmdline_mod.open(app);
+                    // On the open line: the caret, the word, the line.
+                    if (m.button == .left) if (hitRect(app, m.x, m.y)) |r| cmdline_mod.click(app, m.x -| r.x, clickCount(app, m), m.mods.shift, app.screen.width_method);
                     return;
                 },
                 // The `⟳ … running…` indicator: stop what it reports.
