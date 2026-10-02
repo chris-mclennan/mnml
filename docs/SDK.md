@@ -655,6 +655,7 @@ What mnml does with each field:
 | `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest. The live run replaces it over Tier 2, where it may also carry `items` (below) |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
 | `values_sources[]` | the statusline poller (`src/app/integration_poll.zig`): each entry's `command` runs as `<binary> --values --workspace <ws>` every `poll_interval_secs` (300 by default), one worker per source, staggered, backed off on a failure, and quiet while a pane of the integration is open; `prefetch = true` also runs the whole-pane warm |
+| `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary. See *Links* below |
 | `context_menu[]`, `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
 
 `binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
@@ -672,6 +673,57 @@ the same files. mnml's own launchers live in the repo's `launchers/`.
 returns the path it wrote. `sdk.manifest.remove(gpa, io, env, id)` is
 uninstall. mnml re-scans on `integrations.refresh` and at startup; an
 `id` must be a file name (`[A-Za-z0-9_.-]`).
+
+## Links — the text your integration knows
+
+mnml links a plain `http://` / `https://` URL wherever it shows text it
+did not write — a session card's name and output, the sessions table's
+summary: the words underline (dotted at rest, the accent under the
+pointer), a click opens them, a right-click offers *Copy link* /
+*Open link*, and the card's menu (Shift+F10 on the focused card) lists
+them as `Open …` rows. Everything that is not a URL — a ticket key, a
+build number — links only because an installed integration says what
+it looks like and where it goes. mnml itself knows no project key,
+company or product.
+
+```zig
+.links = &.{
+    .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}" },
+},
+```
+
+* **`pattern`** is a Perl-style regex, matched case-sensitively. A match
+  must stand alone as a word — no letter, digit or `_` either side — so
+  `XENG-1` does not yield `ENG-1`. A match inside a URL mnml already
+  linked stays part of the URL.
+* **`url`** is a template: `{0}` or `{match}` is the matched text, `{1}`
+  … `{9}` the pattern's groups (each percent-encoded where a URL needs
+  it), and `{<key>}` a value the integration was configured with. What
+  it expands to must start `http://` or `https://`; mnml refuses
+  anything else and toasts why.
+* **A `{<key>}` is bound once, never per match.** Your `--install` can
+  bind it from what only it knows — `sdk.manifest.bindLinks(arena, spec,
+  "site_url", url)` before `write`; the Jira integration writes its
+  config's `.jira_url` in that way. Whatever is still unbound when mnml
+  reads the manifest, mnml binds from the manifest's own `settings[]`
+  value of that key, else from the environment variable the `auth[]`
+  field of that key names as its `env_fallback` (Jira's `site_url` falls
+  back to `$JIRA_URL`). A link with a value still missing is not in
+  force — nothing breaks; the key just does not link until the
+  integration is set up and installed (or refreshed) again.
+* **The first declaration wins.** mnml builds one rule set when it reads
+  the manifests — startup, an install, `integrations.refresh` — never per
+  frame. URLs come first; then the integrations in the order the
+  INTEGRATIONS section lists them (by label), each manifest's `links[]`
+  in its own order. Where two integrations' patterns both match the same
+  words, the first one listed opens. A disabled integration (its chip
+  off) declares nothing.
+
+The in-repo integrations: Jira's Work chip declares the issue key
+above; Bitbucket declares none — a pull request is already a URL
+(`…/pull-requests/12`), which links on its own, and Bitbucket has no
+short reference worth a pattern. The sample's `manifest.zon` carries a
+commented example.
 
 ## Publishing an integration — the catalogue entry
 

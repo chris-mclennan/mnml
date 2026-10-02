@@ -153,6 +153,73 @@ pub const ValuesSource = struct {
     prefetch: bool = false,
 };
 
+/// A shape of text the integration knows how to link — a ticket key,
+/// say — so mnml can turn it into a link wherever it shows text the
+/// integration did not write (a session card's name and output). mnml
+/// links plain `http://` / `https://` URLs on its own; `links[]` is
+/// for everything else, and it is the only way mnml learns a key
+/// shape: core knows no project key, company or product.
+///
+/// `pattern` is a Perl-style regex (`[A-Z][A-Z0-9]+-\d+`), matched
+/// case-sensitively. A match must stand alone as a word: the
+/// characters either side of it are not letters, digits or `_`, so
+/// `XENG-1` does not yield `ENG-1`. A match inside a URL mnml already
+/// linked is not linked twice.
+///
+/// `url` is the address a match opens, a template:
+///
+///   `{0}` or `{match}`   the matched text
+///   `{1}` … `{9}`        a capture group of `pattern`
+///   `{<key>}`            a value the integration configured — see
+///                        `bindLinkVar` and docs/SDK.md, *Links*
+///
+/// What a template expands to must start `http://` or `https://`;
+/// anything else is never opened. The matched text is percent-encoded
+/// where a URL needs it; a `{<key>}` value goes in as written.
+pub const Link = struct {
+    pattern: []const u8,
+    url: []const u8,
+};
+
+/// `template` with every `{key}` replaced by `value`, on `arena` — the
+/// step an integration's `--install` takes for a value only it knows
+/// (the Jira integration's site, from its own config), and the step
+/// mnml takes at load for the rest. A template without `{key}` comes
+/// back as it was.
+pub fn bindLinkVar(arena: Allocator, template: []const u8, key: []const u8, value: []const u8) Allocator.Error![]const u8 {
+    var needle_buf: [80]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "{{{s}}}", .{key}) catch return template;
+    if (std.mem.indexOf(u8, template, needle) == null) return template;
+    return std.mem.replaceOwned(u8, arena, template, needle, value);
+}
+
+/// `m` with `{key}` bound to `value` in every `links[]` url, on
+/// `arena`; `m` itself is untouched. `--install` writes the result.
+pub fn bindLinks(arena: Allocator, m: Manifest, key: []const u8, value: []const u8) Allocator.Error!Manifest {
+    if (m.links.len == 0) return m;
+    const out = try arena.alloc(Link, m.links.len);
+    for (m.links, out) |l, *o| o.* = .{ .pattern = l.pattern, .url = try bindLinkVar(arena, l.url, key, value) };
+    var copy = m;
+    copy.links = out;
+    return copy;
+}
+
+/// The first `{name}` in `template` that is not `{0}`–`{9}` or
+/// `{match}` — a value still to be bound — or null when none is left.
+pub fn unboundLinkVar(template: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, template, from, '{')) |open| {
+        const close = std.mem.indexOfScalarPos(u8, template, open + 1, '}') orelse return null;
+        const name = template[open + 1 .. close];
+        from = close + 1;
+        if (name.len == 1 and std.ascii.isDigit(name[0])) continue;
+        if (std.mem.eql(u8, name, "match")) continue;
+        if (name.len == 0) continue;
+        return name;
+    }
+    return null;
+}
+
 pub const Manifest = struct {
     id: []const u8,
     label: []const u8,
@@ -176,6 +243,10 @@ pub const Manifest = struct {
     requires: []const []const u8 = &.{},
     auth: []const AuthField = &.{},
     values_sources: []const ValuesSource = &.{},
+    /// Text shapes the integration links (`Link`): a ticket key and
+    /// the address it opens. First declared wins where two
+    /// integrations' patterns match the same text.
+    links: []const Link = &.{},
     /// The SDK version the binary was built against — `sdk.version`,
     /// stamped by `render` (so by every `--install`) when the author
     /// leaves it out, which is always. mnml compares it with its own
@@ -495,4 +566,35 @@ test "write renders ZON that parses back with the same shape" {
     const lback = try std.zon.parse.fromSliceAlloc(Manifest, arena_state.allocator(), ltext, &ldiag, .{ .free_on_error = false });
     try testing.expect(lback.isLauncher());
     try testing.expectEqualStrings(":term htop", lback.commands[0].line().?);
+}
+
+test "links: the field parses and renders back; bindLinkVar fills a configured value; unboundLinkVar names what is left" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text =
+        \\.{ .id = "acme", .label = "Acme", .binary = "mnml-acme",
+        \\   .links = .{ .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}" } } }
+    ;
+    var diag: std.zon.parse.Diagnostics = .{};
+    defer diag.deinit(a);
+    const m = try std.zon.parse.fromSliceAlloc(Manifest, a, text, &diag, .{ .free_on_error = false });
+    try testing.expectEqual(@as(usize, 1), m.links.len);
+    try testing.expectEqualStrings("[A-Z][A-Z0-9]+-\\d+", m.links[0].pattern);
+    try testing.expectEqualStrings("site_url", unboundLinkVar(m.links[0].url).?);
+    // `--install` binds what only the integration knows.
+    const bound = try bindLinks(a, m, "site_url", "https://tracker.example.com");
+    try testing.expectEqualStrings("https://tracker.example.com/browse/{0}", bound.links[0].url);
+    try testing.expect(unboundLinkVar(bound.links[0].url) == null);
+    // The source manifest is untouched; an absent key leaves a template alone.
+    try testing.expectEqualStrings("{site_url}/browse/{0}", m.links[0].url);
+    try testing.expectEqualStrings("{a}/{0}", try bindLinkVar(a, "{a}/{0}", "b", "x"));
+    // `{0}`–`{9}` and `{match}` are the match's, never a value to bind.
+    try testing.expect(unboundLinkVar("https://x/{match}/{1}") == null);
+    // It renders back with the field, and a manifest without links omits it.
+    const out = try render(a, bound);
+    try testing.expect(std.mem.indexOf(u8, out, ".links") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "https://tracker.example.com/browse/{0}") != null);
+    const plain = try render(a, .{ .id = "p", .label = "p", .binary = "b" });
+    try testing.expect(std.mem.indexOf(u8, plain, ".links") == null);
 }
