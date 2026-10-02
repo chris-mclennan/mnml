@@ -116,6 +116,7 @@ const ws_pane = @import("app/ws_pane.zig");
 const browser_pane = @import("app/browser_pane.zig");
 const mount_pane = @import("app/mount_pane.zig");
 const integrations = @import("app/integrations.zig");
+const link_rules = @import("app/link_rules.zig");
 const marketplace = @import("app/marketplace.zig");
 const font_scan = @import("app/font_scan.zig");
 const glyph_audit = @import("app/glyph_audit.zig");
@@ -1298,6 +1299,9 @@ pub const App = struct {
     http: http_app.State,
     http_panel: http_panel.State,
     integrations: integrations.State,
+    /// URLs and the installed integrations' `links[]`, compiled, and the
+    /// spans of the texts painted lately (`app/link_rules.zig`).
+    link_rules: link_rules.State = .{},
     marketplace: marketplace.State = .{},
     /// The installed Nerd Fonts and the latest release (`app/font_scan.zig`).
     fonts: font_scan.State,
@@ -2060,6 +2064,7 @@ pub const App = struct {
         self.panes.deinit();
         self.docs.destroy();
         self.integrations.deinit(gpa);
+        self.link_rules.deinit(gpa);
         self.activity_bar.deinit(gpa);
         self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
@@ -3920,6 +3925,8 @@ test {
     _ = @import("app/sidebar_auto.zig");
     _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/pin_chip.zig");
+    _ = @import("ui/link_span.zig");
+    _ = @import("app/link_rules.zig");
     _ = @import("ui/edge_grip.zig");
     _ = @import("app/edge_band_audit.zig");
     // // changed (railmove): the two strips and the section placement

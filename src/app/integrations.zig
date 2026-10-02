@@ -657,6 +657,8 @@ pub fn refresh(app: *App) Allocator.Error!void {
     for (st.list) |*inst| try registerCommands(app, arena, inst);
     try app.keymap.rebuildPrefixes();
     try setSegments(app);
+    // The links the manifests declare follow them too (`link_rules`).
+    try @import("link_rules.zig").rebuild(app);
     // The schedule follows the manifests: an install, an uninstall or a
     // disable changes what the poller runs without a restart.
     try integration_poll.restart(app);
