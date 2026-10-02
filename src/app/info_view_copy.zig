@@ -234,27 +234,53 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
 /// for prose: `g d` → `gd`, `f12` → `F12`, `ctrl+k ctrl+i` → `Ctrl+K
 /// Ctrl+I`. The vim profile's own chords come before the shared ones
 /// (`gd` over `F12`, the idiom a vim user knows); the standard profile
-/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`), but a
-/// which-key row (`space l h`) only when the command has no chord of
-/// its own — VS Code's `Ctrl+K Ctrl+I`, not the popup's path.
+/// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`), then
+/// the keys its input handler answers itself (`input/standard.zig`'s
+/// `own_keys`: Cut is `Ctrl+X`). A which-key row (`space a e`) is never
+/// the standard profile's chord — Space types there — so a command bound
+/// only through the leader shows none; `leaderChordOf` names it.
 pub fn chordOf(app: *const App, arena: Allocator, id: CommandId) Allocator.Error!?[]const u8 {
+    const spec = chordSpecOf(app, id) orelse return null;
+    return try chordDisplay(arena, spec);
+}
+
+/// `chordOf`'s spec, unspelled (`ctrl+x`, `g d`) — what the welcome
+/// screen spells its own way.
+pub fn chordSpecOf(app: *const App, id: CommandId) ?[]const u8 {
     const keys = command.spec(id).keys;
-    const lists: [3][]const []const u8 = switch (App.profileOf(app.input_style)) {
-        .vim => .{ keys.vim, keys.both, keys.vim_handler },
-        .standard => .{ keys.both, keys.standard, &.{} },
-    };
     const standard = App.profileOf(app.input_style) == .standard;
+    const lists: [3][]const []const u8 = if (standard) .{ keys.both, keys.standard, &.{} } else .{ keys.vim, keys.both, keys.vim_handler };
     // The sessions mode's chords mean its verbs while it shows: theirs
     // are printed there, and nothing else claims them.
     const sessions_mode = @import("sessions_mode.zig");
-    if (sessions_mode.contextualSpec(app, id)) |spec| return try chordDisplay(arena, spec);
+    if (sessions_mode.contextualSpec(app, id)) |spec| return spec;
     for (lists) |list| for (list) |spec| {
         if (standard and isLeaderChord(spec)) continue;
         if (sessions_mode.takesSpec(app, spec)) continue;
-        return try chordDisplay(arena, spec);
+        return spec;
     };
-    for (lists) |list| for (list) |spec| {
-        if (!sessions_mode.takesSpec(app, spec)) return try chordDisplay(arena, spec);
+    if (standard) if (standardLayerSpec(id)) |spec| {
+        if (!sessions_mode.takesSpec(app, spec)) return spec;
+    };
+    return null;
+}
+
+/// The standard input handler's own chord for `id` (`Ctrl+X` for Cut),
+/// whichever profile is active — the caller asks only under standard.
+pub fn standardLayerSpec(id: CommandId) ?[]const u8 {
+    for (@import("../input/standard.zig").own_keys) |row| if (row.command == id) return row.spec;
+    return null;
+}
+
+/// The leader chord the standard profile binds `id` to when that is
+/// all it binds (`Space a e` for Explain) — the chord `chordOf` leaves
+/// off a menu row there. Null under vim, or when `chordOf` has one.
+pub fn leaderChordOf(app: *const App, arena: Allocator, id: CommandId) Allocator.Error!?[]const u8 {
+    if (App.profileOf(app.input_style) != .standard) return null;
+    if (chordSpecOf(app, id) != null) return null;
+    const keys = command.spec(id).keys;
+    for ([_][]const []const u8{ keys.both, keys.standard }) |list| for (list) |spec| {
+        if (isLeaderChord(spec)) return try chordDisplay(arena, spec);
     };
     return null;
 }
@@ -570,6 +596,44 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
     try t.expectEqualStrings("gd", (try chordOf(&app, a, .@"lsp.goto_definition")).?);
     try t.expectEqualStrings("K", (try chordOf(&app, a, .@"lsp.hover")).?);
     try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
+}
+
+test "chordOf under standard: the input handler's own keys resolve, a leader-only command resolves to nothing, the AI chords are Ctrl chords; vim is as it was" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try app.setInputStyle(.standard);
+    // `input/standard.zig`'s `own_keys`, after the keymap.
+    try t.expectEqualStrings("Ctrl+X", (try chordOf(&app, a, .@"editor.cut")).?);
+    try t.expectEqualStrings("Ctrl+C", (try chordOf(&app, a, .@"editor.copy")).?);
+    try t.expectEqualStrings("Ctrl+V", (try chordOf(&app, a, .@"editor.paste")).?);
+    try t.expectEqualStrings("Ctrl+Z", (try chordOf(&app, a, .@"editor.undo")).?);
+    try t.expectEqualStrings("Ctrl+A", (try chordOf(&app, a, .@"editor.select_all")).?);
+    try t.expectEqualStrings("Ctrl+/", (try chordOf(&app, a, .@"editor.toggle_line_comment")).?);
+    // The keymap still comes first: redo's shared Ctrl+Shift+Z over the
+    // handler's Ctrl+Y.
+    try t.expectEqualStrings("Ctrl+Shift+Z", (try chordOf(&app, a, .@"editor.redo")).?);
+    // Leader-only: nothing on a row, and `leaderChordOf` names it.
+    try t.expect((try chordOf(&app, a, .@"ai.explain")) == null);
+    try t.expect((try chordOf(&app, a, .@"browser.open")) == null);
+    try t.expectEqualStrings("Space a e", (try leaderChordOf(&app, a, .@"ai.explain")).?);
+    try t.expect((try leaderChordOf(&app, a, .@"editor.cut")) == null);
+    // The AI chords a VS Code user knows: Open Chat, Open Quick Chat.
+    try t.expectEqualStrings("Ctrl+Alt+I", (try chordOf(&app, a, .@"ai.claude_code")).?);
+    try t.expectEqualStrings("Ctrl+Alt+Shift+L", (try chordOf(&app, a, .@"ai.ask")).?);
+    try app.setInputStyle(.vim);
+    // Vim reads the keymap alone: the standard handler's keys are not
+    // its, and its leader chords are its chords.
+    try t.expect((try chordOf(&app, a, .@"editor.cut")) == null);
+    try t.expect((try chordOf(&app, a, .@"editor.undo")) == null);
+    try t.expectEqualStrings("Ctrl+Shift+Z", (try chordOf(&app, a, .@"editor.redo")).?);
+    try t.expectEqualStrings("Space a e", (try chordOf(&app, a, .@"ai.explain")).?);
+    try t.expectEqualStrings("Space a c", (try chordOf(&app, a, .@"ai.claude_code")).?);
+    try t.expectEqualStrings("Space a a", (try chordOf(&app, a, .@"ai.ask")).?);
+    try t.expectEqualStrings("Space /", (try chordOf(&app, a, .@"editor.toggle_line_comment")).?);
+    try t.expect((try leaderChordOf(&app, a, .@"ai.explain")) == null);
 }
 
 test "askPrompt carries the entry's words and the target's state" {

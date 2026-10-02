@@ -128,14 +128,27 @@ pub fn shortcuts(app: *App, arena: Allocator) Allocator.Error![]const Shortcut {
     var out: std.ArrayListUnmanaged(Shortcut) = .empty;
     if (app.cfg.ui.welcome == .minimal) {
         for (minimal_shortcuts) |row| {
-            const chord = try minimalChord(app, arena, command.spec(row.command).keys) orelse continue;
+            const chord = try minimalChord(app, arena, command.spec(row.command).keys) orelse try ownKeyChord(app, arena, row.command, .minimal) orelse continue;
             try out.append(arena, .{ .chord = chord, .label = row.label, .command = row.command });
         }
     } else for (start_shortcuts) |row| {
-        const chord = try startChord(app, arena, command.spec(row.command).keys) orelse continue;
+        const chord = try startChord(app, arena, command.spec(row.command).keys) orelse try ownKeyChord(app, arena, row.command, .start) orelse continue;
         try out.append(arena, .{ .chord = chord, .label = row.label, .command = row.command });
     }
     return out.items;
+}
+
+/// A command the keymap leaves unbound may still have a chord the
+/// standard input handler answers itself (`Ctrl+X` for Cut), read off
+/// the one table the menus and the hover help read
+/// (`info_view_copy.standardLayerSpec`).
+fn ownKeyChord(app: *App, arena: Allocator, id: command.CommandId, form: enum { start, minimal }) Allocator.Error!?[]const u8 {
+    if (App.profileOf(app.input_style) != .standard) return null;
+    const spec = info_copy.standardLayerSpec(id) orelse return null;
+    return switch (form) {
+        .start => try info_copy.chordDisplay(arena, spec),
+        .minimal => try caretDisplay(arena, spec),
+    };
 }
 
 /// The chord the start surface shows for `keys` under the active

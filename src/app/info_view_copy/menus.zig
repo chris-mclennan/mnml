@@ -421,6 +421,8 @@ pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.E
             .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ m.title, it.label }),
             .body = if (try copy.chordOf(app, arena, c)) |chord|
                 try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. {s}, the chord at the row's right edge, does the same from the keyboard; the palette lists it under its group.", .{ command.name(c), command.title(c), chord })
+            else if (try copy.leaderChordOf(app, arena, c)) |leader|
+                try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. This profile reaches it only through the leader, `{s}`, and a menu row prints no leader chord, so the row's right edge is bare; the palette lists it under its group.", .{ command.name(c), command.title(c), leader })
             else
                 try std.fmt.allocPrint(arena, "Runs `{s}` — {s}. No chord binds it in this profile; the palette lists it under its group.", .{ command.name(c), command.title(c) }),
         },
@@ -551,4 +553,24 @@ fn columns(comptime n: u8) Entry {
         .body = if (n == 1) "The sessions mode shows one session across the whole editor area, the others stacked behind it as tabs — Ctrl+Tab steps through them. Writes `ai.session_columns = 1` home; the tick is the current count." else std.fmt.comptimePrint("The sessions mode stands {d} sessions side by side, each column a stack of the rest, dealt in the rail's order. Writes `ai.session_columns = {d}` home; the tick is the current count.", .{ n, n }),
         .links = &.{.{ .command = .{ .id = ids[n - 1], .label = "Use this count" } }},
     };
+}
+
+test "the fallback names a row's chord at its right edge only when the row prints one; a leader-only row under standard names the leader instead" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    const a = app.frame.allocator();
+    const rows_in = [_]command.MenuItem{
+        .{ .label = "Fix", .action = .{ .command = .@"ai.fix" } },
+        .{ .label = "Cut", .action = .{ .command = .@"editor.cut" } },
+    };
+    try app.setInputStyle(.standard);
+    try app.openMenu("Probe", try app.gpa.dupe(command.MenuItem, &rows_in), 10, 5);
+    const fix = (try rowFallback(&app, a, 0, 0)).?;
+    try t.expect(std.mem.indexOf(u8, fix.body, "`Space a f`") != null);
+    try t.expect(std.mem.indexOf(u8, fix.body, "the chord at the row's right edge") == null);
+    const cut = (try rowFallback(&app, a, 0, 1)).?;
+    try t.expect(std.mem.indexOf(u8, cut.body, "Ctrl+X, the chord at the row's right edge") != null);
+    try app.setInputStyle(.vim);
+    const vim_fix = (try rowFallback(&app, a, 0, 0)).?;
+    try t.expect(std.mem.indexOf(u8, vim_fix.body, "Space a f, the chord at the row's right edge") != null);
 }

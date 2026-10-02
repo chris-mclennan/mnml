@@ -7,7 +7,9 @@
 # no blank line above the bottom edge (2026-09-20: `menuSize` used to
 # reserve a row for the title as well, and this file pinned the gap); a
 # hover on a group shows its rows beside it (the child hung from the
-# row), each leaf ending in its chord; Esc closes.
+# row), each leaf ending in its chord — none for Browser tab, whose one
+# chord is the leader's `Space B`, which a standard menu row does not
+# print; Esc closes.
 click 32 1
 expect screen contains "┌ Create… ──────────┐"
 expect screen contains "│   New          ▸ │"
@@ -17,13 +19,14 @@ expect screen contains "│   Dock         ▸ │"
 expect screen contains "│   Integrations ▸ │"
 expect screen lacks "│                   │"
 hover 36 3
-expect screen contains "│   New          ▸ │┌───────────────────────────┐"
-expect screen contains "│   Scratch buffer         │"
-expect screen contains "│   From clipboard         │"
-expect screen contains "│   HTTP request           │"
-expect screen contains "│   Shell     Ctrl+Shift+` │"
-expect screen contains "│   Browser tab    Space B │"
-expect screen contains "│   Tab page      Ctrl+K n │"
+expect screen contains "│   New          ▸ │┌──────────────────────────┐"
+expect screen contains "│   Scratch buffer        │"
+expect screen contains "│   From clipboard        │"
+expect screen contains "│   HTTP request          │"
+expect screen contains "│   Shell    Ctrl+Shift+` │"
+expect screen contains "│   Browser tab           │"
+expect screen lacks "Space B"
+expect screen contains "│   Tab page     Ctrl+K n │"
 hover 36 4
 expect screen contains "Dual file panes (commander)"
 expect screen lacks "Tab page"

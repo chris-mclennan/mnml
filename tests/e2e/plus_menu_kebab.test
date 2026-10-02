@@ -14,12 +14,12 @@ rightclick 47 1
 expect screen contains "┌ Create…"
 hover 50 3
 expect screen contains "Scratch buffer"
-expect screen lacks "HTTP request         ⋮"
+expect screen lacks "HTTP request        ⋮"
 hover 72 4
-expect screen contains "Scratch buffer       ⋮ │"
+expect screen contains "Scratch buffer      ⋮ │"
 hover 72 6
-expect screen contains "HTTP request         ⋮"
-click 94 6
+expect screen contains "HTTP request        ⋮"
+click 93 6
 expect screen contains "Pin to top"
 expect screen lacks "Rename…"
 key esc

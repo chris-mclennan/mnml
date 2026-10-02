@@ -51,6 +51,17 @@ here) and exits non-zero on a mismatch.
 | standard | `alt+f10` | `view.menu_bar_open` | Focus Application Menu |
 | standard | `ctrl+alt+c` / `ctrl+k ctrl+alt+c` | `file.copy_path` | Copy Path |
 | standard | `ctrl+shift+f10` | `lsp.peek_definition_overlay` | Peek Definition (Linux; `alt+f12` is Windows') |
+| standard | `ctrl+alt+i` | `ai.claude_code` | Open Chat — the Chat view, the conversation pane you return to; in mnml the Claude Code session (focus the running one, or start one) |
+| standard | `ctrl+alt+shift+l` | `ai.ask` | Open Quick Chat — a one-off question; VS Code spells it `ctrl+shift+alt+l` |
+
+The two AI chords were the user's decision: a VS Code user's AI chords on
+the commands they reach for, and on a standard menu row no leader chord at
+all (`info_view_copy.chordOf`). VS Code's Inline Chat, `Ctrl+I`, was left
+out: without the kitty keyboard protocol it is the same byte as Tab, and in
+a terminal pane it would take Neovim's jumplist-forward from the child. Its
+agent-mode `Ctrl+Shift+I` is Format Document on Linux, and mnml's too.
+Explain, fix, refactor, write tests and the Codex verbs have no VS Code
+chord, so they keep their `space a …` rows in the leader popup only.
 
 Pinned by `the parity additions` test in `src/core/keymap.zig`, the `[b / ]b`
 test in `src/input/vim.zig`, the leader-tree tests in `src/app/whichkey.zig`,
