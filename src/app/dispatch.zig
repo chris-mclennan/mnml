@@ -2041,6 +2041,13 @@ pub fn paste(app: *App, text: []const u8) Allocator.Error!void {
         if (app.focus == .pane) return zon_pane.paste(app, z, text);
     };
     if (app.active) |id| if (app.focus == .pane) if (try paneFilterPaste(app, id, text)) return;
+    // The debug console's input line, over its selection.
+    if (app.active) |id| if (app.focus == .pane) if (app.panes.get(id)) |p| if (p.* == .debug) {
+        const c = &app.dap.console;
+        try text_field.insertSel(&c.input, &c.caret, &c.anchor, app.gpa, text);
+        app.needs_render = true;
+        return;
+    };
     // The graph's commit box: a pasted message keeps its lines.
     if (try git_app.pasteIntoCommitBox(app, text)) return;
     const e = app.activeEditor() orelse return;
@@ -2641,7 +2648,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .ai_usage => |*u| try usage_pane.click(app, u, sh.id, m),
                 .grep => |*g| try grep.click(app, sh.pane, g, sh.id, m),
                 .debug => if (m.button == .left) try dap.click(app, sh.pane, sh.id),
-                .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m, hitRect(app, m.x, m.y)),
+                .request => |*rp| try request_pane.click(app, sh.pane, rp, sh.id, m),
                 .websocket => {},
                 .browser => |*b| if (m.button == .left) try browser_pane.click(app, b, sh.id),
                 .mount => |*mp| try mount_pane.click(app, sh.pane, mp, sh.id, m, hitRect(app, m.x, m.y)),
@@ -3301,6 +3308,32 @@ pub fn fieldRef(app: *App, id: hit_mod.FieldId) ?FieldRef {
         },
         .panel_filter => |p| return panelFilter(app, p),
         .pane_filter => |pane| return (paneFilter(app, pane) orelse return null).ref,
+        .pane_field => |pf| return paneField(app, pf.pane, pf.sub),
+    }
+}
+
+/// A pane's own text field — the HTTP pane's URL and its draft row's
+/// two cells, a WebSocket's message line, the debug console's input, a
+/// ZON field open for editing.
+fn paneField(app: *App, id: PaneId, sub: hit_mod.PaneField) ?FieldRef {
+    const pane = app.panes.get(id) orelse return null;
+    switch (pane.*) {
+        .request => |*rp| switch (sub) {
+            .request_url => return .{ .buf = &rp.url, .caret = &rp.url_caret, .anchor = &rp.url_anchor },
+            .request_draft_key, .request_draft_value => {
+                const d = if (rp.draft) |*d| d else return null;
+                if (sub == .request_draft_value) return .{ .buf = &d.value, .caret = &d.value_caret, .anchor = &d.value_anchor };
+                return .{ .buf = &d.key, .caret = &d.key_caret, .anchor = &d.key_anchor };
+            },
+            else => return null,
+        },
+        .websocket => |*w| return if (sub == .ws_input) .{ .buf = &w.input, .caret = &w.input_caret, .anchor = &w.input_anchor } else null,
+        .debug => return if (sub == .dap_input) .{ .buf = &app.dap.console.input, .caret = &app.dap.console.caret, .anchor = &app.dap.console.anchor } else null,
+        .zon => |*z| {
+            if (sub != .zon_value) return null;
+            const e = if (z.editing) |*e| e else return null;
+            return .{ .buf = &e.buf, .caret = &e.caret, .anchor = &e.anchor };
+        },
         else => return null,
     }
 }
@@ -6149,4 +6182,21 @@ test "the settings box's filter and the find bar's two fields: a double-click ta
     try std.testing.expectEqual([2]usize{ 4, 7 }, text_field.selRange(fb.caret, fb.anchor).?);
     try app.handle(.{ .key = key_mod.Key.char('Z') });
     try std.testing.expectEqualStrings("one Z", fb.queryText());
+}
+
+test "the debug console's input: a double-click takes the word, a paste replaces it" {
+    var app = try App.initWith(std.testing.allocator, std.testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"dap.repl" });
+    const id = app.active.?;
+    try std.testing.expect(app.panes.get(id).?.* == .debug);
+    for ("foo.bar + baz") |c| try app.handle(.{ .key = key_mod.Key.char(c) });
+    const c = &app.dap.console;
+    try std.testing.expectEqualStrings("foo.bar + baz", c.input.items);
+    const at = (try fieldCell(&app, .{ .pane_field = .{ .pane = id, .sub = .dap_input } })).?;
+    try pressAt(&app, at[0] + 11, at[1]);
+    try pressAt(&app, at[0] + 11, at[1]);
+    try std.testing.expectEqual([2]usize{ 10, 13 }, text_field.selRange(c.caret, c.anchor).?);
+    try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "qux") });
+    try std.testing.expectEqualStrings("foo.bar + qux", c.input.items);
 }

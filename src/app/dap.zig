@@ -100,6 +100,8 @@ pub const Console = struct {
     entries: std.ArrayListUnmanaged(ConsoleEntry) = .empty,
     input: text_field.Buf = .empty,
     caret: usize = 0,
+    /// The input's selection (`text_field.clickSelect`), to the caret.
+    anchor: ?usize = null,
     /// What was submitted, for ↑/↓ — failed evaluations included, as a
     /// typo is what one most wants back.
     commands: std.ArrayListUnmanaged([]u8) = .empty,
@@ -1695,6 +1697,7 @@ pub fn drawDebug(app: *App, ui: Ui, id: PaneId, p: *DebugPane, area: Rect) Alloc
         .scroll = c.scroll,
         .input = c.input.items,
         .caret = c.caret,
+        .anchor = c.anchor,
         .state = sessionState(app),
         .focused = paneFocused(app, id),
     });
@@ -1729,7 +1732,7 @@ pub fn debugKey(app: *App, id: PaneId, p: *DebugPane, k: Key) Allocator.Error!bo
         if (!k.mods.ctrl or k.code != .char) return false;
         switch (k.code.char) {
             'u', 'w', 'a', 'e', 'k' => {
-                _ = try text_field.handleKey(&c.input, &c.caret, gpa, k);
+                _ = try text_field.editKey(&c.input, &c.caret, &c.anchor, gpa, k);
                 c.clearCompletion(gpa);
             },
             'l' => clearConsole(app) catch {},
@@ -1750,7 +1753,7 @@ pub fn debugKey(app: *App, id: PaneId, p: *DebugPane, k: Key) Allocator.Error!bo
         .page_down => c.scroll -|= page,
         .esc => leaveToEditor(app),
         else => {
-            _ = try text_field.handleKey(&c.input, &c.caret, gpa, k);
+            _ = try text_field.editKey(&c.input, &c.caret, &c.anchor, gpa, k);
             c.clearCompletion(gpa);
         },
     }
@@ -1784,6 +1787,7 @@ fn consoleSubmit(app: *App) Allocator.Error!void {
     try consoleAppend(app, .{ .eval = entry });
     c.input.clearRetainingCapacity();
     c.caret = 0;
+    c.anchor = null;
 }
 
 /// A reply for `expr` lands on the oldest pending entry with that text.
@@ -1823,6 +1827,7 @@ fn historyWalk(c: *Console, gpa: Allocator, dir: i32) void {
         c.typed = null;
     }
     c.caret = c.input.items.len;
+    c.anchor = null;
     c.cmd_idx = next;
 }
 

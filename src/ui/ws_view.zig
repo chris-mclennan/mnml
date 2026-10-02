@@ -26,6 +26,7 @@ pub const Model = struct {
     entries: []const Entry,
     input: []const u8,
     input_caret: usize,
+    input_anchor: ?usize = null,
     /// Rows from the bottom; 0 follows the tail.
     scroll: *usize,
     focused: bool,
@@ -50,8 +51,14 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, m: Model) ?Caret {
     const prompt: []const u8 = "> ";
     const pw = ui.putStr(input_row.x, input_row.y, input_row.w, prompt, t.accent);
     const field = Rect.init(input_row.x + pw, input_row.y, input_row.w -| pw, 1);
-    const caret = text_field.draw(ui, field, m.input, m.input_caret, .{ .style = t.fg, .placeholder = "type a message — Enter sends · Esc disconnects", .focused = m.focused });
     ui.hit(input_row, .{ .script_hit = .{ .pane = pane, .id = hit_input } });
+    const caret = text_field.draw(ui, field, m.input, m.input_caret, .{
+        .style = t.fg,
+        .placeholder = "type a message — Enter sends · Esc disconnects",
+        .focused = m.focused,
+        .anchor = m.input_anchor,
+        .field = .{ .pane_field = .{ .pane = pane, .sub = .ws_input } },
+    });
     if (area.h < 3) return caret;
     const log = Rect.init(area.x, area.y + 1, area.w, area.h - 2);
     ui.hit(log, .{ .script_hit = .{ .pane = pane, .id = hit_log } });
