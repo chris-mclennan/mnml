@@ -232,8 +232,14 @@ pub fn materialize(app: *App, arena: Allocator, entry: Entry) Allocator.Error!Ma
 
 /// The chord the copy shows for `id` under the active profile, spelled
 /// for prose: `g d` → `gd`, `f12` → `F12`, `ctrl+k ctrl+i` → `Ctrl+K
-/// Ctrl+I`. The vim profile's own chords come before the shared ones
-/// (`gd` over `F12`, the idiom a vim user knows); the standard profile
+/// Ctrl+I`. Under vim the input handler's own verbs come first for the
+/// commands they do (`input/vim.zig`'s `own_keys`: Undo is `u`, Redo
+/// `Ctrl+R`, Toggle fold `za`) — ahead of the keymap, because the
+/// keymap binds several of those commands to a standard-shaped chord in
+/// its shared list (Redo's `Ctrl+Shift+Z`, the fold's `Ctrl+Shift+[`)
+/// and a vim user is printed Neovim's key, never VS Code's. Then the vim
+/// profile's own chords before the shared ones (`gd` over `F12`, the
+/// idiom a vim user knows). The standard profile
 /// reads the shared ones first (`Ctrl+P` over its own `Ctrl+O`), then
 /// the keys its input handler answers itself (`input/standard.zig`'s
 /// `own_keys`: Cut is `Ctrl+X`). A which-key row (`space a e`) is never
@@ -254,6 +260,9 @@ pub fn chordSpecOf(app: *const App, id: CommandId) ?[]const u8 {
     // are printed there, and nothing else claims them.
     const sessions_mode = @import("sessions_mode.zig");
     if (sessions_mode.contextualSpec(app, id)) |spec| return spec;
+    if (!standard) if (vimLayerSpec(id)) |spec| {
+        if (!sessions_mode.takesSpec(app, spec)) return spec;
+    };
     for (lists) |list| for (list) |spec| {
         if (standard and isLeaderChord(spec)) continue;
         if (sessions_mode.takesSpec(app, spec)) continue;
@@ -269,6 +278,13 @@ pub fn chordSpecOf(app: *const App, id: CommandId) ?[]const u8 {
 /// whichever profile is active — the caller asks only under standard.
 pub fn standardLayerSpec(id: CommandId) ?[]const u8 {
     for (@import("../input/standard.zig").own_keys) |row| if (row.command == id) return row.spec;
+    return null;
+}
+
+/// The vim input handler's own verb for `id` (`u` for Undo), whichever
+/// profile is active — the caller asks only under vim.
+pub fn vimLayerSpec(id: CommandId) ?[]const u8 {
+    for (@import("../input/vim.zig").own_keys) |row| if (row.command == id) return row.spec;
     return null;
 }
 
@@ -598,7 +614,7 @@ test "chordDisplay spells a spec for prose; chordOf reads the active profile" {
     try t.expectEqualStrings("Ctrl+P", (try chordOf(&app, a, .@"picker.files")).?);
 }
 
-test "chordOf under standard: the input handler's own keys resolve, a leader-only command resolves to nothing, the AI chords are Ctrl chords; vim is as it was" {
+test "chordOf: each profile's input handler's own keys resolve — standard's Ctrl chords, vim's Normal verbs ahead of the keymap; a leader-only command resolves to nothing under standard" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -624,11 +640,20 @@ test "chordOf under standard: the input handler's own keys resolve, a leader-onl
     try t.expectEqualStrings("Ctrl+Alt+I", (try chordOf(&app, a, .@"ai.claude_code")).?);
     try t.expectEqualStrings("Ctrl+Alt+Shift+L", (try chordOf(&app, a, .@"ai.ask")).?);
     try app.setInputStyle(.vim);
-    // Vim reads the keymap alone: the standard handler's keys are not
-    // its, and its leader chords are its chords.
-    try t.expect((try chordOf(&app, a, .@"editor.cut")) == null);
-    try t.expect((try chordOf(&app, a, .@"editor.undo")) == null);
-    try t.expectEqualStrings("Ctrl+Shift+Z", (try chordOf(&app, a, .@"editor.redo")).?);
+    // Vim: the standard handler's keys are not its; its own handler's
+    // verbs are, ahead of the keymap's standard-shaped chords; and its
+    // leader chords are its chords.
+    try t.expectEqualStrings("d", (try chordOf(&app, a, .@"editor.cut")).?);
+    try t.expectEqualStrings("y", (try chordOf(&app, a, .@"editor.copy")).?);
+    try t.expectEqualStrings("p", (try chordOf(&app, a, .@"editor.paste")).?);
+    try t.expectEqualStrings("u", (try chordOf(&app, a, .@"editor.undo")).?);
+    try t.expectEqualStrings("Ctrl+R", (try chordOf(&app, a, .@"editor.redo")).?);
+    try t.expectEqualStrings("ggVG", (try chordOf(&app, a, .@"editor.select_all")).?);
+    try t.expectEqualStrings("za", (try chordOf(&app, a, .@"editor.toggle_fold")).?);
+    // No vim verb for these: the keymap's chord, which NvChad binds too
+    // (Save), or the only one there is (Select all occurrences).
+    try t.expectEqualStrings("Ctrl+S", (try chordOf(&app, a, .@"file.save")).?);
+    try t.expectEqualStrings("Ctrl+Shift+L", (try chordOf(&app, a, .@"editor.select_all_occurrences")).?);
     try t.expectEqualStrings("Space a e", (try chordOf(&app, a, .@"ai.explain")).?);
     try t.expectEqualStrings("Space a c", (try chordOf(&app, a, .@"ai.claude_code")).?);
     try t.expectEqualStrings("Space a a", (try chordOf(&app, a, .@"ai.ask")).?);

@@ -3702,6 +3702,25 @@ test "menu chords: the menu grows by the widest chord; a row too narrow for labe
     try t.expect(f[0] >= l[0] + long.len + chord_gap);
 }
 
+test "menu chords: a chip menu whose widest row is a long chord — the bell's — keeps the chord's cell of air before the border, as a label-widest menu does" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.setInputStyle(.standard);
+    // At the screen's right edge, where the bell is: the frame is
+    // clamped onto the screen, not shrunk.
+    try @import("context_menus.zig").openBellMenu(&app, 119, 38);
+    try app.render();
+    const chord = "Ctrl+K Ctrl+Shift+N";
+    const at = findOnScreen(&app, chord).?;
+    const label = findOnScreen(&app, "Show messages").?;
+    try t.expectEqual(label[1], at[1]);
+    // The gap, the chord, one cell of air, the border.
+    try t.expect(at[0] >= label[0] + "Show messages".len + chord_gap);
+    const end = at[0] + @as(u16, chord.len);
+    try t.expectEqualStrings(" ", app.screen.readCell(end, at[1]).?.char.grapheme);
+    try t.expectEqualStrings("\u{2502}", app.screen.readCell(end + 1, at[1]).?.char.grapheme);
+}
+
 test "menu chords: a menu-bar dropdown's rows carry their chords too" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
     defer app.deinit();

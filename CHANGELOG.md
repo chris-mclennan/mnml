@@ -50,6 +50,8 @@ the release ships one file), and one line per change a user can see.
   browser, and a right-click offers *Copy link* / *Open link*. The card's
   menu lists each one as an `Open …` row, and Shift+F10 on the focused
   card now opens that menu.
+- Hovering a SESSIONS card no longer re-clips its summary lines: only the
+  name row makes room for the ` ⋯ `, and a URL below it keeps its length.
 - A ticket key links only because an installed integration says what one
   looks like: a manifest's new `links[]` pairs a pattern with the address
   it opens (`docs/SDK.md`, *Links*). The Jira integration declares the
@@ -68,6 +70,9 @@ the release ships one file), and one line per change a user can see.
   every page a click away, nothing is hidden.
 - Opening the tab just past the strip's last whole tab brings it into view
   whole; it used to stay cut at the edge, its name and close button lost.
+- A page of tabs holds whole tabs only: the tab that would be cut at the
+  strip's edge, before the new-tab `+`, is not painted there and starts
+  the next page, as the page count already said.
 - Double-click a tab to zoom its pane; double-click again to put the splits
   back.
 
@@ -86,8 +91,11 @@ the release ships one file), and one line per change a user can see.
   the right-click menu's Cut, Copy, Paste, Undo and Select all read Ctrl+X,
   Ctrl+C, Ctrl+V, Ctrl+Z and Ctrl+A, and the hover help names them too. A
   command reached only through the leader (`Space a e`) prints no chord on
-  a standard menu; its hover help names the leader row instead. The vim
-  profile's menus are unchanged.
+  a standard menu; its hover help names the leader row instead.
+- Under the vim profile the same rows print Neovim's own keys: Cut `d`,
+  Copy `y`, Paste `p`, Undo `u`, Redo Ctrl+R, Select all `ggVG`, Toggle fold
+  `za` — never a VS Code chord where vim has a key of its own. Save stays
+  Ctrl+S, which NvChad binds too.
 - The standard profile has VS Code's AI chords: Ctrl+Alt+I (Open Chat)
   opens or focuses a Claude Code session, and Ctrl+Alt+Shift+L (Open Quick
   Chat) asks Claude a question. The `Space a c` / `Space a a` leader rows

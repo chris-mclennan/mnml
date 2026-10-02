@@ -23,6 +23,35 @@ const script_ops = @import("script_ops.zig");
 
 pub const VimMode = enum { normal, insert, replace, visual, visual_line, visual_block };
 
+/// A verb the handler answers itself, typed in `mode`, and the command
+/// a menu row or the palette runs for the same act.
+pub const OwnKey = struct {
+    spec: []const u8,
+    command: CommandId,
+    /// Where the keys are typed: Cut and Copy act on a Visual selection.
+    mode: enum { normal, visual } = .normal,
+};
+
+/// The Neovim verbs this handler answers without the keymap that do
+/// what an editor command does — so a menu row prints `u` for Undo
+/// under the vim profile, not a standard chord (`info_view_copy.chordOf`
+/// reads this table before the keymap for the commands it names).
+/// Cut is Visual `d` (Visual `x` is the same act; Normal `x` takes one
+/// character, not the selection). Select all is `ggVG`: the handler has
+/// no one-key verb for it, and those four keys leave the whole buffer in
+/// a V-LINE selection. Save is not here: `:w` is an ex command the app
+/// runs, not a key the handler answers, and the keymap's `Ctrl+S` is
+/// NvChad's own. A test below holds every row to the handler.
+pub const own_keys = [_]OwnKey{
+    .{ .spec = "u", .command = .@"editor.undo" },
+    .{ .spec = "ctrl+r", .command = .@"editor.redo" },
+    .{ .spec = "d", .command = .@"editor.cut", .mode = .visual },
+    .{ .spec = "y", .command = .@"editor.copy", .mode = .visual },
+    .{ .spec = "p", .command = .@"editor.paste" },
+    .{ .spec = "g g V G", .command = .@"editor.select_all" },
+    .{ .spec = "z a", .command = .@"editor.toggle_fold" },
+};
+
 pub const PendingOp = enum {
     delete,
     change,
@@ -2873,6 +2902,56 @@ test "every chord a spec lists as the vim handler's own reaches that spec's comm
     };
     // `Ctrl-W w` and `Ctrl-W W` at least.
     try testing.expect(listed >= 2);
+}
+
+test "own_keys: every row's keys, typed in its mode, do what its command does" {
+    const keymap = @import("../core/keymap.zig");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const ctx: EditCtx = .{ .line_count = 3, .line_len = 4 };
+    for (own_keys) |row| {
+        var v = Vim.init(testing.allocator, .{});
+        defer v.deinit();
+        if (row.mode == .visual) _ = try v.handleKey(Key.char('v'), ctx, a);
+        var seen: std.ArrayListUnmanaged(std.meta.Tag(EditOp)) = .empty;
+        var it = std.mem.tokenizeScalar(u8, row.spec, ' ');
+        var last: InputResult = .ignored;
+        while (it.next()) |tok| {
+            last = try v.handleKey(keymap.parseKeySpec(tok).?, ctx, a);
+            if (last == .ops) for (last.ops) |op| try seen.append(a, std.meta.activeTag(op));
+        }
+        try testing.expect(last != .ignored);
+        // The op the command's runner applies (`app/cmd_editor.zig`), or
+        // the vim op that is the same act: Visual `d` deletes into the
+        // register, `p` puts after the cursor.
+        const want: []const std.meta.Tag(EditOp) = switch (row.command) {
+            .@"editor.undo" => &.{.undo},
+            .@"editor.redo" => &.{.redo},
+            .@"editor.cut" => &.{ .delete_selection, .cut_selection },
+            .@"editor.copy" => &.{.yank_selection},
+            .@"editor.paste" => &.{ .paste_after, .paste },
+            .@"editor.select_all" => &.{.select_line},
+            else => &.{},
+        };
+        if (want.len == 0) {
+            try testing.expect(last == .app);
+            try testing.expectEqual(row.command, last.app.run_command);
+            continue;
+        }
+        var found = false;
+        for (seen.items) |tag| for (want) |w| {
+            found = found or tag == w;
+        };
+        if (!found) std.debug.print("own_keys row `{s}` does not do what {s} does\n", .{ row.spec, @tagName(row.command) });
+        try testing.expect(found);
+        // `ggVG` ends in V-LINE from the first line to the last.
+        if (row.command == .@"editor.select_all") {
+            try testing.expectEqual(VimMode.visual_line, v.vmode);
+            try testing.expect(last == .ops and last.ops.len > 0);
+            try testing.expectEqual(@as(usize, 0), last.ops[last.ops.len - 1].move_to_line_keep_col);
+        }
+    }
 }
 
 test "ctrl+w H/J/K/L move the split; = r _ | + - > < n o w h d f T z reach their runners" {

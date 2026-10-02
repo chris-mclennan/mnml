@@ -714,10 +714,15 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     // The tabs from the clamped offset, a cell of strip between chips.
     const tabs_right = g.tabs_right;
     const first = clampScroll(ui, tabs, tabs_right -| area.x, opts.first);
+    // With a pager a page holds whole chips only: one that would be cut
+    // at the edge is not painted here — it starts the next page, which
+    // is what the pager's count already says. (The first chip always
+    // paints, cut if it is wider than the strip.)
+    const stop = if (g.pager_form != .none) pageEnd(ui, tabs, tabs_right -| area.x, first) else tabs.len;
     var x = area.x;
     var painted: usize = 0;
     var i = first;
-    while (i < tabs.len) : (i += 1) {
+    while (i < stop) : (i += 1) {
         if (x >= tabs_right) break;
         const w = paintChip(ui, x, y, tabs_right - x, tabs[i], opts.leaf, @intCast(i), opts.focused);
         if (w == 0) break;
@@ -1212,6 +1217,36 @@ test "an overflowing strip: the offset clamps to what fills it, the pager ` ‹ 
     _ = draw(e.ui(), e.full(), &.{}, .{ .new_tab = 1 });
     try e.expectRow(0, " " ++ plus_glyph);
     _ = draw(e.ui(), Rect.empty, &.{}, .{ .new_tab = 1 });
+}
+
+test "with a pager a page paints whole chips only: a chip that would be cut at the edge is not painted and starts the next page, at every width" {
+    var names: [12][8]u8 = undefined;
+    var tabs: [12]Tab = undefined;
+    for (&tabs, 0..) |*tab, i| tab.* = .{ .id = @intCast(i + 1), .title = try std.fmt.bufPrint(&names[i], "t{d}.txt", .{i + 1}), .glyph = "x" };
+    tabs[0].active = true;
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .all_tabs = 72 };
+    var cut_seen = false;
+    var w: u16 = 30;
+    while (w <= 110) : (w += 1) {
+        var f = try Fixture.init(w, 1);
+        defer f.deinit();
+        const win = draw(f.ui(), f.full(), &tabs, opts);
+        if (!hasButton(&f, 70)) continue;
+        // Every chip painted is whole: its close glyph is on the strip.
+        var buf: [1024]u8 = undefined;
+        const row = f.row(0, &buf);
+        try testing.expectEqual(win.painted, std.mem.count(u8, row, close_glyph));
+        for (win.painted..tabs.len) |i| try testing.expect(!hasTab(&f, @intCast(i)));
+        // The page is what the pager counts: the next page starts at the
+        // first chip not painted.
+        try testing.expectEqual(win.first + win.painted, win.page_next);
+        // Room was left after the last whole chip: the old loop painted
+        // the next one there, cut.
+        const g = geometry(f.ui(), f.full(), &tabs, opts);
+        const room = g.tabs_right -| f.full().x;
+        if (win.first + win.painted < tabs.len and allWidth(f.ui(), tabs[win.first .. win.first + win.painted]) + 1 < room) cut_seen = true;
+    }
+    try testing.expect(cut_seen);
 }
 
 test "the pager pages: whole chips per page from the first tab, `›` to the next page's offset, `‹` to the previous, wrapping at both ends; a session strip's own control leaves it out" {
