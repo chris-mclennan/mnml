@@ -357,6 +357,14 @@ fn cellW(g: []const u8, method: vaxis.gwidth.Method) u16 {
     return utf8.width(g, method);
 }
 
+/// The selection on a chip-grey field (a filter pill, the find bar):
+/// the theme's selection ground — and its match grey — are a step off
+/// that grey and all but vanish on it (measured on the real window), so
+/// these take the accent as the ground under the editor's own ink.
+pub fn chipSelStyle(ui: Ui) Style {
+    return .{ .fg = ui.theme.bg.bg, .bg = ui.theme.accent.fg };
+}
+
 pub const DrawOptions = struct {
     style: Style,
     placeholder: ?[]const u8 = null,

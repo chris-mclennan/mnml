@@ -86,6 +86,7 @@ pub fn draw(ui: Ui, area: Rect, p: Props) ?Caret {
         .placeholder = placeholder(ui, p.focused, p.noun),
         .focused = p.focused,
         .anchor = p.anchor,
+        .sel_style = text_field.chipSelStyle(ui),
         // A press on the text: caret, word, the whole filter
         // (`dispatch.fieldPress`), read off the owner of the pill.
         .field = p.field orelse if (p.pane) |id| .{ .pane_filter = id } else .{ .panel_filter = p.panel },

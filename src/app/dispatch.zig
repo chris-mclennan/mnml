@@ -6118,10 +6118,12 @@ test "a list panel's filter pill: a double-click takes the word, a paste replace
     try pressAt(&app, at[0] + 7, at[1]);
     try pressAt(&app, at[0] + 7, at[1]);
     try std.testing.expectEqual([2]usize{ 6, 10 }, text_field.selRange(st.filter_caret, st.filter_anchor).?);
-    // The selection paints in the theme's selection.
+    // The selection paints on the accent: the theme's selection ground
+    // is a step off the pill's grey and would not show on it.
     try app.render();
     const cell = app.screen.readCell(at[0] + 7, at[1]).?;
-    try std.testing.expect(@import("vaxis").Color.eql(cell.style.bg, app.theme.selection.bg));
+    try std.testing.expect(@import("vaxis").Color.eql(cell.style.bg, app.theme.accent.fg));
+    try std.testing.expect(!@import("vaxis").Color.eql(app.screen.readCell(at[0] + 2, at[1]).?.style.bg, app.theme.accent.fg));
     try app.handle(.{ .paste = try std.testing.allocator.dupe(u8, "B") });
     try std.testing.expectEqualStrings("alpha B gamma", st.filterText());
     try std.testing.expect(app.focus == .panel);
