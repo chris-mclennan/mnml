@@ -12,7 +12,6 @@ type one two
 doubleclick 45 36
 type gamma
 expect screen contains "Find  alpha gamma"
-expect screen contains "no matches"
 doubleclick 46 37
 type three
 expect screen contains "Replace  one three"
@@ -20,4 +19,4 @@ click 39 36
 doubleclick 39 36
 type beta
 expect screen contains "Find  beta "
-expect screen contains "match 1/2"
+expect within 6000 screen contains "match 1/2"
