@@ -21,13 +21,16 @@ tools/look.sh key ctrl+shift+p               # a key spec, as the channel reads 
 tools/look.sh type "git"                     # literal text (\n is Enter)
 tools/look.sh click 32 1 [right]             # cells, 0-based
 tools/look.sh hover 36 3
-tools/look.sh send '{"cmd":"scroll","col":40,"row":10,"dy":-3}'   # any channel line
+tools/look.sh send '{"cmd":"scroll","col":40,"row":10,"dy":-3}'   # any channel line: 3 notches DOWN
 tools/look.sh shot palette                   # prints .verify/look/<ws>/shots/palette.png
 tools/look.sh pixel 0 38 [FX FY]             # prints #rrggbb; FX/FY 0..1 within the cell
 tools/look.sh screen                         # the live screen.txt
 tools/look.sh status                         # the live status.json
 tools/look.sh quit
 ```
+
+The channel's `scroll` sign is the wheel's: `dy >= 0` scrolls up and a
+negative `dy` scrolls down, one notch per unit (`src/ipc/effects.zig`).
 
 `look.sh` is a thin front on `tools/tour/` (stdlib Python) and
 `zig-out/bin/mnml-drive` (`zig build -Ddrive`, macOS + ghostty only; see
