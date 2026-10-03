@@ -75,7 +75,9 @@ pub const table = .{
     .@"ai.claude_code_new" = &claudeCodeNew,
     .@"ai.new_session_worktree" = &newSessionWorktree,
     .@"ai.claude_code_new_x2" = &claudeCodeNewX2,
+    .@"ai.claude_code_new_x3" = &claudeCodeNewX3,
     .@"ai.claude_code_new_x4" = &claudeCodeNewX4,
+    .@"ai.claude_code_new_x6" = &claudeCodeNewX6,
     .@"ai.claude_code_new_x8" = &claudeCodeNewX8,
     .@"ai.claude_code_new_left" = &claudeCodeNewLeft,
     .@"ai.claude_code_new_right" = &claudeCodeNewRight,
@@ -1578,8 +1580,14 @@ fn openBatch(app: *App, n: usize) CommandError!void {
 fn claudeCodeNewX2(app: *App) CommandError!void {
     return openBatch(app, 2);
 }
+fn claudeCodeNewX3(app: *App) CommandError!void {
+    return openBatch(app, 3);
+}
 fn claudeCodeNewX4(app: *App) CommandError!void {
     return openBatch(app, 4);
+}
+fn claudeCodeNewX6(app: *App) CommandError!void {
+    return openBatch(app, 6);
 }
 fn claudeCodeNewX8(app: *App) CommandError!void {
     return openBatch(app, 8);

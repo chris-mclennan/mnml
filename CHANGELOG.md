@@ -45,6 +45,8 @@ the release ships one file), and one line per change a user can see.
 
 ### Sessions
 
+- The `+ New session` menu opens a batch of 3 or 6 Claude Code sessions
+  as well as 2, 4 or 8 (`ai.claude_code_new_x3`, `_x6`).
 - The Sessions row of the activity bar enters the sessions mode: the editor
   layout is put aside and every Claude Code and Codex session stands in
   columns side by side (`ai.session_columns`, 1 to 4, default 2; the AI

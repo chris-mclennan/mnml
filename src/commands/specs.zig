@@ -984,7 +984,9 @@ pub const specs = [_]Spec{
     .{ .id = "ai.claude_code_new", .title = "AI: open a NEW Claude Code session (multi-session)", .group = "ai", .short = "new claude session", .keys = .{ .both = &.{ "space a n", "ctrl+shift+n" } } },
     .{ .id = "ai.new_session_worktree", .title = "AI: open a NEW Claude Code session in a git worktree of its own (prompts for a branch name)", .group = "ai" },
     .{ .id = "ai.claude_code_new_x2", .title = "AI: open 2 new Claude Code sessions", .group = "ai" },
+    .{ .id = "ai.claude_code_new_x3", .title = "AI: open 3 new Claude Code sessions", .group = "ai" },
     .{ .id = "ai.claude_code_new_x4", .title = "AI: open 4 new Claude Code sessions", .group = "ai" },
+    .{ .id = "ai.claude_code_new_x6", .title = "AI: open 6 new Claude Code sessions", .group = "ai" },
     .{ .id = "ai.claude_code_new_x8", .title = "AI: open 8 new Claude Code sessions", .group = "ai" },
     .{ .id = "ai.codex", .title = "AI: open Codex (focus the running session, or start one)", .group = "ai", .short = "codex", .keys = .{ .both = &.{"space a x"} } },
     .{ .id = "ai.codex_new", .title = "AI: open a NEW Codex session (multi-session)", .group = "ai", .short = "new codex session", .keys = .{ .both = &.{"space a X"} } },
@@ -1474,7 +1476,7 @@ test "every command has an effect class, and every override names a real command
     }
 }
 
-test "1176 specs, unique ids" {
+test "1178 specs, unique ids" {
     // + `file.save_as`, Save As (Ctrl+Shift+S) (stdfix3)
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands
     // + four script commands + the SCRIPTS activity command + eight cutover-prep commands + four var
@@ -1517,269 +1519,269 @@ test "1176 specs, unique ids" {
     // + `marketplace.add_source`, a private source from the UI (add-source)
     // + `ai.focus_next_session` / `ai.focus_prev_session` and the four
     //   `ai.{claude_code,codex}_new_{tab,page}` launches (session-cycling)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // − the five ids that only ever said "not in this build": the four
     // `cloud_agents.*` stubs and `ai.canary` (aifix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `git.checkout_commit`, a graph commit checked out detached (gitpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `qf.open` / `qf.close` / `qf.from_diagnostics`, the one quickfix list (searchfix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `view.search_history` / `view.search_history_backward`, vim's q/ and q? (searchfix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // − the five ids that only ever said "not in this build": the four
     // `cloud_agents.*` stubs and `ai.canary` (aifix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `git.checkout_commit`, a graph commit checked out detached (gitpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.changes` (sessiondiff)
     // + `integrations.toggle_dry_run` / `integrations.cancel_wait` (apibudget)
     // + `editor.repeat_last_substitute_all`, vim's `g&` (vimfix3)
     // + `ai.search_sessions`, the transcript search (sessions-extras)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the seventeen `sessions.*` verbs of the sessions mode (sessions-mode)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // − the five ids that only ever said "not in this build": the four
     // `cloud_agents.*` stubs and `ai.canary` (aifix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `git.checkout_commit`, a graph commit checked out detached (gitpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `qf.open` / `qf.close` / `qf.from_diagnostics`, the one quickfix list (searchfix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `view.search_history` / `view.search_history_backward`, vim's q/ and q? (searchfix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // − the five ids that only ever said "not in this build": the four
     // `cloud_agents.*` stubs and `ai.canary` (aifix)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `jobs.show`, the background-jobs list (jobschip)
     // + `integrations.rebuild_stale` / `rebuild_focused` (sdk-currency)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `editor.toggle_indent_guides`, `git.toggle_line_blame` (editorpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.sort_waiting`, the Waiting axis, and
     //   `sessions.next_waiting` / `prev_waiting`, the jumps (needsyou)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `term.search` / `term.search_next` / `term.search_prev` (scrollsearch)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + the four named-layout commands, `layout.save` / `load` / `delete` / `pick` (layouts)
     // + `find.word_forward_partial` / `find.word_backward_partial`, vim's `g*` / `g#` (vimfix)
     // + `ai.claude_add_account` / `ai.claude_remove_account` (usagemeters)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `git.checkout_commit`, a graph commit checked out detached (gitpolish)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // + `sessions.changes` (sessiondiff)
     // + `integrations.toggle_dry_run` / `integrations.cancel_wait` (apibudget)
     // + `editor.repeat_last_substitute_all`, vim's `g&` (vimfix3)
-    try std.testing.expectEqual(@as(usize, 1176), specs.len);
+    try std.testing.expectEqual(@as(usize, 1178), specs.len);
     // Uniqueness is enforced at comptime by command.zig; this pins the count.
 }
