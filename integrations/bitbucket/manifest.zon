@@ -40,8 +40,23 @@
         .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },
         .{ .key = "app_password", .label = "Bitbucket app password", .kind = .secret, .env_fallback = "BITBUCKET_APP_PASSWORD", .help_url = "https://bitbucket.org/account/settings/app-passwords/", .help = "Legacy path. Set this OR an api_token above (api_token wins if both are set). Scopes: Repositories:Read + Pull requests:Read + Pipelines:Read." },
         .{ .key = "username", .label = "Bitbucket username (optional)", .kind = .text, .env_fallback = "BITBUCKET_USERNAME", .help = "Optional. Only needed if your app password requires Basic auth (username + password); leave blank for token-only auth." },
+        // Read by mnml alone, for the pull-request links below; the
+        // binary reads its workspace from config.zon.
+        .{ .key = "workspace", .label = "Bitbucket workspace (for PR links)", .kind = .text, .env_fallback = "BITBUCKET_WORKSPACE", .help = "Optional. The slug in bitbucket.org/<workspace>/<repo>. `--install` writes config.zon's workspace into the pull-request links; set this only when the integration has no config yet." },
     },
     .values_sources = .{
         .{ .id = "bitbucket_values", .command = "mnml-bitbucket --values", .poll_interval_secs = 300 },
+    },
+    // A pull request named the way people write one — `<repo>#<number>`,
+    // `widget#42` — links to it in your workspace, wherever mnml shows
+    // text. A bare `#42` names no repo and does not link, nor does a
+    // `<repo>#<number>` inside a path or an `owner/repo#n` (that owner
+    // may be another forge's). `{workspace}` is filled in by `--install`
+    // from config.zon's `.workspace`, which also narrows `<repo>` to the
+    // config's `repos` when it lists any and adds `<workspace>/<repo>#n`;
+    // else mnml binds it from $BITBUCKET_WORKSPACE (the workspace field's
+    // fallback above).
+    .links = .{
+        .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}" },
     },
 }
