@@ -25,6 +25,14 @@ const svg = @import("svg.zig");
 pub const units_per_em: i32 = 1000;
 /// The monospace advance JetBrainsMono Mono uses, in those units.
 pub const advance_width: i32 = 600;
+/// JetBrains Mono's vertical metrics, in those units — hhea, OS/2 typo
+/// and win alike. The connector outlines run from 1120 down to -400,
+/// past this box at both ends, so a row's stroke meets the next row's
+/// only when the face is fitted to the cell by this box.
+pub const vertical = struct {
+    pub const ascender: i16 = 1020;
+    pub const descender: i16 = -300;
+};
 
 pub const Error = error{ TooManyPoints, CoordinateOverflow } || Allocator.Error;
 
@@ -411,8 +419,12 @@ pub fn build(arena: Allocator, glyphs: []const Glyph, family: []const u8, versio
     try i16At(&head, arena, 1); // indexToLocFormat: long
     try i16At(&head, arena, 0);
 
-    const ascender: i16 = 800;
-    const descender: i16 = -200;
+    // JetBrains Mono's vertical box, the face mnml's glyphs were drawn
+    // against: ghostty fits a codepoint-mapped face to the cell by its
+    // own metrics, so a smaller box here shifts and shrinks the tree
+    // connectors, whose strokes run to the edges of that box.
+    const ascender: i16 = vertical.ascender;
+    const descender: i16 = vertical.descender;
 
     var hhea: Buf = .empty;
     try u32At(&hhea, arena, 0x00010000);
@@ -473,7 +485,7 @@ pub fn build(arena: Allocator, glyphs: []const Glyph, family: []const u8, versio
     try os2.appendSlice(arena, &panose);
     for (0..4) |_| try u32At(&os2, arena, 0); // ulUnicodeRange1-4
     try os2.appendSlice(arena, "MNML");
-    try u16At(&os2, arena, 0b0100_0000); // fsSelection: REGULAR
+    try u16At(&os2, arena, 0b1100_0000); // fsSelection: REGULAR | USE_TYPO_METRICS
     const first = if (glyphs.len == 0) @as(u16, 0) else @as(u16, @intCast(@min(glyphs[0].codepoint, 0xFFFF)));
     try u16At(&os2, arena, first);
     try u16At(&os2, arena, 0xFFFF);
@@ -936,6 +948,45 @@ test "a built font is a well-formed sfnt: ten tables, the head magic, and the wh
     try t.expectEqual(@as(u32, 0x5F0F3CF5), std.mem.readInt(u32, bytes[head_off + 12 ..][0..4], .big));
     try t.expectEqual(@as(u16, @intCast(units_per_em)), std.mem.readInt(u16, bytes[head_off + 18 ..][0..2], .big));
     try t.expectEqual(@as(u32, 0xB1B0AFBA), checksum(bytes));
+}
+
+test "the face carries JetBrains Mono's vertical metrics, so ghostty fits it to the cell as it fits the text" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const c = [_]svg.Contour{try square(arena, 350, -400, 450, 1120)};
+    const bytes = try build(arena, &.{
+        .{ .codepoint = 0xF1F04, .name = "tree_pipe", .contours = &c },
+    }, "MnmlSymbols", "1.0");
+    var hhea: usize = 0;
+    var os2: usize = 0;
+    const n = std.mem.readInt(u16, bytes[4..6], .big);
+    for (0..n) |i| {
+        const rec = bytes[12 + 16 * i ..][0..16];
+        const off = std.mem.readInt(u32, rec[8..12], .big);
+        if (std.mem.eql(u8, rec[0..4], "hhea")) hhea = off;
+        if (std.mem.eql(u8, rec[0..4], "OS/2")) os2 = off;
+    }
+    try t.expect(hhea != 0 and os2 != 0);
+    const rd = struct {
+        fn i(b: []const u8, at: usize) i16 {
+            return std.mem.readInt(i16, b[at..][0..2], .big);
+        }
+        fn u(b: []const u8, at: usize) u16 {
+            return std.mem.readInt(u16, b[at..][0..2], .big);
+        }
+    };
+    // hhea: ascender, descender, lineGap.
+    try t.expectEqual(@as(i16, 1020), rd.i(bytes, hhea + 4));
+    try t.expectEqual(@as(i16, -300), rd.i(bytes, hhea + 6));
+    try t.expectEqual(@as(i16, 0), rd.i(bytes, hhea + 8));
+    // OS/2: fsSelection REGULAR | USE_TYPO_METRICS, typo, win.
+    try t.expectEqual(@as(u16, 0x00C0), rd.u(bytes, os2 + 62));
+    try t.expectEqual(@as(i16, 1020), rd.i(bytes, os2 + 68));
+    try t.expectEqual(@as(i16, -300), rd.i(bytes, os2 + 70));
+    try t.expectEqual(@as(i16, 0), rd.i(bytes, os2 + 72));
+    try t.expectEqual(@as(u16, 1020), rd.u(bytes, os2 + 74));
+    try t.expectEqual(@as(u16, 300), rd.u(bytes, os2 + 76));
 }
 
 test "a hole is wound against its outer contour, and nesting decides which is which" {
