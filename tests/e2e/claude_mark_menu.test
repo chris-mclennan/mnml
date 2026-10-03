@@ -37,7 +37,9 @@ expect screen lacks "✓ Anthropic"
 # The glyph column carries the mark each row would set — the figure on
 # one row, the spark on the other, not one brush on both.
 expect screen contains "󱸀  ✓ Claude Code"
-expect screen contains "󱸂  Anthropic"
+# (The tick column is kept on every row of a menu that has a tick, so
+# the unticked row carries two cells of air where its ✓ would be.)
+expect screen contains "󱸂    Anthropic"
 # Down then Enter — the second row, the spark.
 key down
 key enter
