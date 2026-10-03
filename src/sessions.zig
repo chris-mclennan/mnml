@@ -503,6 +503,10 @@ pub const State = struct {
     adoptions: u32 = 0,
     scanning: bool = false,
     scanned_once: bool = false,
+    /// The first tick has decided the prefetch. Apart from
+    /// `scanned_once`: a prefetch skipped for want of anything to read
+    /// leaves the listing unread, so the first open still reads it.
+    prefetched: bool = false,
     last_scan_ms: i64 = 0,
     /// When each part last ran (`App.now_ms`): the liveness pass, the
     /// transcript walk, the cloud read — `refresh_cadence` against
@@ -716,6 +720,7 @@ pub const Want = struct {
 fn startScan(app: *App, want: Want) CommandError!void {
     const st = &app.sessions;
     st.last_scan_ms = app.now_ms;
+    st.prefetched = true;
     if (want.live or want.force) st.live_ms = app.now_ms;
     if (want.walk or want.force) st.walk_ms = app.now_ms;
     if (want.cloud or want.force) st.cloud_ms = app.now_ms;
@@ -1526,14 +1531,17 @@ pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
     trackNeedsYou(app) catch {};
     if (st.scanning) return;
-    if (!st.scanned_once) {
+    if (!st.prefetched) {
+        st.prefetched = true;
         if (refreshMode(app) == .manual) return;
-        // Nothing to read (no transcript directory, no cloud table): the
-        // first pass is a no-op, so the clocks start without a worker.
-        if (cloudOn(app) or hasTranscripts(app)) {
+        // Nothing to read (no transcript directory, no cloud table): no
+        // worker; the clocks start, and the listing stays unread — so a
+        // transcript written after start is read by the first open
+        // (`draw`) or the first due part, not an idle wait.
+        // A listing already adopted (a test's rows) counts as the pass.
+        if (!st.scanned_once and (cloudOn(app) or hasTranscripts(app))) {
             refresh(app) catch {};
         } else {
-            st.scanned_once = true;
             st.last_scan_ms = now;
             st.live_ms = now;
             st.walk_ms = now;
@@ -1555,8 +1563,8 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
     const pane_due = needsYouDeadlineMs(app);
     if (st.scanning) return @min(app.now_ms + 80, pane_due orelse app.now_ms + 80);
-    // Before the first pass: the loop's first tick starts it; no wake.
-    if (!st.scanned_once) return pane_due;
+    // Before the first tick: it decides the prefetch; no wake.
+    if (!st.prefetched) return pane_due;
     var next: ?i64 = pane_due;
     const p = phases(app);
     const dues = [_]?i64{
@@ -4546,6 +4554,31 @@ test "tick: the first pass starts with the app, hidden; then idle off screen, sl
     try command.run(&f.app, .{ .static = .@"sessions.refresh" });
     try testing.expectEqual(g + 1, st.generation);
     try f.settle(2000);
+}
+
+test "a home with nothing to read at start skips the prefetch worker, and a transcript written afterwards is read on the first open" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    const st = &f.app.sessions;
+    try f.tmp.dir.createDirPath(testing.io, "home");
+    st.home = try std.fs.path.join(testing.allocator, &.{ f.root, "home" });
+    // The first tick: no transcript directory, so no worker.
+    f.app.now_ms = 0;
+    tick(&f.app, 0);
+    try testing.expectEqual(@as(u32, 0), st.generation);
+    try testing.expect(!st.scanning);
+    // A session starts after mnml did; the section opens a moment later
+    // — long before any interval — and its first paint reads the home.
+    const sh = st.home.?;
+    st.home = null;
+    try f.seedHome();
+    testing.allocator.free(sh);
+    f.app.now_ms = 100;
+    try command.run(&f.app, .{ .static = .@"view.activity_sessions" });
+    try f.app.render();
+    try testing.expectEqual(@as(u32, 1), st.generation);
+    try f.settle(2000);
+    try testing.expectEqual(@as(usize, 2), st.items.len);
 }
 
 test "a pass where no transcript moved reads nothing and posts nothing; a grown transcript is read again" {
