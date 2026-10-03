@@ -268,6 +268,20 @@ pub fn wantsScan(app: *const App) bool {
     return false;
 }
 
+/// A table pane is open and every one open is paused (or typing in its
+/// filter): the cadence holds still for it.
+pub fn pausedOpen(app: *const App) bool {
+    var any = false;
+    for (app.panes.slots.items) |*slot| if (slot.*) |*pane| switch (pane.*) {
+        .sessions_table => |*tp| {
+            if (!tp.paused and !tp.list.filter_focused) return false;
+            any = true;
+        },
+        else => {},
+    };
+    return any;
+}
+
 /// `sessions.table` / `ai.dashboard` / `view.activity_agents`: show the
 /// table (opening it beside the active pane), and rescan.
 pub fn openCmd(app: *App) CommandError!void {
