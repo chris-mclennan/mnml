@@ -4,6 +4,7 @@
 # sample a pixel, quit. The recipe and its rules: docs/LOOK.md.
 #
 #   tools/look.sh launch WS [--exe PATH] [--cols N] [--rows N] [--root DIR] [--sandbox]
+#                  [--env KEY=VALUE]…   (repeatable; `PATH=/dir:$PATH` prepends)
 #   tools/look.sh key SPEC | type TEXT | run COMMAND_ID | open PATH
 #   tools/look.sh click X Y [right] | hover X Y | send JSON [JSON…]
 #   tools/look.sh shot NAME            prints the PNG path
@@ -18,7 +19,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -x "$ROOT/zig-out/bin/mnml-drive" ] || { echo "look.sh: build the driver first: zig build -Ddrive" >&2; exit 64; }
 case "${1:-}" in
-  ""|-h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|-h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   # A driver older than tools/drive/ is rebuilt (MNML_DRIVE_NO_REBUILD=1:
   # refused) before a window opens; the other verbs act on that window.
   launch) MNML_STAMP_WHO=look.sh python3 "$ROOT/tools/tour/stamp.py" drive || exit $? ;;
