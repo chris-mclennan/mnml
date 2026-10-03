@@ -271,6 +271,10 @@ the release ships one file), and one line per change a user can see.
   Claude Code's project folder by the same rule the app reads it by.
 - The tree's connectors follow the Rust rule again: none under a top-level
   folder, in the chevrons' grey.
+- `MnmlSymbols.ttf` declares JetBrains Mono's vertical metrics (ascender
+  1020, descender -300, typo metrics in use), the box its connectors and
+  icons were drawn in, rather than an 800 / -200 box of its own. Run
+  `./run.sh install-font` to pick it up.
 - Right-click on a link in a terminal or session pane offers "Copy link" and
   "Open link" above "Copy" (a right-click selects nothing, so Copy had
   nothing to copy); a hyperlink the program printed or a plain `https://…`
