@@ -1428,7 +1428,12 @@ that mnml expands and runs when the command fires:
 - `chip.glyph` is a Nerd Font glyph; `chip.glyph_codepoint` (`F1D00`)
   paints a codepoint verbatim when `glyph` is empty — for a mark in
   mnml's own font block; `chip.fallback` is what paints without the
-  font. `chip.in_palette_bar` puts the chip on the palette bar; the
+  font. A mark in that block has to be baked into `MnmlSymbols.ttf`
+  (`src/glyph/builder.zig`, art under `data/glyphs/`); the Bitbucket and
+  Jira chips' Atlassian marks are `U+F1C15`–`U+F1C18` (pull request,
+  pipeline, board, release), and the Rust-era chips an older installed
+  face carries sit below them at `U+F1C03`–`U+F1C14`.
+  `chip.in_palette_bar` puts the chip on the palette bar; the
   row's and the chip's right-click menus toggle it (*Hide from top bar*
   / *Show on top bar*).
 - A launcher needs at least one command and every command a `run`

@@ -18,7 +18,7 @@
     .binary = "mnml-bitbucket",
     .args = .{ "--only", "prs" },
     .category = "forge",
-    .chip = .{ .glyph = "\u{f00a8}", .fallback = "BP", .color = "blue", .tooltip = "Bitbucket pull requests", .in_palette_bar = false },
+    .chip = .{ .glyph = "\u{f1c15}", .fallback = "BP", .color = "blue", .tooltip = "Bitbucket pull requests", .in_palette_bar = false }, // MnmlSymbols: Atlassian pull-request
     .commands = .{
         .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open", .keys = .{"space i b"} },
         .{ .id = "bitbucket_prs.open_mine", .title = "Bitbucket PRs: open (mine only)", .args = .{ "--only", "prs-mine" } },

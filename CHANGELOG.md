@@ -261,6 +261,22 @@ the release ships one file), and one line per change a user can see.
   when it is on, and Settings → UI has the same switch. On, closing one of
   three splits leaves two even halves. It stays off by default.
 
+### Jira and Bitbucket chips
+
+- The four Atlassian chips wear Atlassian's own icons, the ones Bitbucket's
+  and Jira's sidebars draw: the two-branch pull request on Bitbucket pull
+  requests, the pipeline loop on Bitbucket pipelines, the three-column board
+  on Jira Boards and the ship on Jira Fix Versions. They were the Bitbucket
+  and Jira logos, two chips each. The marks are Atlassian's design-system
+  SVGs (`@atlaskit/icon`, `@atlaskit/icon-lab`, Apache-2.0 — see
+  `data/glyphs/NOTICE`), baked into `MnmlSymbols.ttf` at `U+F1C15`–`U+F1C18`
+  at their sizes on Atlassian's 16-unit grid, so the pull request stands
+  taller than the loop as it does on Atlassian's own pages. Run `./run.sh
+  install-font` to pick them up — until then an installed face lacks them
+  and the startup glyph check names the four. Under `--ascii` the chips
+  still read `BP`, `BL`, `JB` and `JV`. The Jira Work chip keeps the Jira
+  logo.
+
 ### Fixes
 - The chevrons and the tree's lines wear the menu bar's grey — one step dimmer than before, the same colour on both.
 

@@ -11,7 +11,7 @@
     .binary = "mnml-bitbucket",
     .args = .{ "--only", "pipelines" },
     .category = "forge",
-    .chip = .{ .glyph = "\u{f00a8}", .fallback = "BL", .color = "green", .tooltip = "Bitbucket pipelines", .in_palette_bar = false },
+    .chip = .{ .glyph = "\u{f1c16}", .fallback = "BL", .color = "green", .tooltip = "Bitbucket pipelines", .in_palette_bar = false }, // MnmlSymbols: Atlassian pipeline
     .commands = .{
         .{ .id = "bitbucket_pipelines.open", .title = "Bitbucket Pipelines: open", .keys = .{"space i l"} },
     },

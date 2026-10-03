@@ -11,7 +11,7 @@
     .version = "0.2.1",
     .binary = "mnml-jira",
     .category = "tracker",
-    .chip = .{ .glyph = "\u{f0303}", .fallback = "JB", .color = "magenta", .tooltip = "Jira Boards", .in_palette_bar = false }, // nf-md-jira
+    .chip = .{ .glyph = "\u{f1c17}", .fallback = "JB", .color = "magenta", .tooltip = "Jira Boards", .in_palette_bar = false }, // MnmlSymbols: Atlassian board
     .commands = .{
         .{ .id = "jira_boards.open", .title = "Jira Boards: open", .args = .{ "--only", "boards" }, .keys = .{"space i j b"} },
         .{ .id = "jira_boards.refresh", .title = "Jira Boards: republish the statusline count", .ex = "term mnml-jira --values --only boards --workspace {{workspace}}" },
