@@ -2477,7 +2477,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .scrollbar = app.cfg.ui.scrollbar,
         .gutter_marks = try gutterMarksFor(app, arena, id, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
-        .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
+        .underlines = try decor.mergeUnderlines(arena, try decor.hoverLinkUnderline(app, arena, id), try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme))),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,

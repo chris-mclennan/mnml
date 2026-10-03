@@ -1461,6 +1461,10 @@ pub const App = struct {
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
     click_echo: ?ClickEcho = null,
+    /// The link — a URL or a declared key — under the pointer in an
+    /// editor's text: underlined in the link's hover look while the
+    /// pointer stays on it (`app/lsp_decor.zig`, `editorLinkHover`).
+    editor_link: ?struct { pane: PaneId, start: usize, end: usize } = null,
     /// `debug.toggle_click_inspector`: every press toasts the hit target
     /// under the pointer before it is handled.
     debug_click_inspector: bool = false,
