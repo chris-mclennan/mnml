@@ -11,13 +11,16 @@
 # // changed (settings-typeahead): the standard profile's box is
 # type-to-filter, so `G` / `k` / `l` are query characters there now —
 # End / ↑ / → are the controls that reach the row in both profiles.
+# // changed (settings-rows): the box is reached by its filter, not by
+# End and a count of Ups — every row added under Integrations moved
+# the target.
 command view.settings
-key end
-key up
-# (one more Up: the Integrations section's last row is now "API")
-key up
-expect screen contains "New pane sizing"
+type "pane sizing"
+expect screen contains "▸ New pane sizing"
 expect screen contains "[context]"
+# Enter hands the keys from the filter to the row it found; ←→ in the
+# filter move its caret.
+key enter
 key right
 expect screen contains "[fixed]"
 key enter
