@@ -28,6 +28,21 @@ the release ships one file), and one line per change a user can see.
   or the file channel through unasked; a workspace you have not trusted
   cannot set them.
 
+### The API
+
+- Each mnml now serves a local socket that `mnml remote` (or `mnml r`)
+  talks to: `open PATH[:LINE[:COL]]`, `run COMMAND-ID`, `status`, `panes`,
+  `ping`, `instances`, and `call METHOD [JSON]` for anything raw, with
+  `--json`. Run in a pane it reaches that mnml as that pane; run from any
+  other terminal it finds the mnml whose workspace holds the current
+  directory. `docs/API.md` has the methods and the exit codes.
+- Every pane is told the socket and gets its own token, made when the pane
+  starts and gone when it closes. A command run through the API that
+  changes more than the view asks you first, naming the pane; *Allow for
+  the session* lasts while that pane is open. Anything without a token may
+  only read the status and the command list.
+- Settings → Integrations → **API** turns the socket off.
+
 ### Sessions
 
 - The Sessions row of the activity bar enters the sessions mode: the editor

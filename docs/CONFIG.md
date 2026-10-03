@@ -537,6 +537,10 @@ otherwise. Copy what you need; leave the rest out.
     // "Commands a program asks for" below). Config-file only, and
     // stripped from an untrusted workspace's layer.
     .api = .{
+        // Serve the API socket `mnml remote` talks to (docs/API.md). Off,
+        // nothing is bound and no pane is told a socket. Read at start;
+        // turned off while running, the socket answers only "the API is off".
+        .enabled = true,
         // Command ids any caller may run unasked, e.g. .{ "git.refresh" }
         .allow_commands = .{},
         // Callers you trust, by name; "file-channel" is the file channel.
@@ -1242,6 +1246,14 @@ out, fails it. The values beside the keys are not compared by that test
 appear in `Config.zig`'s field order.
 
 ## Commands a program asks for
+
+The API socket (`docs/API.md`, `mnml remote`) asks the same way and
+writes the same audit lines, with the asking pane as the client
+(`pane:4`, and its title in the toast); a grant for the session lasts
+while that pane is open, and a `.api.clients` row named `pane:<id>`
+matches it. A connection without a pane's token is `unknown` and may
+only read. `.api.enabled` (Settings → Integrations → API) turns the
+socket off.
 
 Any program in a pane can append a line to
 `<workspace>/.mnml/ipc/command`. Under the live terminal, that file

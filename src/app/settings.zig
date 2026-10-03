@@ -373,6 +373,7 @@ pub const rows = [_]RowSpec{
     // someone looking for it looks (`app/session.zig`).
     .{ .path = "session.restore_terminals", .label = "Restore terminals", .section = .integrations, .scope = .home },
     .{ .path = "integrations.arrange", .label = "New pane sizing", .section = .integrations, .scope = .home },
+    .{ .path = "api.enabled", .label = "API", .section = .integrations, .scope = .home },
 };
 
 pub const reset_label = "Reset all to defaults";
@@ -2053,4 +2054,50 @@ test "view.settings_search opens the box with the filter holding the keys, and `
     const l = try lists(&app, app.frame.allocator());
     try t.expect(l.visible.len < l.all.len);
     try t.expectEqualStrings("Always show fold arrows", l.visible[st.ui.cursor].row.label);
+}
+
+test "the API row sits in Integrations, offers off / on with on the default, and writes api.enabled to the home config" {
+    // `docs/API.md`: the socket `mnml remote` talks to. On unless you
+    // turn it off; a list of trusted clients stays ZON-only.
+    const idx = comptime blk: {
+        for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "api.enabled")) break :blk i;
+        @compileError("no settings row for api.enabled");
+    };
+    try t.expectEqual(Section.integrations, rows[idx].section);
+    try t.expectEqual(Scope.home, rows[idx].scope);
+    try t.expectEqualStrings("API", rows[idx].label);
+    try t.expectEqualStrings("off", options("api.enabled")[0]);
+    try t.expectEqualStrings("on", options("api.enabled")[1]);
+    try t.expectEqual(@as(usize, 1), comptime defaultIndex("api.enabled"));
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(app.cfg.api.enabled);
+    try adjust(&app, idx, -1);
+    try t.expect(!app.cfg.api.enabled);
+    const path = try std.fs.path.join(t.allocator, &.{ home, config.data_root.config_file });
+    defer t.allocator.free(path);
+    const written = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .unlimited);
+    defer t.allocator.free(written);
+    try t.expect(std.mem.indexOf(u8, written, ".enabled = false") != null);
+    try t.expect(std.mem.indexOf(u8, written, ".api") != null);
+    // Enter keeps it; back on, and the file says so.
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(!app.cfg.api.enabled);
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try adjust(&app, idx, 1);
+    try t.expect(app.cfg.api.enabled);
 }

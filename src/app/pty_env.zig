@@ -22,6 +22,8 @@ const Allocator = std.mem.Allocator;
 const App = @import("../app.zig").App;
 const Theme = @import("../ui/theme.zig");
 const shell_integration = @import("shell_integration.zig");
+const api = @import("api.zig");
+const api_paths = @import("../api/paths.zig");
 
 pub const prompt_script = @import("themes").prompt_script;
 pub const prompt_file = "prompt.sh";
@@ -32,11 +34,20 @@ pub const Launch = shell_integration.Launch;
 /// lines over it, and the variables above. `shell` is non-null for a
 /// shell, and gets how to start it (the integration's handoff; its
 /// strings are on the frame arena). The caller owns the map.
-pub fn build(app: *App, extra: []const []const u8, shell: ?*Launch) Allocator.Error!std.process.Environ.Map {
+pub fn build(app: *App, pane: ?@import("../app.zig").PaneId, extra: []const []const u8, shell: ?*Launch) Allocator.Error!std.process.Environ.Map {
     var env = try app.env.clone(app.gpa);
     errdefer env.deinit();
     try env.put("MNML_PANE", "1");
     try env.put("MNML_WORKSPACE", app.workspace);
+    // The API socket and this pane's own token (`app/api.zig`): what
+    // `mnml remote` run in the pane reaches, as `pane:<id>`. An
+    // inherited pair from an outer mnml never leaks through.
+    _ = env.swapRemove(api_paths.env_socket);
+    _ = env.swapRemove(api_paths.env_token);
+    if (pane) |id| if (try api.mintToken(app, id)) |tok| {
+        try env.put(api_paths.env_socket, app.api.socket);
+        try env.put(api_paths.env_token, &tok);
+    };
     for (extra) |kv| {
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try env.put(kv[0..eq], kv[eq + 1 ..]);
@@ -100,7 +111,7 @@ const t = std.testing;
 test "every child gets MNML_PANE and the workspace; a shell also gets the prompt's colours, and the script once there is a data root" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
     defer app.deinit();
-    var cmd = try build(&app, &.{"MNML_WORKSPACE=/tmp/worktree"}, null);
+    var cmd = try build(&app, null, &.{"MNML_WORKSPACE=/tmp/worktree"}, null);
     defer cmd.deinit();
     try t.expectEqualStrings("1", cmd.get("MNML_PANE").?);
     // A session worktree's own workspace wins over the app's.
@@ -108,7 +119,7 @@ test "every child gets MNML_PANE and the workspace; a shell also gets the prompt
     try t.expect(cmd.get("MNML_PROMPT_BG") == null);
 
     var launch: Launch = .{};
-    var sh = try build(&app, &.{}, &launch);
+    var sh = try build(&app, null, &.{}, &launch);
     defer sh.deinit();
     try t.expectEqualStrings(app.workspace, sh.get("MNML_WORKSPACE").?);
     try t.expectEqualStrings("mnml", sh.get("MNML_CONTEXT").?);
@@ -126,10 +137,41 @@ test "every child gets MNML_PANE and the workspace; a shell also gets the prompt
     const old = app.data_root;
     app.data_root = root;
     defer app.data_root = old;
-    var sh2 = try build(&app, &.{}, &launch);
+    var sh2 = try build(&app, null, &.{}, &launch);
     defer sh2.deinit();
     const path = sh2.get("MNML_PROMPT_SCRIPT").?;
     const text = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(1024 * 1024));
     defer t.allocator.free(text);
     try t.expectEqualStrings(prompt_script, text);
+}
+
+test "a pane's child gets the API socket and its own token, minted at spawn and dropped when the pane closes" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    // An outer mnml's pair never leaks into a child.
+    try app.env.put(api_paths.env_token, "outer");
+    // Nothing serving: no socket, no token.
+    var bare = try build(&app, 0, &.{}, null);
+    defer bare.deinit();
+    try t.expect(bare.get(api_paths.env_token) == null);
+    try t.expectEqual(@as(usize, 0), app.api.tokens.count());
+
+    app.api.socket = "/run/mnml/42.sock";
+    const file = try std.fs.path.join(t.allocator, &.{ app.workspace, "x.txt" });
+    defer t.allocator.free(file);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = file, .data = "x" });
+    const id = try app.openPath(file);
+    var env = try build(&app, id, &.{}, null);
+    defer env.deinit();
+    try t.expectEqualStrings("/run/mnml/42.sock", env.get(api_paths.env_socket).?);
+    const tok = env.get(api_paths.env_token).?;
+    try t.expectEqual(@as(usize, api.token_len), tok.len);
+    try t.expectEqualStrings(tok, &app.api.tokens.get(id).?);
+    // A respawn is a new token.
+    var again = try build(&app, id, &.{}, null);
+    defer again.deinit();
+    try t.expect(!std.mem.eql(u8, tok, again.get(api_paths.env_token).?));
+
+    try app.forceClosePane(id);
+    try t.expect(app.api.tokens.get(id) == null);
 }

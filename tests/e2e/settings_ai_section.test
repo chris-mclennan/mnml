@@ -1,7 +1,8 @@
 # Settings has an AI section — ghost text, its backend, the Claude and
 # Codex backends, the meter, the sessions side by side, the session
-# notifications and their bell (at End the first row, Ghost text, is just
-# above the box) —
+# notifications and their bell (at End the first two rows, Ghost text and
+# its backend, are just above the box — the Integrations section's API row
+# took the second) —
 # below Editor; End scrolls the box there, and the filter keeps the
 # section's header over the rows it matched.
 write a.txt alpha
@@ -11,7 +12,6 @@ expect screen contains "── UI ──"
 expect screen contains "▸ Line numbers:"
 key end
 expect screen contains "Sessions side by side:"
-expect screen contains "Ghost-text backend:"
 expect screen contains "Claude backend:"
 expect screen contains "[unset]"
 expect screen contains "Session notifications:"
