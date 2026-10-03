@@ -188,19 +188,24 @@ pub fn placedBox(arena: Allocator, spec: Spec) Error!Placed {
 // ─── the connectors ─────────────────────────────────────────────────────
 
 // JetBrainsMono's box-drawing metrics, so mnml's `│` lines up with the
-// `│` of the font beside it: a 100-unit stroke in the x band 250–350,
-// spanning y −400…1120 so one row's vertical touches the next one's.
-// mnml shifts the band right by 100 to sit under the tree's chevron.
+// `│` of the font beside it: a 100-unit stroke spanning y −400…1120 so
+// one row's vertical touches the next one's. The band sits 156 units
+// right of JetBrainsMono's 250, which puts the stem's centre under the
+// octicon chevron's (measured on ghostty at 16 × 34 px cells: 0.1 px
+// apart; at +100 it was 1.5 px left of it).
 const stroke: f64 = 100;
-const band_left: f64 = 250 + 100;
+const band_left: f64 = 250 + 156;
 const v_top: f64 = 1120;
 const v_bottom: f64 = -400;
-// The corner's arms are narrower than the plain bar (70 rather than
-// 100) and centred on the same axis: at a terminal's ppem the
-// rasteriser was snapping a 100-unit arm one pixel wider than the bar
-// above it, and the L read heavier than the line it continued.
-const arm: f64 = 70;
-const elbow_top: f64 = 620;
+// The corner is drawn at a different scale from the bar: ghostty shrinks
+// a glyph taller than the cell to fit it, and the bar's 1520 units are,
+// while the L's are not. So the L's strokes are 84 units — the bar's 100
+// at the bar's scale — and both land 2 px wide on screen (at 70 the arm
+// was lighter than the line, at 100 it rasterised a pixel heavier).
+const arm: f64 = 84;
+// The arm's centre, 506 units up, is the file icon's vertical centre
+// (0.05 px apart on screen; at 620 it sat 1.5 px above it).
+const elbow_top: f64 = 548;
 const horiz_right: f64 = 620 + (band_left - 250);
 
 /// A closed rectangle, wound clockwise in the y-up em square — the
@@ -435,6 +440,18 @@ test "a broken SVG fails the build rather than baking an empty mark" {
     try t.expectError(error.NoViewBox, buildWith(arena, .{ .terminal = "<svg><path d=\"M0 0 L1 0 L1 1 Z\"/></svg>" }));
     try t.expectError(error.Empty, buildWith(arena, .{ .terminal = "<svg viewBox=\"0 0 1 1\"></svg>" }));
     try t.expectError(error.Malformed, buildWith(arena, .{ .terminal = "not an svg at all" }));
+}
+
+test "the connectors' numbers are the ones measured on screen: stem under the chevron, arm at the icon's middle, equal weight" {
+    // Measured on ghostty at 16 x 34 px cells against the octicon chevron
+    // and a file icon (`.verify` crops, rounds.md). A change here moves a
+    // line by pixels — measure it on the real screen again.
+    try t.expectEqual(@as(f64, 406), band_left);
+    try t.expectEqual(@as(f64, 456), band_left + stroke / 2);
+    try t.expectEqual(@as(f64, 84), arm);
+    try t.expectEqual(@as(f64, 506), elbow_top - arm / 2);
+    // The arm reaches the same place past the stem it always did.
+    try t.expectEqual(@as(f64, 776), horiz_right);
 }
 
 test "the connectors are the cell-edge rectangles the tree draws, not scaled art" {

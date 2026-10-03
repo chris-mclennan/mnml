@@ -275,6 +275,10 @@ the release ships one file), and one line per change a user can see.
   1020, descender -300, typo metrics in use), the box its connectors and
   icons were drawn in, rather than an 800 / -200 box of its own. Run
   `./run.sh install-font` to pick it up.
+- The tree's lines meet what they connect: the `│` sits under the chevron
+  and the `└`'s arm at the file icon's middle (both were 1.5 px off), and the
+  arm is as heavy as the line instead of a pixel lighter. `./run.sh
+  install-font` puts the redrawn lines in an installed face.
 - Right-click on a link in a terminal or session pane offers "Copy link" and
   "Open link" above "Copy" (a right-click selects nothing, so Copy had
   nothing to copy); a hyperlink the program printed or a plain `https://…`
