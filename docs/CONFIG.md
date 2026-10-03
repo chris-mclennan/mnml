@@ -201,7 +201,7 @@ otherwise. Copy what you need; leave the rest out.
         },
         .edge_grips = true, // the three-dot handle at the middle of a hidden slide-in's edge: `⋯` on the menu bar's row and on the dock's bottom row, `⋮` on a side column's screen edge (`--ascii` spends one `.` per cell). Dwelling on it reveals, a left click reveals and PINS, a right click opens that surface's own menu. False gives the invisible bands back — they never move, so every reveal works either way
         .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
-        .auto_equalize_splits = false,
+        .auto_equalize_splits = false, // every split and every close re-shares the sizes equally; Settings → UI → Auto-equalize splits, the Window menu's ticked row and `view.toggle_auto_equalize_splits` flip it (written to the workspace config)
         .relative_line_numbers = false,
         .line_numbers = true,
         .cursor_line = false,

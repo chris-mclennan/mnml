@@ -404,9 +404,9 @@ pub const rows = [_]Row{
         .body = "Resizes every split in this tab page back to an equal share in one go — vim's Ctrl+W = — undoing the grow and shrink rows and any divider drag. Auto-equalize below does it by itself after every split and close.",
         .links = &.{ .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize now" } }, .{ .command = .{ .id = .@"view.toggle_auto_equalize_splits", .label = "Do it automatically" } } },
     } },
-    .{ .menu = "Window", .label = "Auto-equalize on split / close (toggle)", .entry = .{
-        .title = "Auto-equalize on split / close (toggle)",
-        .body = "On, every split and every close re-shares the sizes equally, so a leaf never ends up a sliver; off, a new split takes half of the pane it came from and the rest keep their ratios. The row carries no tick — a toast says which way it went; Equalize splits is the one-shot form.",
+    .{ .menu = "Window", .label = "Auto-equalize splits", .entry = .{
+        .title = "Auto-equalize splits",
+        .body = "On, every split and every close re-shares the sizes equally, so a leaf never ends up a sliver; off, a new split takes half of the pane it came from and the rest keep their ratios. The row's tick says whether it is on, and Settings → UI carries the same switch; Equalize splits is the one-shot form.",
         .links = &.{ .{ .command = .{ .id = .@"view.toggle_auto_equalize_splits", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.equalize_splits", .label = "Equalize once" } } },
     } },
     .{ .menu = "Window", .label = "Grow split width", .entry = .{

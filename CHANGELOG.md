@@ -214,6 +214,12 @@ the release ships one file), and one line per change a user can see.
   It never takes a column from the program, so nothing resizes when it
   appears, and full-screen programs (no scrollback) never show it.
 
+### Splits
+
+- The Window menu's row is now *Auto-equalize splits* and carries a tick
+  when it is on, and Settings → UI has the same switch. On, closing one of
+  three splits leaves two even halves. It stays off by default.
+
 ### Fixes
 
 - A toast's Copy, a menu's "Copy path" / "Copy link" and every other
