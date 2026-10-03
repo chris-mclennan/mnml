@@ -104,7 +104,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
         },
         .sessions => .{
             .title = try std.fmt.allocPrint(arena, "Session {d}", .{r.idx + 1}),
-            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you; a `◆` in the column left of the card means it finished a turn or ended since you last looked at it (the `•` there instead means it is on screen now). A click selects it and a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows, and its Move rows reorder it under the Manual sort.",
+            .body = "A Claude Code or Codex session's card — its name, branch, cwd and what the pane is showing; a raised hand before the name means the session is stopped on a question for you; a `◆` in the column left of the card means it finished a turn or ended since you last looked at it (the `•` there instead means it is on screen now, and a `⇄` that the session is linked to mnml as its IDE). A click selects it and a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows, and its Move rows reorder it under the Manual sort.",
             .keys = &.{ .{ .chord = "Enter", .label = "Open the pane" }, .{ .command = .@"sessions.next_waiting", .label = "Next ready for you" } },
             .links = &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask },
         },

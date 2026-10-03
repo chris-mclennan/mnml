@@ -10,8 +10,9 @@
 //! `send_lock` serialises writers.
 //!
 //! The CDP session and the WebSocket pane both run on this; the
-//! server-side handshake (`serverAccept`) exists so tests can host a
-//! fake endpoint on a local port.
+//! server-side handshake (`serverAccept`) hosts a fake endpoint for the
+//! tests, and — with a required header (`serverAcceptChecked`) — the
+//! agent face's listener (`api/ide_server.zig`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -269,13 +270,30 @@ fn readHead(r: *Io.Reader, alloc: Allocator) !Head {
 
 /// Server side: read the client's request head, answer 101. Returns
 /// the requested path (on `alloc`) and the first subprotocol offered.
-pub fn serverAccept(r: *Io.Reader, w: *Io.Writer, alloc: Allocator) !struct { path: []const u8, protocol: ?[]const u8 } {
+/// What the client asked for: its path and the first subprotocol offered.
+pub const Accepted = struct { path: []const u8, protocol: ?[]const u8 };
+
+pub fn serverAccept(r: *Io.Reader, w: *Io.Writer, alloc: Allocator) !Accepted {
+    return serverAcceptChecked(r, w, alloc, null);
+}
+
+/// A request header the upgrade must carry, value compared in full
+/// (every byte, whatever differs first).
+pub const RequiredHeader = struct { name: []const u8, value: []const u8 };
+
+/// `serverAccept`, refusing the upgrade with a 401 — and
+/// `error.Unauthorized` — unless the request carries `required`.
+pub fn serverAcceptChecked(r: *Io.Reader, w: *Io.Writer, alloc: Allocator, required: ?RequiredHeader) !Accepted {
     var path: []const u8 = "/";
     var key: ?[]const u8 = null;
     var protocol: ?[]const u8 = null;
+    var presented: ?[]const u8 = null;
     var first = true;
+    var total: usize = 0;
     while (true) {
         const line_raw = try r.takeDelimiterInclusive('\n');
+        total += line_raw.len;
+        if (total > 64 * 1024) return error.HeadTooLong;
         const line = std.mem.trimEnd(u8, line_raw, "\r\n");
         if (line.len == 0) break;
         if (first) {
@@ -290,7 +308,15 @@ pub fn serverAccept(r: *Io.Reader, w: *Io.Writer, alloc: Allocator) !struct { pa
         const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
         if (std.ascii.eqlIgnoreCase(name, "sec-websocket-key")) key = try alloc.dupe(u8, value);
         if (std.ascii.eqlIgnoreCase(name, "sec-websocket-protocol")) protocol = try alloc.dupe(u8, std.mem.sliceTo(value, ','));
+        if (required) |req| if (std.ascii.eqlIgnoreCase(name, req.name)) {
+            presented = try alloc.dupe(u8, value);
+        };
     }
+    if (required) |req| if (!sameBytes(presented orelse "", req.value)) {
+        try w.writeAll("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        try w.flush();
+        return error.Unauthorized;
+    };
     const k = key orelse return error.BadStatus;
     var accept_buf: [28]u8 = undefined;
     const accept = acceptKey(k, &accept_buf);
@@ -299,6 +325,13 @@ pub fn serverAccept(r: *Io.Reader, w: *Io.Writer, alloc: Allocator) !struct { pa
     try w.writeAll("\r\n");
     try w.flush();
     return .{ .path = path, .protocol = protocol };
+}
+
+fn sameBytes(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    var diff: u8 = 0;
+    for (a, b) |x, y| diff |= x ^ y;
+    return diff == 0;
 }
 
 // ─── the connection ─────────────────────────────────────────────────────

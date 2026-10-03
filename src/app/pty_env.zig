@@ -48,6 +48,14 @@ pub fn build(app: *App, pane: ?@import("../app.zig").PaneId, extra: []const []co
         try env.put(api_paths.env_socket, app.api.socket);
         try env.put(api_paths.env_token, &tok);
     };
+    // The agent face (`app/ide.zig`): a Claude Code pane gets its own
+    // IDE listener and lock file, and the two variables that point the
+    // session at it — so it links to mnml with no setup.
+    if (pane) |id| if (try @import("ide.zig").startFor(app, id)) |port| {
+        var buf: [8]u8 = undefined;
+        try env.put(@import("ide.zig").env_port, std.fmt.bufPrint(&buf, "{d}", .{port}) catch unreachable);
+        try env.put(@import("ide.zig").env_enable, "true");
+    };
     for (extra) |kv| {
         const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
         try env.put(kv[0..eq], kv[eq + 1 ..]);

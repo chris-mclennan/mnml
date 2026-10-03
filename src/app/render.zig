@@ -1556,6 +1556,7 @@ pub fn tabsOfList(app: *App, ui: Ui, ids: []const PaneId, active_id: PaneId) All
             .diag = diag_text,
             .diag_severity = diag,
             .needs_you = needs_you,
+            .linked = @import("ide.zig").linked(app, id),
         });
     }
     return tabs.items;

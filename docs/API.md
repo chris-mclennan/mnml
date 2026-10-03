@@ -124,3 +124,83 @@ removed by whoever finds it.
 | 7 | protocol mismatch (an mnml that does not speak `v1`, or no such method) |
 
 `tools/api-bench.sh` times 200 `ping`s through `mnml remote`.
+
+## Agent face: Claude Code's IDE protocol
+
+A Claude Code session started in an mnml pane links to mnml as its IDE
+with nothing to set up. The protocol is the one Claude Code speaks to its
+editor plugins; `coder/claudecode.nvim`'s `PROTOCOL.md` describes it.
+
+**When.** A terminal pane whose command is Claude Code
+(`launch_profiles.productOfArgv`), spawned while the API serves. A Codex
+pane, a shell, and every pane while **API** is off get nothing. A
+`claude` typed into a shell pane gets nothing either: the link is made
+when the pane starts.
+
+**What the pane gets.** Its own listener on `127.0.0.1:<a port the OS
+picks>`, one per session pane: Claude Code reads its token from the lock
+file its port names, so one shared port would give every session the same
+token, and mnml could not tell the sessions apart. The child's
+environment gains, beside `MNML_API` / `MNML_API_TOKEN`:
+
+| variable | value |
+|---|---|
+| `CLAUDE_CODE_SSE_PORT` | the listener's port |
+| `ENABLE_IDE_INTEGRATION` | `true` |
+
+**The lock file.** `$CLAUDE_CONFIG_DIR/ide/<port>.lock`, else
+`~/.claude/ide/<port>.lock`, mode 0600:
+
+```json
+{"pid": 4242, "workspaceFolders": ["/path/to/ws"], "ideName": "mnml",
+ "transport": "ws", "authToken": "<32 lowercase hex>"}
+```
+
+The token is 128 random bits, made when the pane starts. The lock file is
+removed when the pane closes, when it restarts (which makes a new port and
+token), and when mnml exits.
+
+**The connection.** A WebSocket upgrade must carry the token in the
+`x-claude-code-ide-authorization` header; without it the answer is 401.
+Then MCP, one JSON-RPC message per WebSocket message: `initialize`
+(`serverInfo.name` `mnml`), `tools/list`, `tools/call`, `ping`.
+
+**The tools.** Every call is made as the pane the lock file belongs to,
+`pane:<id>`, through the same gate as the socket, and each is a line in
+`.mnml/ipc/audit.jsonl` (`"method":"ide"`).
+
+| tool | what it does | asks? |
+|---|---|---|
+| `getWorkspaceFolders` | the workspace | no |
+| `getOpenEditors` | the open editors: path, label, active, dirty | no |
+| `getCurrentSelection`, `getLatestSelection` | the active editor's selection (else the last editor's) | no |
+| `getDiagnostics` | language-server diagnostics, one file (`uri`) or every file | no |
+| `checkDocumentDirty` | whether a file has unsaved changes | no |
+| `openFile` | opens a file, optionally selecting `startText` … `endText` | no |
+| `openDiff` | shows the proposal in the review pane; answers when you decide | no: your review is the approval |
+| `close_tab`, `closeAllDiffTabs` | closes the session's diff tabs | no |
+| `saveDocument` | saves a buffer | **yes**: class `write`, the same toast as a command; *Allow for the session* or `.api.clients` `pane:<id>` with `.allow = .{.write}` lets it through |
+| `executeCode` | — | refused: not supported |
+
+**`openDiff`.** The proposed file opens in the review pane beside the
+buffer, titled with the session's `tab_name`, diffed against the buffer
+as it stands (unsaved edits included). Accept hunks and press Enter: the
+accepted text goes into the buffer as one undo step, **the file is saved**
+(the session's next read or test run must see what it was told was
+saved), a toast says so, and the session is answered `FILE_SAVED` with
+the file's text; undo in the buffer is still there. Esc, `q`, closing the tab, or Enter with nothing
+accepted answers `DIFF_REJECTED`. A second proposal for the same file
+replaces the first, which is answered `DIFF_REJECTED`.
+
+**What mnml tells the session.** `selection_changed` (`text`,
+`filePath`, `fileUrl`, `selection` with 0-based lines and characters) when
+the selection in an editor changes, at most once per 100 ms, to one
+session: the linked session pane you looked at last. `ai.send_selection`
+sends that session `at_mentioned` (`filePath`, `lineStart`, `lineEnd`,
+0-based) for the selected lines, or the cursor's line.
+
+**What you see.** A link mark, `⇄` (`=` with `--ascii`), after the
+session's name on its tab while the link is up, and in the gutter left of
+its SESSIONS card when the ready mark and the on-screen dot are not there;
+and a toast the first time it connects:
+`Claude Code connected to mnml (pane 4)`.
