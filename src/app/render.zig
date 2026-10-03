@@ -598,6 +598,15 @@ fn screenRect(screen: *vaxis.Screen) Rect {
     return Rect.init(0, 0, screen.width, screen.height);
 }
 
+/// The left column shows SESSIONS and its cards would not all fit the
+/// `section_h` rows the info view leaves above itself — so the box
+/// steps aside, unless it is pinned or holds the focus.
+fn sessionsCrowded(app: *const App, section_h: u16) bool {
+    if (side_mod.shown(app, .left) != .sessions) return false;
+    if (info_view_app.isPinned(app) or app.focus == .info_view) return false;
+    return !sessions.listFits(app, section_h);
+}
+
 pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
     // What the pointer rests on, read off the previous frame's hits
     // BEFORE `begin` hands their memory back: the info view's dictionary
@@ -638,6 +647,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .triangle = app.cfg.ui.expand_indicator == .triangle,
         .focus_cue = app.cfg.ui.focus_cue,
         .links = @import("link_rules.zig").finder(app),
+        .menu_link = if (app.overlay == .menu) app.overlay.menu.link else null,
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);
@@ -680,7 +690,9 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         // (`info_view.boxRows`); a column too short for four rows and
         // the six has no box. The section takes the rest.
         var side = fr.sidebar;
-        if (help_copy) |copy| if (info_view_app.boxRows(side.h, app.cfg.ui.hover_help_height)) |rows| {
+        // SESSIONS whose cards would scroll above the box takes the
+        // box's rows instead; the pin (or focus in the box) keeps it.
+        if (help_copy) |copy| if (info_view_app.boxRows(side.h, app.cfg.ui.hover_help_height)) |rows| if (!sessionsCrowded(app, side.h - rows)) {
             const parts = side.splitBottom(rows);
             side = parts.top;
             const focused = app.focus == .info_view;

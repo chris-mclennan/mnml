@@ -13,6 +13,7 @@
 const std = @import("std");
 const sessions_mode = @import("sessions_mode.zig");
 const Allocator = std.mem.Allocator;
+const Rect = @import("../ui/rect.zig");
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
@@ -1330,6 +1331,7 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     // A right-click on a link: copy it or open it, above the selection's
     // Copy (a right-click makes no selection).
     const link: ?[]const u8 = if (app.panes.pty(pane)) |pt| try pty_pane.linkUnder(mem.allocator(), pt, x, y) else null;
+    const link_cells: ?Rect = if (link == null) null else if (app.panes.pty(pane)) |pt| try pty_pane.linkCellsUnder(mem.allocator(), pt, x, y) else null;
     var all: std.ArrayList(MenuItem) = .empty;
     if (link) |url| try all.appendSlice(mem.allocator(), &.{
         .{ .label = "Copy link", .action = .{ .copy_link = url } },
@@ -1357,6 +1359,7 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     errdefer app.gpa.free(rows);
     try app.openMenu(p.title(), rows, x, y);
     app.overlay.menu.mem = mem;
+    app.overlay.menu.link = link_cells;
 }
 
 /// An AI pane's body (Rust `open_ai_pane_context_menu`): re-ask,
@@ -1404,7 +1407,7 @@ pub fn openWelcomeRecentMenu(app: *App, path: []const u8, x: u16, y: u16) Alloca
 
 /// A link (a preview's, a detail pane's — Rust `integration_detail_links`
 /// copies the URL): open it, copy it.
-pub fn openLinkMenu(app: *App, url: []const u8, x: u16, y: u16) Allocator.Error!void {
+pub fn openLinkMenu(app: *App, url: []const u8, cells: ?Rect, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
     const arena = mem.allocator();
@@ -1416,6 +1419,7 @@ pub fn openLinkMenu(app: *App, url: []const u8, x: u16, y: u16) Allocator.Error!
     });
     errdefer app.gpa.free(rows);
     try openOwned(app, "Link", rows, x, y, mem);
+    app.overlay.menu.link = cells;
 }
 
 // ─── right-click: the chrome chips ──────────────────────────────────────

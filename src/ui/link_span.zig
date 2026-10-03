@@ -62,9 +62,15 @@ pub fn nextUrl(text: []const u8, from: usize) ?Range {
 
 /// The URL covering byte `col` of `line`, if one does.
 pub fn urlAt(line: []const u8, col: usize) ?[]const u8 {
+    const r = rangeAt(line, col) orelse return null;
+    return line[r.start..r.end];
+}
+
+/// `urlAt`'s bytes as a range of `line`.
+pub fn rangeAt(line: []const u8, col: usize) ?Range {
     var from: usize = 0;
     while (nextUrl(line, from)) |r| {
-        if (col >= r.start and col < r.end) return line[r.start..r.end];
+        if (col >= r.start and col < r.end) return r;
         if (r.start > col) return null;
         from = r.end;
     }
@@ -107,12 +113,29 @@ fn paintSpan(ui: Ui, x: u16, y: u16, w: u16, url: []const u8) void {
     // The hit outlives the cache that owns the URL only until the next
     // frame; the frame arena holds it exactly that long.
     ui.hit(r, .{ .link = .{ .url = ui.arena.dupe(u8, url) catch return } });
-    const hot = ui.hovered(r);
+    const hot = ui.hovered(r) or if (ui.menu_link) |m| !m.intersect(r).isEmpty() else false;
     var cx = x;
-    while (cx < x + w) : (cx += 1) ui.canvas.restyle(cx, y, if (hot) .{
-        .fg = ui.theme.accent.fg,
-        .ul_style = .single,
-    } else .{ .ul_style = .dotted });
+    while (cx < x + w) : (cx += 1) ui.canvas.restyle(cx, y, if (hot) hotPatch(ui) else .{ .ul_style = .dotted });
+}
+
+/// The look of a link under the pointer — or the one an open menu is
+/// for: the accent and a solid underline over the painter's colours.
+fn hotPatch(ui: Ui) @import("canvas.zig").StylePatch {
+    return .{ .fg = ui.theme.accent.fg, .ul_style = .single };
+}
+
+/// A surface that finds its links itself (a terminal pane's grid)
+/// calls this over `area` once its cells are out: the cells of the
+/// link the open menu is for (`Ui.menu_link`) that fall in `area`
+/// take the hover look. Nothing with no such menu.
+pub fn paintMenuLink(ui: Ui, area: Rect) void {
+    const m = ui.menu_link orelse return;
+    const r = m.intersect(area);
+    var y = r.y;
+    while (y < r.bottom()) : (y += 1) {
+        var x = r.x;
+        while (x < r.right()) : (x += 1) ui.canvas.restyle(x, y, hotPatch(ui));
+    }
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -158,6 +181,19 @@ test "mark: a span's cells take the hit and the look; the pointer lights them; c
     markSpans(ui, 1, 1, 14, text, &.{.{ .start = 3, .end = 10, .url = "u" }});
     try testing.expectEqual(vaxis.Style.Underline.single, f.cell(6, 1).style.ul_style);
     try testing.expect(std.meta.eql(ui.theme.accent.fg, f.cell(6, 1).style.fg));
+    // The link an open menu is for wears the same look with the
+    // pointer elsewhere (on the menu); a menu for another link does not.
+    ui.hover = null;
+    ui.menu_link = Rect.init(4, 1, 7, 1);
+    _ = ui.putStr(1, 1, 20, text, ui.theme.fg);
+    markSpans(ui, 1, 1, 14, text, &.{.{ .start = 3, .end = 10, .url = "u" }});
+    try testing.expectEqual(vaxis.Style.Underline.single, f.cell(6, 1).style.ul_style);
+    try testing.expect(std.meta.eql(ui.theme.accent.fg, f.cell(6, 1).style.fg));
+    ui.menu_link = Rect.init(4, 0, 7, 1);
+    _ = ui.putStr(1, 1, 20, text, ui.theme.fg);
+    markSpans(ui, 1, 1, 14, text, &.{.{ .start = 3, .end = 10, .url = "u" }});
+    try testing.expectEqual(vaxis.Style.Underline.dotted, f.cell(6, 1).style.ul_style);
+    ui.menu_link = null;
     // Painted into 6 cells: only `ENG` of the key is on screen.
     f.hits.reset();
     markSpans(ui, 1, 0, 6, text, &spans);

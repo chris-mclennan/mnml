@@ -3095,7 +3095,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // the Link menu (Copy link / Open link).
         .link => |l| if (m.kind == .press and m.button == .right) {
             if (app.overlay != .none) closeOverlay(app);
-            try context_menus.openLinkMenu(app, l.url, m.x, m.y);
+            try context_menus.openLinkMenu(app, l.url, hitRect(app, m.x, m.y), m.x, m.y);
         } else if (m.kind == .press and m.button == .left) {
             if (app.overlay != .none) closeOverlay(app);
             git_app.openExternal(app, l.url);

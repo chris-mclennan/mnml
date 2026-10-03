@@ -589,7 +589,7 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
             return statusline_app.openLspChipMenu(a, 5, 5);
         }
         fn link(a: *App) Allocator.Error!void {
-            return cm.openLinkMenu(a, "https://example.com/", 5, 5);
+            return cm.openLinkMenu(a, "https://example.com/", null, 5, 5);
         }
         fn breadcrumb(a: *App) Allocator.Error!void {
             return cm.openBreadcrumbMenu(a, "src", 5, 5);

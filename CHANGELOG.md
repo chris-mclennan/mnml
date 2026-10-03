@@ -101,6 +101,10 @@ the release ships one file), and one line per change a user can see.
   it opens (`docs/SDK.md`, *Links*). The Jira integration declares the
   issue key and writes your site in at `--install` (reinstall it to pick
   this up); with no integration declaring one, only URLs link.
+- The help panel at the foot of the left column steps aside while
+  SESSIONS has more cards than fit above it, so the list gets those rows
+  instead of a scrollbar; it comes back when they fit, and its pin keeps
+  it in place.
 
 ### Tabs
 
@@ -213,6 +217,16 @@ the release ships one file), and one line per change a user can see.
   column; drag the thumb through the history, click the track to page.
   It never takes a column from the program, so nothing resizes when it
   appears, and full-screen programs (no scrollback) never show it.
+- A right-click on a link — in a terminal, on a session card or in the
+  sessions table — keeps that link lit in the accent with a solid
+  underline while its menu is open, so you can see which link Copy link
+  and Open link are for.
+
+### Splits
+
+- The Window menu's row is now *Auto-equalize splits* and carries a tick
+  when it is on, and Settings → UI has the same switch. On, closing one of
+  three splits leaves two even halves. It stays off by default.
 
 ### Fixes
 

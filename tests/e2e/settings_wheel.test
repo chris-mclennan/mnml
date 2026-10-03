@@ -83,5 +83,7 @@ scroll 60 20 down
 # (+1 notch: the UI section's "Terminal copy on select" row)
 scroll 60 20 down
 # (+1 notch: the Integrations section's "API" row)
+scroll 60 20 down
+# (+1 notch: the UI section's "Auto-equalize splits" row)
 expect screen contains "── Editor ──"
 expect screen contains "▸"

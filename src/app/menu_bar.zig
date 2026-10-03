@@ -188,6 +188,9 @@ const file_recent_row = 3;
 /// The View menu's full-screen row is index `view_fullscreen_row`: its
 /// label reads the way out while inside (`zen.title`).
 const view_fullscreen_row = 8;
+/// The Window menu's auto-equalize row is index `window_auto_equalize_row`:
+/// its tick reads `ui.auto_equalize_splits` per open.
+const window_auto_equalize_row = 7;
 const file_rows = [_]MenuItem{
     .{ .icon = "\u{F0224}", .icon_ascii = "+", .label = "New file", .action = .{ .command = .@"file.new" } },
     .{ .icon = "\u{F115}", .icon_ascii = "/", .label = "Open file…", .action = .{ .command = .@"picker.files" } },
@@ -289,7 +292,7 @@ const window_rows = [_]MenuItem{
     .{ .icon = "\u{EB57}", .icon_ascii = "-", .label = "Split down", .action = .{ .command = .@"view.split_down" } },
     .{ .icon = "\u{F00D}", .icon_ascii = "x", .label = "Close split", .action = .{ .command = .@"view.close_split" } },
     .{ .icon = "\u{F02C1}", .icon_ascii = "=", .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" } },
-    .{ .icon = "\u{F0758}", .icon_ascii = "a", .label = "Auto-equalize on split / close (toggle)", .action = .{ .command = .@"view.toggle_auto_equalize_splits" } },
+    .{ .icon = "\u{F0758}", .icon_ascii = "a", .label = "Auto-equalize splits", .action = .{ .command = .@"view.toggle_auto_equalize_splits" } },
     sep(.{ .icon = "\u{F07E}", .icon_ascii = "<", .label = "Grow split width", .action = .{ .command = .@"view.split_grow_width" } }),
     .{ .icon = "\u{F07D}", .icon_ascii = "^", .label = "Grow split height", .action = .{ .command = .@"view.split_grow_height" } },
     sep(.{ .icon = "\u{F060}", .icon_ascii = "<", .label = "Focus split left", .action = .{ .command = .@"view.focus_left" } }),
@@ -359,6 +362,7 @@ fn buildRows(app: *App, m: Menu) Allocator.Error![]MenuItem {
     errdefer app.gpa.free(rows);
     if (m == .file) rows[file_recent_row].submenu = try recentRows(app, arena);
     if (m == .view) rows[view_fullscreen_row].label = zen.title(app);
+    if (m == .window) rows[window_auto_equalize_row].checked = app.cfg.ui.auto_equalize_splits;
     return rows;
 }
 
@@ -699,6 +703,21 @@ test "menu bar: the View menu's full-screen row reads the way in outside and the
     try openIndex(&app, @intFromEnum(Menu.view));
     try t.expectEqualStrings("Exit full screen", app.overlay.menu.items[view_fullscreen_row].label);
     try t.expectEqual(command.CommandId.@"view.fullscreen", app.overlay.menu.items[view_fullscreen_row].action.command);
+}
+
+test "menu bar: the Window menu's auto-equalize row is ticked exactly when ui.auto_equalize_splits is on" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try t.expectEqual(command.CommandId.@"view.toggle_auto_equalize_splits", window_rows[window_auto_equalize_row].action.command);
+    app.cfg.ui.auto_equalize_splits = false;
+    try openIndex(&app, @intFromEnum(Menu.window));
+    try t.expectEqualStrings("Auto-equalize splits", app.overlay.menu.items[window_auto_equalize_row].label);
+    try t.expect(!app.overlay.menu.items[window_auto_equalize_row].checked);
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    app.cfg.ui.auto_equalize_splits = true;
+    try openIndex(&app, @intFromEnum(Menu.window));
+    try t.expect(app.overlay.menu.items[window_auto_equalize_row].checked);
 }
 
 test "menu bar: a click drops the menu in Rust's dropdown shape with the recent submenu; hover lights and switches; » lists the hidden menus; F10 / Alt / arrows; auto follows the menu; cycle persists" {

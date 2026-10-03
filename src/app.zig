@@ -806,6 +806,10 @@ pub const MenuState = struct {
     /// Owns labels built for this open (a count in a label, an
     /// integration's name); freed with the menu.
     mem: ?std.heap.ArenaAllocator = null,
+    /// A right-click on a link: the screen cells of that link, which
+    /// wear the link's hover look while this menu is open
+    /// (`Ui.menu_link`). Gone with the menu.
+    link: ?@import("ui/rect.zig") = null,
 
     pub const SubMenu = struct {
         /// The parent row it hangs off.

@@ -2300,6 +2300,30 @@ pub const transcript_line_max: usize = 120;
 pub const history_glyph = "\u{F02DA}";
 pub const history_ascii = "H";
 
+/// Room under the cards for EXTERNAL / ENDED: what they need, at most
+/// a third of the panel (a full page of cards keeps the rest).
+fn reserveRows(st: *const State, h: u16) u16 {
+    const ext_n: u16 = @intCast(@min(st.external.items.len, external_max));
+    const ended_n: u16 = @intCast(@min(st.ended.items.len, 64));
+    var needed: u16 = 0;
+    if (ext_n > 0) needed += 1 + ext_n + 1;
+    if (ended_n > 0) needed += 1 + ended_n;
+    return @min(needed, h / 3);
+}
+
+/// Whether every card of the list `draw` last built fits a panel `h`
+/// rows tall without scrolling — the sidebar asks before it gives the
+/// rows under SESSIONS to the info view. Arithmetic on the last
+/// frame's count; no scan.
+pub fn listFits(app: *const App, h: u16) bool {
+    const st = &app.sessions;
+    const n = st.filtered.items.len;
+    if (n == 0) return true;
+    const head = list_panel.headRows(.{ .has_new = true });
+    const list_h = (h -| head) -| reserveRows(st, h);
+    return list_panel.perPage(list_h, card_h, card_gap) >= n;
+}
+
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const st = &app.sessions;
     if (!st.scanned_once and !st.scanning) refresh(app) catch {};
@@ -2333,14 +2357,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
         };
         n_chips = 1;
     }
-    // Room under the cards for EXTERNAL / ENDED: what they need, at
-    // most a third of the panel (a full page of cards keeps the rest).
-    const ext_n: u16 = @intCast(@min(st.external.items.len, external_max));
-    const ended_n: u16 = @intCast(@min(st.ended.items.len, 64));
-    var needed: u16 = 0;
-    if (ext_n > 0) needed += 1 + ext_n + 1;
-    if (ended_n > 0) needed += 1 + ended_n;
-    const reserve: u16 = @min(needed, area.h / 3);
+    const reserve = reserveRows(st, area.h);
     const caret = Panel.draw(&st.list, ui, area, .{
         .panel = .sessions,
         .label = "SESSIONS",
@@ -3308,6 +3325,36 @@ fn wsItem(f: *Fixture, id: []const u8, state: AgentState, at: i64, msg: ?[]const
     it.cwd = f.root;
     it.git_branch = "main";
     return it;
+}
+
+test "the info view steps aside when SESSIONS' cards would scroll above it, comes back when they fit, and a pin keeps it" {
+    var f = try Fixture.init(120, 40);
+    defer f.deinit();
+    try f.fakeClaude();
+    try f.adopt(&.{});
+    const app = &f.app;
+    app.cfg.ui.hover_help = true;
+    app.side.of.set(.sessions, .left);
+    try command.run(app, .{ .static = .@"view.activity_sessions" });
+    // Three cards fit the rows above the box: it shows.
+    for (0..3) |_| _ = try pty_pane.open(app, .{ .argv = &.{f.claude.?}, .label = "claude", .kind = .command, .placement = .tab });
+    try app.render();
+    try testing.expectEqual(@as(usize, 3), app.sessions.filtered.items.len);
+    try app.render();
+    try testing.expect(app.info_view.rect != null);
+    // Eight would scroll: the box goes and the list has the rows.
+    for (0..5) |_| _ = try pty_pane.open(app, .{ .argv = &.{f.claude.?}, .label = "claude", .kind = .command, .placement = .tab });
+    try app.render();
+    try testing.expectEqual(@as(usize, 8), app.sessions.filtered.items.len);
+    try app.render();
+    try testing.expect(app.info_view.rect == null);
+    // Pinned, it stays whatever the list needs; unpinned, it goes again.
+    try @import("app/info_view.zig").togglePin(app);
+    try app.render();
+    try testing.expect(app.info_view.rect != null);
+    try testing.expect(@import("app/info_view.zig").unpin(app));
+    try app.render();
+    try testing.expect(app.info_view.rect == null);
 }
 
 test "the cards are this app's AI panes: a fresh one reads its banner off the grid, one at rest its transcript's exchange, an exited one `exited`; the scan's rows go under EXTERNAL and ENDED, the chip counts the hidden" {

@@ -203,6 +203,7 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.tree_preview_on_arrow", .label = "Tree previews on arrow", .section = .ui, .scope = .workspace },
     .{ .path = "ui.preview_tabs", .label = "Preview tabs", .section = .ui, .scope = .workspace },
     .{ .path = "ui.todos_sort", .label = "TODOS sort", .section = .ui, .scope = .workspace },
+    .{ .path = "ui.auto_equalize_splits", .label = "Auto-equalize splits", .section = .ui, .scope = .workspace },
     .{ .path = "ui.theme", .label = "Theme", .section = .ui, .scope = .home },
     .{ .path = "ui.ascii_icons", .label = "ASCII icons", .section = .ui, .scope = .home },
     .{ .path = "ui.clock", .label = "Clock in statusline", .section = .ui, .scope = .home },
@@ -2019,6 +2020,50 @@ test "the fold-arrows row sits in Editor, offers off / on, and writes ui.always_
     // Esc cancels, and cancelling puts both the value and the file back.
     try app.handle(.{ .key = Key.named(.esc) });
     try t.expect(!app.cfg.ui.always_show_fold_arrows);
+}
+
+test "the auto-equalize row sits in UI, offers off / on with off the default, and round-trips ui.auto_equalize_splits through the workspace config" {
+    const idx = comptime blk: {
+        for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "ui.auto_equalize_splits")) break :blk i;
+        @compileError("no settings row for ui.auto_equalize_splits");
+    };
+    try t.expectEqual(Section.ui, rows[idx].section);
+    try t.expectEqual(Scope.workspace, rows[idx].scope);
+    try t.expectEqualStrings("Auto-equalize splits", rows[idx].label);
+    try t.expectEqual(@as(usize, 2), options("ui.auto_equalize_splits").len);
+    try t.expectEqual(@as(usize, 0), comptime defaultIndex("ui.auto_equalize_splits"));
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expect(!app.cfg.ui.auto_equalize_splits);
+    try adjust(&app, idx, 1);
+    try t.expect(app.cfg.ui.auto_equalize_splits);
+    // Enter keeps it; the workspace file carries it.
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expect(app.cfg.ui.auto_equalize_splits);
+    const path = try std.fs.path.join(t.allocator, &.{ ws, ".mnml", "config.zon" });
+    defer t.allocator.free(path);
+    const written = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .unlimited);
+    defer t.allocator.free(written);
+    try t.expect(std.mem.indexOf(u8, written, ".auto_equalize_splits = true") != null);
+    // Back off through the row: the live value follows.
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try adjust(&app, idx, -1);
+    try t.expect(!app.cfg.ui.auto_equalize_splits);
 }
 
 test "view.settings_search opens the box with the filter holding the keys, and `fold` finds the row" {
