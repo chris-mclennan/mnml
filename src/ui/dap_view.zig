@@ -155,7 +155,7 @@ test "toolbar, the scrollback's tail, the echo rows as hits, the input row with 
     // A foldable result: the expander before its text, in the
     // expander's grey; the text keeps the result colour.
     try f.expectContains("   \u{F47C} {a=1, b=2} : struct");
-    try testing.expect(f.fgEql(3, 5, f.theme.muted));
+    try testing.expect(f.fgEql(3, 5, .{ .fg = f.theme.palette.grey }));
     try testing.expect(f.fgEql(5, 5, f.theme.info_fg));
     try f.expectContains("       a : int = 1");
     try f.expectRow(7, " > y");

@@ -293,12 +293,13 @@ test "every row kind paints its shape at the shipped width (26 cells) and regist
     try f.expectRow(12, "   [x] prog.dbg:3  when i…");
     try f.expectRow(13, "   [x] Uncaught errors");
     // The changed value is the warning colour; the frame's ▶ too. The
-    // headers and their expanders are the git panel's grey.
+    // headers are the git panel's grey; their expanders the menu bar's
+    // dimmer `palette.grey` (expander.style).
     try testing.expect(f.fgEql(14, 5, f.theme.warn_fg));
-    try testing.expect(f.fgEql(1, 3, f.theme.muted));
+    try testing.expect(f.fgEql(1, 3, .{ .fg = f.theme.palette.grey }));
     try testing.expect(f.fgEql(3, 3, f.theme.muted));
     try testing.expect(f.style(3, 3).bold);
-    try testing.expect(f.fgEql(1, 11, f.theme.muted));
+    try testing.expect(f.fgEql(1, 11, .{ .fg = f.theme.palette.grey }));
     try testing.expectEqual(@as(u32, 3), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(list_panel.PanelId.debug, f.hits.at(5, 5).?.row.panel);
 }
