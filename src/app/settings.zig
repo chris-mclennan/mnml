@@ -203,7 +203,6 @@ pub const rows = [_]RowSpec{
     .{ .path = "ui.tree_preview_on_arrow", .label = "Tree previews on arrow", .section = .ui, .scope = .workspace },
     .{ .path = "ui.preview_tabs", .label = "Preview tabs", .section = .ui, .scope = .workspace },
     .{ .path = "ui.todos_sort", .label = "TODOS sort", .section = .ui, .scope = .workspace },
-    .{ .path = "ui.auto_equalize_splits", .label = "Auto-equalize splits", .section = .ui, .scope = .workspace },
     .{ .path = "ui.theme", .label = "Theme", .section = .ui, .scope = .home },
     .{ .path = "ui.ascii_icons", .label = "ASCII icons", .section = .ui, .scope = .home },
     .{ .path = "ui.clock", .label = "Clock in statusline", .section = .ui, .scope = .home },
@@ -300,6 +299,9 @@ pub const rows = [_]RowSpec{
     // (`app/info_view.zig`, the corridor).
     .{ .path = "ui.hover_help_grace_ms", .label = "Hover help grace (ms)", .section = .ui, .scope = .home, .number = .{ .min = 0, .max = config.Config.hover_help_grace_ms_max, .step = 100 } },
     // ── Editor ──
+    // The splits switch: last in UI so the rows above it keep their
+    // places (the dock placement test reads the box's first page).
+    .{ .path = "ui.auto_equalize_splits", .label = "Auto-equalize splits", .section = .ui, .scope = .workspace },
     .{ .path = "editor.input_style", .label = "Input style", .section = .editor, .scope = .home },
     .{ .path = "editor.auto_pair", .label = "Auto-pair brackets", .section = .editor, .scope = .workspace },
     .{ .path = "editor.auto_indent", .label = "Auto-indent", .section = .editor, .scope = .workspace },
