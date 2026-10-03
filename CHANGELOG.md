@@ -106,16 +106,16 @@ the release ships one file), and one line per change a user can see.
   instead of a scrollbar; it comes back when they fit, and its pin keeps
   it in place.
 - SESSIONS has its list ready the first time you open it: the first read
-  starts with mnml, in the background. After that it keeps itself
-  current at a pace that follows what you can see — quickly while the
-  section or the sessions table is on screen and a session is working,
-  more slowly when nothing is, and only now and then while neither is
-  showing. A read where no transcript changed looks at file sizes and
-  opens nothing, and the cloud runs are re-read on a slower pace of
-  their own. Settings → Integrations → *Dashboard refresh* chooses
-  auto, fast, slow or manual (only the ⟳ chip reads); the intervals are
-  `sessions.refresh`, `agents.refresh` and `cloud_agents.refresh` in
-  the config file.
+  starts with mnml, in the background. A new or changed transcript shows
+  within half a second while the section or the sessions table is on
+  screen (two seconds while neither is): mnml looks at the files' sizes
+  that often and reads only one that changed, so a quiet machine reads
+  nothing. The process list, `git status` and the cloud runs follow a
+  pace of their own — quick while a session is working and a view shows
+  it, slower when nothing is, rare while nothing is showing. Settings →
+  Integrations → *Dashboard refresh* chooses auto, fast, slow or manual
+  (only the ⟳ chip reads); the intervals are `sessions.refresh` and
+  `cloud_agents.refresh` in the config file.
 
 ### Links
 
