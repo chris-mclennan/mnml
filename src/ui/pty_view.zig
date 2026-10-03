@@ -46,6 +46,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const pty = @import("pty");
 const Rect = @import("rect.zig");
+const link_span = @import("link_span.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const blendOver = @import("diff_view.zig").blendOver;
@@ -296,6 +297,8 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
         }
     }
     for (props.marks) |m| paintMark(ui, area, grid, m, rows, cols);
+    // The link a right-click's menu is for, while that menu is open.
+    link_span.paintMenuLink(ui, area);
     if (props.exit_label) |label| {
         const r = area.row(area.h - 1);
         ui.fill(r, th.statusline);

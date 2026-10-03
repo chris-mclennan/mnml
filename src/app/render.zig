@@ -647,6 +647,7 @@ pub fn render(app: *App, screen: *vaxis.Screen) Allocator.Error!void {
         .triangle = app.cfg.ui.expand_indicator == .triangle,
         .focus_cue = app.cfg.ui.focus_cue,
         .links = @import("link_rules.zig").finder(app),
+        .menu_link = if (app.overlay == .menu) app.overlay.menu.link else null,
     };
     const full = ui.canvas.full();
     ui.canvas.fill(full, app.theme.bg);

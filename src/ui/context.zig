@@ -51,6 +51,10 @@ focus_cue: focus_cue_mod.Cue = .both,
 /// The frame's link finder (`link_span.zig`): URLs and the installed
 /// integrations' patterns. Null in a fixture — nothing links there.
 links: ?@import("link_span.zig").Finder = null,
+/// The cells of the link the open menu is for (a right-click on a
+/// link): they wear the link's hover look until the menu closes
+/// (`link_span.paintMenuLink`). Null with no such menu.
+menu_link: ?Rect = null,
 
 /// Registers `t` for `r`. OOM drops the entry: the paint already
 /// happened and the next frame re-registers it.

@@ -374,7 +374,7 @@ pub const rows = [_]Row{
     // right-click on a link has, written for where they are ──
     .{ .menu = "Link", .label = "Copy link", .kind = .copy_link, .entry = .{
         .title = "Copy link",
-        .body = "Puts the link's whole address on the clipboard and toasts *link copied* — the register a `p` in an editor pastes, and the system clipboard. For a key an integration links (`ENG-123`), that is the page it opens, not the key's own text; for a URL cut short on a card, the whole URL.",
+        .body = "Puts the link's whole address on the clipboard and toasts *link copied* — the register a `p` in an editor pastes, and the system clipboard. For a key an integration links (`ENG-123`), that is the page it opens, not the key's own text; for a URL cut short on a card, the whole URL. While this menu is open the link it is for stays lit in the accent with a solid underline.",
         .links = &.{.{ .settings = .{ .row = copy.settingsRow("editor.clipboard"), .label = "Clipboard in Settings" } }},
     } },
     .{ .menu = "Link", .label = "Open link", .kind = .open_url, .entry = .{
@@ -733,7 +733,7 @@ test "panes: every row of the editor, gutter, tree, workspace, breadcrumb, welco
     try expectCurated(&app);
     closeMenu(&app);
 
-    try cm.openLinkMenu(&app, "https://example.com/", 5, 5);
+    try cm.openLinkMenu(&app, "https://example.com/", null, 5, 5);
     try expectCurated(&app);
     closeMenu(&app);
 

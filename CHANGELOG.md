@@ -217,6 +217,10 @@ the release ships one file), and one line per change a user can see.
   column; drag the thumb through the history, click the track to page.
   It never takes a column from the program, so nothing resizes when it
   appears, and full-screen programs (no scrollback) never show it.
+- A right-click on a link — in a terminal, on a session card or in the
+  sessions table — keeps that link lit in the accent with a solid
+  underline while its menu is open, so you can see which link Copy link
+  and Open link are for.
 
 ### Splits
 

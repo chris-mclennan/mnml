@@ -1390,6 +1390,40 @@ pub fn linkUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!
     return @import("lsp_decor.zig").urlAt(text, col - left);
 }
 
+/// The cells `linkUnder`'s link covers on row `y`: the run of cells
+/// carrying the same OSC 8 hyperlink, else the URL's bytes in the row's
+/// text — what the Link rows' menu lights while it is open. On `arena`.
+pub fn linkCellsUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?Rect {
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    if (linkAt(p, x, y)) |url| {
+        var x0 = x;
+        while (x0 > b.x) : (x0 -= 1) {
+            const u = linkAt(p, x0 - 1, y) orelse break;
+            if (!std.mem.eql(u8, u, url)) break;
+        }
+        var x1 = x + 1;
+        while (x1 < b.x + b.w) : (x1 += 1) {
+            const u = linkAt(p, x1, y) orelse break;
+            if (!std.mem.eql(u8, u, url)) break;
+        }
+        return Rect.init(x0, y, x1 - x0, 1);
+    }
+    const session = p.session orelse return null;
+    const screen = session.terminal().screens.active;
+    const pin = pinAt(p, x, y) orelse return null;
+    const line = screen.selectLine(.{ .pin = pin, .whitespace = null }) orelse return null;
+    const text = try screen.selectionString(arena, .{ .sel = line, .trim = false });
+    const col: usize = x - b.x;
+    const left = line.topLeft(screen).x;
+    if (col < left) return null;
+    const r = @import("../ui/link_span.zig").rangeAt(text, col - left) orelse return null;
+    const x0: usize = b.x + left + r.start;
+    const x1: usize = @min(b.x + left + r.end, b.x + b.w);
+    if (x1 <= x0) return null;
+    return Rect.init(@intCast(x0), y, @intCast(x1 - x0), 1);
+}
+
 // ─── selection ──────────────────────────────────────────────────────────
 
 /// A cell rectangle on the screen.
@@ -2267,8 +2301,27 @@ test "right-click on a link in a terminal pane: Copy link and Open link above Co
     try t.expectEqualStrings("Open link", its[1].label);
     try t.expectEqualStrings("https://example.com/a/b", its[1].action.open_url);
     try t.expectEqualStrings("Copy", its[2].label);
+    // While the menu is open the painter lights the link's cells in
+    // the hover look — `https://example.com/a/b` is cells 4..26, not
+    // `see` or the sentence's `.` — and once it closes the look goes.
+    // The menu itself covers the cells from 10 on.
+    const cells = app.overlay.menu.link.?;
+    try t.expect(cells.eql(Rect.init(b.x + 4, b.y, 23, 1)));
+    const lit = struct {
+        fn at(a: *App, x: u16, y: u16) bool {
+            const c = a.screen.readCell(x, y).?;
+            return c.style.ul_style == .single and std.meta.eql(c.style.fg, a.theme.accent.fg);
+        }
+    };
+    try app.render();
+    try t.expect(lit.at(&app, b.x + 4, b.y));
+    try t.expect(lit.at(&app, b.x + 9, b.y));
+    try t.expect(!lit.at(&app, b.x + 3, b.y));
     try @import("dispatch.zig").runMenuActionForTest(&app, its[0].action);
     try t.expect(app.overlay == .none);
+    try app.render();
+    try t.expect(!lit.at(&app, b.x + 4, b.y));
+    try t.expect(!lit.at(&app, b.x + 9, b.y));
     try t.expectEqualStrings("https://example.com/a/b", app.clipboard.text());
     try t.expectEqualStrings("link copied", app.lastToast().?);
     // On `see`: no link rows.
