@@ -257,6 +257,8 @@ pub const PtyPane = struct {
     /// The scrollback search (`pty_search.zig`): the query, its matches
     /// and the scan's place.
     search: pty_search.Search = .{},
+    /// The links in the lines on screen, cached by line (`pty_links.zig`).
+    links: @import("pty_links.zig").Cache = .{},
     /// // changed (sessiondiff): an AI session's base and its latest
     /// set — what `sessions.changes` shows (`app/session_changes.zig`).
     /// Owned; null on a shell, and on a session outside any repository.
@@ -267,6 +269,7 @@ pub const PtyPane = struct {
         if (self.session) |s| s.deinit();
         self.grid.deinit(gpa);
         self.search.deinit(gpa);
+        self.links.deinit(gpa);
         gpa.destroy(self.wire);
         if (self.accent_color) |c| gpa.free(c);
         if (self.codex_session_id) |c| gpa.free(c);
@@ -1371,29 +1374,19 @@ pub fn linkAt(p: *PtyPane, x: u16, y: u16) ?[]const u8 {
 }
 
 /// The link under screen cell (`x`, `y`): an OSC 8 hyperlink the child
-/// printed (`linkAt`), else a plain `scheme://…` URL in the row's text —
-/// what `cat` of a log or a README leaves on screen. On `arena`.
-pub fn linkUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?[]const u8 {
+/// printed (`linkAt`), else a URL or a key an integration declared in
+/// the line's text (`pty_links.zig`) — what `cat` of a log, a README or
+/// a commit list leaves on screen. On `arena`.
+pub fn linkUnder(app: *App, arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?[]const u8 {
     if (linkAt(p, x, y)) |url| return try arena.dupe(u8, url);
-    const b = p.body;
-    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
-    const session = p.session orelse return null;
-    const screen = session.terminal().screens.active;
-    const pin = pinAt(p, x, y) orelse return null;
-    const line = screen.selectLine(.{ .pin = pin, .whitespace = null }) orelse return null;
-    const text = try screen.selectionString(arena, .{ .sel = line, .trim = false });
-    // The row's text starts at the pane's left edge; the column is a
-    // byte offset there for ASCII rows (a URL is ASCII).
-    const col: usize = x - b.x;
-    const left = line.topLeft(screen).x;
-    if (col < left) return null;
-    return @import("lsp_decor.zig").urlAt(text, col - left);
+    const l = try textLinkUnder(app, p, x, y) orelse return null;
+    return try arena.dupe(u8, l.url);
 }
 
 /// The cells `linkUnder`'s link covers on row `y`: the run of cells
-/// carrying the same OSC 8 hyperlink, else the URL's bytes in the row's
-/// text — what the Link rows' menu lights while it is open. On `arena`.
-pub fn linkCellsUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.Error!?Rect {
+/// carrying the same OSC 8 hyperlink, else the link's cells in the
+/// row — what the Link rows' menu lights while it is open.
+pub fn linkCellsUnder(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!?Rect {
     const b = p.body;
     if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
     if (linkAt(p, x, y)) |url| {
@@ -1409,19 +1402,32 @@ pub fn linkCellsUnder(arena: Allocator, p: *PtyPane, x: u16, y: u16) Allocator.E
         }
         return Rect.init(x0, y, x1 - x0, 1);
     }
-    const session = p.session orelse return null;
-    const screen = session.terminal().screens.active;
-    const pin = pinAt(p, x, y) orelse return null;
-    const line = screen.selectLine(.{ .pin = pin, .whitespace = null }) orelse return null;
-    const text = try screen.selectionString(arena, .{ .sel = line, .trim = false });
-    const col: usize = x - b.x;
-    const left = line.topLeft(screen).x;
-    if (col < left) return null;
-    const r = @import("../ui/link_span.zig").rangeAt(text, col - left) orelse return null;
-    const x0: usize = b.x + left + r.start;
-    const x1: usize = @min(b.x + left + r.end, b.x + b.w);
-    if (x1 <= x0) return null;
-    return Rect.init(@intCast(x0), y, @intCast(x1 - x0), 1);
+    const l = try textLinkUnder(app, p, x, y) orelse return null;
+    return l.cells;
+}
+
+const TextLink = struct { url: []const u8, cells: Rect };
+
+/// A URL or a declared key in the text under cell (`x`, `y`), by the
+/// rows the painter marked; its address lives until the next frame.
+fn textLinkUnder(app: *App, p: *PtyPane, x: u16, y: u16) Allocator.Error!?TextLink {
+    const b = p.body;
+    if (x < b.x or y < b.y or x >= b.x + b.w or y >= b.y + b.h) return null;
+    if (p.session == null) return null;
+    const row: u16 = y - b.y;
+    const col: u16 = x - b.x;
+    if (row >= p.grid.rows()) return null;
+    const method = app.screen.width_method;
+    const utf8 = @import("../core/utf8.zig");
+    for (try @import("pty_links.zig").rows(app.gpa, app.frame.allocator(), &app.link_rules, &p.links, &p.grid)) |rl| {
+        if (rl.y != row) continue;
+        for (rl.spans) |s| {
+            const c0 = utf8.width(rl.text[0..s.start], method);
+            const c1 = @min(utf8.width(rl.text[0..s.end], method), b.w);
+            if (col >= c0 and col < c1) return .{ .url = s.url, .cells = Rect.init(b.x + c0, y, c1 - c0, 1) };
+        }
+    }
+    return null;
 }
 
 // ─── selection ──────────────────────────────────────────────────────────
@@ -2319,6 +2325,8 @@ test "right-click on a link in a terminal pane: Copy link and Open link above Co
     try t.expect(!lit.at(&app, b.x + 3, b.y));
     try @import("dispatch.zig").runMenuActionForTest(&app, its[0].action);
     try t.expect(app.overlay == .none);
+    // The pointer moves off the link (on it, the link is hot anyway).
+    try app.handle(.{ .mouse = .{ .x = b.x + 1, .y = b.y, .kind = .motion } });
     try app.render();
     try t.expect(!lit.at(&app, b.x + 4, b.y));
     try t.expect(!lit.at(&app, b.x + 9, b.y));
@@ -3159,4 +3167,60 @@ test "the scrollback's bar: over the last column only when scrolled back or poin
     try app.handle(.{ .mouse = .{ .x = ab.x + ab.w - 1, .y = ab.y + 1, .kind = .motion } });
     try app.render();
     try t.expect(!barHitAt(&app, alt, ab.x + ab.w - 1, ab.y + 1));
+}
+
+fn addTestRule(app: *App, pattern: []const u8, url: []const u8) !void {
+    try app.link_rules.rules.append(app.gpa, .{
+        .owner = try app.gpa.dupe(u8, "acme"),
+        .re = try @import("../regex/regex.zig").Regex.compile(pattern, .{ .dialect = .perl }),
+        .url = try app.gpa.dupe(u8, url),
+    });
+}
+
+test "a ticket key and a PR ref in a terminal pane: the link look at rest, the hover look under the pointer, Ctrl+click opens, the right-click Link rows carry the address" {
+    // A POSIX shell script drives this one.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var root: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &root);
+    const log = try std.fmt.allocPrint(t.allocator, "{s}/opened-urls.log", .{root[0..n]});
+    defer t.allocator.free(log);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 60, .rows = 12 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.env.put("MNML_OPEN_URL", log);
+    try addTestRule(&app, "[A-Z][A-Z0-9]+-\\d+", "https://t.example/browse/{0}");
+    try addTestRule(&app, "([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\\d+)", "https://bitbucket.org/{1}/{2}/pull-requests/{3}");
+    const id = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", "printf 'fix ENG-123 in acme/widget#42 now\\n'; sleep 30" }, .label = "keys" });
+    const Ul = @import("vaxis").Style.Underline;
+    try t.expect(try tickUntilScreen(&app, "acme/widget#42 now", 5000));
+    // The line has held still for a frame: this one links it.
+    try app.render();
+    const p = app.panes.pty(id).?;
+    const b = p.body;
+    // `ENG-123` is cells 4..10, `acme/widget#42` 15..28.
+    try t.expectEqual(Ul.dotted, app.screen.readCell(b.x + 4, b.y).?.style.ul_style);
+    try t.expectEqual(Ul.dotted, app.screen.readCell(b.x + 28, b.y).?.style.ul_style);
+    try t.expect(app.screen.readCell(b.x + 3, b.y).?.style.ul_style != .dotted);
+    try t.expect(app.screen.readCell(b.x + 29, b.y).?.style.ul_style != .dotted);
+    // Under the pointer: the accent and a solid underline, that link only.
+    try app.handle(.{ .mouse = .{ .x = b.x + 20, .y = b.y, .kind = .motion } });
+    try app.render();
+    const hot = app.screen.readCell(b.x + 16, b.y).?.style;
+    try t.expectEqual(Ul.single, hot.ul_style);
+    try t.expect(std.meta.eql(hot.fg, app.theme.accent.fg));
+    try t.expectEqual(Ul.dotted, app.screen.readCell(b.x + 5, b.y).?.style.ul_style);
+    // A plain press anchors a selection; Ctrl+click opens the key.
+    try app.handle(.{ .mouse = .{ .x = b.x + 5, .y = b.y, .kind = .press, .button = .left, .mods = .{ .ctrl = true } } });
+    const body = try tmp.dir.readFileAlloc(t.io, "opened-urls.log", t.allocator, .unlimited);
+    defer t.allocator.free(body);
+    try t.expect(std.mem.indexOf(u8, body, "\thttps://t.example/browse/ENG-123\n") != null);
+    // The right-click's Link rows carry the PR's address, and its cells
+    // are what the open menu lights.
+    try app.handle(.{ .mouse = .{ .x = b.x + 20, .y = b.y, .kind = .press, .button = .right } });
+    try t.expect(app.overlay == .menu);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/42", app.overlay.menu.items[0].action.copy_link);
+    try t.expect(app.overlay.menu.link.?.eql(Rect.init(b.x + 15, b.y, 14, 1)));
 }

@@ -2150,10 +2150,14 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     }
     // An armed button's release replays its press on the button itself,
     // whatever the frame since has painted under the pointer.
-    const target = if (app.firing_button) |pb| pb.target() else app.hits.at(m.x, m.y) orelse {
+    const top = if (app.firing_button) |pb| pb.target() else app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
     };
+    // A link laid on text takes the presses; the wheel, a motion and a
+    // drag go to the text's own surface — a link must not stop a list
+    // scrolling under the pointer.
+    const target = if (top == .link and m.kind != .press) app.hits.underLink(m.x, m.y) orelse top else top;
     // A press anywhere but on the overlay itself dismisses it; the
     // press then goes on to whatever it landed on. A menu closes, a
     // picker puts its preview back (the themes picker), the settings
@@ -2585,10 +2589,12 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // not tracking the mouse (a tracking child owns its
                     // right button).
                     if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
-                    // Ctrl / Cmd + click opens an OSC 8 link the child
-                    // printed, as ghostty's does.
+                    // Ctrl / Cmd + click opens a link — an OSC 8 one the
+                    // child printed, as ghostty's does, or a URL or key in
+                    // the text (`pty_links.zig`). A plain press stays a
+                    // selection's anchor.
                     if (m.kind == .press and m.button == .left and (m.mods.ctrl or m.mods.super)) {
-                        if (pty_pane.linkAt(p, m.x, m.y)) |url| return git_app.openExternal(app, url);
+                        if (try pty_pane.linkUnder(app, app.frame.allocator(), p, m.x, m.y)) |url| return git_app.openExternal(app, url);
                     }
                     // A left press anchors a text selection; the drag and
                     // the release come back through `continueDrag`.

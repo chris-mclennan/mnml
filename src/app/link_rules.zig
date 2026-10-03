@@ -62,6 +62,13 @@ pub const State = struct {
     /// Text (gpa-owned key) → its spans.
     cache: std.StringHashMapUnmanaged(Entry) = .empty,
     stamp: u32 = 0,
+    /// Bumped each time the rules are rebuilt: a cache of its own (a
+    /// terminal pane's rows) drops what it found under an older set.
+    gen: u32 = 0,
+    /// A terminal pane left a line unmatched because it was still
+    /// moving (`pty_links.zig`): the next frame should come even with
+    /// nothing else to show, so the line links once it stops.
+    pending: bool = false,
     gpa: Allocator = undefined,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
@@ -244,6 +251,7 @@ pub fn rebuild(app: *App) Allocator.Error!void {
     const gpa = app.gpa;
     st.clearRules(gpa);
     st.clearCache(gpa);
+    st.gen +%= 1;
     for (app.integrations.list) |*inst| {
         if (!inst.enabled()) continue;
         const m = inst.manifest;
@@ -308,6 +316,17 @@ fn varValue(app: *App, m: manifest_mod.Manifest, name: []const u8) ?[]const u8 {
 
 fn envHint(m: manifest_mod.Manifest, name: []const u8) ?[]const u8 {
     for (m.auth) |a| if (std.mem.eql(u8, a.key, name)) if (a.env_fallback) |e| return e;
+    return null;
+}
+
+/// The link covering byte `col` of `text` — a URL or a declared key —
+/// through the cache; null off every link. What a surface that finds
+/// its own spot (an editor's cursor, a terminal cell) asks.
+pub fn spanAt(app: *App, text: []const u8, col: usize) ?Span {
+    for (app.link_rules.spans(app.gpa, text)) |s| {
+        if (col >= s.start and col < s.end) return s;
+        if (s.start > col) return null;
+    }
     return null;
 }
 

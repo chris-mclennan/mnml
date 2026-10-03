@@ -1918,6 +1918,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         .mnml_font = app.fonts.baked(pty_view.cursor_hollow_cp),
         // The scrollback search's matches in view (`pty_search.zig`).
         .marks = try pty_search.marks(app, id, p),
+        .links = try @import("pty_links.zig").rows(app.gpa, ui.arena, &app.link_rules, &p.links, &p.grid),
     });
     // The scrollback's bar over the last column when it has something to
     // say (`pty_pane.barShown`): never a column of the child's, so its

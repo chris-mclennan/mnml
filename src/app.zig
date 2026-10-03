@@ -3757,7 +3757,10 @@ pub const App = struct {
         try render_mod.render(self, screen);
         const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
         self.stress.push(@intCast(std.math.clamp(us, 0, std.math.maxInt(u32))));
-        self.needs_render = false;
+        // A terminal's line that was still moving links on the frame
+        // after it stops (`app/pty_links.zig`).
+        self.needs_render = self.link_rules.pending;
+        self.link_rules.pending = false;
     }
 
     /// The first edit keeps a preview tab: the user is working in the
@@ -3970,6 +3973,7 @@ test {
     _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/pin_chip.zig");
     _ = @import("ui/link_span.zig");
+    _ = @import("app/pty_links.zig");
     _ = @import("app/link_rules.zig");
     _ = @import("ui/edge_grip.zig");
     _ = @import("app/edge_band_audit.zig");
