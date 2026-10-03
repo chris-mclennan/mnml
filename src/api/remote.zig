@@ -396,9 +396,26 @@ test "open's PATH[:LINE[:COL]] becomes editor.open's params, relative to where i
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try t.expectEqualStrings("{\"path\":\"/w/src/main.zig\",\"line\":120}", try openParams(a, "/w", "src/main.zig:120"));
-    try t.expectEqualStrings("{\"path\":\"/x.zig\",\"line\":3,\"col\":9}", try openParams(a, "/w", "/x.zig:3:9"));
-    try t.expectEqualStrings("{\"path\":\"/w/a:b\"}", try openParams(a, "/w", "a:b"));
+    // The expectations are built the way the code builds them, so the
+    // test holds on Windows too: there the join uses a backslash and a
+    // JSON string carries it doubled, and a path needs a drive to be
+    // absolute.
+    const cwd = if (@import("builtin").os.tag == .windows) "C:\\w" else "/w";
+    const abs_in = if (@import("builtin").os.tag == .windows) "C:\\x.zig" else "/x.zig";
+    const Expect = struct {
+        fn of(arena: Allocator, path: []const u8, tail: []const u8) ![]const u8 {
+            var w: Io.Writer.Allocating = .init(arena);
+            try w.writer.writeAll("{\"path\":");
+            try std.json.Stringify.encodeJsonString(path, .{}, &w.writer);
+            try w.writer.writeAll(tail);
+            return w.written();
+        }
+    };
+    const joined = try std.fs.path.join(a, &.{ cwd, "src/main.zig" });
+    try t.expectEqualStrings(try Expect.of(a, joined, ",\"line\":120}"), try openParams(a, cwd, "src/main.zig:120"));
+    try t.expectEqualStrings(try Expect.of(a, abs_in, ",\"line\":3,\"col\":9}"), try openParams(a, cwd, abs_in ++ ":3:9"));
+    const colon = try std.fs.path.join(a, &.{ cwd, "a:b" });
+    try t.expectEqualStrings(try Expect.of(a, colon, "}"), try openParams(a, cwd, "a:b"));
 }
 
 test "usage errors exit 2 before any instance is looked for" {
