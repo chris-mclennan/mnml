@@ -361,6 +361,19 @@ pub const HitMap = struct {
         return if (h.entryAt(x, y)) |e| e.target else null;
     }
 
+    /// `at`, passing over a link laid on text (`link_span.mark`): what
+    /// the text itself is — the pane the wheel scrolls, the row a drag
+    /// moves over.
+    pub fn underLink(h: *const HitMap, x: u16, y: u16) ?HitTarget {
+        var i = h.items.items.len;
+        while (i > 0) {
+            i -= 1;
+            const e = h.items.items[i];
+            if (e.rect.contains(x, y) and e.target != .link) return e.target;
+        }
+        return null;
+    }
+
     /// Like `at`, with the rect — for callers that need the cell's
     /// offset inside its target (a scrollbar drag, a divider).
     pub fn entryAt(h: *const HitMap, x: u16, y: u16) ?Entry {
@@ -450,6 +463,19 @@ test "at scans back to front so the last painted target wins" {
     try testing.expect(h.entryAt(4, 4).?.rect.eql(Rect.init(2, 2, 3, 3)));
     h.reset();
     try testing.expect(h.at(0, 0) == null);
+}
+
+test "underLink: a link laid on text gives way to what the text is; off a link it is `at`" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var h: HitMap = .{};
+    try h.add(arena, Rect.init(0, 0, 10, 10), .{ .pane = 1 });
+    try h.add(arena, Rect.init(2, 2, 3, 1), .{ .link = .{ .url = "https://t.example/browse/ENG-123" } });
+    try testing.expect(h.at(3, 2).? == .link);
+    try testing.expectEqual(@as(u32, 1), h.underLink(3, 2).?.pane);
+    try testing.expectEqual(@as(u32, 1), h.underLink(0, 0).?.pane);
+    try testing.expect(h.underLink(10, 10) == null);
 }
 
 test "fieldAt: the field under the cell, unless a hit painted after it covers the cell" {
