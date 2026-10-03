@@ -95,24 +95,48 @@ pub fn mark(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8) void {
     markSpans(ui, x, y, cells, text, finder.spans(text));
 }
 
+/// `mark` for one row of text a painter wrapped: when the text goes on
+/// in the next row (`continues`), a link that reaches this row's end
+/// may be cut, and is left plain.
+pub fn markWrapped(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, continues: bool) void {
+    const finder = ui.links orelse return;
+    if (cells == 0 or text.len == 0) return;
+    const spans = finder.spans(text);
+    var n = spans.len;
+    if (continues and n > 0 and std.mem.trimEnd(u8, text, " ").len <= spans[n - 1].end) n -= 1;
+    markSpans(ui, x, y, cells, text, spans[0..n]);
+}
+
 /// `mark` with the spans in hand (sorted, as a finder returns them).
 pub fn markSpans(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, spans: []const Span) void {
+    eachSpan(ui, x, y, cells, text, spans, true);
+}
+
+/// `markSpans`' look without its hits: for a surface whose own hit
+/// owns the pointer (a terminal pane — the child may track the mouse,
+/// a press anchors a selection), which opens a link itself
+/// (Ctrl/Cmd+click, the right-click Link rows).
+pub fn lookSpans(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, spans: []const Span) void {
+    eachSpan(ui, x, y, cells, text, spans, false);
+}
+
+fn eachSpan(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, spans: []const Span, hit: bool) void {
     const method = ui.canvas.widthMethod();
     for (spans) |s| {
         if (s.start >= s.end or s.end > text.len) continue;
         const c0 = utf8.width(text[0..s.start], method);
         if (c0 >= cells) break;
         const c1 = @min(utf8.width(text[0..s.end], method), cells);
-        paintSpan(ui, x + c0, y, c1 -| c0, s.url);
+        paintSpan(ui, x + c0, y, c1 -| c0, s.url, hit);
     }
 }
 
-fn paintSpan(ui: Ui, x: u16, y: u16, w: u16, url: []const u8) void {
+fn paintSpan(ui: Ui, x: u16, y: u16, w: u16, url: []const u8, hit: bool) void {
     if (w == 0) return;
     const r = Rect.init(x, y, w, 1);
     // The hit outlives the cache that owns the URL only until the next
     // frame; the frame arena holds it exactly that long.
-    ui.hit(r, .{ .link = .{ .url = ui.arena.dupe(u8, url) catch return } });
+    if (hit) ui.hit(r, .{ .link = .{ .url = ui.arena.dupe(u8, url) catch return } });
     const hot = ui.hovered(r) or if (ui.menu_link) |m| !m.intersect(r).isEmpty() else false;
     var cx = x;
     while (cx < x + w) : (cx += 1) ui.canvas.restyle(cx, y, if (hot) hotPatch(ui) else .{ .ul_style = .dotted });
@@ -137,6 +161,40 @@ pub fn paintMenuLink(ui: Ui, area: Rect) void {
         while (x < r.right()) : (x += 1) ui.canvas.restyle(x, y, hotPatch(ui));
     }
 }
+
+// ─── a finder for tests ─────────────────────────────────────────────────
+
+/// What a painter's test hands `Ui.links`: `ENG-<digits>` opens
+/// `key_url`, `widget#<digits>` opens `pr_url` — the fixtures' ticket
+/// and pull request, with no app and no regex behind them.
+pub const TestKeys = struct {
+    pub const key_url = "https://t.example/browse/ENG";
+    pub const pr_url = "https://forge.example/acme/widget/pull-requests";
+    var buf: [8]Span = undefined;
+    var dummy: u8 = 0;
+
+    pub fn finder() Finder {
+        return .{ .ctx = &dummy, .find = find };
+    }
+
+    fn find(_: *anyopaque, text: []const u8) []const Span {
+        var n: usize = 0;
+        var i: usize = 0;
+        while (i < text.len and n < buf.len) : (i += 1) {
+            for ([_][2][]const u8{ .{ "ENG-", key_url }, .{ "widget#", pr_url } }) |p| {
+                if (!std.mem.startsWith(u8, text[i..], p[0])) continue;
+                var e = i + p[0].len;
+                while (e < text.len and std.ascii.isDigit(text[e])) e += 1;
+                if (e == i + p[0].len) continue;
+                buf[n] = .{ .start = i, .end = e, .url = p[1] };
+                n += 1;
+                i = e - 1;
+                break;
+            }
+        }
+        return buf[0..n];
+    }
+};
 
 // ─── tests ──────────────────────────────────────────────────────────────
 

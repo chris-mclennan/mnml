@@ -295,7 +295,14 @@ const usage =
 // ─── install ─────────────────────────────────────────────────────────────
 
 fn install(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, stdout: *Io.Writer, stderr: *Io.Writer) !u8 {
-    for ([_]sdk.Manifest{ spec, spec_pipelines }) |m| {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // The pull-request links' workspace and repos: this config's, when
+    // it has them — mnml cannot read config.zon, so the manifest
+    // carries them.
+    const prs = if (installConfig(arena, io, env)) |c| try linkSpec(arena, spec, c.workspace, try linkedRepos(arena, c)) else spec;
+    for ([_]sdk.Manifest{ prs, spec_pipelines }) |m| {
         const path = sdk.manifest.write(gpa, io, env, m) catch |err| {
             try stderr.print("mnml-bitbucket: could not write the manifest for {s}: {s}\n", .{ m.id, @errorName(err) });
             return 1;
@@ -316,6 +323,66 @@ fn install(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, stdout: 
         }
     }
     return 0;
+}
+
+/// config.zon as it is, without the scaffold a first `load` writes;
+/// null when there is none yet or it does not parse.
+fn installConfig(arena: Allocator, io: Io, env: *const std.process.Environ.Map) ?cfg.Config {
+    const p = cfg.configPath(arena, env) catch return null;
+    const text = Io.Dir.cwd().readFileAllocOptions(io, p, arena, .unlimited, .of(u8), 0) catch return null;
+    return cfg.parseText(arena, text) catch null;
+}
+
+/// The repos a pull-request link may name: the config's `repos`, and
+/// its `explicit_repos` under `scope = .explicit`, less the hidden.
+/// Empty: any repo.
+pub fn linkedRepos(arena: Allocator, c: cfg.Config) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    const lists = [_][]const []const u8{ c.repos, if (c.scope == .explicit) c.explicit_repos else &.{} };
+    for (lists) |list| for (list) |r| {
+        if (r.len == 0 or c.isHidden(r) or cfg.contains(out.items, r)) continue;
+        try out.append(arena, r);
+    };
+    return out.items;
+}
+
+/// `m`'s pull-request links for `workspace`: `<repo>#<n>` with the
+/// workspace written in, `<repo>` narrowed to `repos` when it names
+/// any, and `<workspace>/<repo>#<n>` beside it. An empty workspace
+/// leaves `m` as declared, for mnml to bind from $BITBUCKET_WORKSPACE.
+pub fn linkSpec(arena: Allocator, m: sdk.Manifest, workspace: []const u8, repos: []const []const u8) Allocator.Error!sdk.Manifest {
+    const ws = std.mem.trim(u8, workspace, " /");
+    if (ws.len == 0) return m;
+    const slug = if (repos.len == 0) "[A-Za-z0-9_.-]+" else blk: {
+        var alt: std.ArrayListUnmanaged(u8) = .empty;
+        for (repos, 0..) |r, i| {
+            if (i > 0) try alt.append(arena, '|');
+            try appendEscaped(arena, &alt, r);
+        }
+        break :blk alt.items;
+    };
+    var ws_re: std.ArrayListUnmanaged(u8) = .empty;
+    try appendEscaped(arena, &ws_re, ws);
+    const links = try arena.alloc(sdk.manifest.Link, 2);
+    links[0] = .{
+        .pattern = try std.fmt.allocPrint(arena, "(?<![/\\w.-])({s})/({s})#(\\d+)", .{ ws_re.items, slug }),
+        .url = "https://bitbucket.org/{1}/{2}/pull-requests/{3}",
+    };
+    links[1] = .{
+        .pattern = try std.fmt.allocPrint(arena, "(?<![/\\w.-])({s})#(\\d+)", .{slug}),
+        .url = try sdk.manifest.bindLinkVar(arena, "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", "workspace", ws),
+    };
+    var copy = m;
+    copy.links = links;
+    return copy;
+}
+
+/// `s` as a regex literal: every byte but a letter, digit or `_` escaped.
+fn appendEscaped(arena: Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) Allocator.Error!void {
+    for (s) |ch| {
+        if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) try out.append(arena, '\\');
+        try out.append(arena, ch);
+    }
 }
 
 fn uninstall(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, stdout: *Io.Writer, stderr: *Io.Writer) !u8 {
@@ -1720,7 +1787,16 @@ test "both manifests name the reference's ids, chips and commands, and validate"
         found_click = true;
     };
     try t.expect(found_click);
-    try t.expectEqual(@as(usize, 3), spec.auth.len);
+    try t.expectEqual(@as(usize, 4), spec.auth.len);
+    // The fourth is mnml's alone: the pull-request links' workspace.
+    try t.expectEqualStrings("workspace", spec.auth[3].key);
+    try t.expectEqualStrings("BITBUCKET_WORKSPACE", spec.auth[3].env_fallback.?);
+    // `<repo>#<n>` links to the pull request in that workspace; the
+    // Pipelines chip declares none (the same workspace).
+    try t.expectEqual(@as(usize, 1), spec.links.len);
+    try t.expectEqualStrings("(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", spec.links[0].pattern);
+    try t.expectEqualStrings("https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", spec.links[0].url);
+    try t.expectEqual(@as(usize, 0), spec_pipelines.links.len);
     var why: []const u8 = "";
     try sdk.manifest.validate(spec, &why);
     try sdk.manifest.validate(spec_pipelines, &why);
@@ -1733,6 +1809,32 @@ test "both manifests name the reference's ids, chips and commands, and validate"
         const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
         try t.expectEqualStrings(m.id, back.id);
     }
+}
+
+test "--install writes the config's workspace into the PR links, narrows the repo to the config's list and adds <workspace>/<repo>#n; no workspace leaves the template for mnml" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // No workspace yet: as declared.
+    const bare = try linkSpec(arena, spec, "", &.{});
+    try t.expectEqualStrings("https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", bare.links[0].url);
+    // A workspace, any repo.
+    const any = try linkSpec(arena, spec, "acme", &.{});
+    try t.expectEqual(@as(usize, 2), any.links.len);
+    try t.expectEqualStrings("(?<![/\\w.-])(acme)/([A-Za-z0-9_.-]+)#(\\d+)", any.links[0].pattern);
+    try t.expectEqualStrings("https://bitbucket.org/{1}/{2}/pull-requests/{3}", any.links[0].url);
+    try t.expectEqualStrings("(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", any.links[1].pattern);
+    try t.expectEqualStrings("https://bitbucket.org/acme/{1}/pull-requests/{2}", any.links[1].url);
+    try t.expect(sdk.manifest.unboundLinkVar(any.links[1].url) == null);
+    // The config lists its repos: only those link; a dot is a literal.
+    const c: cfg.Config = .{ .workspace = "acme", .repos = &.{ "widget", "web.site" }, .hidden_repos = &.{"old"} };
+    const repos = try linkedRepos(arena, c);
+    try t.expectEqual(@as(usize, 2), repos.len);
+    const narrow = try linkSpec(arena, spec, c.workspace, repos);
+    try t.expectEqualStrings("(?<![/\\w.-])(widget|web\\.site)#(\\d+)", narrow.links[1].pattern);
+    try t.expectEqualStrings("(?<![/\\w.-])(acme)/(widget|web\\.site)#(\\d+)", narrow.links[0].pattern);
+    // The declared spec is untouched.
+    try t.expectEqual(@as(usize, 1), spec.links.len);
 }
 
 test "the pane's brand is its OWN family's chip colour, not the host's accent" {

@@ -106,6 +106,28 @@ the release ships one file), and one line per change a user can see.
   instead of a scrollbar; it comes back when they fit, and its pin keeps
   it in place.
 
+### Links
+
+- Ticket keys and pull-request refs link everywhere text is shown, not
+  only on SESSIONS cards: a terminal pane's output, an editor's text, the
+  Markdown preview, a commit's message in the git graph's detail column,
+  a toast, and an HTTP response body. Each goes through the one rule set
+  the installed integrations declare.
+- In a terminal pane a link wears the same dotted underline and lights
+  under the pointer; Ctrl/Cmd+click opens it and a right-click offers
+  *Copy link* / *Open link* (a plain press still starts a selection).
+  The pane matches a line only once it has held still for a frame, so a
+  flood of output costs nothing extra.
+- In an editor a key or a ref lights under the pointer and opens with
+  `gx` or Ctrl/Cmd+click, as a URL already did.
+- The Bitbucket integration links `<repo>#<number>` (`widget#42`) to that
+  pull request in your workspace. `--install` writes config.zon's
+  `workspace` in, links only the repos its `repos` lists when it lists
+  any, and adds `<workspace>/<repo>#<number>`; without a config, mnml
+  takes the workspace from `$BITBUCKET_WORKSPACE`. A bare `#42` names no
+  repo and does not link. Reinstall the integration to pick this up.
+- The wheel over a link scrolls what is under it.
+
 ### Tabs
 
 - A tab strip whose tabs overflow shows ` ‹ 2/5 › `: the page of tabs on

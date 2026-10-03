@@ -37,6 +37,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
+const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
 const scrollbar = @import("scrollbar.zig");
 const toast = @import("toast.zig");
@@ -1463,6 +1464,10 @@ fn drawResponseBox(ui: Ui, pane: PaneId, r: Rect, m: Model) void {
             if (x >= row.right()) break;
             x += ui.putStr(x, row.y, row.right() -| x, seg.text, seg.style);
         }
+        // The line's URLs and declared keys link, over the body's hit.
+        var joined: std.ArrayListUnmanaged(u8) = .empty;
+        for (lines[i].segs) |seg| joined.appendSlice(ui.arena, seg.text) catch break;
+        link_span.mark(ui, row.x, row.y, x - row.x, joined.items);
     }
     _ = p;
 }
@@ -2504,4 +2509,39 @@ test "the request Body editor scrolls with the shared bar beside its text" {
     _ = draw(ui, 3, ui.canvas.full(), m);
     try testing.expect(scroll > 0);
     try testing.expect(vaxis.Color.eql(fx.style(bar_x, first.?).fg, fx.theme.chip.bg));
+}
+
+test "a response body's ticket key and PR ref take `.link` hits over the body's own" {
+    var fx = try fixture.init(89, 36);
+    defer fx.deinit();
+    var view: editor_view.ViewState = .{};
+    var scroll: usize = 0;
+    var m = baseModel(&scroll, &view);
+    m.response = .{
+        .status = 200,
+        .status_text = "OK",
+        .headers = &.{},
+        .body = "{\n  \"key\": \"ENG-123\",\n  \"pr\": \"widget#42\"\n}",
+        .body_bytes = 44,
+        .truncated = false,
+        .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 },
+        .cookies = &.{},
+    };
+    m.block = .response;
+    m.field = .content;
+    var ui = fx.ui();
+    ui.links = link_span.TestKeys.finder();
+    _ = draw(ui, 3, ui.canvas.full(), m);
+    var buf: [512]u8 = undefined;
+    var key: ?[2]u16 = null;
+    var pr: ?[2]u16 = null;
+    var y: u16 = 0;
+    while (y < 36) : (y += 1) {
+        const row = fx.row(y, &buf);
+        if (std.mem.indexOf(u8, row, "ENG-123")) |i| key = .{ @intCast(try std.unicode.utf8CountCodepoints(row[0..i])), y };
+        if (std.mem.indexOf(u8, row, "widget#42")) |i| pr = .{ @intCast(try std.unicode.utf8CountCodepoints(row[0..i])), y };
+    }
+    try testing.expectEqualStrings(link_span.TestKeys.key_url, fx.hits.at(key.?[0] + 2, key.?[1]).?.link.url);
+    try testing.expectEqualStrings(link_span.TestKeys.pr_url, fx.hits.at(pr.?[0] + 8, pr.?[1]).?.link.url);
+    try testing.expectEqual(hit_resp_body, fx.hits.at(key.?[0] - 3, key.?[1]).?.script_hit.id);
 }

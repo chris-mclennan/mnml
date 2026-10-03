@@ -70,6 +70,9 @@ pub const Cursor = struct {
 /// (`ui.pty_cursor.unfocused`).
 pub const Unfocused = enum { hollow, dim, none };
 
+/// One row's links: the row's text as painted and the spans in it.
+pub const RowLinks = struct { y: u16, text: []const u8, spans: []const link_span.Span };
+
 pub const Props = struct {
     focused: bool,
     /// `[exited 0]` — painted on the last row when set.
@@ -87,6 +90,9 @@ pub const Props = struct {
     /// Spans to call out over the cells — a scrollback search's matches
     /// (`app/pty_search.zig`), in viewport rows.
     marks: []const Mark = &.{},
+    /// The links in the rows on screen (`app/pty_links.zig`): they wear
+    /// the link look. The pane opens them itself, so they take no hit.
+    links: []const RowLinks = &.{},
 };
 
 /// One row's run of cells, `x0` to `x1` inclusive, painted in the
@@ -297,6 +303,7 @@ pub fn draw(ui: Ui, area: Rect, grid: *const pty.Grid, props: Props) ?Cursor {
         }
     }
     for (props.marks) |m| paintMark(ui, area, grid, m, rows, cols);
+    for (props.links) |l| if (l.y < rows) link_span.lookSpans(ui, area.x, area.y + l.y, cols, l.text, l.spans);
     // The link a right-click's menu is for, while that menu is open.
     link_span.paintMenuLink(ui, area);
     if (props.exit_label) |label| {

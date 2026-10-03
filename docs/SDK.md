@@ -678,10 +678,13 @@ uninstall. mnml re-scans on `integrations.refresh` and at startup; an
 
 mnml links a plain `http://` / `https://` URL wherever it shows text it
 did not write — a session card's name and output, the sessions table's
-summary: the words underline (dotted at rest, the accent under the
-pointer), a click opens them, a right-click offers *Copy link* /
-*Open link*, and the card's menu (Shift+F10 on the focused card) lists
-them as `Open …` rows. Everything that is not a URL — a ticket key, a
+summary, a terminal pane, an editor, the Markdown preview, a commit's
+message, a toast, an HTTP response body: the words underline (dotted at
+rest, the accent under the pointer), a click opens them (Ctrl/Cmd+click
+in a terminal or an editor, where a plain press is the pane's own; `gx`
+in an editor), a right-click offers *Copy link* / *Open link*, and a
+card's menu (Shift+F10 on the focused card) lists them as `Open …`
+rows. Everything that is not a URL — a ticket key, a
 build number — links only because an installed integration says what
 it looks like and where it goes. mnml itself knows no project key,
 company or product.
@@ -719,11 +722,27 @@ company or product.
   words, the first one listed opens. A disabled integration (its chip
   off) declares nothing.
 
+A capture group carries a part of the match into the address. The
+Bitbucket PRs chip links a pull request written `<repo>#<number>`:
+
+```zig
+.links = &.{
+    .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}" },
+},
+```
+
+`widget#42` opens `https://bitbucket.org/<workspace>/widget/pull-requests/42`.
+The lookbehind keeps a path's `src/foo#3` and another forge's
+`owner/repo#5` from linking, and a bare `#42` has no repo to match.
+`{workspace}` is bound like any `{<key>}`: Bitbucket's `--install` writes
+its config's workspace in — and, when the config lists `repos`, narrows
+`([A-Za-z0-9_.-]+)` to `(widget|api)` and adds
+`<workspace>/<repo>#<number>` — else mnml takes it from the `workspace`
+auth field's `$BITBUCKET_WORKSPACE`.
+
 The in-repo integrations: Jira's Work chip declares the issue key
-above; Bitbucket declares none — a pull request is already a URL
-(`…/pull-requests/12`), which links on its own, and Bitbucket has no
-short reference worth a pattern. The sample's `manifest.zon` carries a
-commented example.
+above, Bitbucket's PRs chip the pull request. The sample's
+`manifest.zon` carries a commented example.
 
 ## Publishing an integration — the catalogue entry
 

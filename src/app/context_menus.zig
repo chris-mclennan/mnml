@@ -1330,8 +1330,8 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     const current: ?[]const u8 = if (app.panes.pty(pane)) |pt| pt.accent_color else null;
     // A right-click on a link: copy it or open it, above the selection's
     // Copy (a right-click makes no selection).
-    const link: ?[]const u8 = if (app.panes.pty(pane)) |pt| try pty_pane.linkUnder(mem.allocator(), pt, x, y) else null;
-    const link_cells: ?Rect = if (link == null) null else if (app.panes.pty(pane)) |pt| try pty_pane.linkCellsUnder(mem.allocator(), pt, x, y) else null;
+    const link: ?[]const u8 = if (app.panes.pty(pane)) |pt| try pty_pane.linkUnder(app, mem.allocator(), pt, x, y) else null;
+    const link_cells: ?Rect = if (link == null) null else if (app.panes.pty(pane)) |pt| try pty_pane.linkCellsUnder(app, pt, x, y) else null;
     var all: std.ArrayList(MenuItem) = .empty;
     if (link) |url| try all.appendSlice(mem.allocator(), &.{
         .{ .label = "Copy link", .action = .{ .copy_link = url } },

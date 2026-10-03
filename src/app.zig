@@ -1461,6 +1461,10 @@ pub const App = struct {
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
     click_echo: ?ClickEcho = null,
+    /// The link — a URL or a declared key — under the pointer in an
+    /// editor's text: underlined in the link's hover look while the
+    /// pointer stays on it (`app/lsp_decor.zig`, `editorLinkHover`).
+    editor_link: ?struct { pane: PaneId, start: usize, end: usize } = null,
     /// `debug.toggle_click_inspector`: every press toasts the hit target
     /// under the pointer before it is handled.
     debug_click_inspector: bool = false,
@@ -3757,7 +3761,10 @@ pub const App = struct {
         try render_mod.render(self, screen);
         const us = @divTrunc(t0.durationTo(Io.Timestamp.now(self.io, .awake)).nanoseconds, 1000);
         self.stress.push(@intCast(std.math.clamp(us, 0, std.math.maxInt(u32))));
-        self.needs_render = false;
+        // A terminal's line that was still moving links on the frame
+        // after it stops (`app/pty_links.zig`).
+        self.needs_render = self.link_rules.pending;
+        self.link_rules.pending = false;
     }
 
     /// The first edit keeps a preview tab: the user is working in the
@@ -3970,6 +3977,7 @@ test {
     _ = @import("ui/sidebar_overlay.zig");
     _ = @import("ui/pin_chip.zig");
     _ = @import("ui/link_span.zig");
+    _ = @import("app/pty_links.zig");
     _ = @import("app/link_rules.zig");
     _ = @import("ui/edge_grip.zig");
     _ = @import("app/edge_band_audit.zig");

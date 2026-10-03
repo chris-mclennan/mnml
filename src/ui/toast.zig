@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -155,6 +156,10 @@ fn paintBox(ui: Ui, area: Rect, bottom: u16, toast: Toast, border: Style, idx: ?
     for (lines, 0..) |line, i| _ = ui.putStr(inner.x + 1, inner.y + @as(u16, @intCast(i)), inner.w -| 1, line, fg);
     // The box's own hit goes down first so the two above it win.
     if (idx) |i| ui.hit(r, .{ .button = button_base + @as(u32, @intCast(i)) });
+    // Its URLs and declared keys link, over the box's own hit. A link
+    // the wrap cut at a line's end is not one: half a URL opens the
+    // wrong page.
+    for (lines, 0..) |line, i| link_span.markWrapped(ui, inner.x + 1, inner.y + @as(u16, @intCast(i)), inner.w -| 1, line, i + 1 < lines.len);
     // The close mark sits in the top edge, three cells before the
     // corner: it costs the message no width and is a three-cell target
     // rather than one.
@@ -388,4 +393,35 @@ test "no room, no paint" {
     try g.expectLacks("two");
     draw(g.ui(), Rect.empty, &.{.{ .text = "x" }});
     draw(g.ui(), g.full(), &.{});
+}
+
+test "a toast's ticket key and PR ref take `.link` hits over the box's own; a link the wrap cut at a line's end does not" {
+    var f = try Fixture.init(60, 12);
+    defer f.deinit();
+    var ui = f.ui();
+    ui.links = link_span.TestKeys.finder();
+    const toasts = [_]Toast{.{ .text = "opened ENG-123 for widget#42" }};
+    draw(ui, f.full(), &toasts);
+    var buf: [256]u8 = undefined;
+    const row = f.row(10, &buf);
+    const k: u16 = @intCast(try std.unicode.utf8CountCodepoints(row[0..std.mem.indexOf(u8, row, "ENG-123").?]));
+    const p: u16 = @intCast(try std.unicode.utf8CountCodepoints(row[0..std.mem.indexOf(u8, row, "widget#42").?]));
+    try testing.expectEqualStrings(link_span.TestKeys.key_url, f.hits.at(k + 3, 10).?.link.url);
+    try testing.expectEqualStrings(link_span.TestKeys.pr_url, f.hits.at(p + 8, 10).?.link.url);
+    try testing.expectEqual(button_base + 0, f.hits.at(k - 2, 10).?.button);
+    // Wrapped so the key ends the first line: it is left plain there.
+    var g = try Fixture.init(24, 12);
+    defer g.deinit();
+    var ui2 = g.ui();
+    ui2.links = link_span.TestKeys.finder();
+    draw(ui2, g.full(), &.{.{ .text = "see the ENG-12 tail words here" }});
+    var y: u16 = 0;
+    var linked = false;
+    while (y < 12) : (y += 1) {
+        var x: u16 = 0;
+        while (x < 24) : (x += 1) if (g.hits.at(x, y)) |h| if (h == .link) {
+            linked = true;
+        };
+    }
+    try testing.expect(!linked);
 }

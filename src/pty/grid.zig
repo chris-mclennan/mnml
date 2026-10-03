@@ -117,6 +117,11 @@ pub const Grid = struct {
         return self.state.row_data.items(.dirty)[y];
     }
 
+    /// Row `y` soft-wraps: its line goes on in row `y + 1`.
+    pub fn rowWraps(self: *const Grid, y: u16) bool {
+        return self.state.row_data.items(.raw)[y].wrap;
+    }
+
     /// The columns of row `y` the screen's selection covers, both ends
     /// inclusive; null when the row has none.
     pub fn rowSelection(self: *const Grid, y: u16) ?[2]u16 {

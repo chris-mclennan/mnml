@@ -19,6 +19,7 @@
 //! keystroke, and the toggle painted nothing.
 
 const std = @import("std");
+const link_rules = @import("link_rules.zig");
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const app_mod = @import("../app.zig");
@@ -572,7 +573,33 @@ pub fn linkAtCursor(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
     const line = ed.currentLine();
     const text = ed.bytes()[ed.lineStart(line)..ed.lineEnd(line)];
     const col = cur - ed.lineStart(line);
+    if (link_rules.spanAt(app, text, col)) |s| return try arena.dupe(u8, s.url);
     return urlAt(text, col);
+}
+
+/// The link — a URL or a key an integration declared — covering `byte`
+/// of the editor's text: its bytes and its address (the rules' cache's,
+/// alive until the next frame).
+pub fn textLinkAt(app: *App, e: *EditorPane, byte: usize) ?struct { start: usize, end: usize, url: []const u8 } {
+    const ed = e.buf.editor;
+    const line = ed.lineOfByte(byte);
+    const start = ed.lineStart(line);
+    const s = link_rules.spanAt(app, ed.bytes()[start..ed.lineEnd(line)], byte - start) orelse return null;
+    return .{ .start = start + s.start, .end = start + s.end, .url = s.url };
+}
+
+/// The pointer's link in pane `pane`'s text, as one underline in the
+/// link's hover look — the accent, solid — or none.
+pub fn hoverLinkUnderline(app: *App, arena: Allocator, pane: PaneId) Allocator.Error![]editor_view.Underline {
+    const h = app.editor_link orelse return &.{};
+    if (h.pane != pane) return &.{};
+    const e = app.panes.editor(pane) orelse return &.{};
+    if (h.end > e.buf.editor.len()) return &.{};
+    var style = app.theme.accent;
+    style.ul_style = .single;
+    const out = try arena.alloc(editor_view.Underline, 1);
+    out[0] = .{ .start = h.start, .end = h.end, .style = style };
+    return out;
 }
 
 /// A `scheme://` token of `line` covering `col`.
@@ -877,4 +904,73 @@ test "through the fake server: a lens command the server did not offer runs clie
     try runLensCommand(&app, s, pane, listed);
     try testing.expectEqual(before + 1, s.transport.pendingCount());
     try rig.stop(&app);
+}
+
+/// Where `needle` starts on the screen, by its cells' graphemes.
+fn findOnScreen(app: *App, needle: []const u8) ?struct { x: u16, y: u16 } {
+    var y: u16 = 0;
+    while (y < app.screen.height) : (y += 1) {
+        var x: u16 = 0;
+        outer: while (x + needle.len <= app.screen.width) : (x += 1) {
+            for (needle, 0..) |ch, i| {
+                const c = app.screen.readCell(x + @as(u16, @intCast(i)), y) orelse continue :outer;
+                if (c.char.grapheme.len != 1 or c.char.grapheme[0] != ch) continue :outer;
+            }
+            return .{ .x = x, .y = y };
+        }
+    }
+    return null;
+}
+
+test "an editor's ticket key and PR ref: underlined in the hover look under the pointer, Ctrl+click and gx open them" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var root: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(testing.io, &root);
+    const log = try std.fmt.allocPrint(testing.allocator, "{s}/opened-urls.log", .{root[0..n]});
+    defer testing.allocator.free(log);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    try app.env.put("MNML_OPEN_URL", log);
+    const regex = @import("../regex/regex.zig");
+    const rules = [_][2][]const u8{
+        .{ "[A-Z][A-Z0-9]+-\\d+", "https://t.example/browse/{0}" },
+        .{ "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", "https://bitbucket.org/acme/{1}/pull-requests/{2}" },
+    };
+    for (rules) |r| try app.link_rules.rules.append(app.gpa, .{ .owner = try app.gpa.dupe(u8, "acme"), .re = try regex.Regex.compile(r[0], .{ .dialect = .perl }), .url = try app.gpa.dupe(u8, r[1]) });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "notes.txt", .data = "// fix ENG-123 in widget#7 today\n" });
+    const path = try std.fmt.allocPrint(testing.allocator, "{s}/notes.txt", .{root[0..n]});
+    defer testing.allocator.free(path);
+    _ = try app.openPath(path);
+    try app.render();
+    const key = findOnScreen(&app, "ENG-123").?;
+    const pr = findOnScreen(&app, "widget#7").?;
+    // At rest: no underline (an editor's text is not decorated until
+    // the pointer asks).
+    try testing.expect(app.screen.readCell(key.x, key.y).?.style.ul_style != .single);
+    // The pointer on the PR ref: its eight cells, the accent, solid.
+    try app.handle(.{ .mouse = .{ .x = pr.x + 3, .y = pr.y, .kind = .motion } });
+    try app.render();
+    var i: u16 = 0;
+    while (i < 8) : (i += 1) {
+        const c = app.screen.readCell(pr.x + i, pr.y).?.style;
+        try testing.expectEqual(@import("vaxis").Style.Underline.single, c.ul_style);
+        try testing.expect(std.meta.eql(c.ul, app.theme.accent.fg) or std.meta.eql(c.fg, app.theme.accent.fg));
+    }
+    try testing.expect(app.screen.readCell(pr.x + 8, pr.y).?.style.ul_style != .single);
+    try testing.expect(app.screen.readCell(key.x, key.y).?.style.ul_style != .single);
+    // Off it, the look goes.
+    try app.handle(.{ .mouse = .{ .x = key.x - 2, .y = key.y, .kind = .motion } });
+    try app.render();
+    try testing.expect(app.screen.readCell(pr.x + 3, pr.y).?.style.ul_style != .single);
+    // Ctrl+click on the key opens it; the cursor does not move there.
+    try app.handle(.{ .mouse = .{ .x = key.x + 2, .y = key.y, .kind = .press, .button = .left, .mods = .{ .ctrl = true } } });
+    // `gx` on the PR ref (the cursor put there by a plain click).
+    try app.handle(.{ .mouse = .{ .x = pr.x + 1, .y = pr.y, .kind = .press, .button = .left } });
+    try app.handle(.{ .mouse = .{ .x = pr.x + 1, .y = pr.y, .kind = .release, .button = .left } });
+    try command.run(&app, .{ .static = .@"editor.open_url_at_cursor" });
+    const body = try tmp.dir.readFileAlloc(testing.io, "opened-urls.log", testing.allocator, .unlimited);
+    defer testing.allocator.free(body);
+    try testing.expect(std.mem.indexOf(u8, body, "\thttps://t.example/browse/ENG-123\n") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "\thttps://bitbucket.org/acme/widget/pull-requests/7\n") != null);
 }

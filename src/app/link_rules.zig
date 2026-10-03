@@ -62,6 +62,13 @@ pub const State = struct {
     /// Text (gpa-owned key) → its spans.
     cache: std.StringHashMapUnmanaged(Entry) = .empty,
     stamp: u32 = 0,
+    /// Bumped each time the rules are rebuilt: a cache of its own (a
+    /// terminal pane's rows) drops what it found under an older set.
+    gen: u32 = 0,
+    /// A terminal pane left a line unmatched because it was still
+    /// moving (`pty_links.zig`): the next frame should come even with
+    /// nothing else to show, so the line links once it stops.
+    pending: bool = false,
     gpa: Allocator = undefined,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
@@ -244,6 +251,7 @@ pub fn rebuild(app: *App) Allocator.Error!void {
     const gpa = app.gpa;
     st.clearRules(gpa);
     st.clearCache(gpa);
+    st.gen +%= 1;
     for (app.integrations.list) |*inst| {
         if (!inst.enabled()) continue;
         const m = inst.manifest;
@@ -308,6 +316,17 @@ fn varValue(app: *App, m: manifest_mod.Manifest, name: []const u8) ?[]const u8 {
 
 fn envHint(m: manifest_mod.Manifest, name: []const u8) ?[]const u8 {
     for (m.auth) |a| if (std.mem.eql(u8, a.key, name)) if (a.env_fallback) |e| return e;
+    return null;
+}
+
+/// The link covering byte `col` of `text` — a URL or a declared key —
+/// through the cache; null off every link. What a surface that finds
+/// its own spot (an editor's cursor, a terminal cell) asks.
+pub fn spanAt(app: *App, text: []const u8, col: usize) ?Span {
+    for (app.link_rules.spans(app.gpa, text)) |s| {
+        if (col >= s.start and col < s.end) return s;
+        if (s.start > col) return null;
+    }
     return null;
 }
 
@@ -446,4 +465,41 @@ test "rebuild: none installed links URLs only; two integrations, the first by th
     list[0].manifest.chip = .{ .enabled = false };
     try rebuild(&app);
     try t.expectEqualStrings("https://beta.example/ENG-5", app.link_rules.spans(app.gpa, "ENG-5")[0].url);
+}
+
+test "a forge's <repo>#<n>: the repo's PR in the workspace bound from the env; a bare #n, a path's and another owner's do not link; <workspace>/<repo>#n does" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    // The rule the Bitbucket integration declares, and the one its
+    // `--install` adds for a configured workspace (here `acme`).
+    var list = [_]integrations.Installed{.{
+        .manifest = .{
+            .id = "forge",
+            .label = "Forge",
+            .links = &.{
+                .{ .pattern = "(?<![/\\w.-])(acme)/([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{1}/{2}/pull-requests/{3}" },
+                .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}" },
+            },
+            .auth = &.{.{ .key = "workspace", .label = "Workspace", .kind = .text, .env_fallback = "FORGE_WORKSPACE" }},
+        },
+        .path = "",
+        .source = .home,
+        .binary_found = true,
+        .slots = &.{},
+    }};
+    app.integrations.list = &list;
+    defer app.integrations.list = &.{};
+    _ = app.env.swapRemove("FORGE_WORKSPACE");
+    try rebuild(&app);
+    // No workspace yet: the explicit form only.
+    try t.expectEqual(@as(usize, 1), app.link_rules.rules.items.len);
+    try app.env.put("FORGE_WORKSPACE", "acme");
+    try rebuild(&app);
+    const text = "see widget#7, acme/widget#42, #9, src/foo#3 and other/widget#5";
+    const got = app.link_rules.spans(app.gpa, text);
+    try t.expectEqual(@as(usize, 2), got.len);
+    try t.expectEqualStrings("widget#7", text[got[0].start..got[0].end]);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/7", got[0].url);
+    try t.expectEqualStrings("acme/widget#42", text[got[1].start..got[1].end]);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/42", got[1].url);
 }

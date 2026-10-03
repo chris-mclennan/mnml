@@ -1918,6 +1918,7 @@ fn drawPty(app: *App, ui: Ui, id: PaneId, p: *pty_pane.PtyPane, rect: Rect) Allo
         .mnml_font = app.fonts.baked(pty_view.cursor_hollow_cp),
         // The scrollback search's matches in view (`pty_search.zig`).
         .marks = try pty_search.marks(app, id, p),
+        .links = try @import("pty_links.zig").rows(app.gpa, ui.arena, &app.link_rules, &p.links, &p.grid),
     });
     // The scrollback's bar over the last column when it has something to
     // say (`pty_pane.barShown`): never a column of the child's, so its
@@ -2476,7 +2477,7 @@ fn drawEditor(app: *App, ui: Ui, id: PaneId, e: *EditorPane, rect_in: Rect) Allo
         .scrollbar = app.cfg.ui.scrollbar,
         .gutter_marks = try gutterMarksFor(app, arena, id, e, ui.ascii),
         .blame = (try git_app.blameLabels(app, id, arena)) orelse &.{},
-        .underlines = try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme)),
+        .underlines = try decor.mergeUnderlines(arena, try decor.hoverLinkUnderline(app, arena, id), try decor.mergeUnderlines(arena, try lsp.underlinesFor(app, arena, e, &app.theme), try decor.linkUnderlinesFor(app, arena, e, &app.theme))),
         .var_spans = try http_app.editorVarSpans(app, arena, e),
         .labels = labels,
         .echo = if (app.click_echo) |ce| (if (ce.pane == id and ce.until_ms > app.now_ms) editor_view.Range{ .start = ce.start, .end = ce.end } else null) else null,

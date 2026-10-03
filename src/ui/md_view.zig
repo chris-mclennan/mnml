@@ -12,6 +12,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Allocator = std.mem.Allocator;
+const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -469,12 +470,25 @@ pub fn drawWith(ui: Ui, pane: PaneId, area: Rect, lines: []const Line, scroll: u
             ui.fill(row, t.panel_bg);
         }
         ui.hit(Rect.init(body.x, y, body.w, used), .{ .editor_cell = .{ .pane = pane, .line = @intCast(li), .col = 0 } });
+        // Its URLs and declared keys link, on a line that painted whole
+        // in one row (a wrapped one's breaks are the canvas's).
+        if (used == 1 and skip == 0 and l.segs.len > 0 and !l.filler) {
+            const text = joinSegs(ui.arena, l.segs) catch "";
+            if (text.len > 0 and text[0] != ' ') link_span.mark(ui, r.x, y, r.w, text);
+        }
         y += used;
         skip = 0;
     }
     flushPlacement(ui, placements, cur_src, box);
     if (want_bar) scrollbar.drawVertical(ui, cols.rest, .{ .pane = pane }, total, area.h, scroll);
     return total;
+}
+
+fn joinSegs(arena: Allocator, segs: []const Segment) Allocator.Error![]const u8 {
+    if (segs.len == 1) return segs[0].text;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (segs) |sg| try out.appendSlice(arena, sg.text);
+    return out.items;
 }
 
 fn flushPlacement(ui: Ui, placements: ?*std.ArrayListUnmanaged(Placement), src: ?[]const u8, box: ?Rect) void {
@@ -608,4 +622,23 @@ test "images: a standalone ![alt](src) reserves rows; the placement follows the 
     try testing.expectEqual(@as(u16, 1), placements.items[0].rect.h);
     try testing.expect(imageLine("![x](y.png) tail") == null);
     try testing.expectEqualStrings("y.png", imageLine("![x](y.png)").?.src);
+}
+
+test "a line's ticket key and PR ref take `.link` hits over their cells; the line's own row hit stays beside them" {
+    var f = try Fixture.init(40, 6);
+    defer f.deinit();
+    const a = f.arena_state.allocator();
+    var ui = f.ui();
+    ui.links = link_span.TestKeys.finder();
+    const lines = try render(a, &f.theme, "Fix **ENG-123** in widget#42 now\n", false);
+    _ = draw(ui, 1, Rect.init(0, 0, 40, 6), lines, 0);
+    var buf: [256]u8 = undefined;
+    const row = f.row(0, &buf);
+    const k: u16 = @intCast(std.mem.indexOf(u8, row, "ENG-123").?);
+    const p: u16 = @intCast(std.mem.indexOf(u8, row, "widget#42").?);
+    try testing.expectEqualStrings(link_span.TestKeys.key_url, f.hits.at(k, 0).?.link.url);
+    try testing.expectEqualStrings(link_span.TestKeys.key_url, f.hits.at(k + 6, 0).?.link.url);
+    try testing.expectEqualStrings(link_span.TestKeys.pr_url, f.hits.at(p + 8, 0).?.link.url);
+    try testing.expect(f.hits.at(k - 1, 0).? == .editor_cell);
+    try testing.expect(f.hits.at(p + 9, 0).? == .editor_cell);
 }

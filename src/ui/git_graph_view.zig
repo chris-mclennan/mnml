@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
@@ -1249,7 +1250,13 @@ fn drawDetail(ui: Ui, pane: PaneId, area: Rect, view: *State, d: DetailDoc) void
         const r = area.row(y);
         var pen: Pen = .{ .ui = ui, .x = r.x, .y = r.y, .end = r.right() };
         for (l.segs) |s| pen.put(s.text, s.style);
-        if (l.file) |fi| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = detailRowId(fi) } });
+        if (l.file) |fi| ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = detailRowId(fi) } }) else {
+            // The message's URLs and declared keys link (a file row is
+            // a file).
+            var text: std.ArrayListUnmanaged(u8) = .empty;
+            for (l.segs) |s| text.appendSlice(arena, s.text) catch break;
+            link_span.mark(ui, r.x, r.y, pen.x - r.x, text.items);
+        }
         y += 1;
     }
 }
@@ -1833,4 +1840,41 @@ test "a commit's detail: the header rule, the reflowed message wrapped to the wi
     });
     try testing.expectEqual(Caret{ .x = q.textarea.x + 7, .y = q.textarea.y }, q.caret.?);
     try g.expectContains("  Enter newline \u{B7} Esc unfocus \u{B7} \u{2026}");
+}
+
+test "a commit's message links its ticket key and PR ref: `.link` hits over their cells, none on the file rows" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const cs = [_]parse.Commit{commit("aaaaaaaaaa", &.{})};
+    const l = try layout(arena, &cs);
+    var f = try Fixture.init(100, 20);
+    defer f.deinit();
+    var ui = f.ui();
+    ui.links = link_span.TestKeys.finder();
+    var st: State = .{};
+    const files = [_]parse.DetailFile{.{ .status = 'M', .path = "ENG-9.txt" }};
+    _ = draw(ui, 1, f.full(), &st, .{
+        .commits = &cs,
+        .lanes = l,
+        .order = try identity(arena, 1),
+        .cursor = 0,
+        .focused = true,
+        .now = 0,
+        .detail = .{ .short = "aaaaaaaaa", .author = "amy", .age = "2d", .message = "ENG-123: merge widget#42", .parents = &.{}, .files = &files },
+    });
+    var buf: [512]u8 = undefined;
+    var key: ?[2]u16 = null;
+    var pr: ?[2]u16 = null;
+    var file: ?[2]u16 = null;
+    var y: u16 = 0;
+    while (y < 20) : (y += 1) {
+        const row = f.row(y, &buf);
+        if (std.mem.indexOf(u8, row, "ENG-123:")) |i| key = .{ @intCast(try std.unicode.utf8CountCodepoints(row[0..i])), y };
+        if (std.mem.indexOf(u8, row, "widget#42")) |i| pr = .{ @intCast(try std.unicode.utf8CountCodepoints(row[0..i])), y };
+        if (std.mem.indexOf(u8, row, "ENG-9.txt")) |i| file = .{ @intCast(try std.unicode.utf8CountCodepoints(row[0..i])), y };
+    }
+    try testing.expectEqualStrings(link_span.TestKeys.key_url, f.hits.at(key.?[0] + 6, key.?[1]).?.link.url);
+    try testing.expectEqualStrings(link_span.TestKeys.pr_url, f.hits.at(pr.?[0], pr.?[1]).?.link.url);
+    try testing.expect(f.hits.at(file.?[0], file.?[1]).? != .link);
 }

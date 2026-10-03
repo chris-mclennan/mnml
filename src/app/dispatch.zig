@@ -2107,6 +2107,8 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     app.needs_render = true;
     app.hover = .{ .x = m.x, .y = m.y };
     app.hover_live = m.kind == .motion or m.kind == .drag;
+    // Set again below while the pointer stays on an editor's link.
+    if (m.kind == .motion) app.editor_link = null;
     focus_follow.track(app, m);
     if (m.kind == .drag or m.kind == .release) {
         if (app.drag != null) return continueDrag(app, m);
@@ -2122,8 +2124,11 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
         // reached one, so every cell of the pane read one host blurb.
         // An overlay over the pane has its own hits on top, so a cell
         // that still resolves to the pane is the pane's.
-        if (app.hits.at(m.x, m.y)) |under| if (under == .script_hit) {
-            if (app.panes.get(under.script_hit.pane)) |pp| if (pp.asMount()) |mp| mount_pane.hover(mp, under.script_hit.id, m, hitRect(app, m.x, m.y));
+        if (app.hits.at(m.x, m.y)) |under| switch (under) {
+            .script_hit => |sh| if (app.panes.get(sh.pane)) |pp| if (pp.asMount()) |mp| mount_pane.hover(mp, sh.id, m, hitRect(app, m.x, m.y)),
+            // A link in an editor's text lights under the pointer.
+            .editor_cell => |cell| editorLinkHover(app, cell),
+            else => {},
         };
         return;
     }
@@ -2150,10 +2155,14 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
     }
     // An armed button's release replays its press on the button itself,
     // whatever the frame since has painted under the pointer.
-    const target = if (app.firing_button) |pb| pb.target() else app.hits.at(m.x, m.y) orelse {
+    const top = if (app.firing_button) |pb| pb.target() else app.hits.at(m.x, m.y) orelse {
         if (m.kind == .press) pressOutside(app);
         return;
     };
+    // A link laid on text takes the presses; the wheel, a motion and a
+    // drag go to the text's own surface — a link must not stop a list
+    // scrolling under the pointer.
+    const target = if (top == .link and m.kind != .press) app.hits.underLink(m.x, m.y) orelse top else top;
     // A press anywhere but on the overlay itself dismisses it; the
     // press then goes on to whatever it landed on. A menu closes, a
     // picker puts its preview back (the themes picker), the settings
@@ -2585,10 +2594,12 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // not tracking the mouse (a tracking child owns its
                     // right button).
                     if (m.kind == .press and m.button == .right) return context_menus.openPtyPaneMenu(app, id, m.x, m.y);
-                    // Ctrl / Cmd + click opens an OSC 8 link the child
-                    // printed, as ghostty's does.
+                    // Ctrl / Cmd + click opens a link — an OSC 8 one the
+                    // child printed, as ghostty's does, or a URL or key in
+                    // the text (`pty_links.zig`). A plain press stays a
+                    // selection's anchor.
                     if (m.kind == .press and m.button == .left and (m.mods.ctrl or m.mods.super)) {
-                        if (pty_pane.linkAt(p, m.x, m.y)) |url| return git_app.openExternal(app, url);
+                        if (try pty_pane.linkUnder(app, app.frame.allocator(), p, m.x, m.y)) |url| return git_app.openExternal(app, url);
                     }
                     // A left press anchors a text selection; the drag and
                     // the release come back through `continueDrag`.
@@ -3514,6 +3525,18 @@ pub fn clickCount(app: *App, m: Mouse) u8 {
 /// A left press in the text: shift extends the selection; a second
 /// press within the double-click window selects the word, a third the
 /// line; and the press anchors a drag-select at its granularity.
+/// The pointer moved over an editor's text: the link under it, if
+/// any, wears the hover look (`App.editor_link`).
+fn editorLinkHover(app: *App, cell: CellHit) void {
+    const e = app.panes.editor(cell.pane) orelse return;
+    const ed = e.buf.editor;
+    const line = @min(cell.line, ed.lineCount() - 1);
+    // A cell past the line's end is not on its last character.
+    if (ed.lineStart(line) + cell.col >= ed.lineEnd(line)) return;
+    const l = decor.textLinkAt(app, e, cellByte(ed, line, cell.col)) orelse return;
+    app.editor_link = .{ .pane = cell.pane, .start = l.start, .end = l.end };
+}
+
 fn editorPress(app: *App, pane: PaneId, e: *EditorPane, byte: usize, m: Mouse) Allocator.Error!void {
     const ed = e.buf.editor;
     const count = clickCount(app, m);
@@ -4225,6 +4248,12 @@ fn editorCellMouse(app: *App, cell: CellHit, m: Mouse, count: u16, wheel: bool) 
     const ed = e.buf.editor;
     const line = @min(cell.line, ed.lineCount() - 1);
     const byte = cellByte(ed, line, cell.col);
+    // Ctrl / Cmd + click on a link — a URL or a declared key — opens it
+    // (`gx` from the keys).
+    if (m.button == .left and (m.mods.ctrl or m.mods.super)) if (decor.textLinkAt(app, e, byte)) |l| {
+        git_app.openExternal(app, l.url);
+        return;
+    };
     // `ui.click_echo`: the word under a left press underlines
     // for 120 ms — "did that click land?".
     if (m.button == .left and app.cfg.ui.click_echo) {
