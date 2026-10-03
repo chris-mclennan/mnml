@@ -26,7 +26,7 @@
 //! icon and ~10 cells of name always fit. The connectors are mnml's
 //! own baked glyphs (U+F1F04 / U+F1F05: JetBrainsMono's `│` / `└`
 //! shifted right so they meet the chevron above), painted in the
-//! chevrons' colour (`expander.style`, `theme.muted.fg`) in every
+//! chevrons' colour (`expander.style`, `palette.grey`) in every
 //! theme; ASCII draws `| ` and has no chevron slot. The chevrons are
 //! `expander.zig`'s pair, the file icons `icons.zig`.
 //! Every glyph has its `ui.ascii_icons` twin beside it. The cursor row
@@ -703,7 +703,7 @@ test "connectors take the chevrons' colour, the default theme and a light one al
         defer f.deinit();
         f.theme = Theme.byName(name).?.*;
         _ = draw(f.ui(), f.full(), .{ .items = &items, .cursor = 3, .focused = true });
-        const chevron = f.theme.muted.fg;
+        const chevron = f.theme.palette.grey;
         // b's chevron and c1's own-level bar, its slot's bar, c2's corner.
         try testing.expect(vaxis.Color.eql(f.style(5, 2).fg, chevron));
         try testing.expect(vaxis.Color.eql(f.style(5, 3).fg, chevron));

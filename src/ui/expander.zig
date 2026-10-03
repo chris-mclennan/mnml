@@ -9,9 +9,11 @@
 //! The glyphs are the Octicons chevrons neo-tree uses and the Rust tree
 //! paints (nf-oct-chevron_down / chevron_right, U+F47C / U+F460), `v` /
 //! `>` under `--ascii` or without a Nerd Font, and the small triangles
-//! under `ui.expand_indicator = .triangle`. The colour is the tree's
-//! section-header chevron: `theme.muted.fg`, the palette's `comment`
-//! grey. A slot is the glyph and one cell of air after it.
+//! under `ui.expand_indicator = .triangle`. The colour is the menu
+//! bar's idle label: the palette's `grey`, one step dimmer than the
+//! `comment` grey the chevrons wore before (the user found them a
+//! little bright beside the tree's lines, which share this colour).
+//! A slot is the glyph and one cell of air after it.
 //!
 //! Not an expander: a chip's dropdown mark (the sort chip, the repo
 //! pill), a menu row's submenu mark, a focus marker, the debugger's
@@ -50,9 +52,9 @@ pub fn slot(ui: Ui, expanded: bool) []const u8 {
     return if (expanded) open_glyph ++ " " else closed_glyph ++ " ";
 }
 
-/// `base` with the expander's colour: the tree's section-header grey.
+/// `base` with the expander's colour: the menu bar's idle-label grey.
 pub fn style(ui: Ui, base: Style) Style {
-    return Theme.withFg(base, ui.theme.muted.fg);
+    return Theme.withFg(base, ui.theme.palette.grey);
 }
 
 // ── tests ──
@@ -81,11 +83,11 @@ test "one codepoint per glyph; the slot is the glyph and a cell of air; ascii, n
     ui.ascii = true;
     try testing.expectEqualStrings("> ", slot(ui, false));
     try testing.expectEqualStrings("v", glyph(ui, true));
-    // The colour is the tree's section-header grey: `muted.fg` is the
-    // palette's `comment`.
+    // The colour is the menu bar's idle-label grey — `palette.grey`,
+    // dimmer than the `comment` grey of `muted.fg`.
     const s = style(ui, .{ .bg = f.theme.bg.bg });
-    try testing.expect(vaxis.Color.eql(s.fg, f.theme.muted.fg));
-    try testing.expect(vaxis.Color.eql(s.fg, f.theme.palette.comment));
+    try testing.expect(vaxis.Color.eql(s.fg, f.theme.palette.grey));
+    try testing.expect(!vaxis.Color.eql(s.fg, f.theme.muted.fg));
     try testing.expect(vaxis.Color.eql(s.bg, f.theme.bg.bg));
 }
 

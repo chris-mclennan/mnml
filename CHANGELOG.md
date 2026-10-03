@@ -262,6 +262,7 @@ the release ships one file), and one line per change a user can see.
   three splits leaves two even halves. It stays off by default.
 
 ### Fixes
+- The chevrons and the tree's lines wear the menu bar's grey — one step dimmer than before, the same colour on both.
 
 - A toast's Copy, a menu's "Copy path" / "Copy link" and every other
   copy outside the editor reach the system clipboard, so the text pastes
