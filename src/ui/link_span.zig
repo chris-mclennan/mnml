@@ -150,6 +150,40 @@ pub fn paintMenuLink(ui: Ui, area: Rect) void {
     }
 }
 
+// ─── a finder for tests ─────────────────────────────────────────────────
+
+/// What a painter's test hands `Ui.links`: `ENG-<digits>` opens
+/// `key_url`, `widget#<digits>` opens `pr_url` — the fixtures' ticket
+/// and pull request, with no app and no regex behind them.
+pub const TestKeys = struct {
+    pub const key_url = "https://t.example/browse/ENG";
+    pub const pr_url = "https://forge.example/acme/widget/pull-requests";
+    var buf: [8]Span = undefined;
+    var dummy: u8 = 0;
+
+    pub fn finder() Finder {
+        return .{ .ctx = &dummy, .find = find };
+    }
+
+    fn find(_: *anyopaque, text: []const u8) []const Span {
+        var n: usize = 0;
+        var i: usize = 0;
+        while (i < text.len and n < buf.len) : (i += 1) {
+            for ([_][2][]const u8{ .{ "ENG-", key_url }, .{ "widget#", pr_url } }) |p| {
+                if (!std.mem.startsWith(u8, text[i..], p[0])) continue;
+                var e = i + p[0].len;
+                while (e < text.len and std.ascii.isDigit(text[e])) e += 1;
+                if (e == i + p[0].len) continue;
+                buf[n] = .{ .start = i, .end = e, .url = p[1] };
+                n += 1;
+                i = e - 1;
+                break;
+            }
+        }
+        return buf[0..n];
+    }
+};
+
 // ─── tests ──────────────────────────────────────────────────────────────
 
 const testing = std.testing;
