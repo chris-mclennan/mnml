@@ -29,3 +29,4 @@ tests/tour/sweep-baseline/
 
 # the HTTP pane's request history — workspace state, never source
 .rqst/
+.claude/settings.local.json
