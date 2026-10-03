@@ -1,0 +1,49 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The wheel over SESSIONS scrolls its cards: with nine sessions, one of
+# them pinned, the list is taller than the rows it has at 120x40, and
+# notches down bring the cards past the fold on screen. The pointer sits
+# on row 20 — the gap between two cards, which had no hit, so the wheel
+# there landed on nothing. One row per notch: ten reach the last card.
+# The stand-in is the demo shim's shape with a number in its title.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "alpha alpha"
+open a.txt
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command view.activity_sessions
+wait 300
+expect screen contains "SESSIONS (9)"
+command sessions.pin
+wait 100
+expect screen lacks "fake claude 8"
+wait 100
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+wait 200
+expect screen contains "fake claude 8"

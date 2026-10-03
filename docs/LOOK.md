@@ -15,7 +15,7 @@ So a hunter or fixer agent works in two gears on the **same workspace**:
    on that workspace, send the same channel lines, take a PNG, `Read` it.
 
 ```
-tools/look.sh launch <ws> [--exe zig-out/bin/mnml-zig] [--cols 120 --rows 40] [--sandbox]
+tools/look.sh launch <ws> [--exe zig-out/bin/mnml-zig] [--cols 120 --rows 40] [--sandbox] [--env KEY=VALUE]…
 tools/look.sh run view.activity_git          # a command id
 tools/look.sh key ctrl+shift+p               # a key spec, as the channel reads it
 tools/look.sh type "git"                     # literal text (\n is Enter)
@@ -84,6 +84,16 @@ The driver's `config.zon` rides along as the explicit `--config` layer,
 so the channel still works; the app removes the directory when `quit`
 ends it. It is an extra, not a replacement for the private `HOME`: the
 wrapper's `env -i`, clean `PATH` and refusing proxy still apply.
+
+`launch --env KEY=VALUE` (repeatable) adds to the app's environment —
+a stand-in `claude` ahead of the clean `PATH`, a fake manifest's
+`ACME_SITE`. A value may name the window's own variables, so
+`--env 'PATH=/abs/stand-ins:$PATH'` prepends a directory (quote it so
+your shell leaves `$PATH` alone). It adds, never loosens: `HOME`,
+`TMPDIR`, `MNML_DATA_ROOT`, `MNML_IPC_DIR`, `MNML_PROFILE`, the
+artifacts and sessions homes and the proxies stay the window's own, and
+an `--env` naming one is refused. The pairs are kept in the root's
+`look.json`.
 
 ## Reading what you see
 

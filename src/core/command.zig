@@ -907,6 +907,9 @@ pub const MenuItem = struct {
     label: []const u8,
     action: MenuAction,
     checked: bool = false,
+    /// A row that can wear a tick though it has none now: its menu
+    /// keeps the tick column (`app/render.zig`'s `hasTickColumn`).
+    checkable: bool = false,
     separator_before: bool = false,
     /// // changed (ui-polish): a glyph override for the row; null draws
     /// the command group's glyph (`ui/menu_glyph.zig`).

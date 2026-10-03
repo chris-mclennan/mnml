@@ -518,7 +518,7 @@ pub fn sidebarModeRow(app: *const App) MenuItem {
 /// and the pin. // changed (sidebar-autohide).
 pub fn openSidebarModeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
-        .{ .label = if (app.sidebar_auto.pinned) "Unpin (back to auto-hide)" else "Pin (dock for this session)", .action = .{ .command = .@"view.sidebar_pin" }, .checked = app.sidebar_auto.pinned },
+        .{ .label = if (app.sidebar_auto.pinned) "Unpin (back to auto-hide)" else "Pin (dock for this session)", .action = .{ .command = .@"view.sidebar_pin" }, .checked = app.sidebar_auto.pinned, .checkable = true },
         sidebarModeRow(app),
     });
     errdefer app.gpa.free(rows);
@@ -1292,7 +1292,7 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
             .{ .label = "Collapse / expand section", .action = .{ .command = .@"view.toggle_tree_section" } },
             .{ .label = "Expand all", .action = .{ .command = .@"tree.expand_all" }, .separator_before = true },
             .{ .label = "Collapse all", .action = .{ .command = .@"tree.collapse_all" } },
-            .{ .label = "Show git-ignored files", .action = .{ .command = .@"tree.toggle_ignored" }, .checked = app.tree.show_ignored },
+            .{ .label = "Show git-ignored files", .action = .{ .command = .@"tree.toggle_ignored" }, .checked = app.tree.show_ignored, .checkable = true },
             .{ .label = "New file…", .action = .{ .command = .@"file.new" }, .separator_before = true },
             .{ .label = "New folder…", .action = .{ .command = .@"file.new_folder" } },
             .{ .label = "Paste here", .action = .{ .command = .@"file.paste" } },
@@ -1310,7 +1310,7 @@ pub fn openWorkspaceHeaderMenu(app: *App, root: u8, x: u16, y: u16) Allocator.Er
         .{ .label = "Manage workspaces…", .action = .{ .command = .@"view.manage_workspaces" } },
         .{ .label = "Copy path", .action = .{ .copy_text = try arena.dupe(u8, path) }, .separator_before = true },
         .{ .label = "Refresh tree", .action = .{ .command = .@"tree.refresh" } },
-        .{ .label = "Show workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" }, .checked = app.cfg.ui.show_workspace_dots, .separator_before = true },
+        .{ .label = "Show workspace dots", .action = .{ .command = .@"view.toggle_workspace_dots" }, .checked = app.cfg.ui.show_workspace_dots, .checkable = true, .separator_before = true },
     });
     const owned = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(owned);
@@ -1501,7 +1501,7 @@ pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "Hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar_side == .left) .@"view.toggle_tree" else .@"view.toggle_right_panel" }, .separator_before = true },
         // A ticked row unticks: checked, it puts the sidebar back to
         // `always` rather than setting `auto` again.
-        .{ .label = "Auto-hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar == .auto) .@"view.sidebar_mode_always" else .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto },
+        .{ .label = "Auto-hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar == .auto) .@"view.sidebar_mode_always" else .@"view.sidebar_mode_auto" }, .checked = app.cfg.ui.sidebar == .auto, .checkable = true },
         .{ .label = if (app.cfg.ui.sidebar_side == .left) "Move sidebar to the right" else "Move sidebar to the left", .action = .{ .command = .@"view.flip_sidebar_side" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -1674,7 +1674,7 @@ pub fn openThemeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         "Toggle (set ui.theme_toggle first)";
     try rows.appendSlice(app.gpa, &.{
         .{ .label = toggle_label, .action = .{ .command = .@"theme.toggle" } },
-        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (following) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = following },
+        .{ .label = "Auto: match system (light / dark)", .action = .{ .command = if (following) .@"theme.auto_system_off" else .@"theme.auto_system" }, .checked = following, .checkable = true },
         .{ .label = "Reset to config default", .action = .{ .command = .@"theme.reset" } },
         .{ .label = "Pick theme…  (fuzzy)", .action = .{ .command = .@"theme.pick" } },
     });

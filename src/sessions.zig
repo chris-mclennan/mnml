@@ -312,7 +312,10 @@ pub const GutterMark = enum {
     }
 };
 
-pub const Summary = enum { exited, none, text };
+/// What a card's summary rows are: `ended` is a child that exited 0 —
+/// done, not failed, so it paints in the ENDED rows' grey; `exited` is
+/// any other end (a non-zero code, a signal), in red.
+pub const Summary = enum { exited, ended, none, text };
 
 pub const ScanResult = struct {
     arena: std.heap.ArenaAllocator,
@@ -2641,7 +2644,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
     var lines: std.ArrayListUnmanaged(CardLine) = .empty;
     var kind: Summary = .text;
     if (p == null or p.?.exit != null) {
-        kind = .exited;
+        kind = if (exitedClean(p)) .ended else .exited;
         try lines.append(arena, .{ .text = try exitWords(arena, p) });
     } else {
         const d = derive(app, c.pane);
@@ -2704,6 +2707,15 @@ pub fn exitWords(arena: Allocator, p: ?*const pty_pane.PtyPane) Allocator.Error!
             try std.fmt.allocPrint(arena, "exited {d}", .{c}),
         .signal => |sg| try std.fmt.allocPrint(arena, "killed by signal {d}", .{sg}),
     };
+}
+
+/// The child ran and exited 0 — a resume that found no conversation
+/// is not clean, whatever its code.
+fn exitedClean(p: ?*const pty_pane.PtyPane) bool {
+    const pp = p orelse return false;
+    if (pp.dormant or pp.resume_missing) return false;
+    const e = pp.exit orelse return false;
+    return e == .code and e.code == 0;
 }
 
 /// The accent the card paints: the user's pick for its key, else the
@@ -3287,7 +3299,7 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
     const max_cells: u16 = @max(4, r.w -| 6);
     const color = switch (row.kind) {
         .exited => t.palette.red,
-        .none => t.palette.grey,
+        .ended, .none => t.palette.grey,
         .text => t.muted.fg,
     };
     for (row.lines, 0..) |line, i| {
@@ -3605,9 +3617,9 @@ test "the cards are this app's AI panes: a fresh one reads its banner off the gr
     try testing.expectEqual(Summary.text, v_fresh.kind);
     try testing.expectEqual(@as(usize, 3), v_fresh.lines.len);
     try testing.expectEqualStrings("Claude Code v9 (fake)", v_fresh.lines[0].text);
-    // The child gone: `exited` and its code, red.
+    // The child gone with code 0: `exited 0`, ended, not failed.
     const v_gone = try cardView(app, app.frame.allocator(), f.cardAt(2));
-    try testing.expectEqual(Summary.exited, v_gone.kind);
+    try testing.expectEqual(Summary.ended, v_gone.kind);
     try testing.expectEqualStrings("exited 0", v_gone.lines[0].text);
     // Named by its id, not the binary: nothing better names it.
     try testing.expectEqualStrings("exit-1", v_gone.name);
@@ -4444,7 +4456,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
         else => {},
     };
     try testing.expect(row0 != null and sort_chip != null);
-    try testing.expectEqual(card_h, row0.?.h);
+    try testing.expectEqual(card_h + card_gap, row0.?.h);
     try app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
     // Pin, four moves, Auto sort, Rename…, Color, Focus, transcript,
@@ -4783,6 +4795,24 @@ test "a banner row keeps its cells' colours through the walk, and the card paint
     try g.expectRow(1, " \u{258C} exited");
     try testing.expect(vaxis.Color.eql(g.style(3, 1).fg, g.theme.palette.red));
     try testing.expect(vaxis.Color.eql(g.style(3, 1).bg, g.theme.panel_bg.bg));
+    // `exited 0` is done, not failed: the ENDED rows' grey, never the
+    // error red; `exited 1` stays red.
+    var h = try UiFixture.init(40, 6);
+    defer h.deinit();
+    var clean = row;
+    clean.lines = &.{.{ .text = "exited 0" }};
+    clean.kind = .ended;
+    paintRow(h.ui(), Rect.init(0, 0, 40, 4), clean, false);
+    try h.expectRow(1, " \u{258C} exited 0");
+    try testing.expect(vaxis.Color.eql(h.style(3, 1).fg, h.theme.palette.grey));
+    try testing.expect(!vaxis.Color.eql(h.style(3, 1).fg, h.theme.palette.red));
+    var k = try UiFixture.init(40, 6);
+    defer k.deinit();
+    var failed = row;
+    failed.lines = &.{.{ .text = "exited 1" }};
+    failed.kind = .exited;
+    paintRow(k.ui(), Rect.init(0, 0, 40, 4), failed, false);
+    try testing.expect(vaxis.Color.eql(k.style(3, 1).fg, k.theme.palette.red));
 }
 
 test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-sessions-120x40.txt, the top block per the user above them" {
@@ -4803,13 +4833,14 @@ test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-session
     var y: u16 = 3;
     while (y <= 18) : (y += 1) try testing.expectEqualStrings(specRow(y), f.row(y, &buf));
     // Hits: the New chip alone on its row, the blanks take none, a card's
-    // hit covers its four rows and the gap none.
+    // hit covers its four rows and the gap under it — Rust's left the gap
+    // bare, so the wheel there scrolled nothing (`list_panel`).
     try testing.expectEqual(hit.ChipKind.new, f.hits.at(3, 3).?.chip.kind);
     try testing.expect(f.hits.at(5, 2) == null);
     try testing.expect(f.hits.at(5, 4) == null);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(@as(u32, 0), f.hits.at(20, 8).?.row.idx);
-    try testing.expect(f.hits.at(5, 9) == null);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 9).?.row.idx);
     try testing.expectEqual(@as(u32, 1), f.hits.at(5, 10).?.row.idx);
     try testing.expectEqual(@as(u32, 2), f.hits.at(5, 15).?.row.idx);
     try testing.expectEqual(hit.PanelId.sessions, f.hits.at(10, 1).?.filter_input);
@@ -5035,7 +5066,7 @@ test "pins lead the list on either axis; p toggles and follows the card; the row
         else => {},
     };
     try testing.expect(row0 != null and new_chip != null);
-    try testing.expectEqual(card_h, row0.?.h);
+    try testing.expectEqual(card_h + card_gap, row0.?.h);
     try app.handle(.{ .mouse = .{ .x = row0.?.x + 3, .y = row0.?.y + 2, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
     try testing.expectEqualStrings("Unpin", app.overlay.menu.items[0].label);

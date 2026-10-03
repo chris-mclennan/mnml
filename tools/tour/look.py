@@ -1,7 +1,7 @@
 """`tools/look.sh`: one agent, one real window, driven like the headless
 harness — see docs/LOOK.md.
 
-    look.sh launch WS [--exe PATH] [--cols N --rows N] [--root DIR] [--sandbox]
+    look.sh launch WS [--exe PATH] [--cols N --rows N] [--root DIR] [--sandbox] [--env KEY=VALUE]…
     look.sh key SPEC | type TEXT | run ID | open PATH
     look.sh click X Y [right] | hover X Y | send JSON…
     look.sh shot NAME         → prints the PNG's path (Read it)
@@ -16,12 +16,35 @@ other verbs act on, so an agent says `launch` once and then just verbs.
 
 import json
 import os
+import string
 import sys
 
 from mnmlwin import REPO, DriveError, Window, base_env  # noqa: F401
 
 LOOK = os.path.join(REPO, ".verify", "look")
 CURRENT = os.path.join(LOOK, "current")
+
+# What keeps the window off the person's own files and the network: an
+# `--env` never replaces these (docs/LOOK.md, *Own data root*).
+PROTECTED_ENV = ("HOME", "TMPDIR", "MNML_DATA_ROOT", "MNML_IPC_DIR", "MNML_PROFILE",
+                 "MNML_ARTIFACTS_HOME", "MNML_SESSIONS_HOME",
+                 "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY")
+
+
+def app_env(pairs, root):
+    """`--env KEY=VALUE`s as the app's additions. A value may name the
+    window's own variables — `PATH=/stand-ins:$PATH` puts a directory
+    ahead of the clean PATH. Returns (env, error)."""
+    base = base_env(os.path.join(root, "home"), os.path.join(root, "tmp"))
+    env = {}
+    for pair in pairs or ():
+        key, sep, value = pair.partition("=")
+        if not sep or not key:
+            return None, f"--env takes KEY=VALUE, not `{pair}`"
+        if key in PROTECTED_ENV or key.upper().endswith("_PROXY"):
+            return None, f"--env {key}: the window keeps its own (docs/LOOK.md)"
+        env[key] = string.Template(value).safe_substitute({**base, **env})
+    return env, None
 
 
 def die(msg, code=2):
@@ -73,9 +96,12 @@ def run(args):
         app_args = []
         if getattr(args, "sandbox", False):
             app_args = ["--sandbox", "--config", os.path.join(root, "data", "config.zon")]
-        w = Window(root, ws, exe=args.exe, cols=args.cols, rows=args.rows, app_args=app_args)
+        extra, err = app_env(getattr(args, "env", None), root)
+        if err:
+            return die(err)
+        w = Window(root, ws, exe=args.exe, cols=args.cols, rows=args.rows, app_env=extra, app_args=app_args)
         with open(os.path.join(root, "look.json"), "w", encoding="utf-8") as f:
-            json.dump({"ws": ws, "exe": w.exe, "cols": args.cols, "rows": args.rows, "app_args": app_args}, f)
+            json.dump({"ws": ws, "exe": w.exe, "cols": args.cols, "rows": args.rows, "app_args": app_args, "env": extra}, f)
         try:
             w.launch()
         except DriveError as e:

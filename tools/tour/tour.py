@@ -628,6 +628,8 @@ def main(argv):
     lk.add_argument("--root")
     lk.add_argument("--sandbox", action="store_true",
                     help="launch with `--sandbox` (a throwaway HOME under the window's TMPDIR)")
+    lk.add_argument("--env", action="append", metavar="KEY=VALUE",
+                    help="add to the app's environment (repeatable; $PATH names the window's own)")
 
     args = ap.parse_args(argv)
     if args.cmd == "run":
