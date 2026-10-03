@@ -1507,6 +1507,19 @@ fn cloudOn(app: *const App) bool {
     return cloud_agents.configured(&app.cfg.cloud_agents, &app.env);
 }
 
+/// Whether the home has a transcript directory to walk — two stats,
+/// once, before the first pass.
+fn hasTranscripts(app: *App) bool {
+    const home = (homeFor(app) catch return true) orelse return false;
+    const arena = app.frame.allocator();
+    for ([_][]const []const u8{ &.{ ".claude", "projects" }, &.{ ".codex", "sessions" } }) |sub| {
+        const path = std.fs.path.join(arena, &.{ home, sub[0], sub[1] }) catch return true;
+        Io.Dir.cwd().access(app.io, path, .{}) catch continue;
+        return true;
+    }
+    return false;
+}
+
 /// Every tick: the panes' needs-you answers; the first pass at start
 /// (the prefetch), then each part on its own cadence.
 pub fn tick(app: *App, now: i64) void {
@@ -1514,7 +1527,18 @@ pub fn tick(app: *App, now: i64) void {
     trackNeedsYou(app) catch {};
     if (st.scanning) return;
     if (!st.scanned_once) {
-        if (refreshMode(app) != .manual) refresh(app) catch {};
+        if (refreshMode(app) == .manual) return;
+        // Nothing to read (no transcript directory, no cloud table): the
+        // first pass is a no-op, so the clocks start without a worker.
+        if (cloudOn(app) or hasTranscripts(app)) {
+            refresh(app) catch {};
+        } else {
+            st.scanned_once = true;
+            st.last_scan_ms = now;
+            st.live_ms = now;
+            st.walk_ms = now;
+            st.cloud_ms = now;
+        }
         return;
     }
     const p = phases(app);
@@ -1531,11 +1555,9 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
     const pane_due = needsYouDeadlineMs(app);
     if (st.scanning) return @min(app.now_ms + 80, pane_due orelse app.now_ms + 80);
+    // Before the first pass: the loop's first tick starts it; no wake.
+    if (!st.scanned_once) return pane_due;
     var next: ?i64 = pane_due;
-    if (!st.scanned_once) {
-        if (refreshMode(app) != .manual) next = @min(app.now_ms, next orelse app.now_ms);
-        return next;
-    }
     const p = phases(app);
     const dues = [_]?i64{
         refresh_cadence.dueAt(app.cfg.sessions.refresh, p.live, st.live_ms),
