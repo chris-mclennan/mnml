@@ -813,7 +813,7 @@ fn inlineVarCmd(app: *App) CommandError!void {
 fn copyVarNameCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const name = (try currentVar(app, arena)) orelse return app.diag.fail(arena, "copy_var_name: no {{{{VAR}}}} under the caret", .{});
-    try app.clipboard.set(name, false);
+    try app.clipboard.copy(name);
     app.toast("copied {s}", .{name});
 }
 
@@ -2178,7 +2178,7 @@ fn copyCurlCmd(app: *App) CommandError!void {
     var active = try parseActive(app, arena.allocator());
     defer active.req.deinit(app.gpa);
     const curl = try parse.toCurl(arena.allocator(), &active.req);
-    try app.clipboard.set(curl, false);
+    try app.clipboard.copy(curl);
     app.toast("copied as curl ({d} bytes)", .{curl.len});
 }
 
@@ -2296,7 +2296,7 @@ fn saveCmd(app: *App) CommandError!void {
 fn copyResponseBodyCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     const resp = rp.response() orelse return app.diag.fail(app.frame.allocator(), "no response yet", .{});
-    try app.clipboard.set(resp.body, false);
+    try app.clipboard.copy(resp.body);
     app.toast("copied response body ({d} bytes)", .{resp.body.len});
 }
 
@@ -2304,7 +2304,7 @@ fn copyResponseHeadersCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     const resp = rp.response() orelse return app.diag.fail(app.frame.allocator(), "no response yet", .{});
     const text = try parse.headersToText(app.frame.allocator(), resp.headers);
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied {d} response header(s)", .{resp.headers.len});
 }
 
@@ -2313,7 +2313,7 @@ fn copyResponseCookiesCmd(app: *App) CommandError!void {
     const resp = rp.response() orelse return app.diag.fail(app.frame.allocator(), "no response yet", .{});
     const set = try resp.setCookies(app.frame.allocator());
     const text = try std.mem.join(app.frame.allocator(), "\n", set);
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied {d} Set-Cookie header(s)", .{set.len});
 }
 
@@ -2321,14 +2321,14 @@ fn copyResponseTimelineCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     const resp = rp.response() orelse return app.diag.fail(app.frame.allocator(), "no response yet", .{});
     const text = try std.fmt.allocPrint(app.frame.allocator(), "wait {d}ms · receive {d}ms · total {d}ms", .{ resp.timing.wait_ms, resp.timing.receive_ms, resp.timing.total_ms });
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied timeline: {s}", .{text});
 }
 
 fn copyResponseTestsCmd(app: *App) CommandError!void {
     const rp = try requireRequest(app);
     const text = try std.mem.join(app.frame.allocator(), "\n", rp.tests.items);
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied {d} test line(s)", .{rp.tests.items.len});
 }
 
@@ -2361,13 +2361,13 @@ fn focusedField(app: *App) CommandError!FieldRef {
 
 fn fieldCopyCmd(app: *App) CommandError!void {
     const f = try focusedField(app);
-    try app.clipboard.set(f.buf.items, false);
+    try app.clipboard.copy(f.buf.items);
     app.toast("copied {s} ({d} bytes)", .{ f.name, f.buf.items.len });
 }
 
 fn fieldCutCmd(app: *App) CommandError!void {
     const f = try focusedField(app);
-    try app.clipboard.set(f.buf.items, false);
+    try app.clipboard.copy(f.buf.items);
     f.buf.clearRetainingCapacity();
     f.caret.* = 0;
     const rp = activeRequest(app).?;
@@ -2384,7 +2384,7 @@ fn fieldPasteCmd(app: *App) CommandError!void {
 fn fieldSelectAllCmd(app: *App) CommandError!void {
     const f = try focusedField(app);
     f.caret.* = f.buf.items.len;
-    try app.clipboard.set(f.buf.items, false);
+    try app.clipboard.copy(f.buf.items);
     app.toast("copied {s}", .{f.name});
 }
 

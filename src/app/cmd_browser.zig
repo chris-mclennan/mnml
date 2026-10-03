@@ -116,7 +116,7 @@ fn forwardCmd(app: *App) CommandError!void {
 fn copyUrlCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
     if (b.url.len == 0) return app.diag.fail(app.frame.allocator(), "browser.copy_url: pane has no URL yet", .{});
-    try app.clipboard.set(b.url, false);
+    try app.clipboard.copy(b.url);
     app.toast("browser: {s} → clipboard", .{history.shortUrl(b.url)});
 }
 
@@ -124,7 +124,7 @@ fn devtoolsCmd(app: *App) CommandError!void {
     const b = try requireBrowser(app);
     const port = b.port orelse return app.diag.fail(app.frame.allocator(), "browser.devtools: no debugger port — open via :browser.open", .{});
     const hint = try std.fmt.allocPrint(app.frame.allocator(), "http://127.0.0.1:{d}", .{port});
-    try app.clipboard.set(hint, false);
+    try app.clipboard.copy(hint);
     app.toast("browser.devtools: open chrome://inspect and add {s} (copied)", .{hint});
 }
 

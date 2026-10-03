@@ -1299,7 +1299,7 @@ fn copySelected(app: *App, p: *GrepPane) Allocator.Error!void {
     const hit = p.selectedHit() orelse return;
     const h = p.hits.items[hit];
     const s = try std.fmt.allocPrint(app.frame.allocator(), "{s}:{d}", .{ h.rel, h.line });
-    try app.clipboard.set(s, false);
+    try app.clipboard.copy(s);
     app.toast("copied {s}", .{s});
 }
 

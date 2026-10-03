@@ -1164,7 +1164,7 @@ test "small commands: recent jumps, scratch from the register, fold navigation, 
     try t.expectEqual(@as(usize, 1), app.activeEditor().?.buf.editor.rowCol().row);
     try t.expectEqual(@as(usize, 2), app.activeEditor().?.buf.editor.rowCol().col);
     // The registers picker inserts what it holds.
-    try app.clipboard.set("pasted", false);
+    try app.clipboard.copy("pasted");
     try command.run(&app, .{ .static = .@"scratch.from_clipboard" });
     try t.expectEqualStrings("pasted", app.activeEditor().?.buf.editor.bytes()[0..6]);
     try command.run(&app, .{ .static = .@"picker.clipboard" });

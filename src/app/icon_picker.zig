@@ -151,7 +151,7 @@ pub fn accept(app: *App, i: usize) Allocator.Error!void {
     app.focus = if (app.active) |a| .{ .pane = a } else .tree;
     var buf: [4]u8 = undefined;
     const glyph = glyphStr(&buf, cp);
-    try app.clipboard.set(glyph, false);
+    try app.clipboard.copy(glyph);
     app.toast("icon copied \u{2014} paste: {s} or \\u{{{X:0>4}}}", .{ glyph, cp });
 }
 
@@ -163,7 +163,7 @@ pub fn chord(app: *App, k: app_mod.Key) Allocator.Error!bool {
     if (p.state.cursor >= p.filtered.items.len) return true;
     const cp = codepointOf(p.labels[p.filtered.items[p.state.cursor]]) orelse return true;
     const esc = try std.fmt.allocPrint(app.frame.allocator(), "\\u{{{X:0>4}}}", .{cp});
-    try app.clipboard.set(esc, false);
+    try app.clipboard.copy(esc);
     app.toast("copied {s}", .{esc});
     return true;
 }

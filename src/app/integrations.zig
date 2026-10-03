@@ -3194,14 +3194,14 @@ fn copyId(app: *App) CommandError!void {
     const st = &app.integrations;
     if (st.menu_row) |r| if (r.tab == .dev and r.idx < st.dev.len) {
         st.menu_row = null;
-        try app.clipboard.set(st.dev[r.idx].id(), false);
+        try app.clipboard.copy(st.dev[r.idx].id());
         app.toast("copied {s}", .{st.dev[r.idx].id()});
         return;
     };
     if (activeDetail(app)) |ap| {
         const key = ap.p.target.key();
         const id: []const u8 = if (ap.p.target == .dev) (if (st.findDev(key)) |d| st.dev[d].id() else std.fs.path.basename(key)) else key;
-        try app.clipboard.set(id, false);
+        try app.clipboard.copy(id);
         app.toast("copied {s}", .{id});
         return;
     }
@@ -3212,7 +3212,7 @@ fn copyId(app: *App) CommandError!void {
 fn copyIdAt(app: *App, i: usize) CommandError!void {
     const st = &app.integrations;
     if (i >= st.list.len) return;
-    try app.clipboard.set(st.list[i].id(), false);
+    try app.clipboard.copy(st.list[i].id());
     app.toast("copied {s}", .{st.list[i].id()});
 }
 

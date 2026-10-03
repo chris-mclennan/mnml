@@ -229,6 +229,17 @@ pub const Clipboard = struct {
         if (reg != null and isOsRegister(reg.?)) self.pushToOs(s);
     }
 
+    /// A chrome copy — a toast's Copy, a menu's "Copy path" / "Copy
+    /// link", the HTTP pane's "Copy as curl": what a person means by
+    /// "copy" outside the editor is the system clipboard. The text goes
+    /// to the OS sink AND the unnamed register, so it pastes in another
+    /// app and in mnml alike. The editor's own yanks keep `setYank`,
+    /// whose destination is the register the person named.
+    pub fn copy(self: *Clipboard, s: []const u8) Allocator.Error!void {
+        self.pending_register = '+';
+        try self.set(s, false);
+    }
+
     fn pushToOs(self: *Clipboard, s: []const u8) void {
         const io = self.io orelse return;
         clipboard_os.write(self.os, io, s) catch {};
@@ -422,4 +433,26 @@ test "a tool sink answers a \"+ read; the OS text is linewise when it ends in a 
     c.setPendingRegister('*');
     try c.setYank("pushed", false);
     try std.testing.expectEqualStrings("pushed", c.unnamed.?.text);
+}
+
+test "a chrome copy reaches the OS sink and the unnamed register, whatever register was pending" {
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    var c = Clipboard.init(std.testing.allocator);
+    defer c.deinit();
+    c.attach(std.testing.io, &aw.writer, null, .auto);
+    // A stray pending register (a `"a` typed before a click) does not
+    // divert a chrome copy into a named register.
+    c.setPendingRegister('a');
+    try c.copy("ENG-123");
+    try std.testing.expectEqualStrings("\x1b]52;c;RU5HLTEyMw==\x07", aw.written());
+    try std.testing.expectEqualStrings("ENG-123", c.unnamed.?.text);
+    try std.testing.expect(c.named_entry('a') == null);
+    try std.testing.expect(c.pending_register == null);
+    // Without a sink the register still takes it.
+    c.selectMode(.internal);
+    aw.clearRetainingCapacity();
+    try c.copy("second");
+    try std.testing.expectEqualStrings("", aw.written());
+    try std.testing.expectEqualStrings("second", c.unnamed.?.text);
 }

@@ -1846,7 +1846,7 @@ fn detailFocused(app: *App) CommandError!void {
 
 fn copyIdFocused(app: *App) CommandError!void {
     const i = try integrations.marketRow(app);
-    try app.clipboard.set(app.marketplace.entries[i].id, false);
+    try app.clipboard.copy(app.marketplace.entries[i].id);
     app.toast("copied {s}", .{app.marketplace.entries[i].id});
 }
 

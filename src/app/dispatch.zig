@@ -1467,11 +1467,11 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .repo_color => |a| try git_palette.setRepoColor(app, a.idx, a.name),
         // right-click: the string-carrying rows, on the copy taken above.
         .copy_text => {
-            try app.clipboard.set(text.?, false);
+            try app.clipboard.copy(text.?);
             app.toast("copied {s}", .{text.?});
         },
         .copy_link => {
-            try app.clipboard.set(text.?, false);
+            try app.clipboard.copy(text.?);
             app.toast("link copied", .{});
         },
         .open_url => git_app.openExternal(app, text.?),

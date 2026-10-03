@@ -593,7 +593,7 @@ fn copyTrack(app: *App) CommandError!void {
     const t = app.now_playing.current orelse return app.toast("nothing playing", .{});
     if (!t.hasTrack()) return app.toast("nothing playing", .{});
     const label = try rawLabel(app.frame.allocator(), &t);
-    try app.clipboard.set(label, false);
+    try app.clipboard.copy(label);
     app.toast("copied: {s}", .{label});
 }
 

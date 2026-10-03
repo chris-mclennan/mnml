@@ -427,7 +427,7 @@ fn copyPathCmd(app: *App) CommandError!void {
         .file => |g| st.groups.items[g].rel,
         .hit => |h| try std.fmt.allocPrint(arena, "{s}:{d}", .{ st.hits.items[h].rel, st.hits.items[h].line }),
     };
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied {s}", .{text});
 }
 
@@ -435,7 +435,7 @@ fn copyLineCmd(app: *App) CommandError!void {
     const arena = app.frame.allocator();
     const h = app.search_section.selectedHit() orelse return app.diag.fail(arena, "search: the cursor is on a file row", .{});
     const text = std.mem.trim(u8, h.text, " \t");
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied the line", .{});
 }
 

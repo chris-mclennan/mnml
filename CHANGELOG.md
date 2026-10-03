@@ -203,6 +203,9 @@ the release ships one file), and one line per change a user can see.
 
 ### Fixes
 
+- A toast's Copy, a menu's "Copy path" / "Copy link" and every other
+  copy outside the editor reach the system clipboard, so the text pastes
+  in another app; before, it landed only in mnml's own register.
 - `mnml --demo` lists its three earlier sessions when the workspace path
   has a space, an underscore or a Windows drive letter: the demo names
   Claude Code's project folder by the same rule the app reads it by.

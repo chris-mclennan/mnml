@@ -1739,7 +1739,7 @@ fn copySelectedCurl(app: *App, p: *BrowserPane) Allocator.Error!void {
     const n = p.selectedNet() orelse return;
     var req = try n.toRequest(app.frame.allocator());
     const curl = try parse.toCurl(app.frame.allocator(), &req);
-    try app.clipboard.set(curl, false);
+    try app.clipboard.copy(curl);
     app.toast("copied as curl: {s} {s}", .{ n.method, history.shortUrl(n.url) });
 }
 

@@ -736,7 +736,7 @@ fn copyPathCmd(app: *App) CommandError!void {
     const fp = try require(app);
     const e = fp.pane.selected() orelse return app.diag.fail(app.frame.allocator(), "nothing selected", .{});
     const rel = app.relPath(e.path);
-    try app.clipboard.set(rel, false);
+    try app.clipboard.copy(rel);
     app.toast("copied {s}", .{rel});
 }
 

@@ -685,7 +685,7 @@ pub fn activate(app: *App, row: Row) CommandError!void {
         .cookies => {
             const c = st.cookies[row.idx];
             const text = try std.fmt.allocPrint(arena, "{s}={s}", .{ c.name, c.value });
-            try app.clipboard.set(text, false);
+            try app.clipboard.copy(text);
             app.toast("cookies: copied {s}={s}", .{ c.name, c.value });
         },
         .recent => {
@@ -898,7 +898,7 @@ fn copyPathCmd(app: *App) CommandError!void {
             .captured => st.captured[row.idx].url,
         },
     };
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied {s}", .{text});
 }
 

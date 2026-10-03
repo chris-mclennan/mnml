@@ -501,7 +501,7 @@ fn toggleDetail(p: *RequestsPane) void {
 /// thing you want out of this view and into a terminal.
 pub fn copyPath(app: *App, p: *RequestsPane) void {
     const r = p.selectedRow() orelse return;
-    app.clipboard.set(r.path, false) catch {};
+    app.clipboard.copy(r.path) catch {};
     app.toast("copied {s}", .{r.path});
 }
 

@@ -1685,7 +1685,7 @@ pub fn click(app: *App, id: PaneId, rp: *RequestPane, hit_id: u32, m: Mouse) All
         },
         view.hit_copy => {
             if (rp.response()) |r| {
-                try app.clipboard.set(r.body, false);
+                try app.clipboard.copy(r.body);
                 app.toast("response body copied", .{});
             } else app.toast("no response yet", .{});
             return;

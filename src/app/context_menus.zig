@@ -811,7 +811,7 @@ fn hideRow(app: *App) CommandError!void {
 
 fn copyRowId(app: *App) CommandError!void {
     const cmd = try curationTarget(app);
-    try app.clipboard.set(command.name(cmd), false);
+    try app.clipboard.copy(command.name(cmd));
     app.toast("copied {s}", .{command.name(cmd)});
 }
 
@@ -886,7 +886,7 @@ fn copyStress(app: *App) CommandError!void {
         s.max_us / 1000, (s.max_us % 1000) / 100,
         s.count,
     });
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied the stress summary", .{});
 }
 
@@ -903,7 +903,7 @@ fn toastCopyClicked(app: *App) CommandError!void {
     app.toast_ctx = null;
     if (at >= app.toasts.items.len) return;
     const text = try app.frame.allocator().dupe(u8, app.toasts.items[at].text);
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied", .{});
 }
 
@@ -1030,7 +1030,7 @@ fn copyPath(app: *App) CommandError!void {
         const e = try app.requireEditor();
         break :blk app.relPath(e.buf.doc.path orelse return app.diag.fail(arena, "no file name", .{}));
     };
-    try app.clipboard.set(rel, false);
+    try app.clipboard.copy(rel);
     app.toast("copied {s}", .{rel});
 }
 

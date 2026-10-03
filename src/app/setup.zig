@@ -91,7 +91,7 @@ fn installToPath(app: *App) CommandError!void {
     if (builtin.os.tag == .windows) {
         const dir = std.fs.path.dirname(exe) orelse exe;
         const line = try std.fmt.allocPrint(arena, "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';{s}', 'User')", .{dir});
-        try app.clipboard.set(line, false);
+        try app.clipboard.copy(line);
         app.toast("run this in PowerShell to put mnml-zig on PATH (copied to the clipboard): {s}", .{line});
         return;
     }
@@ -110,7 +110,7 @@ fn installToPath(app: *App) CommandError!void {
         return;
     }
     const cmd = try std.fmt.allocPrint(arena, "sudo ln -sf {s} /usr/local/bin/{s}", .{ exe_real, link_name });
-    try app.clipboard.set(cmd, false);
+    try app.clipboard.copy(cmd);
     app.toast("no writable bin directory — run this (copied to the clipboard): {s}", .{cmd});
 }
 

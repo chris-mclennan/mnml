@@ -697,7 +697,7 @@ pub fn onFanResult(app: *App, r: *client.JobResult) Allocator.Error!void {
     fan.done += 1;
     if (fan.done < fan.total) return;
     const summary = try std.mem.join(app.frame.allocator(), " · ", fan.lines.items);
-    try app.clipboard.set(fan.table.items, false);
+    try app.clipboard.copy(fan.table.items);
     app.toast("fan_envs: {d}/{d} OK in {d}ms · {s} · (full table → clipboard)", .{ fan.ok, fan.total, app.now_ms - fan.started_ms, summary });
     fan.deinit(gpa);
     app.http.fan = null;
@@ -745,7 +745,7 @@ pub fn onJobResult(app: *App, r: *client.JobResult) Allocator.Error!void {
             jobs.progress(app, .http, http.bench_job_key, try std.fmt.allocPrint(app.frame.allocator(), "{d}/{d}", .{ b.samples.items.len, b.total }));
             if (b.samples.items.len < b.total) return;
             const report = try bench_mod.report(app.frame.allocator(), b.url, b.samples.items, b.errors.items, @intCast(@max(app.now_ms - b.started_ms, 0)));
-            try app.clipboard.set(report, false);
+            try app.clipboard.copy(report);
             const stats = bench_mod.stats(b.samples.items);
             app.toast("bench: {d}× · p50 {d}ms · p95 {d}ms · max {d}ms · {d} ok · (full trace → clipboard)", .{ b.total, stats.p50, stats.p95, stats.max, stats.ok });
             const words = try std.fmt.allocPrint(app.frame.allocator(), "{d} of {d} ok · p50 {d}ms", .{ stats.ok, b.total, stats.p50 });
@@ -960,7 +960,7 @@ fn copyAiPromptCmd(app: *App) CommandError!void {
     const curl = try parse.toCurl(arena, &rp.request);
     const status_line: []const u8 = if (rp.response()) |r| try std.fmt.allocPrint(arena, "{d} {s}\n\n{s}", .{ r.status, r.status_text, r.body[0..@min(r.body.len, 4000)] }) else if (rp.state == .failed) rp.state.failed else "(not sent yet)";
     const text = try std.fmt.allocPrint(arena, "Debug this HTTP request. It is failing and I need to know why.\n\n```\n{s}\n```\n\nResponse:\n\n```\n{s}\n```\n", .{ curl, status_line });
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied an AI debug prompt ({d} bytes)", .{text.len});
 }
 
@@ -1014,7 +1014,7 @@ fn extractBearerCmd(app: *App) CommandError!void {
     const text = app.clipboard.text();
     const token = jwt.extractBearer(text) orelse return app.diag.fail(app.frame.allocator(), "auth.extract_bearer: no bearer token in the clipboard", .{});
     const copy = try app.frame.allocator().dupe(u8, token);
-    try app.clipboard.set(copy, false);
+    try app.clipboard.copy(copy);
     app.toast("auth: extracted bearer token ({d} chars) → clipboard", .{copy.len});
 }
 
@@ -1211,7 +1211,7 @@ fn cookiesNormalizeCmd(app: *App) CommandError!void {
     const out = try cookies.normalize(app.gpa, raw);
     defer app.gpa.free(out);
     if (out.len == 0) return app.diag.fail(app.frame.allocator(), "cookies.normalize: no name=value pairs found", .{});
-    try app.clipboard.set(out, false);
+    try app.clipboard.copy(out);
     app.toast("cookies: {s}", .{if (out.len > 120) out[0..118] else out});
 }
 
@@ -1297,7 +1297,7 @@ fn copyAs(app: *App, idx: usize) Allocator.Error!void {
             break :blk out.items;
         },
     };
-    try app.clipboard.set(text, false);
+    try app.clipboard.copy(text);
     app.toast("copied as {s} ({d} bytes)", .{ code_targets[@min(idx, code_targets.len - 1)], text.len });
 }
 
@@ -1435,7 +1435,7 @@ pub fn acceptPicker(app: *App, kind: app_mod.PickerKind, i: usize, label: []cons
             const j = try jar(app);
             const value = j.valueOf(host, name) orelse return;
             const text = try std.fmt.allocPrint(app.frame.allocator(), "{s}={s}", .{ name, value });
-            try app.clipboard.set(text, false);
+            try app.clipboard.copy(text);
             app.toast("cookies: copied {s}", .{text});
         },
         .cookies_delete => {
