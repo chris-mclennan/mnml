@@ -25,6 +25,7 @@ const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
 const api_server = @import("../api/server.zig");
+const ide_server = @import("../api/ide_server.zig");
 const marketplace = @import("../app/marketplace.zig");
 const font_scan = @import("../app/font_scan.zig");
 const ipc_command = @import("../ipc/command.zig");
@@ -202,6 +203,10 @@ pub const AppEvent = union(enum) {
     /// A line from an API socket connection, or its end
     /// (`api/server.zig`). Owned; `app/api.zig` `handle` destroys it.
     api: *api_server.Incoming,
+    /// A message on a session pane's agent-face WebSocket, or a
+    /// connection opening or ending (`api/ide_server.zig`). Owned;
+    /// `app/ide.zig` `handle` destroys it.
+    ide: *ide_server.Incoming,
     /// A mounted integration spoke (or its stream ended). Owned;
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
     mount: *bridge_host.Event,
@@ -285,6 +290,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .fonts => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
         .api => |p| p.destroy(gpa),
+        .ide => |p| p.destroy(gpa),
         .transfer => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }
