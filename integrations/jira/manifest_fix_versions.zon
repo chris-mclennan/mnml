@@ -11,7 +11,7 @@
     .version = "0.2.1",
     .binary = "mnml-jira",
     .category = "tracker",
-    .chip = .{ .glyph = "\u{f0303}", .fallback = "JV", .color = "green", .tooltip = "Jira Fix Versions", .in_palette_bar = false }, // nf-md-jira
+    .chip = .{ .glyph = "\u{f1c18}", .fallback = "JV", .color = "green", .tooltip = "Jira Fix Versions", .in_palette_bar = false }, // MnmlSymbols: Atlassian release
     .commands = .{
         .{ .id = "jira_fix_versions.open", .title = "Jira Fix Versions: open", .args = .{ "--only", "fix-versions" }, .keys = .{"space i j v"} },
         .{ .id = "jira_fix_versions.refresh", .title = "Jira Fix Versions: republish the statusline count", .ex = "term mnml-jira --values --only fix-versions --workspace {{workspace}}" },

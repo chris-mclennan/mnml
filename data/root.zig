@@ -30,6 +30,19 @@ pub const claude_spark_svg = @embedFile("glyphs/claude-spark.svg");
 pub const codex_svg = @embedFile("glyphs/codex.svg");
 pub const ghostty_svg = @embedFile("glyphs/ghostty.svg");
 
+/// The four Atlassian marks the Bitbucket and Jira chips wear — the
+/// icons Bitbucket's and Jira's own sidebars draw for pull requests,
+/// pipelines, boards and releases. Atlassian's design-system SVGs,
+/// unmodified (16-unit grid, one filled path each, holes by
+/// `evenodd`): `pull-request`, `board` and `release` from
+/// `@atlaskit/icon` 38.0.2's `svgs/core/`, `pipeline` from
+/// `@atlaskit/icon-lab` 7.11.0's (the core set has no pipelines mark).
+/// Apache-2.0, Atlassian's copyright; `glyphs/NOTICE` carries both.
+pub const atlassian_pull_request_svg = @embedFile("glyphs/atlassian-pull-request.svg");
+pub const atlassian_pipeline_svg = @embedFile("glyphs/atlassian-pipeline.svg");
+pub const atlassian_board_svg = @embedFile("glyphs/atlassian-board.svg");
+pub const atlassian_release_svg = @embedFile("glyphs/atlassian-release.svg");
+
 /// The shell integration a shell pane's shell loads
 /// (`src/app/shell_integration.zig`): the files mnml writes into its
 /// data root, per shell, by the name each is installed under.

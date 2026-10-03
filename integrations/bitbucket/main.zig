@@ -1765,6 +1765,11 @@ test "both manifests name the reference's ids, chips and commands, and validate"
     try t.expectEqualStrings("bitbucket_pipelines.open", spec_pipelines.commands[0].id);
     try t.expectEqualStrings("BP", spec.chip.?.fallback);
     try t.expectEqualStrings("BL", spec_pipelines.chip.?.fallback);
+    // Atlassian's own pull-request and pipeline marks, baked into
+    // MnmlSymbols at these two codepoints (`src/glyph/builder.zig`'s
+    // `atl_pull_request` / `atl_pipeline`).
+    try t.expectEqualStrings("\u{f1c15}", spec.chip.?.glyph);
+    try t.expectEqualStrings("\u{f1c16}", spec_pipelines.chip.?.glyph);
     // Three chips, three questions: how many of mine are open, how
     // many threads on them are waiting on a human, and how many are
     // waiting on ME. The ids the binary publishes on are the
