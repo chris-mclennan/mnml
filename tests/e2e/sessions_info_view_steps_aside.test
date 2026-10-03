@@ -1,0 +1,35 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# The info view at the foot of the left column steps aside when SESSIONS
+# is showing and its cards would not all fit the rows above it: the list
+# takes the rows. Three cards fit at 120x40 and the box shows (its top
+# rule spans the column); with eight it is gone. The stand-in is the demo
+# shim's shape with a number in its title.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600
+shell chmod +x bin/claude
+write a.txt "alpha alpha"
+open a.txt
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command view.activity_sessions
+wait 300
+expect screen contains "SESSIONS (3)"
+expect screen contains "│──────────────────────────│"
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command view.activity_sessions
+wait 300
+expect screen contains "SESSIONS (8)"
+expect screen lacks "│──────────────────────────│"

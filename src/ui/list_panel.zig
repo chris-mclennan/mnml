@@ -57,6 +57,23 @@ pub const kebab_w: u16 = 3;
 
 pub const Window = struct { first: usize, visible: usize, needs_bar: bool };
 
+/// The rows a panel spends above its list: the header, the filter
+/// pill, the prelude, and the ` + New … ` chip with air either side
+/// (or the filter's gap). `Panel.draw` lays them out in this order.
+pub const Head = struct { show_filter: bool = true, prelude_rows: u16 = 0, has_new: bool = false, filter_gap: bool = false };
+
+pub fn headRows(h: Head) u16 {
+    return 1 + @as(u16, @intFromBool(h.show_filter)) + h.prelude_rows +
+        (if (h.has_new) @as(u16, 3) else @intFromBool(h.filter_gap));
+}
+
+/// Items of `row_h` rows, `row_gap` apart, that fit in `list_h` rows
+/// — the last needs no trailing gap.
+pub fn perPage(list_h: u16, row_h: u16, row_gap: u16) usize {
+    const stride: u16 = @max(1, row_h) + row_gap;
+    return (list_h + row_gap) / stride;
+}
+
 /// Clamps `scroll` so `cursor` is inside `visible_rows` of `total`, and
 /// reports the window. Follows the cursor both ways; never leaves blank
 /// rows below a full list.
@@ -399,7 +416,7 @@ pub fn ListPanel(comptime Row: type) type {
             // item, so `h + gap` over the stride.
             const stride: u16 = @max(1, p.row_h) + p.row_gap;
             const list_h: u16 = rest.h -| p.reserve_bottom;
-            const per_page: usize = (list_h + p.row_gap) / stride;
+            const per_page: usize = perPage(list_h, p.row_h, p.row_gap);
             const win = scrollWindow(&st.scroll, st.cursor, p.rows.len, per_page);
             st.visible = per_page;
             var list = rest;

@@ -101,6 +101,10 @@ the release ships one file), and one line per change a user can see.
   it opens (`docs/SDK.md`, *Links*). The Jira integration declares the
   issue key and writes your site in at `--install` (reinstall it to pick
   this up); with no integration declaring one, only URLs link.
+- The help panel at the foot of the left column steps aside while
+  SESSIONS has more cards than fit above it, so the list gets those rows
+  instead of a scrollbar; it comes back when they fit, and its pin keeps
+  it in place.
 
 ### Tabs
 
