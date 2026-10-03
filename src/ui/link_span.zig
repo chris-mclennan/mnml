@@ -95,6 +95,18 @@ pub fn mark(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8) void {
     markSpans(ui, x, y, cells, text, finder.spans(text));
 }
 
+/// `mark` for one row of text a painter wrapped: when the text goes on
+/// in the next row (`continues`), a link that reaches this row's end
+/// may be cut, and is left plain.
+pub fn markWrapped(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, continues: bool) void {
+    const finder = ui.links orelse return;
+    if (cells == 0 or text.len == 0) return;
+    const spans = finder.spans(text);
+    var n = spans.len;
+    if (continues and n > 0 and std.mem.trimEnd(u8, text, " ").len <= spans[n - 1].end) n -= 1;
+    markSpans(ui, x, y, cells, text, spans[0..n]);
+}
+
 /// `mark` with the spans in hand (sorted, as a finder returns them).
 pub fn markSpans(ui: Ui, x: u16, y: u16, cells: u16, text: []const u8, spans: []const Span) void {
     eachSpan(ui, x, y, cells, text, spans, true);
