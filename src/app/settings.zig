@@ -377,6 +377,11 @@ pub const rows = [_]RowSpec{
     .{ .path = "session.restore_terminals", .label = "Restore terminals", .section = .integrations, .scope = .home },
     .{ .path = "integrations.arrange", .label = "New pane sizing", .section = .integrations, .scope = .home },
     .{ .path = "api.enabled", .label = "API", .section = .integrations, .scope = .home },
+    // How SESSIONS, the sessions table and the cloud runs re-read on
+    // their own (`app/refresh_cadence.zig`); the intervals themselves
+    // are config-file numbers (`sessions.refresh`, …). Last in the
+    // section, so the rows above keep their places.
+    .{ .path = "ui.dashboard_refresh", .label = "Dashboard refresh", .section = .integrations, .scope = .home },
 };
 
 pub const reset_label = "Reset all to defaults";
@@ -2066,6 +2071,57 @@ test "the auto-equalize row sits in UI, offers off / on with off the default, an
     try command.run(&app, .{ .static = .@"view.settings" });
     try adjust(&app, idx, -1);
     try t.expect(!app.cfg.ui.auto_equalize_splits);
+}
+
+test "the dashboard refresh row closes Integrations, offers auto / fast / slow / manual with auto the default, and round-trips ui.dashboard_refresh through the home config" {
+    const idx = comptime blk: {
+        for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "ui.dashboard_refresh")) break :blk i;
+        @compileError("no settings row for ui.dashboard_refresh");
+    };
+    try t.expectEqual(Section.integrations, rows[idx].section);
+    try t.expectEqual(Scope.home, rows[idx].scope);
+    try t.expectEqualStrings("Dashboard refresh", rows[idx].label);
+    // The last Integrations row.
+    for (rows[idx + 1 ..]) |r| try t.expect(r.section != .integrations);
+    try t.expectEqual(@as(usize, 4), options("ui.dashboard_refresh").len);
+    try t.expectEqual(@as(usize, 0), comptime defaultIndex("ui.dashboard_refresh"));
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+
+    try command.run(&app, .{ .static = .@"view.settings" });
+    try t.expectEqual(config.Config.DashboardRefresh.auto, app.cfg.ui.dashboard_refresh);
+    for (0..3) |_| try adjust(&app, idx, 1);
+    try t.expectEqual(config.Config.DashboardRefresh.manual, app.cfg.ui.dashboard_refresh);
+    try app.handle(.{ .key = Key.named(.enter) });
+    try t.expectEqual(config.Config.DashboardRefresh.manual, app.cfg.ui.dashboard_refresh);
+    // The home file carries it.
+    var dir = try Io.Dir.cwd().openDir(t.io, home, .{ .iterate = true });
+    defer dir.close(t.io);
+    var walker = try dir.walk(t.allocator);
+    defer walker.deinit();
+    var found = false;
+    while (try walker.next(t.io)) |e| if (e.kind == .file and std.mem.endsWith(u8, e.basename, ".zon")) {
+        const text = try e.dir.readFileAlloc(t.io, e.basename, t.allocator, .unlimited);
+        defer t.allocator.free(text);
+        if (std.mem.indexOf(u8, text, ".dashboard_refresh = .manual") != null) found = true;
+    };
+    try t.expect(found);
+    try command.run(&app, .{ .static = .@"view.settings" });
+    for (0..3) |_| try adjust(&app, idx, -1);
+    try t.expectEqual(config.Config.DashboardRefresh.auto, app.cfg.ui.dashboard_refresh);
 }
 
 test "view.settings_search opens the box with the filter holding the keys, and `fold` finds the row" {

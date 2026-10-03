@@ -105,6 +105,17 @@ the release ships one file), and one line per change a user can see.
   SESSIONS has more cards than fit above it, so the list gets those rows
   instead of a scrollbar; it comes back when they fit, and its pin keeps
   it in place.
+- SESSIONS has its list ready the first time you open it: the first read
+  starts with mnml, in the background. After that it keeps itself
+  current at a pace that follows what you can see — quickly while the
+  section or the sessions table is on screen and a session is working,
+  more slowly when nothing is, and only now and then while neither is
+  showing. A read where no transcript changed looks at file sizes and
+  opens nothing, and the cloud runs are re-read on a slower pace of
+  their own. Settings → Integrations → *Dashboard refresh* chooses
+  auto, fast, slow or manual (only the ⟳ chip reads); the intervals are
+  `sessions.refresh`, `agents.refresh` and `cloud_agents.refresh` in
+  the config file.
 
 ### Links
 
