@@ -32,6 +32,7 @@ const command = @import("../core/command.zig");
 const Effect = command.Effect;
 const ipc = @import("../ipc/root.zig");
 const Confirm = @import("../ui/confirm.zig");
+const api_app = @import("api.zig");
 
 /// The identity the audit records for the file channel.
 pub const client = "file-channel";
@@ -44,14 +45,62 @@ const toast_prefix = "ipc-gate:";
 pub const Verb = enum {
     run_command,
     open_pty,
+    /// The API socket's `commands.run` (`app/api.zig`).
+    api_run,
+    /// The API socket's other methods, audited but never held.
+    api_open,
+    api_read,
 
     pub fn word(v: Verb) []const u8 {
         return switch (v) {
             .run_command => "run-command",
             .open_pty => "open-pty",
+            .api_run => "commands.run",
+            .api_open => "editor.open",
+            .api_read => "read",
+        };
+    }
+
+    fn runs(v: Verb) bool {
+        return v == .run_command or v == .api_run;
+    }
+};
+
+/// Who asks. The file channel is one caller; over the API socket a
+/// process in a pane is that pane (its `MNML_API_TOKEN`), and anything
+/// without a token is `unknown`, which may only read.
+pub const Caller = union(enum) {
+    file_channel,
+    pane: u32,
+    unknown,
+
+    /// What the audit and `.api.clients` call it: `file-channel`,
+    /// `pane:<id>`, `unknown`.
+    pub fn name(c: Caller, buf: []u8) []const u8 {
+        return switch (c) {
+            .file_channel => client,
+            .pane => |id| std.fmt.bufPrint(buf, "pane:{d}", .{id}) catch "pane",
+            .unknown => "unknown",
+        };
+    }
+
+    pub fn eql(a: Caller, b: Caller) bool {
+        return switch (a) {
+            .pane => |x| b == .pane and b.pane == x,
+            else => std.meta.activeTag(a) == std.meta.activeTag(b),
         };
     }
 };
+
+/// Where an API request's answer goes once the person has decided.
+pub const ApiReply = struct {
+    conn: u32,
+    /// The request's `id`, as JSON. Owned.
+    id_json: []u8,
+};
+
+/// What `askApi` decided.
+pub const Outcome = enum { run, held, refused };
 
 pub const Decision = enum {
     /// A `view` command: nothing to ask.
@@ -89,8 +138,12 @@ pub const Request = struct {
     argv: [][]u8 = &.{},
     cwd: ?[]u8 = null,
     raised_ms: i64,
+    caller: Caller = .file_channel,
+    /// An API request: the connection waiting on the answer.
+    reply: ?ApiReply = null,
 
     fn deinit(r: Request, gpa: Allocator) void {
+        if (r.reply) |a| gpa.free(a.id_json);
         gpa.free(r.target);
         for (r.argv) |a| gpa.free(a);
         gpa.free(r.argv);
@@ -129,29 +182,68 @@ pub fn check(app: *App, cmd: *const ipc.Command) Allocator.Error!bool {
         .run_command => |id| {
             // An unknown id is told so by the dispatcher.
             const ref = command.resolve(app, id) orelse return true;
-            return decide(app, .run_command, command.effect(ref), id, &.{}, null);
+            return try decide(app, .file_channel, .run_command, command.effect(ref), id, &.{}, null, null) == .run;
         },
         .open_pty => |p| {
             if (p.command.len == 0) return true;
             const target = try std.mem.join(app.frame.allocator(), " ", p.command);
-            return decide(app, .open_pty, .exec, target, p.command, p.cwd);
+            return try decide(app, .file_channel, .open_pty, .exec, target, p.command, p.cwd, null) == .run;
         },
         else => return true,
     }
 }
 
-fn decide(app: *App, verb: Verb, effect: Effect, target: []const u8, argv: []const []const u8, cwd: ?[]const u8) Allocator.Error!bool {
+/// The API socket's `commands.run` of `target` (class `effect`) from
+/// `caller`: run now, held for the person (answered on `conn` later), or
+/// refused — an `unknown` caller only reads.
+pub fn askApi(app: *App, caller: Caller, conn: u32, id_json: []const u8, target: []const u8, effect: Effect) Allocator.Error!Outcome {
+    if (caller == .unknown) {
+        try logAs(app, caller, .api_run, effect, target, .denied, "policy");
+        return .refused;
+    }
+    const owned = try app.gpa.dupe(u8, id_json);
+    errdefer app.gpa.free(owned);
+    const out = try decide(app, caller, .api_run, effect, target, &.{}, null, .{ .conn = conn, .id_json = owned });
+    if (out != .held) app.gpa.free(owned);
+    return out;
+}
+
+/// An API method that is never held — a read, or `editor.open` — on the
+/// audit trail all the same.
+pub fn logApi(app: *App, caller: Caller, verb: Verb, effect: Effect, target: []const u8, refused: bool) Allocator.Error!void {
+    try logAs(app, caller, verb, effect, target, if (refused) .denied else .free, if (refused) "policy" else null);
+}
+
+/// The grants `caller` holds for this run: the file channel's until
+/// mnml quits, a pane's while the pane lives (`app/api.zig`).
+fn grants(app: *App, caller: Caller) Allocator.Error!?*std.EnumSet(Effect) {
+    return switch (caller) {
+        .file_channel => &app.ipc_gate.granted,
+        .pane => |id| blk: {
+            const gop = try app.api.grants.getOrPut(app.gpa, id);
+            if (!gop.found_existing) gop.value_ptr.* = .initEmpty();
+            break :blk gop.value_ptr;
+        },
+        .unknown => null,
+    };
+}
+
+fn decide(app: *App, caller: Caller, verb: Verb, effect: Effect, target: []const u8, argv: []const []const u8, cwd: ?[]const u8, reply: ?ApiReply) Allocator.Error!Outcome {
     if (effect == .view) {
-        try log(app, verb, effect, target, .free, null);
-        return true;
+        try logAs(app, caller, verb, effect, target, .free, null);
+        return .run;
     }
-    if (allowlisted(app, verb, effect, target)) {
-        try log(app, verb, effect, target, .allowlisted, "config");
-        return true;
+    if (allowlisted(app, caller, verb, effect, target)) {
+        try logAs(app, caller, verb, effect, target, .allowlisted, "config");
+        return .run;
     }
-    if (app.ipc_gate.granted.contains(effect)) {
-        try log(app, verb, effect, target, .granted_session, "session");
-        return true;
+    const held = try grants(app, caller) orelse {
+        try logAs(app, caller, verb, effect, target, .denied, "policy");
+        return .refused;
+    };
+    if (held.contains(effect)) {
+        try logAs(app, caller, verb, effect, target, .granted_session, "session");
+        return .run;
     }
     const gpa = app.gpa;
     var req: Request = .{
@@ -160,6 +252,7 @@ fn decide(app: *App, verb: Verb, effect: Effect, target: []const u8, argv: []con
         .effect = effect,
         .target = try gpa.dupe(u8, target),
         .raised_ms = app.now_ms,
+        .caller = caller,
     };
     errdefer req.deinit(gpa);
     if (argv.len > 0) {
@@ -168,20 +261,25 @@ fn decide(app: *App, verb: Verb, effect: Effect, target: []const u8, argv: []con
         for (argv, 0..) |a, i| req.argv[i] = try gpa.dupe(u8, a);
     }
     if (cwd) |c| req.cwd = try gpa.dupe(u8, c);
+    // Set last: `req.deinit` on the way out of an error frees the
+    // caller's copy, which is the caller's to free then.
+    req.reply = reply;
     try app.ipc_gate.pending.append(gpa, req);
     app.ipc_gate.next_id += 1;
-    try log(app, verb, effect, target, .pending, null);
+    try logAs(app, caller, verb, effect, target, .pending, null);
     try raiseToast(app, req);
-    return false;
+    return .held;
 }
 
-fn allowlisted(app: *const App, verb: Verb, effect: Effect, target: []const u8) bool {
+fn allowlisted(app: *const App, caller: Caller, verb: Verb, effect: Effect, target: []const u8) bool {
     const api = app.cfg.api;
-    if (verb == .run_command) for (api.allow_commands) |id| if (std.mem.eql(u8, id, target)) return true;
+    if (verb.runs()) for (api.allow_commands) |id| if (std.mem.eql(u8, id, target)) return true;
+    var buf: [32]u8 = undefined;
+    const who = caller.name(&buf);
     for (api.clients) |c| {
-        if (!std.mem.eql(u8, c.name, client)) continue;
+        if (!std.mem.eql(u8, c.name, who)) continue;
         for (c.allow) |e| if (e == effect) return true;
-        if (verb == .run_command) for (c.commands) |id| if (std.mem.eql(u8, id, target)) return true;
+        if (verb.runs()) for (c.commands) |id| if (std.mem.eql(u8, id, target)) return true;
     }
     return false;
 }
@@ -192,16 +290,33 @@ fn toastId(buf: []u8, id: u32) []const u8 {
 
 /// What the toast says: who asks, for what, in which class.
 pub fn askText(arena: Allocator, r: Request) Allocator.Error![]u8 {
+    return askTextFor(arena, r, "");
+}
+
+/// `askText`, with the asking pane's title for an API request:
+/// `pane 4 · claude asks to run git.commit (write)`.
+pub fn askTextFor(arena: Allocator, r: Request, pane_title: []const u8) Allocator.Error![]u8 {
     return switch (r.verb) {
         .run_command => std.fmt.allocPrint(arena, "a program wants to run {s} ({s}) through the file channel", .{ r.target, @tagName(r.effect) }),
         .open_pty => std.fmt.allocPrint(arena, "a program wants to open a terminal running `{s}` through the file channel", .{r.target}),
+        else => switch (r.caller) {
+            .pane => |id| std.fmt.allocPrint(arena, "pane {d} · {s} asks to run {s} ({s})", .{ id, pane_title, r.target, @tagName(r.effect) }),
+            else => std.fmt.allocPrint(arena, "a program asks to run {s} ({s}) over the API", .{ r.target, @tagName(r.effect) }),
+        },
+    };
+}
+
+fn paneTitle(app: *App, caller: Caller) []const u8 {
+    return switch (caller) {
+        .pane => |id| if (app.panes.get(id)) |p| p.title() else "a closed pane",
+        else => "",
     };
 }
 
 fn raiseToast(app: *App, r: Request) Allocator.Error!void {
     var buf: [32]u8 = undefined;
     const id = toastId(&buf, r.id);
-    try app.toastPersistent(id, try askText(app.frame.allocator(), r), .warn);
+    try app.toastPersistent(id, try askTextFor(app.frame.allocator(), r, paneTitle(app, r.caller)), .warn);
     const label = try app.gpa.dupe(u8, toast_label);
     app.attachToastAction(id, .{ .ipc_review = .{ .label = label, .request = r.id } });
 }
@@ -245,11 +360,12 @@ pub fn review(app: *App, id: u32) Allocator.Error!void {
         return;
     };
     const r = app.ipc_gate.pending.items[i];
-    const what = switch (r.verb) {
-        .run_command => try std.fmt.allocPrint(app.frame.allocator(), "run-command {s}", .{r.target}),
-        .open_pty => try std.fmt.allocPrint(app.frame.allocator(), "open-pty {s}", .{r.target}),
+    const what = try std.fmt.allocPrint(app.frame.allocator(), "{s} {s}", .{ r.verb.word(), r.target });
+    const from = switch (r.caller) {
+        .pane => |pid| try std.fmt.allocPrint(app.frame.allocator(), "Asked over the API by pane {d} · {s}.", .{ pid, paneTitle(app, r.caller) }),
+        else => "Written to .mnml/ipc/command by a program in a pane.",
     };
-    const msg = try std.fmt.allocPrint(app.gpa, "{s}\nclass: {s}. Written to .mnml/ipc/command by a program in a pane.", .{ what, @tagName(r.effect) });
+    const msg = try std.fmt.allocPrint(app.gpa, "{s}\nclass: {s}. {s}", .{ what, @tagName(r.effect), from });
     errdefer app.gpa.free(msg);
     const cs = choices_by_effect.getPtrConst(r.effect);
     const back: ?app_mod.FocusId = if (app.overlay == .none) app.focus else null;
@@ -258,7 +374,7 @@ pub fn review(app: *App, id: u32) Allocator.Error!void {
         .confirm = .{
             // Cancel holds the focus: Enter on a box nobody meant to raise
             // leaves the request waiting, it does not let it through.
-            .state = .{ .title = "The file channel asks", .message = msg, .choices = cs, .selected = cs.len - 1 },
+            .state = .{ .title = if (r.caller == .pane) "A pane asks" else "The file channel asks", .message = msg, .choices = cs, .selected = cs.len - 1 },
             .purpose = .{ .ipc_grant = id },
             .message = msg,
             .return_focus = back,
@@ -275,12 +391,15 @@ pub fn answer(app: *App, id: u32, choice: usize) Allocator.Error!void {
         0 => try release(app, i, .granted_once, "user"),
         1 => {
             const effect = app.ipc_gate.pending.items[i].effect;
-            app.ipc_gate.granted.insert(effect);
+            const caller = app.ipc_gate.pending.items[i].caller;
+            if (try grants(app, caller)) |g| g.insert(effect);
             try release(app, i, .granted_session, "user");
-            // The rest of the same class waiting behind it goes too.
+            // The rest of the same class from the same caller waiting
+            // behind it goes too.
             var j: usize = 0;
             while (j < app.ipc_gate.pending.items.len) {
-                if (app.ipc_gate.pending.items[j].effect == effect) {
+                const other = app.ipc_gate.pending.items[j];
+                if (other.effect == effect and other.caller.eql(caller)) {
                     try release(app, j, .granted_session, "session");
                 } else j += 1;
             }
@@ -308,14 +427,16 @@ fn take(app: *App, i: usize) Request {
 fn release(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Error!void {
     const r = take(app, i);
     defer r.deinit(app.gpa);
-    try log(app, r.verb, r.effect, r.target, decision, by);
+    try logAs(app, r.caller, r.verb, r.effect, r.target, decision, by);
     switch (r.verb) {
-        .run_command => {
+        .run_command, .api_run, .api_open, .api_read => {
             const ref = command.resolve(app, r.target) orelse {
-                app.toast("run-command: no such command `{s}`", .{r.target});
+                if (r.reply) |a| try api_app.replyError(app, a.conn, a.id_json, api_app.err_no_such, "no such command") else app.toast("run-command: no such command `{s}`", .{r.target});
                 return;
             };
-            command.run(app, ref) catch |err| switch (err) {
+            if (r.reply) |a| {
+                try api_app.runAndReply(app, a.conn, a.id_json, ref);
+            } else command.run(app, ref) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {},
             };
@@ -333,7 +454,8 @@ fn release(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Er
 fn deny(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Error!void {
     const r = take(app, i);
     defer r.deinit(app.gpa);
-    try log(app, r.verb, r.effect, r.target, decision, by);
+    try logAs(app, r.caller, r.verb, r.effect, r.target, decision, by);
+    if (r.reply) |a| try api_app.replyError(app, a.conn, a.id_json, api_app.err_denied, if (decision == .timed_out) "nobody answered in time" else "the user said no");
     // A box still up for it goes with it.
     if (app.overlay == .confirm) switch (app.overlay.confirm.purpose) {
         .ipc_grant => |id| if (id == r.id) {
@@ -345,6 +467,34 @@ fn deny(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Error
         else => {},
     };
     app.toast("denied: {s} {s}", .{ r.verb.word(), r.target });
+}
+
+/// `caller` is gone (its pane closed): what it was waiting on is denied.
+pub fn dropCaller(app: *App, caller: Caller) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < app.ipc_gate.pending.items.len) {
+        if (app.ipc_gate.pending.items[i].caller.eql(caller)) {
+            try deny(app, i, .denied, "closed");
+        } else i += 1;
+    }
+}
+
+/// Connection `conn` hung up: its requests are withdrawn, unanswered.
+pub fn dropConn(app: *App, conn: u32) Allocator.Error!void {
+    var i: usize = 0;
+    while (i < app.ipc_gate.pending.items.len) {
+        const a = app.ipc_gate.pending.items[i].reply orelse {
+            i += 1;
+            continue;
+        };
+        if (a.conn != conn) {
+            i += 1;
+            continue;
+        }
+        const r = take(app, i);
+        defer r.deinit(app.gpa);
+        try logAs(app, r.caller, r.verb, r.effect, r.target, .denied, "disconnect");
+    }
 }
 
 /// Deny what has waited `timeout_ms`.
@@ -363,12 +513,13 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     return next;
 }
 
-fn log(app: *App, verb: Verb, effect: Effect, target: []const u8, decision: Decision, by: ?[]const u8) Allocator.Error!void {
+fn logAs(app: *App, caller: Caller, verb: Verb, effect: Effect, target: []const u8, decision: Decision, by: ?[]const u8) Allocator.Error!void {
     const gpa = app.gpa;
     var a: std.Io.Writer.Allocating = .init(gpa);
     defer a.deinit();
     const w = &a.writer;
-    writeLine(w, app.now_ms, verb, effect, target, decision, by) catch return error.OutOfMemory;
+    var buf: [32]u8 = undefined;
+    writeLine(w, app.now_ms, caller.name(&buf), verb, effect, target, decision, by) catch return error.OutOfMemory;
     const body = a.written();
     // `body` is `{…}`: the event line is the same with its tag first.
     const ev = try std.fmt.allocPrint(gpa, "{{\"event\":\"api\",{s}", .{body[1..]});
@@ -381,8 +532,8 @@ fn log(app: *App, verb: Verb, effect: Effect, target: []const u8, decision: Deci
     try app.ipc_gate.events.append(gpa, ev);
 }
 
-fn writeLine(w: *std.Io.Writer, ts: i64, verb: Verb, effect: Effect, target: []const u8, decision: Decision, by: ?[]const u8) std.Io.Writer.Error!void {
-    try w.print("{{\"ts\":{d},\"client\":\"" ++ client ++ "\",\"method\":\"{s}\",\"target\":", .{ ts, verb.word() });
+fn writeLine(w: *std.Io.Writer, ts: i64, who: []const u8, verb: Verb, effect: Effect, target: []const u8, decision: Decision, by: ?[]const u8) std.Io.Writer.Error!void {
+    try w.print("{{\"ts\":{d},\"client\":\"{s}\",\"method\":\"{s}\",\"target\":", .{ ts, who, verb.word() });
     try std.json.Stringify.encodeJsonString(target, .{}, w);
     try w.print(",\"class\":\"{s}\",\"decision\":\"{s}\"", .{ @tagName(effect), decision.word() });
     if (by) |b| try w.print(",\"by\":\"{s}\"", .{b});

@@ -65,7 +65,84 @@ pub fn removeIfOurs(alloc: Allocator, io: Io, marker_path: []const u8, workspace
     Io.Dir.cwd().deleteFile(io, marker_path) catch {};
 }
 
+// ─── one marker per instance (`docs/research/api-design.md` §4.2) ────────
+//
+// Beside each instance's API socket, `<pid>.zon` — written at start,
+// removed on a clean exit. The single marker above stays "the last one
+// started", for `run.sh`; these are every instance, for `mnml remote`.
+
+pub const instance_suffix = ".zon";
+
+pub const Instance = struct {
+    pid: i64 = 0,
+    version: []const u8 = "",
+    workspace: []const u8 = "",
+    roots: []const []const u8 = &.{},
+    /// The socket's full path.
+    socket: []const u8 = "",
+    started_ms: i64 = 0,
+    frames: u32 = 1,
+};
+
+/// Write `inst` to `marker_path` as ZON, owner-only.
+pub fn writeInstance(gpa: Allocator, io: Io, marker_path: []const u8, inst: Instance) !void {
+    var a: Io.Writer.Allocating = .init(gpa);
+    defer a.deinit();
+    std.zon.stringify.serialize(inst, .{ .whitespace = false }, &a.writer) catch return error.OutOfMemory;
+    a.writer.writeByte('\n') catch return error.OutOfMemory;
+    try @import("../ipc/channel.zig").writeSecret(io, marker_path, a.written());
+}
+
+/// Every instance marker in `dir`, parsed into `arena`, oldest first. A
+/// file that does not parse is skipped; a missing directory is none.
+pub fn listInstances(arena: Allocator, io: Io, dir_path: []const u8) Allocator.Error![]Instance {
+    var out: std.ArrayList(Instance) = .empty;
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (it.next(io) catch null) |e| {
+        if (e.kind != .file or !std.mem.endsWith(u8, e.name, instance_suffix)) continue;
+        const text = dir.readFileAllocOptions(io, e.name, arena, .limited(64 * 1024), .of(u8), 0) catch continue;
+        const inst = std.zon.parse.fromSliceAlloc(Instance, arena, text, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => continue,
+        };
+        try out.append(arena, inst);
+    }
+    std.mem.sortUnstable(Instance, out.items, {}, struct {
+        fn lt(_: void, a: Instance, b: Instance) bool {
+            return a.started_ms < b.started_ms;
+        }
+    }.lt);
+    return out.items;
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────
+
+test "an instance marker round-trips as ZON, owner-only, and the directory lists it" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const p = try std.fs.path.join(t.allocator, &.{ root, "4242.zon" });
+    defer t.allocator.free(p);
+    try writeInstance(t.allocator, t.io, p, .{ .pid = 4242, .version = "0.3.2", .workspace = "/ws", .roots = &.{"/ws"}, .socket = "/d/4242.sock", .started_ms = 7 });
+    // Not a marker: skipped.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "junk.zon", .data = "not zon" });
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const got = try listInstances(arena_state.allocator(), t.io, root);
+    try t.expectEqual(@as(usize, 1), got.len);
+    try t.expectEqual(@as(i64, 4242), got[0].pid);
+    try t.expectEqualStrings("/ws", got[0].roots[0]);
+    try t.expectEqualStrings("/d/4242.sock", got[0].socket);
+    if (@import("builtin").os.tag != .windows) {
+        const st = try Io.Dir.cwd().statFile(t.io, p, .{});
+        try t.expectEqual(@as(u32, 0o600), @as(u32, @intCast(st.permissions.toMode() & 0o777)));
+    }
+    const none = try listInstances(arena_state.allocator(), t.io, "/no/such/dir/at/all");
+    try t.expectEqual(@as(usize, 0), none.len);
+}
 
 const t = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;

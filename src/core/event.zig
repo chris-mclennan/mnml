@@ -24,6 +24,7 @@ const http_client = @import("../http/client.zig");
 const ws_pane = @import("../app/ws_pane.zig");
 const browser_pane = @import("../app/browser_pane.zig");
 const bridge_host = @import("../bridge/host.zig");
+const api_server = @import("../api/server.zig");
 const marketplace = @import("../app/marketplace.zig");
 const font_scan = @import("../app/font_scan.zig");
 const ipc_command = @import("../ipc/command.zig");
@@ -198,6 +199,9 @@ pub const AppEvent = union(enum) {
     /// `font_scan.handle` adopts or frees it.
     fonts: *font_scan.Result,
     ipc: *IpcCommand,
+    /// A line from an API socket connection, or its end
+    /// (`api/server.zig`). Owned; `app/api.zig` `handle` destroys it.
+    api: *api_server.Incoming,
     /// A mounted integration spoke (or its stream ended). Owned;
     /// `mount_pane.handle` reads it and `destroy`s it on every path.
     mount: *bridge_host.Event,
@@ -280,6 +284,7 @@ pub fn freeEvent(gpa: Allocator, ev: AppEvent) void {
         .marketplace => |p| p.destroy(gpa),
         .fonts => |p| p.destroy(gpa),
         .mount => |p| p.destroy(gpa),
+        .api => |p| p.destroy(gpa),
         .transfer => |p| p.destroy(gpa),
         .key, .mouse, .winsize, .focus, .pty_readable, .sonos, .statusline, .ipc, .timer => {},
     }

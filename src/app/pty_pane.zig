@@ -524,7 +524,7 @@ fn startChild(app: *App, id: PaneId, env_extra: []const []const u8) CommandError
     // The child's environment: the app's, the extras, and what it is
     // told about the pane it runs in (`pty_env.zig`).
     var launch: pty_env.Launch = .{};
-    var child_env = try pty_env.build(app, env_extra, if (p.argv.len == 0) &launch else null);
+    var child_env = try pty_env.build(app, id, env_extra, if (p.argv.len == 0) &launch else null);
     defer child_env.deinit();
     // // changed (codex-resume): read BEFORE the spawn. The child may
     // open its Codex rollout before this call returns, and a rollout
@@ -716,7 +716,7 @@ fn restartWith(app: *App, id: PaneId, how: enum { relaunch, fresh }) CommandErro
     // // changed (codex-resume): before the spawn, as in `open`.
     const started_at_s = Io.Timestamp.now(app.io, .real).toSeconds();
     var launch: pty_env.Launch = .{};
-    var child_env = try pty_env.build(app, &.{}, if (p.argv.len == 0) &launch else null);
+    var child_env = try pty_env.build(app, id, &.{}, if (p.argv.len == 0) &launch else null);
     defer child_env.deinit();
     const fresh = pty.Session.spawn(app.gpa, app.io, .{
         .cols = p.cols,

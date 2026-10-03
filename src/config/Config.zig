@@ -908,6 +908,10 @@ pub const Ipc = struct {
 /// `open-pty`. Everything else on the channel is untouched, and the
 /// headless loop, which is the test driver, is never asked.
 pub const Api = struct {
+    /// Whether this mnml serves its API socket (`docs/API.md`): `mnml
+    /// remote` and anything else a pane runs talk to it there. Off, no
+    /// socket is bound and no pane is told one. Read at start.
+    enabled: bool = true,
     /// Command ids any caller may run without a prompt.
     allow_commands: []const []const u8 = &.{},
     /// Callers the user trusts, by name. `file-channel` is the file

@@ -1496,6 +1496,8 @@ pub const App = struct {
     /// The file channel's held requests, grants and audit outbox
     /// (`app/ipc_gate.zig`).
     ipc_gate: @import("app/ipc_gate.zig").State = .{},
+    /// The API socket's tokens, grants and connections (`app/api.zig`).
+    api: @import("app/api.zig").State = .{},
     hooks: hooks.Hooks,
     /// The `init.lua` state (D10), id 0. Reach it through `script()`,
     /// which points it at this App — the struct moves after `initWith`
@@ -2116,6 +2118,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         self.ipc_gate.deinit(gpa);
+        self.api.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
         if (self.cmdline) |*c| c.deinit(gpa);
         if (self.preview_hl) |*h| h.deinit();
@@ -3123,6 +3126,8 @@ pub const App = struct {
         // and is shown twice.
         git_palette_app.forgetPane(self, id);
         sessions_mode_app.forgetPane(self, id);
+        // Its API token and grants, and what it was waiting on.
+        @import("app/api.zig").forgetPane(self, id);
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
@@ -3483,6 +3488,9 @@ pub const App = struct {
             .timer => {},
             // `run.sh stop` / `restart` through the IPC command file: the
             // same exits `app.quit` / `app.restart` reach from the palette.
+            // A line on the API socket (`app/api.zig`); only the terminal
+            // loop serves one.
+            .api => |inc| try @import("app/api.zig").handle(self, inc),
             .ipc => |e| {
                 defer e.destroy();
                 switch (e.cmd) {
@@ -3792,6 +3800,7 @@ pub const App = struct {
 };
 
 test {
+    _ = @import("app/api.zig");
     _ = @import("app/trust.zig");
     _ = @import("app/autosave.zig");
     _ = @import("app/cmdline.zig");

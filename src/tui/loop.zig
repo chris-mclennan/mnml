@@ -26,6 +26,7 @@ const tasks = @import("../app/tasks.zig");
 const clipboard_os = @import("../core/clipboard_os.zig");
 const image = @import("../image/root.zig");
 const marker = @import("marker.zig");
+const api_instance = @import("../api/instance.zig");
 const app_driver = @import("../app/driver.zig");
 const pty_pane = @import("../app/pty_pane.zig");
 const exit_signal = @import("../core/exit_signal.zig");
@@ -131,6 +132,14 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // the marker from under it.
     const sandboxed = app.sandboxState() != .off;
     if (!sandboxed) marker.write(io, marker_path, opts.workspace) catch |err| app.toast("marker: {s}: {s}", .{ marker_path, @errorName(err) });
+    // The API socket and this instance's own marker beside it
+    // (`api/instance.zig`): a task parked in `accept` until somebody
+    // connects, so an mnml nobody talks to pays nothing for it.
+    var api_inst: ?api_instance.Instance = if (app.cfg.api.enabled) api_instance.Instance.start(&app, env) catch |err| blk: {
+        app.toast("api: no socket ({s})", .{@errorName(err)});
+        break :blk null;
+    } else null;
+    defer if (api_inst) |*a| a.stop(&app);
     if (opts.note) |n| app.toast("{s}", .{n});
     switch (app.sandboxState()) {
         .off => {},
@@ -659,6 +668,63 @@ test "the live loop's file channel asks before run-command of an edit command an
     const audit = try std.Io.Dir.cwd().readFileAlloc(t.io, audit_path, arena, .limited(1 << 16));
     try t.expectEqual(@as(usize, 2), std.mem.count(u8, audit, "\"decision\":\"denied\",\"by\":\"user\""));
     try t.expect(std.mem.indexOf(u8, audit, "\"method\":\"open-pty\",\"target\":\"sh\",\"class\":\"exec\"") != null);
+}
+
+test "an idle API listener adds no work per frame: nothing reaches the loop until a client speaks, and then a line is one .api event" {
+    // `api-design.md` §8: with nobody connected the accept task is parked
+    // and the loop's queue stays empty — no event, no wakeup, no frame.
+    // A line is exactly one `.api` event, answered in `App.handle`.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    const api_dir = try std.fs.path.join(t.allocator, &.{ ws, "api" });
+    defer t.allocator.free(api_dir);
+    try env.put("MNML_API_DIR", api_dir);
+    var inst = try api_instance.Instance.start(&app, &env);
+    defer inst.stop(&app);
+
+    var buf: [8]event.AppEvent = undefined;
+    try t.io.sleep(.fromMilliseconds(250), .awake);
+    try t.expectEqual(@as(usize, 0), app.events.drain(t.io, &buf));
+    try t.expectEqual(@as(u64, 0), inst.server.posted.load(.monotonic));
+    try t.expect(!app.events.wake.isSet());
+
+    // The marker beside the socket names it.
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const listed = try marker.listInstances(arena_state.allocator(), t.io, api_dir);
+    try t.expectEqual(@as(usize, 1), listed.len);
+    try t.expectEqualStrings(inst.server.path(), listed[0].socket);
+    try t.expectEqualStrings(ws, listed[0].workspace);
+
+    const server_mod = @import("../api/server.zig");
+    const c = try server_mod.Client.connect(t.io, inst.server.path());
+    defer c.close();
+    for ([_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}",
+    }, [_][]const u8{ "\"version\":\"v1\"", "\"result\":\"pong\"" }) |line, want| {
+        try c.send(line);
+        var n: usize = 0;
+        var waited: usize = 0;
+        while (n == 0 and waited < 200) : (waited += 1) {
+            app.events.wake.waitTimeout(t.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
+            app.events.wake.reset();
+            n = app.events.drain(t.io, &buf);
+        }
+        try t.expectEqual(@as(usize, 1), n);
+        try t.expect(buf[0] == .api);
+        try app.handle(buf[0]);
+        const reply = try c.recv(t.allocator);
+        defer t.allocator.free(reply);
+        try t.expect(std.mem.indexOf(u8, reply, want) != null);
+    }
+    try t.expectEqual(@as(u64, 2), inst.server.posted.load(.monotonic));
 }
 
 test "with allow_input the live loop's input lines MOVE the App: a key opens the picker, open + type edit a file, a click lands" {
