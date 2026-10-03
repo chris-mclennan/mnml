@@ -33,9 +33,6 @@ cloud_agents: CloudAgents = .{},
 /// The SESSIONS listing's liveness pass — the process table, each row's
 /// state, `git status` (`app/refresh_cadence.zig`).
 sessions: Dashboard = .{},
-/// The transcript walk behind SESSIONS: a stat per file, a read only
-/// for a file that moved.
-agents: Dashboard = .{},
 keys: Keys = .{},
 lsp: Map(LspServer) = .empty,
 ai: Ai = .{},

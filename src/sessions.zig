@@ -517,7 +517,7 @@ pub const State = struct {
     last_scan_ms: i64 = 0,
     /// When each part last ran (`App.now_ms`): the liveness pass, the
     /// transcript walk, the cloud read — `refresh_cadence` against
-    /// `sessions.refresh`, `agents.refresh`, `cloud_agents.refresh`.
+    /// `sessions.refresh`, the stat tick, `cloud_agents.refresh`.
     live_ms: i64 = 0,
     walk_ms: i64 = 0,
     cloud_ms: i64 = 0,
@@ -837,7 +837,12 @@ pub fn scanCached(io: Io, gpa: Allocator, j: Job, r: *ScanResult) ScanError!void
         j.local.liveness_runs += 1;
         const pids = try agents.runningPids(io, gpa, arena, j.scope);
         try agents.liveness(arena, pids, rows.items, now);
-        try agents.dirtyScan(io, gpa, arena, rows.items, now);
+        // `git status` is the cadence's alone: a transcript that moved
+        // on the stat tick keeps the dirty counts it had.
+        if (j.want.force or j.want.live) {
+            j.local.git_runs += 1;
+            try agents.dirtyScan(io, gpa, arena, rows.items, now);
+        }
         if (agents.writeBack(j.local, rows.items)) moved = true;
     }
     if (!j.want.force and !moved and !cloud_moved) {
@@ -1570,7 +1575,9 @@ pub fn tick(app: *App, now: i64) void {
         .force = false,
         .on_screen = shown,
         .live = opened or refresh_cadence.isDue(app.cfg.sessions.refresh, p.live, st.live_ms, now),
-        .walk = opened or refresh_cadence.isDue(app.cfg.agents.refresh, p.live, st.walk_ms, now),
+        // The stat tick: its own short interval, not the cadence's — a
+        // transcript that moved is read at once.
+        .walk = opened or (if (refresh_cadence.statInterval(refreshMode(app), shown)) |iv| now - st.walk_ms >= iv else false),
         .cloud = cloudOn(app) and refresh_cadence.isDue(app.cfg.cloud_agents.refresh, p.cloud, st.cloud_ms, now),
     };
     if (want.live or want.walk or want.cloud) startScan(app, want) catch {};
@@ -1586,7 +1593,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     const p = phases(app);
     const dues = [_]?i64{
         refresh_cadence.dueAt(app.cfg.sessions.refresh, p.live, st.live_ms),
-        refresh_cadence.dueAt(app.cfg.agents.refresh, p.live, st.walk_ms),
+        if (refresh_cadence.statInterval(refreshMode(app), wantsScan(app))) |iv| st.walk_ms + iv else null,
         if (cloudOn(app)) refresh_cadence.dueAt(app.cfg.cloud_agents.refresh, p.cloud, st.cloud_ms) else null,
     };
     for (dues) |d| if (d) |at| {
@@ -4528,7 +4535,6 @@ test "tick: the first pass starts with the app, hidden; then idle off screen, sl
     const st = &f.app.sessions;
     const c: Config.RefreshCadence = .{ .fast_ms = 100, .slow_ms = 1000, .idle_ms = 10_000 };
     f.app.cfg.sessions.refresh = c;
-    f.app.cfg.agents.refresh = c;
     // The prefetch: nothing on screen, and the first tick scans.
     try testing.expect(!wantsScan(&f.app));
     f.app.now_ms = 0;
@@ -4542,6 +4548,8 @@ test "tick: the first pass starts with the app, hidden; then idle off screen, sl
     const Step = struct {
         fn at(fx: *Fixture, now: i64) u32 {
             const before = fx.app.sessions.generation;
+            // The stat tick has its own test; here it is never due.
+            fx.app.sessions.walk_ms = now;
             fx.app.now_ms = now;
             tick(&fx.app, now);
             return fx.app.sessions.generation - before;
@@ -4554,7 +4562,8 @@ test "tick: the first pass starts with the app, hidden; then idle off screen, sl
     };
     // Off screen: the idle interval.
     Step.zero(st);
-    try testing.expectEqual(@as(?i64, 10_000), nextDeadlineMs(&f.app));
+    // The stat tick off screen (2 s) comes before the idle interval.
+    try testing.expectEqual(@as(?i64, 2000), nextDeadlineMs(&f.app));
     try testing.expectEqual(@as(u32, 0), Step.at(&f, 9_999));
     try testing.expectEqual(@as(u32, 1), Step.at(&f, 10_000));
     try f.settle(2000);
@@ -4609,6 +4618,69 @@ test "a home with nothing to read at start skips the prefetch worker, and a tran
     try testing.expectEqual(@as(u32, 1), st.generation);
     try f.settle(2000);
     try testing.expectEqual(@as(usize, 2), st.items.len);
+}
+
+test "the stat tick reads a moved transcript within 500 ms while the cadence is far off, and a quiet stat tick reads nothing" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    try f.seedHome();
+    const st = &f.app.sessions;
+    f.app.cfg.sessions.refresh = .{ .fast_ms = 100_000, .slow_ms = 100_000, .idle_ms = 100_000 };
+    f.app.now_ms = 0;
+    tick(&f.app, 0);
+    try f.settle(2000);
+    side.place(&f.app, .sessions, false);
+    f.app.now_ms = 1;
+    tick(&f.app, 1); // coming on screen: one pass
+    try f.settle(2000);
+    // Settling on the test's own clock, not the real one, so no part
+    // falls due while the worker finishes.
+    const Wait = struct {
+        fn done(fx: *Fixture) !void {
+            var n: usize = 0;
+            while (fx.app.sessions.scanning and n < 2000) : (n += 1) {
+                try fx.app.tick(fx.app.now_ms);
+                if (fx.app.sessions.scanning) testing.io.sleep(.fromMilliseconds(5), .awake) catch {};
+            }
+        }
+    };
+    // From here the clocks are pinned: the liveness pass is far off.
+    st.live_ms = 1;
+    st.cloud_ms = 1;
+    st.walk_ms = 1;
+    const reads = st.local.reads;
+    const runs = st.local.liveness_runs;
+    const gits = st.local.git_runs;
+    // Not yet the stat tick.
+    f.app.now_ms = 400;
+    tick(&f.app, 400);
+    try testing.expect(!st.scanning);
+    try testing.expectEqual(@as(?i64, 501), nextDeadlineMs(&f.app));
+    // The stat tick, nothing moved: a stat each, no read, no ps, no git.
+    const g = st.generation;
+    f.app.now_ms = 501;
+    tick(&f.app, 501);
+    try testing.expectEqual(g + 1, st.generation);
+    try Wait.done(&f);
+    try testing.expectEqual(reads, st.local.reads);
+    try testing.expectEqual(runs, st.local.liveness_runs);
+    try testing.expectEqual(gits, st.local.git_runs);
+    // A transcript grows: the next stat tick reads it, the cadence still
+    // 100 s away — and `git status` waits for the cadence.
+    const path = st.local.map.keys()[0];
+    {
+        var file = try Io.Dir.cwd().openFile(testing.io, path, .{ .mode = .read_write });
+        defer file.close(testing.io);
+        const len = try file.length(testing.io);
+        try file.writePositionalAll(testing.io, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"more\"}}\n", len);
+    }
+    st.walk_ms = 501;
+    f.app.now_ms = 1001;
+    tick(&f.app, 1001);
+    try testing.expect(st.scanning);
+    try Wait.done(&f);
+    try testing.expectEqual(reads + 1, st.local.reads);
+    try testing.expectEqual(gits, st.local.git_runs);
 }
 
 test "a pass where no transcript moved reads nothing and posts nothing; a grown transcript is read again" {

@@ -1,9 +1,12 @@
-//! How often a dashboard's source is read again — one model for the
-//! three behind the SESSIONS section and the sessions table: the
-//! liveness pass (`sessions.refresh`: the process table, each row's
-//! state, `git status`), the transcript walk (`agents.refresh`: a stat
-//! per file, a read only for what moved) and the cloud runs
-//! (`cloud_agents.refresh`: the `aws` call).
+//! How often a dashboard's expensive work runs again — the liveness
+//! pass behind SESSIONS and the sessions table (`sessions.refresh`: the
+//! process table, each row's state, `git status`) and the cloud runs
+//! (`cloud_agents.refresh`: the `aws` call). The transcripts are not on
+//! these intervals: the stat tick (`statInterval`) looks at every known
+//! transcript's size and mtime, and lists the directories for new ones,
+//! every `stat_tick_ms` while a view is on screen and every
+//! `stat_tick_off_ms` while none is; a transcript that moved is read at
+//! that tick. A quiet machine stats and reads nothing.
 //!
 //! A source has three intervals. It runs on `fast_ms` while a view of
 //! it is on screen AND something is live (a session thinking or in a
@@ -21,7 +24,7 @@
 const std = @import("std");
 const Config = @import("../config/Config.zig");
 
-/// `sessions.refresh`, `agents.refresh`, `cloud_agents.refresh` in the
+/// `sessions.refresh`, `cloud_agents.refresh` in the
 /// config: milliseconds, 0 = never.
 pub const Cadence = Config.RefreshCadence;
 
@@ -49,6 +52,16 @@ pub fn interval(c: Cadence, p: Phase) ?i64 {
         .manual => return null,
     };
     return if (ms == 0) null else ms;
+}
+
+/// The stat tick's interval: fixed, not configurable, since a tick
+/// that finds nothing costs a stat per transcript. Never under manual.
+pub const stat_tick_ms: i64 = 500;
+pub const stat_tick_off_ms: i64 = 2000;
+
+pub fn statInterval(mode: Mode, on_screen: bool) ?i64 {
+    if (mode == .manual) return null;
+    return if (on_screen) stat_tick_ms else stat_tick_off_ms;
 }
 
 /// When a source last read at `last_ms` is due again, null for never.
@@ -90,4 +103,12 @@ test "refresh cadence: auto is fast on screen with something live, slow on scree
     try t.expect(!isDue(c, .idle, 0, std.math.maxInt(i32)));
     try t.expect(!isDue(c, .manual, 0, std.math.maxInt(i32)));
     try t.expectEqual(@as(?i64, 4500), dueAt(c, .slow, 500));
+}
+
+test "the stat tick is fixed: 500 ms on screen, 2 s off, never under manual, whatever the cadence" {
+    try t.expectEqual(@as(?i64, 500), statInterval(.auto, true));
+    try t.expectEqual(@as(?i64, 500), statInterval(.slow, true));
+    try t.expectEqual(@as(?i64, 2000), statInterval(.auto, false));
+    try t.expectEqual(@as(?i64, 2000), statInterval(.fast, false));
+    try t.expectEqual(@as(?i64, null), statInterval(.manual, true));
 }

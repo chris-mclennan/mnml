@@ -201,7 +201,7 @@ otherwise. Copy what you need; leave the rest out.
         },
         .edge_grips = true, // the three-dot handle at the middle of a hidden slide-in's edge: `⋯` on the menu bar's row and on the dock's bottom row, `⋮` on a side column's screen edge (`--ascii` spends one `.` per cell). Dwelling on it reveals, a left click reveals and PINS, a right click opens that surface's own menu. False gives the invisible bands back — they never move, so every reveal works either way
         .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
-        .dashboard_refresh = .auto, // .auto | .fast | .slow | .manual — how SESSIONS, the sessions table and the cloud runs re-read on their own (the `sessions` / `agents` / `cloud_agents.refresh` intervals below): auto is fast while a session is live and slow otherwise while on screen; fast / slow pin that; manual reads only on the ⟳ chip or `sessions.refresh`. Settings → Integrations → Dashboard refresh
+        .dashboard_refresh = .auto, // .auto | .fast | .slow | .manual — how SESSIONS, the sessions table and the cloud runs re-read on their own (the `sessions` / `cloud_agents.refresh` intervals below; a changed transcript is read within 500 ms on screen whatever this says, except under manual): auto is fast while a session is live and slow otherwise while on screen; fast / slow pin that; manual reads only on the ⟳ chip or `sessions.refresh`. Settings → Integrations → Dashboard refresh
         .auto_equalize_splits = false, // every split and every close re-shares the sizes equally; Settings → UI → Auto-equalize splits, the Window menu's ticked row and `view.toggle_auto_equalize_splits` flip it (written to the workspace config)
         .relative_line_numbers = false,
         .line_numbers = true,
@@ -610,11 +610,13 @@ otherwise. Copy what you need; leave the rest out.
     // read starts with the app. `ui.dashboard_refresh` (Settings →
     // Integrations → Dashboard refresh) picks auto / fast / slow / manual;
     // the ⟳ chip and `sessions.refresh` read everything now, always.
+    // The transcripts themselves are not on these intervals: a stat per
+    // transcript (and a listing of the directories, for new ones) runs
+    // every 500 ms while a view is on screen and every 2 s while none is
+    // (never under manual), and a transcript whose size or mtime moved is
+    // read at that tick — so a quiet machine stats and reads nothing.
     .sessions = .{
         .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the liveness pass: the process table, each session's state, `git status` per working directory — off screen it runs only while a session has a process or a transcript moved; on screen it runs every interval (a resumed session shows only as its process), and a view coming on screen runs one pass at once
-    },
-    .agents = .{
-        .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the transcript walk under ~/.claude/projects and ~/.codex/sessions: a stat per file, and a read only for a transcript whose size or mtime moved
     },
 
     // ── keys ───────────────────────────────────────────────────────────

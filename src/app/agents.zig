@@ -392,6 +392,8 @@ pub const LocalCache = struct {
     /// Liveness passes run (`ps`, the states, `git status`) — counted
     /// by the tests alongside `reads`.
     liveness_runs: u64 = 0,
+    /// `git status` passes run.
+    git_runs: u64 = 0,
     /// A walk has finished: until then everything is new.
     walked: bool = false,
 
