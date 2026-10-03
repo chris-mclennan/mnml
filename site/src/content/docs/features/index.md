@@ -59,6 +59,11 @@ there for reviewing and fixing what they wrote.
   others), re-run only the failures, and run configured tasks in
   terminal panes.
 
+- **[An API](/docs/features/api)**: `mnml remote` opens files and runs
+  commands in a running mnml from any shell, anything beyond the view asks you
+  first, and a Claude Code session in an mnml pane uses mnml as its IDE
+  with no setup.
+
 - **[Lua scripting](/docs/lua)**: an `init.lua` for your own commands,
   keys, hooks, statusline segments and pickers, with Lua 5.4 compiled in.
 

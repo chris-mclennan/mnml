@@ -1,15 +1,19 @@
 ---
-// The home page is one screen, as ghostty.org's is: a window playing a
-// real recording of mnml, one sentence, two buttons.
+// The home page is one screen, as ghostty.org's is: the app's start-page
+// wordmark, a window playing a real recording of mnml, one sentence, two
+// buttons.
 import Site from "../layouts/Site.astro";
 import { media, CELLS } from "../lib/media.mjs";
+import { logoLines } from "../lib/logo.mjs";
 const TAGLINE = "Everything you'd open a second terminal for, in one NvChad-style window: editor, git, agents, HTTP — written in Zig, on libghostty, scripted in Lua.";
 const hero = media("hero");
 const { width, height } = hero || CELLS;
+const logo = logoLines().join("\n");
 ---
 <Site title="mnml" description={TAGLINE} chrome={false}>
-  <main class="home">
-    <section class="window" style={`--ar:${width}/${height};--arw:${width};--arh:${height}`} aria-label="A recording of mnml">
+  <main class="home" style={`--ar:${width}/${height};--arw:${width};--arh:${height}`}>
+    <pre class="home-logo" aria-label="mnml">{logo}</pre>
+    <section class="window" aria-label="A recording of mnml">
       <div class="window-bar">
         <ul class="lights" aria-hidden="true"><li></li><li></li><li></li></ul>
         <svg class="proxy" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 2.2C1 1.5 1.5 1 2.2 1h3.6l1.4 1.5h6.6c.7 0 1.2.5 1.2 1.2V12c0 .7-.5 1.2-1.2 1.2H2.2C1.5 13.2 1 12.7 1 12z" fill="#53adda"/><path d="M1 4.2h14" stroke="#8ec9e5" stroke-width="1"/></svg>

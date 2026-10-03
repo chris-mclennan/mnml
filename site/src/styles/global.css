@@ -334,8 +334,21 @@ button { font: inherit; }
 
 /* ── home ─────────────────────────────────────────────── */
 .home {
+  /* The frame's width, shared with the wordmark above it: the room the
+     wordmark, tagline and buttons leave in the viewport's height. */
+  --w: min(1024px, calc(100vw - 48px), calc((100dvh - 316px) * var(--arw) / var(--arh)));
   min-height: 100vh; min-height: 100dvh; padding: 32px 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+/* The app's start-page wordmark (src/ui/welcome.zig `logo`), as the web
+   demo draws it: bold mono in the accent, left-aligned over the frame.
+   It is 35 cells wide — about 210px at 10px — so it fits a 320px phone
+   whole and needs no scaling. */
+.home-logo {
+  width: var(--w); margin: 0 0 14px; padding: 0; overflow: visible;
+  color: var(--accent); background: none; border: 0; font-weight: 700;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.05;
+  white-space: pre; text-align: left;
 }
 /* The frame is a real macOS Ghostty window, measured off a screenshot of
    one: a 28pt title bar in #24272d (grey, not black), 12pt traffic lights
@@ -344,7 +357,6 @@ button { font: inherit; }
    keeps the proportion the real one has to its window (22px of 1928px
    in the reference capture) at any width the frame is drawn. */
 .window {
-  --w: min(1024px, calc(100vw - 48px), calc((100dvh - 250px) * var(--arw) / var(--arh)));
   width: var(--w); margin: 0 auto 20px; container-type: inline-size;
   border: 1px solid #3f4146; border-radius: 9px; overflow: hidden; background: #24272d;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
