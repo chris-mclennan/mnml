@@ -78,6 +78,18 @@ pub fn title(id: CommandId) []const u8 {
     return spec(id).title;
 }
 
+pub const Effect = specs.Effect;
+
+/// What running `ref` can change (`specs.Effect`). A command registered
+/// at runtime — Lua, a manifest, the file channel — is `exec`: it runs a
+/// program's code, whatever it says it does.
+pub fn effect(ref: CommandRef) Effect {
+    return switch (ref) {
+        .static => |id| specs.effects[@intFromEnum(id)],
+        .dyn => .exec,
+    };
+}
+
 /// The command's short name — its row in a which-key popup — or its
 /// title when the spec gives none.
 pub fn shortTitle(id: CommandId) []const u8 {
