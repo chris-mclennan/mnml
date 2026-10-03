@@ -611,7 +611,7 @@ otherwise. Copy what you need; leave the rest out.
     // Integrations → Dashboard refresh) picks auto / fast / slow / manual;
     // the ⟳ chip and `sessions.refresh` read everything now, always.
     .sessions = .{
-        .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the liveness pass: the process table, each session's state, `git status` per working directory — run only while a session has a process or a transcript moved
+        .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the liveness pass: the process table, each session's state, `git status` per working directory — off screen it runs only while a session has a process or a transcript moved; on screen it runs every interval (a resumed session shows only as its process), and a view coming on screen runs one pass at once
     },
     .agents = .{
         .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the transcript walk under ~/.claude/projects and ~/.codex/sessions: a stat per file, and a read only for a transcript whose size or mtime moved
