@@ -245,8 +245,11 @@ pub fn mnmlConfigWith(gpa: Allocator, user: []const u8, opts: MnmlOptions) Alloc
 }
 
 fn writeMnmlConfig(w: *Io.Writer, user: []const u8, opts: MnmlOptions) Io.Writer.Error!void {
+    // A channel that may type may already run anything a key can, so
+    // the window the harness launched lets the same channel's
+    // `run-command` and `open-pty` through unasked (`app/ipc_gate.zig`).
     try w.writeAll(if (opts.allow_input)
-        ".{ .ipc = .{ .write_screen = true, .allow_input = true }, .ui = .{ .first_launch_complete = true"
+        ".{ .ipc = .{ .write_screen = true, .allow_input = true }, .api = .{ .clients = .{ .{ .name = \"file-channel\", .allow = .{ .view, .edit, .write, .exec } } } }, .ui = .{ .first_launch_complete = true"
     else
         ".{ .ipc = .{ .write_screen = true }, .ui = .{ .first_launch_complete = true");
     for (copied_keys) |key| {
@@ -558,6 +561,9 @@ test "--allow-input turns the channel's input on, and only when asked" {
     const on = try mnmlConfigWith(t.allocator, ".{ .ui = .{ .tree_width = 34 } }", .{ .allow_input = true });
     defer t.allocator.free(on);
     try t.expect(std.mem.indexOf(u8, on, ".ipc = .{ .write_screen = true, .allow_input = true }") != null);
+    // …and lets the same channel run commands without the gate's ask.
+    try t.expect(std.mem.indexOf(u8, on, ".name = \"file-channel\", .allow = .{ .view, .edit, .write, .exec }") != null);
+    try t.expect(std.mem.indexOf(u8, off, "file-channel") == null);
     // The copied layout key still lands, beside the switch.
     try t.expect(std.mem.indexOf(u8, on, ".tree_width = 34") != null);
     try t.expect(std.mem.endsWith(u8, on, "} }\n"));

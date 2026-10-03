@@ -522,8 +522,9 @@ otherwise. Copy what you need; leave the rest out.
         // Whether the file channel may drive INPUT at a live terminal
         // (key, type, click, scroll, drag, mouse_*, hover). The set an
         // integration needs (segments, badges, toasts, progress,
-        // notify, register-command, open-pty, run-command) is always
-        // taken; the headless loop takes everything regardless.
+        // notify, register-command) is always taken; run-command of a
+        // command above `view`, and open-pty, ask first (`.api` below);
+        // the headless loop takes everything regardless.
         .allow_input = false,
         // Whether a key, click, wheel or paste at the live terminal writes
         // {"event":"input","kind":"key|mouse|paste"} to events.jsonl (one
@@ -531,6 +532,23 @@ otherwise. Copy what you need; leave the rest out.
         // own input) — how a host replaying a script sees a person take
         // over (demo/attract/)
         .report_input = false,
+    },
+    // What a program in a pane may have mnml do without asking (see
+    // "Commands a program asks for" below). Config-file only, and
+    // stripped from an untrusted workspace's layer.
+    .api = .{
+        // Command ids any caller may run unasked, e.g. .{ "git.refresh" }
+        .allow_commands = .{},
+        // Callers you trust, by name; "file-channel" is the file channel.
+        // `.allow` takes classes (.exec covers open-pty), `.commands` ids.
+        // An example — the default is .{}.
+        .clients = .{
+            .{
+                .name = "file-channel",
+                .allow = .{ .view }, // .view | .edit | .write | .exec
+                .commands = .{ "test.run_file" },
+            },
+        },
     },
     // ── terminal panes ─────────────────────────────────────────────────
     // Read when a pane starts; a pane already open keeps what it began with.
@@ -1222,6 +1240,54 @@ in `src/config/load.zig`): a key the schema lacks, or a section left
 out, fails it. The values beside the keys are not compared by that test
 — they are the defaults because the file is kept that way. Sections
 appear in `Config.zig`'s field order.
+
+## Commands a program asks for
+
+Any program in a pane can append a line to
+`<workspace>/.mnml/ipc/command`. Under the live terminal, that file
+channel's `run-command` of anything that can change more than the
+view, and every `open-pty`, waits for you:
+
+- A warn toast says what is asked — `a program wants to run
+  scratch.new (edit) through the file channel` — with a **Review**
+  button. It never steals the key you are typing.
+- Review (a click on the toast, or `toast.run_action`) opens the
+  confirm box: **Allow once**, **Allow *edit* for the session**,
+  **Deny**, **Cancel**. Cancel holds the focus and puts the request
+  back on its toast.
+- Nothing answered in two minutes is denied.
+
+Every command has a class — `view`, `edit` (a buffer), `write` (disk,
+git, the network, config) or `exec` (a process) — listed in
+`docs/commands.md`. A `view` command runs unasked; a command registered
+at runtime is `exec`. A grant for the session covers one class until
+mnml quits.
+
+Every decision is a line in `<workspace>/.mnml/ipc/audit.jsonl`
+(owner-only) and an `{"event":"api",…}` line in `events.jsonl`:
+
+```json
+{"ts":1759400000123,"client":"file-channel","method":"run-command","target":"git.commit","class":"write","decision":"denied","by":"user"}
+```
+
+`decision` is `free`, `allowlisted`, `granted-once`,
+`granted-session`, `denied` or `timed-out`; `events.jsonl` also gets a
+`pending` line when a request starts waiting.
+
+To let something through unasked, write it in `config.zon` — there is
+no Settings row:
+
+```zig
+.api = .{
+    .allow_commands = .{ "git.refresh" },
+    .clients = .{ .{ .name = "file-channel", .allow = .{ .edit }, .commands = .{ "test.run_file" } } },
+},
+```
+
+The headless loop (`--headless`, the `.test` runner) is the test driver
+and is never asked. `mnml-drive launch --allow-input` writes a
+`file-channel` row allowing every class, since a channel that may type
+can already run anything a key can.
 
 ## Workspace trust
 
