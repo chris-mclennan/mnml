@@ -292,7 +292,7 @@ const window_rows = [_]MenuItem{
     .{ .icon = "\u{EB57}", .icon_ascii = "-", .label = "Split down", .action = .{ .command = .@"view.split_down" } },
     .{ .icon = "\u{F00D}", .icon_ascii = "x", .label = "Close split", .action = .{ .command = .@"view.close_split" } },
     .{ .icon = "\u{F02C1}", .icon_ascii = "=", .label = "Equalize splits", .action = .{ .command = .@"view.equalize_splits" } },
-    .{ .icon = "\u{F0758}", .icon_ascii = "a", .label = "Auto-equalize splits", .action = .{ .command = .@"view.toggle_auto_equalize_splits" } },
+    .{ .icon = "\u{F0758}", .icon_ascii = "a", .label = "Auto-equalize splits", .action = .{ .command = .@"view.toggle_auto_equalize_splits" }, .checkable = true },
     sep(.{ .icon = "\u{F07E}", .icon_ascii = "<", .label = "Grow split width", .action = .{ .command = .@"view.split_grow_width" } }),
     .{ .icon = "\u{F07D}", .icon_ascii = "^", .label = "Grow split height", .action = .{ .command = .@"view.split_grow_height" } },
     sep(.{ .icon = "\u{F060}", .icon_ascii = "<", .label = "Focus split left", .action = .{ .command = .@"view.focus_left" } }),

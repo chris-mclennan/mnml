@@ -3011,10 +3011,19 @@ const dropdown_min_w: u16 = 20;
 const context_min_inner: u16 = 12;
 
 /// The label as painted: a checked row carries its `✓ ` in the label,
-/// as Rust's do.
-fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
-    if (!it.checked) return it.label;
+/// as Rust's do. In a menu with a tick column (`hasTickColumn`) every
+/// other row starts two cells in as well, so the labels line up
+/// whether a row is ticked or not.
+fn rowLabel(ui: Ui, it: command.MenuItem, tick_col: bool) []const u8 {
+    if (!it.checked) return if (tick_col) ui.fmt("  {s}", .{it.label}) else it.label;
     return ui.fmt("{s} {s}", .{ if (ui.ascii) "*" else "\u{2713}", it.label });
+}
+
+/// A menu with a row that is or can be ticked reserves the tick's
+/// column on every row.
+fn hasTickColumn(items: []const command.MenuItem) bool {
+    for (items) |it| if (it.checked or it.checkable) return true;
+    return false;
 }
 
 /// Frame + rows, in the shape Rust sizes them (`ContextMenu::
@@ -3034,11 +3043,12 @@ fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords:
     var rows: u16 = 0;
     var widest: u16 = 0;
     var any_icon = false;
+    const tick_col = hasTickColumn(items);
     for (items, 0..) |it, i| {
         rows += 1;
         if (it.separator_before) rows += 1;
         if (menu_glyph.forItem(it, ui.ascii).len > 0) any_icon = true;
-        const label_w = ui.width(rowLabel(ui, it)) + if (it.submenu.len > 0) marker_w else 0;
+        const label_w = ui.width(rowLabel(ui, it, tick_col)) + if (it.submenu.len > 0) marker_w else 0;
         // The chord grows the row by itself and its gap; the frame is
         // clamped to the screen after, and a row the clamp leaves too
         // narrow drops the chord (`paintMenuRows`).
@@ -3168,6 +3178,7 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
         const glyph: []const u8 = if (more_above and more_below) (if (ui.ascii) "|" else "\u{2195}") else if (more_above) (if (ui.ascii) "^" else "\u{2191}") else (if (ui.ascii) "v" else "\u{2193}");
         _ = ui.putStr(inner.right() -| 1, inner.bottom(), 1, glyph, rule);
     }
+    const tick_col = hasTickColumn(p.items);
     var row: u16 = 0;
     for (p.items[scroll..], scroll..) |it, i| {
         const selected = p.cursor != null and i == p.cursor.?.*;
@@ -3196,7 +3207,7 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
             xx += icon_col;
         }
         const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else style.fg;
-        const label = rowLabel(ui, it);
+        const label = rowLabel(ui, it, tick_col);
         // The trailing marker: ` ▸` on a dropdown parent, `▸ ` on a
         // context parent, `⋮ ` on a curatable menu's focused leaf.
         var marker: ?[]const u8 = null;
@@ -3698,6 +3709,29 @@ fn rowTail(app: *App, x: u16, y: u16, buf: []u8) []const u8 {
 
 fn openChordMenu(app: *App, items: []const command.MenuItem) !void {
     try app.openMenu("chords", try app.gpa.dupe(command.MenuItem, items), 10, 5);
+}
+
+test "menu ticks: a ticked and an unticked row start their labels on the same column, and a checkable row keeps the column unticked" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try openChordMenu(&app, &.{
+        .{ .label = "Alpha row", .action = .{ .copy_text = "a" }, .checked = true },
+        .{ .label = "Beta row", .action = .{ .copy_text = "b" } },
+    });
+    try app.render();
+    const alpha = findOnScreen(&app, "Alpha row").?;
+    const beta = findOnScreen(&app, "Beta row").?;
+    try t.expectEqual(alpha[0], beta[0]);
+    // Nothing ticked yet, but a row can be: the same column.
+    try openChordMenu(&app, &.{
+        .{ .label = "Gamma row", .action = .{ .copy_text = "g" }, .checkable = true },
+        .{ .label = "Delta row", .action = .{ .copy_text = "d" } },
+    });
+    try app.render();
+    const gamma = findOnScreen(&app, "Gamma row").?;
+    try t.expectEqual(gamma[0], findOnScreen(&app, "Delta row").?[0]);
+    try t.expectEqual(alpha[0], gamma[0]);
 }
 
 test "menu chords: a command row shows the active profile's chord at its right edge, muted; an unbound row and a non-command row show none" {
