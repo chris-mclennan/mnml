@@ -86,6 +86,9 @@ pub const Tab = struct {
     /// The pane's child is blocked on the user (`sessions.needsYou`):
     /// the needs-you mark after the name, in the attention role.
     needs_you: bool = false,
+    /// The session's IDE link to mnml is up (`app/ide.zig`): the link
+    /// mark after the name — the SESSIONS card's gutter glyph.
+    linked: bool = false,
 };
 
 /// The markdown mode chip left of the split buttons: `  Preview ` on
@@ -378,7 +381,7 @@ fn chipName(ui: Ui, tab: Tab) []const u8 {
 pub fn chipWidth(ui: Ui, tab: Tab) u16 {
     const icon: u16 = if (tab.glyph.len == 0) 1 else 2 + ui.width(tab.glyph);
     const verb: u16 = if (tab.verb) |v| ui.width(v) + 3 else 0;
-    const mark: u16 = if (tab.needs_you) ui.width(needsYouMark(ui)) + 1 else 0;
+    const mark: u16 = (if (tab.needs_you) ui.width(needsYouMark(ui)) + 1 else 0) + (if (tab.linked) ui.width(linkMark(ui)) + 1 else 0);
     const diag: u16 = if (tab.diag.len == 0) 0 else ui.width(tab.diag) + 1;
     return icon + verb + ui.width(chipName(ui, tab)) + 1 + mark + diag + 2;
 }
@@ -387,6 +390,11 @@ pub fn chipWidth(ui: Ui, tab: Tab) u16 {
 /// asked for) — the tab's and the SESSIONS card's alike.
 pub fn needsYouMark(ui: Ui) []const u8 {
     return if (ui.ascii) needs_you_ascii else needs_you_glyph;
+}
+
+/// The link mark, the SESSIONS card's `GutterMark.linked`.
+pub fn linkMark(ui: Ui) []const u8 {
+    return if (ui.ascii) @import("../app/ide.zig").link_ascii else @import("../app/ide.zig").link_glyph;
 }
 
 const Badge = struct { text: []const u8, fg: Color, closes: bool };
@@ -443,6 +451,10 @@ fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, 
     cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
     if (tab.needs_you) {
         cx += ui.putStr(cx, y, end - cx, needsYouMark(ui), Theme.onBg(ui.theme.attention_fg, bg));
+        cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
+    }
+    if (tab.linked) {
+        cx += ui.putStr(cx, y, end - cx, linkMark(ui), .{ .fg = p.teal, .bg = bg });
         cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
     }
     if (tab.diag.len > 0) {

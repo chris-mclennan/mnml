@@ -260,6 +260,9 @@ pub const RowView = struct {
     /// which it takes over from the on-screen dot — the news is what
     /// the step to it is for.
     ready: bool = false,
+    /// The session's IDE link to mnml is up (`app/ide.zig`): the link
+    /// mark in that column when neither of the above has it.
+    linked: bool = false,
 };
 
 /// The on-screen mark beside a card, and its `--ascii` twin.
@@ -276,10 +279,14 @@ pub const GutterMark = enum {
     none,
     on_screen,
     ready,
+    /// Linked to mnml as its IDE (`app/ide.zig`) — the quietest of the
+    /// three.
+    linked,
 
     pub fn of(row: RowView) GutterMark {
         if (row.ready) return .ready;
         if (row.on_screen) return .on_screen;
+        if (row.linked) return .linked;
         return .none;
     }
 
@@ -288,6 +295,7 @@ pub const GutterMark = enum {
             .none => " ",
             .on_screen => if (ascii) on_screen_ascii else on_screen_glyph,
             .ready => if (ascii) ready_ascii else ready_glyph,
+            .linked => if (ascii) @import("app/ide.zig").link_ascii else @import("app/ide.zig").link_glyph,
         };
     }
 };
@@ -2459,6 +2467,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .changes = if (session_changes.recordOf(app, c.pane)) |r| r.count() else 0,
         .on_screen = @import("app/sessions_mode.zig").onScreen(app, c.pane),
         .ready = session_ready.unseen(app, c.pane),
+        .linked = @import("app/ide.zig").linked(app, c.pane),
     };
 }
 
@@ -3033,6 +3042,7 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
         .none => {},
         .on_screen => _ = ui.putStr(r.x, r.y, 1, GutterMark.on_screen.glyph(ui.ascii), Theme.withFg(bg, t.palette.green)),
         .ready => _ = ui.putStr(r.x, r.y, 1, GutterMark.ready.glyph(ui.ascii), Theme.withFg(bg, t.palette.yellow)),
+        .linked => _ = ui.putStr(r.x, r.y, 1, GutterMark.linked.glyph(ui.ascii), Theme.withFg(bg, t.palette.teal)),
     }
     const end = r.right();
     var x = r.x + 2;

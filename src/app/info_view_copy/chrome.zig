@@ -379,6 +379,13 @@ pub fn tab(app: *App, arena: Allocator, tb: hit.TabRef) Allocator.Error!?Entry {
                 .keys = &.{ .{ .command = .@"sessions.next_waiting", .label = "Next ready for you" }, .{ .command = .@"sessions.prev_waiting", .label = "Previous ready for you" } },
                 .links = &.{ .{ .command = .{ .id = .@"sessions.sort_waiting", .label = "Sort SESSIONS waiting first" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } } },
             };
+            // The link mark: the session has mnml as its IDE (`ide.zig`).
+            if (@import("../ide.zig").linked(app, id)) break :blk .{
+                .title = try std.fmt.allocPrint(arena, "Tab: {s} — linked to mnml", .{p.title()}),
+                .body = "The `⇄` after the name: this Claude Code session is linked to mnml as its IDE. It hears your selection as you make it, opens files, reads diagnostics, and shows its edits in the review pane for you to accept or reject; an accepted edit lands in the buffer unsaved. A save it asks for waits on you. Made when the session started; it goes when the pane closes or the API is turned off.",
+                .keys = &.{.{ .command = .@"ai.send_selection", .label = "Point it at the selection" }},
+                .links = &.{.{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } }},
+            };
             break :blk .{
                 .title = try std.fmt.allocPrint(arena, "Tab: {s} — {s}", .{ p.title(), if (claude) "a Claude Code session" else "a terminal" }),
                 .body = if (claude) "A Claude Code session in a terminal pane, driven by libghostty-vt; its card in SESSIONS shows the branch, cwd and what it is doing, and the colour on its rail matches. Click shows it; middle-click closes it (which ends the session — the transcript stays on disk); drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu for the mark it wears." else "A shell in a terminal pane, driven by libghostty-vt so it renders as ghostty would — in the workspace directory, with mnml's environment. Click shows it; middle-click closes it, which ends the shell; drag reorders. Right-click has Rename, Restart, Clear, the accent colour and the *Icon* submenu — the ghost or the plain terminal mark for every terminal tab.",
