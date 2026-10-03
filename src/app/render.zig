@@ -2908,8 +2908,9 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState, chords: MenuChords) voi
     const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, chords.rows, m.dropdown, m.curatable);
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
-    const x = @min(m.x, (screen.x + screen.w) -| w);
-    const y = menuTop(screen, m.y, h);
+    const origin: [2]u16 = if (m.link) |span| linkMenuOrigin(screen, span, w, h) else .{ m.x, menuTop(screen, m.y, h) };
+    const x = @min(origin[0], (screen.x + screen.w) -| w);
+    const y = origin[1];
     const frame = Rect.init(x, y, w, h);
     const inner = overlay_mod.frameLook(ui, frame, if (m.dropdown) null else m.title, .menu);
     if (inner.isEmpty()) return;
@@ -3018,6 +3019,17 @@ fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
 
 /// Frame + rows, in the shape Rust sizes them (`ContextMenu::
 /// content_width`; `menu_bar.rs`'s `w` / `sub_w`).
+/// Where a link's menu opens: on the row under the link's cells, its
+/// left edge on the link's first cell, so the menu never covers the
+/// link it is for; above the link when the rows below cannot hold it;
+/// as `menuTop` places it when neither side can.
+pub fn linkMenuOrigin(screen: Rect, span: Rect, w: u16, h: u16) [2]u16 {
+    const x = @min(@max(span.x, screen.x), (screen.x + screen.w) -| w);
+    if (span.bottom() + h <= screen.bottom()) return .{ x, span.bottom() };
+    if (span.y >= screen.y + h) return .{ x, span.y - h };
+    return .{ x, menuTop(screen, span.y, h) };
+}
+
 fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords: []const ?[]const u8, dropdown: bool, curatable: bool) MenuSize {
     var rows: u16 = 0;
     var widest: u16 = 0;
@@ -3611,6 +3623,45 @@ test "menuTop: below when it fits, flipped onto the pointer when it does not, cl
     // Too tall to flip: as low as the screen allows.
     try t.expectEqual(@as(u16, 0), menuTop(Rect.init(0, 0, 80, 5), 4, 6));
     try t.expectEqual(@as(u16, 2), menuTop(Rect.init(0, 0, 80, 8), 3, 6));
+}
+
+/// The rect the open menu's rows cover, from their hits.
+fn menuRowsRect(app: *App) ?Rect {
+    var top: ?u16 = null;
+    var bottom: u16 = 0;
+    var left: u16 = std.math.maxInt(u16);
+    for (app.hits.items.items) |h| if (h.target == .menu_item) {
+        top = @min(top orelse h.rect.y, h.rect.y);
+        bottom = @max(bottom, h.rect.bottom());
+        left = @min(left, h.rect.x);
+    };
+    const tp = top orelse return null;
+    return Rect.init(left, tp, 1, bottom - tp);
+}
+
+test "the Link menu opens under its link, left-aligned to it, and above it when the rows below cannot hold it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    app.tree.visible = false;
+    const cm = @import("context_menus.zig");
+    // A link mid-screen: the menu's frame starts on the row under it.
+    const span = Rect.init(30, 10, 24, 1);
+    try cm.openLinkMenu(&app, "https://example.com/a", span, 40, 10);
+    try app.render();
+    const below = menuRowsRect(&app).?;
+    // The frame's top border is the row under the link; the rows follow it.
+    try t.expectEqual(span.bottom() + 1, below.y);
+    try t.expectEqual(span.x + 1, below.x);
+    try t.expect(below.y > span.bottom());
+    // A link on the last row the menu may use: the menu sits above it.
+    const fr = frameRects(Rect.init(0, 0, app.screen.width, app.screen.height), chrome(&app));
+    const last = Rect.init(30, fr.upper.bottom() - 1, 24, 1);
+    try cm.openLinkMenu(&app, "https://example.com/b", last, 40, last.y);
+    try app.render();
+    const above = menuRowsRect(&app).?;
+    // The frame's bottom border is the row over the link.
+    try t.expectEqual(last.y - 1, above.bottom());
+    try t.expectEqual(last.x + 1, above.x);
 }
 
 // ── menu chords ──
