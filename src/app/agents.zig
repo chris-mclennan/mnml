@@ -389,6 +389,9 @@ pub const LocalCache = struct {
     /// Transcripts opened for their contents (tail, head, totals) — one
     /// per file read; what the tests count.
     reads: u64 = 0,
+    /// Liveness passes run (`ps`, the states, `git status`) — counted
+    /// by the tests alongside `reads`.
+    liveness_runs: u64 = 0,
     /// A walk has finished: until then everything is new.
     walked: bool = false,
 
