@@ -4673,7 +4673,7 @@ test "pins lead the list on either axis; p toggles and follows the card; the row
     try app.handle(.{ .key = Key.named(.esc) });
     try app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .left } });
     try testing.expect(app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 7), app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 9), app.overlay.menu.items.len);
     try app.handle(.{ .key = Key.named(.esc) });
 }
 
