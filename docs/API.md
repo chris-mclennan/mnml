@@ -185,12 +185,12 @@ Then MCP, one JSON-RPC message per WebSocket message: `initialize`
 **`openDiff`.** The proposed file opens in the review pane beside the
 buffer, titled with the session's `tab_name`, diffed against the buffer
 as it stands (unsaved edits included). Accept hunks and press Enter: the
-accepted text goes into the buffer as one undo step, **the buffer is left
-unsaved**, a toast says so, and the session is answered `FILE_SAVED`
-with the buffer's text. Esc, `q`, closing the tab, or Enter with nothing
+accepted text goes into the buffer as one undo step, **the file is saved**
+(the session's next read or test run must see what it was told was
+saved), a toast says so, and the session is answered `FILE_SAVED` with
+the file's text; undo in the buffer is still there. Esc, `q`, closing the tab, or Enter with nothing
 accepted answers `DIFF_REJECTED`. A second proposal for the same file
-replaces the first, which is answered `DIFF_REJECTED`. (`FILE_SAVED` is
-the protocol's word for "accepted"; mnml does not save.)
+replaces the first, which is answered `DIFF_REJECTED`.
 
 **What mnml tells the session.** `selection_changed` (`text`,
 `filePath`, `fileUrl`, `selection` with 0-based lines and characters) when

@@ -732,9 +732,9 @@ fn answerDiff(app: *App, d: Diff, ap: *ai_apply.AiApplyPane) Allocator.Error!voi
     try replyTool(app, d.conn, d.id_json, &.{ diff_saved, final }, false);
 }
 
-/// The toast an accepted `openDiff` raises: the buffer holds it, unsaved.
+/// The toast an accepted `openDiff` raises: saved, as the session was told.
 pub fn acceptedToast(app: *App, n: usize, total: usize) void {
-    app.toast("applied {d} of {d} hunk{s} from Claude Code — not saved yet; save to keep it (Ctrl+S)", .{ n, total, if (total == 1) "" else "s" });
+    app.toast("applied {d} of {d} hunk{s} from Claude Code and saved", .{ n, total, if (total == 1) "" else "s" });
 }
 
 fn closeTab(app: *App, conn: u32, id_json: []const u8, args: std.json.Value) Allocator.Error!void {
@@ -1070,7 +1070,7 @@ test "saveDocument is write: it asks as pane:<id>, saves on yes, and answers no 
     try t.expect(fx.audited("\"client\":\"pane:6\",\"method\":\"saveDocument\""));
 }
 
-test "openDiff shows the review; accept leaves the buffer dirty and answers FILE_SAVED with the text, reject answers DIFF_REJECTED" {
+test "openDiff shows the review; accept saves the file and answers FILE_SAVED with the text, reject answers DIFF_REJECTED" {
     var fx: Fx = undefined;
     try fx.init();
     defer fx.deinit();
@@ -1092,12 +1092,13 @@ test "openDiff shows the review; accept leaves the buffer dirty and answers FILE
     _ = try ai_apply.handleKey(app, rid, ap, .{ .code = .enter });
     try t.expect(fx.has(900, "\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"FILE_SAVED\"},{\"type\":\"text\",\"text\":\"one\\nTWO\\n\"}]}"));
     const ed = app.panes.get(app.panes.findPath(path).?).?;
-    try t.expect(ed.dirty());
+    // Saved to disk before the reply: the session's next read sees it.
+    try t.expect(!ed.dirty());
     const on_disk = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(64));
     defer t.allocator.free(on_disk);
-    try t.expectEqualStrings("one\ntwo\n", on_disk);
+    try t.expectEqualStrings("one\nTWO\n", on_disk);
     var said = false;
-    for (app.toasts.items) |ts| said = said or std.mem.indexOf(u8, ts.text, "not saved yet") != null;
+    for (app.toasts.items) |ts| said = said or std.mem.indexOf(u8, ts.text, "and saved") != null;
     try t.expect(said);
 
     try fx.call(6, 900, 2, "openDiff", args);

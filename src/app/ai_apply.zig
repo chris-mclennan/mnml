@@ -497,10 +497,15 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
     const range = locate(app, &p.anchor, p.old_text) orelse return app.diag.fail(arena, "{s}", .{changed_msg});
     const text = try p.result(arena);
     try app.splice(e, range[0], range[1], text);
-    // A session's proposal: the buffer holds it, unsaved — the session
-    // hears FILE_SAVED as the pane closes.
+    // A session's proposal is saved to disk before the session hears
+    // FILE_SAVED as the pane closes: its next read or test run sees the
+    // file it was told it saved. The person's own review keeps the
+    // buffer dirty for their own save.
     const from_session = p.ide != null;
     if (p.ide) |*d| d.accepted = true;
+    if (from_session) if (app.panes.editor(target)) |te| @import("cmd_file.zig").savePane(app, target, te, .{ .quiet = true }) catch |err| {
+        app.toast("Claude Code's edit is in the buffer but not on disk: {s}", .{@errorName(err)});
+    };
     if (source) |src| if (app.panes.get(src)) |sp| switch (sp.*) {
         .ai => |*ap| ap.apply = Anchor.take(target, e.buf.doc, range[0], range[0] + text.len),
         else => {},

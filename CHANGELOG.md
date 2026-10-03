@@ -45,8 +45,8 @@ the release ships one file), and one line per change a user can see.
 - A Claude Code session started in an mnml pane links to mnml as its IDE
   with no setup. It sees your selection, opens files, reads diagnostics,
   and shows its edits as a diff in mnml's review pane for you to accept
-  hunk by hunk or reject. An accepted diff lands in the buffer unsaved;
-  saving is yours, and a session asking to save asks you first.
+  hunk by hunk or reject. An accepted diff is saved, as the session is
+  told it was; a session asking to save a file itself asks you first.
 - A linked session wears a link mark (`⇄`) on its tab, and on its SESSIONS
   card when nothing else has that spot; a toast says so when it first
   connects.
