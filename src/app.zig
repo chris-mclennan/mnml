@@ -1498,6 +1498,8 @@ pub const App = struct {
     ipc_gate: @import("app/ipc_gate.zig").State = .{},
     /// The API socket's tokens, grants and connections (`app/api.zig`).
     api: @import("app/api.zig").State = .{},
+    /// The agent face: each Claude Code session pane's IDE link (`app/ide.zig`).
+    ide: @import("app/ide.zig").State = .{},
     hooks: hooks.Hooks,
     /// The `init.lua` state (D10), id 0. Reach it through `script()`,
     /// which points it at this App — the struct moves after `initWith`
@@ -2026,6 +2028,9 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         const gpa = self.gpa;
+        // The agent face's listeners and lock files go first, while the
+        // panes and the gate they touch are still whole.
+        @import("app/ide.zig").shutdown(self);
         // Close the queue before a single group is cancelled. Nothing
         // drains it once the loop has stopped, so a worker that posts
         // into a full ring waits for room that never comes — and a
@@ -2118,6 +2123,7 @@ pub const App = struct {
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
         self.ipc_gate.deinit(gpa);
+        self.ide.deinit(gpa);
         self.api.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
         if (self.cmdline) |*c| c.deinit(gpa);
@@ -3128,6 +3134,8 @@ pub const App = struct {
         sessions_mode_app.forgetPane(self, id);
         // Its API token and grants, and what it was waiting on.
         @import("app/api.zig").forgetPane(self, id);
+        // Its IDE link; or, for a diff a session asked for, the answer.
+        @import("app/ide.zig").forgetPane(self, id);
         self.afterSplitChange();
         self.panes.remove(id);
         if (closed_path) |p| lsp.onClose(self, id, p);
@@ -3491,6 +3499,7 @@ pub const App = struct {
             // A line on the API socket (`app/api.zig`); only the terminal
             // loop serves one.
             .api => |inc| try @import("app/api.zig").handle(self, inc),
+            .ide => |inc| try @import("app/ide.zig").handle(self, inc),
             .ipc => |e| {
                 defer e.destroy();
                 switch (e.cmd) {
@@ -3611,6 +3620,7 @@ pub const App = struct {
         try self.flushWheel();
         try integrations.tick(self);
         if (self.chord.deadline_ms) |d| if (now >= d) try dispatch.expireChords(self);
+        try @import("app/ide.zig").tick(self, now);
         var i: usize = 0;
         while (i < self.toasts.items.len) {
             const t = self.toasts.items[i];
@@ -3692,6 +3702,7 @@ pub const App = struct {
         // The status TTL: a frame is due when the snapshot goes stale.
         if (self.git.activeRepo() != null and !self.git.status_pending) next = @min(next orelse std.math.maxInt(i64), self.git.status_at_ms + git_app.status_ttl_ms);
         if (ai_app.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (@import("app/ide.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (transfers.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (jobs_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (now_playing.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);

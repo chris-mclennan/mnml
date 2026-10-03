@@ -50,6 +50,10 @@ pub const Verb = enum {
     /// The API socket's other methods, audited but never held.
     api_open,
     api_read,
+    /// The agent face's tools (`app/ide.zig`): audited, never held…
+    ide_tool,
+    /// …but `saveDocument`, which writes.
+    ide_save,
 
     pub fn word(v: Verb) []const u8 {
         return switch (v) {
@@ -58,6 +62,8 @@ pub const Verb = enum {
             .api_run => "commands.run",
             .api_open => "editor.open",
             .api_read => "read",
+            .ide_tool => "ide",
+            .ide_save => "saveDocument",
         };
     }
 
@@ -97,6 +103,8 @@ pub const ApiReply = struct {
     conn: u32,
     /// The request's `id`, as JSON. Owned.
     id_json: []u8,
+    /// An agent-face connection (`app/ide.zig`), answered in its terms.
+    ide: bool = false,
 };
 
 /// What `askApi` decided.
@@ -208,6 +216,16 @@ pub fn askApi(app: *App, caller: Caller, conn: u32, id_json: []const u8, target:
     return out;
 }
 
+/// The agent face's `saveDocument` of `path` from `caller`: write class,
+/// so run now, held for the person (answered on `conn`), or refused.
+pub fn askIde(app: *App, caller: Caller, conn: u32, id_json: []const u8, path: []const u8) Allocator.Error!Outcome {
+    const owned = try app.gpa.dupe(u8, id_json);
+    errdefer app.gpa.free(owned);
+    const out = try decide(app, caller, .ide_save, .write, path, &.{}, null, .{ .conn = conn, .id_json = owned, .ide = true });
+    if (out != .held) app.gpa.free(owned);
+    return out;
+}
+
 /// An API method that is never held — a read, or `editor.open` — on the
 /// audit trail all the same.
 pub fn logApi(app: *App, caller: Caller, verb: Verb, effect: Effect, target: []const u8, refused: bool) Allocator.Error!void {
@@ -300,7 +318,10 @@ pub fn askTextFor(arena: Allocator, r: Request, pane_title: []const u8) Allocato
         .run_command => std.fmt.allocPrint(arena, "a program wants to run {s} ({s}) through the file channel", .{ r.target, @tagName(r.effect) }),
         .open_pty => std.fmt.allocPrint(arena, "a program wants to open a terminal running `{s}` through the file channel", .{r.target}),
         else => switch (r.caller) {
-            .pane => |id| std.fmt.allocPrint(arena, "pane {d} · {s} asks to run {s} ({s})", .{ id, pane_title, r.target, @tagName(r.effect) }),
+            .pane => |id| if (r.verb == .ide_save)
+                std.fmt.allocPrint(arena, "pane {d} · {s} asks to save {s} ({s})", .{ id, pane_title, r.target, @tagName(r.effect) })
+            else
+                std.fmt.allocPrint(arena, "pane {d} · {s} asks to run {s} ({s})", .{ id, pane_title, r.target, @tagName(r.effect) }),
             else => std.fmt.allocPrint(arena, "a program asks to run {s} ({s}) over the API", .{ r.target, @tagName(r.effect) }),
         },
     };
@@ -429,6 +450,7 @@ fn release(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Er
     defer r.deinit(app.gpa);
     try logAs(app, r.caller, r.verb, r.effect, r.target, decision, by);
     switch (r.verb) {
+        .ide_save, .ide_tool => if (r.reply) |a| try @import("ide.zig").saveAndReply(app, a, r.target),
         .run_command, .api_run, .api_open, .api_read => {
             const ref = command.resolve(app, r.target) orelse {
                 if (r.reply) |a| try api_app.replyError(app, a.conn, a.id_json, api_app.err_no_such, "no such command") else app.toast("run-command: no such command `{s}`", .{r.target});
@@ -455,7 +477,8 @@ fn deny(app: *App, i: usize, decision: Decision, by: []const u8) Allocator.Error
     const r = take(app, i);
     defer r.deinit(app.gpa);
     try logAs(app, r.caller, r.verb, r.effect, r.target, decision, by);
-    if (r.reply) |a| try api_app.replyError(app, a.conn, a.id_json, api_app.err_denied, if (decision == .timed_out) "nobody answered in time" else "the user said no");
+    const why = if (decision == .timed_out) "nobody answered in time" else "the user said no";
+    if (r.reply) |a| if (a.ide) try @import("ide.zig").replyToolError(app, a.conn, a.id_json, why) else try api_app.replyError(app, a.conn, a.id_json, api_app.err_denied, why);
     // A box still up for it goes with it.
     if (app.overlay == .confirm) switch (app.overlay.confirm.purpose) {
         .ipc_grant => |id| if (id == r.id) {

@@ -172,6 +172,9 @@ pub const AiApplyPane = struct {
     /// The focused hunk.
     cursor: usize = 0,
     scroll: usize = 0,
+    /// A Claude Code session's `openDiff` (`ide.zig`): it is answered
+    /// when this pane closes, and its `tab_name` is the tab's title.
+    ide: ?@import("ide.zig").Diff = null,
 
     pub fn deinit(self: *AiApplyPane) void {
         self.arena.deinit();
@@ -494,12 +497,17 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
     const range = locate(app, &p.anchor, p.old_text) orelse return app.diag.fail(arena, "{s}", .{changed_msg});
     const text = try p.result(arena);
     try app.splice(e, range[0], range[1], text);
+    // A session's proposal: the buffer holds it, unsaved — the session
+    // hears FILE_SAVED as the pane closes.
+    const from_session = p.ide != null;
+    if (p.ide) |*d| d.accepted = true;
     if (source) |src| if (app.panes.get(src)) |sp| switch (sp.*) {
         .ai => |*ap| ap.apply = Anchor.take(target, e.buf.doc, range[0], range[0] + text.len),
         else => {},
     };
     try app.forceClosePane(id);
     app.showPane(target);
+    if (from_session) return @import("ide.zig").acceptedToast(app, n, total);
     app.toast("applied {d} of {d} hunk{s}", .{ n, total, if (total == 1) "" else "s" });
 }
 

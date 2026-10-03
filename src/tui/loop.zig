@@ -727,6 +727,51 @@ test "an idle API listener adds no work per frame: nothing reaches the loop unti
     try t.expectEqual(@as(u64, 2), inst.server.posted.load(.monotonic));
 }
 
+test "an idle agent-face listener adds no work per frame: nothing reaches the loop until Claude Code connects, and then each message is one .ide event" {
+    // `api-design.md` §6.2, §8: a Claude Code pane's IDE listener is a
+    // task parked in `accept` — no event, no wakeup, no frame until the
+    // session connects; then each message is one `.ide` event.
+    const ide = @import("../app/ide.zig");
+    const ws = @import("../http/ws.zig");
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws_dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws_dir, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    app.api.socket = "/test/1.sock";
+    app.ide.lock_dir_override = ws_dir;
+    const pid = try @import("../app/pty_pane.zig").open(&app, .{ .argv = &.{"claude"}, .label = "claude", .kind = .command, .placement = .tab, .dormant = true });
+    const port = (try ide.startFor(&app, pid)).?;
+    const l = app.ide.links.get(pid).?.listener.?;
+
+    var buf: [8]event.AppEvent = undefined;
+    // Frames go by with nobody connected: nothing posted, nothing woken,
+    // and the per-frame tick has no selection to tell.
+    try t.io.sleep(.fromMilliseconds(250), .awake);
+    try app.tick(1_000);
+    try t.expectEqual(@as(usize, 0), app.events.drain(t.io, &buf));
+    try t.expectEqual(@as(u64, 0), l.posted.load(.monotonic));
+    try t.expect(!app.events.wake.isSet());
+    try t.expect(ide.nextDeadlineMs(&app) == null);
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "ws://127.0.0.1:{d}/", .{port});
+    const c = try ws.Conn.connect(t.allocator, t.io, url, .{ .headers = &.{.{ @import("../api/ide_server.zig").auth_header, &l.token }} });
+    defer c.deinit();
+    try t.expectEqual(@as(usize, 1), @import("../api/ide_server.zig").awaitEvent(app.events, t.io, &buf));
+    try t.expect(buf[0] == .ide and buf[0].ide.kind == .opened);
+    try app.handle(buf[0]);
+    try c.sendText("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+    try t.expectEqual(@as(usize, 1), @import("../api/ide_server.zig").awaitEvent(app.events, t.io, &buf));
+    try t.expect(buf[0] == .ide and buf[0].ide.kind == .message);
+    try app.handle(buf[0]);
+    const m = (try c.readMessage()).?;
+    try t.expect(std.mem.indexOf(u8, m.text, "\"serverInfo\":{\"name\":\"mnml\"") != null);
+    try t.expectEqual(@as(u64, 2), l.posted.load(.monotonic));
+    try t.expect(ide.linked(&app, pid));
+}
+
 test "with allow_input the live loop's input lines MOVE the App: a key opens the picker, open + type edit a file, a click lands" {
     // The ack said `accepted` and the App's `.ipc` arm answered "not in
     // this build": a host driving the real window through the channel

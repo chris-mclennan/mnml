@@ -1130,6 +1130,8 @@ test {
     _ = @import("tui/marker.zig");
     _ = @import("api/paths.zig");
     _ = @import("api/server.zig");
+    _ = @import("api/ide_server.zig");
+    _ = @import("app/ide.zig");
     _ = @import("api/remote.zig");
     _ = @import("api/instance.zig");
     _ = @import("editor/edit_op.zig");
