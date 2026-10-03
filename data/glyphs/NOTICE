@@ -1,0 +1,25 @@
+Third-party art in this directory
+=================================
+
+atlassian-pull-request.svg, atlassian-board.svg, atlassian-release.svg
+    @atlaskit/icon 38.0.2, svgs/core/{pull-request,board,release}.svg
+    https://www.npmjs.com/package/@atlaskit/icon
+
+atlassian-pipeline.svg
+    @atlaskit/icon-lab 7.11.0, svgs/core/pipeline.svg
+    https://www.npmjs.com/package/@atlaskit/icon-lab
+
+Copyright 2019 Atlassian Pty Ltd
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+A copy of the License is in LICENSE-APACHE at the root of this
+repository, and at http://www.apache.org/licenses/LICENSE-2.0
+
+The four files are the packages' own SVGs, unmodified.
+
+Atlassian, Jira and Bitbucket are trademarks of Atlassian. The marks
+are used to label the Jira and Bitbucket integrations' chips; no
+endorsement is implied.
+
+The other SVGs here are described in data/root.zig.
