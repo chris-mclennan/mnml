@@ -19,7 +19,7 @@
 //! placeholder the user emptied (a session closed, a pane dragged in)
 //! is forgotten as soon as the tree holds no `.empty` slot.
 //!
-//! The batch (`Open ×2 / ×4 / ×8`) runs the same rule N times and
+//! The batch (`Open ×2 / ×3 / ×4 / ×6 / ×8`) runs the same rule N times and
 //! reports the pages it needed.
 
 const std = @import("std");

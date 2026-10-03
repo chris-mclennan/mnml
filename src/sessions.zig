@@ -2232,8 +2232,8 @@ pub fn menuLinks(app: *App, arena: Allocator, card: ?Card, it: ?Item) Allocator.
     return link_rules.collect(app, arena, texts.items, menu_links_max);
 }
 
-/// The `+ New session` menu: a local session, a batch (Rust's ×2 / ×4
-/// / ×8), and — the cloud wizards' new home — a cloud run by ticket or
+/// The `+ New session` menu: a local session, a batch (×2 / ×3 / ×4 /
+/// ×6 / ×8), and — the cloud wizards' new home — a cloud run by ticket or
 /// through the wizard. The cloud rows say when the API is not
 /// configured rather than hide.
 pub fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
@@ -2242,7 +2242,9 @@ pub fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
         .{ .label = "New local session", .action = .{ .command = .@"ai.claude_code_new" } },
         .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
         .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" } },
+        .{ .label = "Open ×3", .action = .{ .command = .@"ai.claude_code_new_x3" } },
         .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" } },
+        .{ .label = "Open ×6", .action = .{ .command = .@"ai.claude_code_new_x6" } },
         .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" } },
         .{ .label = if (cloud_ok) "New cloud run…" else "New cloud run… (not configured)", .action = .{ .command = .@"cloud_agents.new_run" }, .separator_before = true },
         .{ .label = if (cloud_ok) "New cloud run (wizard)…" else "New cloud run (wizard)… (not configured)", .action = .{ .command = .@"cloud_agents.new_run_wizard" } },
@@ -4656,18 +4658,22 @@ test "pins lead the list on either axis; p toggles and follows the card; the row
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", new_command);
     try app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 7), app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 9), app.overlay.menu.items.len);
     try testing.expectEqual(command.CommandId.@"ai.claude_code_new", app.overlay.menu.items[0].action.command);
     try testing.expectEqual(command.CommandId.@"ai.new_session_worktree", app.overlay.menu.items[1].action.command);
     try testing.expectEqualStrings("New session in a worktree…", app.overlay.menu.items[1].label);
-    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", app.overlay.menu.items[4].action.command);
-    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run", app.overlay.menu.items[5].action.command);
-    try testing.expect(std.mem.indexOf(u8, app.overlay.menu.items[5].label, "not configured") != null);
-    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run_wizard", app.overlay.menu.items[6].action.command);
+    // The batch sizes in order: 2, 3, 4, 6, 8 — the ones a person asked for.
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x2", app.overlay.menu.items[2].action.command);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x3", app.overlay.menu.items[3].action.command);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x6", app.overlay.menu.items[5].action.command);
+    try testing.expectEqual(command.CommandId.@"ai.claude_code_new_x8", app.overlay.menu.items[6].action.command);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run", app.overlay.menu.items[7].action.command);
+    try testing.expect(std.mem.indexOf(u8, app.overlay.menu.items[7].label, "not configured") != null);
+    try testing.expectEqual(command.CommandId.@"cloud_agents.new_run_wizard", app.overlay.menu.items[8].action.command);
     try app.handle(.{ .key = Key.named(.esc) });
     try app.handle(.{ .mouse = .{ .x = new_chip.?.x + 1, .y = new_chip.?.y, .kind = .press, .button = .left } });
     try testing.expect(app.overlay == .menu);
-    try testing.expectEqual(@as(usize, 7), app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 9), app.overlay.menu.items.len);
     try app.handle(.{ .key = Key.named(.esc) });
 }
 
