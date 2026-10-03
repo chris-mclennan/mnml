@@ -429,6 +429,9 @@ pub const ConfirmPurpose = union(enum) {
     restart,
     /// Run the workspace's exec-bearing config (`trust.zig`).
     trust_workspace,
+    /// A request the file channel is holding (`app/ipc_gate.zig`); the
+    /// payload is its id.
+    ipc_grant: u32,
     /// `workspace.review_trust` on a trusted workspace: Keep / Forget.
     review_trust,
     /// Install the missing tool (`runners.zig`); the payload indexes the installer table.
@@ -1047,6 +1050,10 @@ pub const ToastAction = union(enum) {
     /// else the listing's `session_id`. The one offer the toast's body
     /// click takes too — the message IS the session.
     focus_session: struct { label: []u8, pane: ?PaneId = null, session_id: ?[]u8 = null },
+    /// Open the confirm box for a request the file channel is holding
+    /// (`app/ipc_gate.zig`). The other offer the body click takes: the
+    /// message IS the request.
+    ipc_review: struct { label: []u8, request: u32 },
 
     pub fn label(self: ToastAction) []const u8 {
         return switch (self) {
@@ -1064,7 +1071,7 @@ pub const ToastAction = union(enum) {
                     .command => |c| gpa.free(c.id),
                     .open_url => |u| gpa.free(u.url),
                     .focus_session => |f| if (f.session_id) |sid| gpa.free(sid),
-                    .restart => {},
+                    .restart, .ipc_review => {},
                 }
             },
         }
@@ -1486,6 +1493,9 @@ pub const App = struct {
     abbrevs: std.StringHashMapUnmanaged([]u8) = .empty,
     dyn_commands: command.DynRegistry,
     plugin_invocations: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The file channel's held requests, grants and audit outbox
+    /// (`app/ipc_gate.zig`).
+    ipc_gate: @import("app/ipc_gate.zig").State = .{},
     hooks: hooks.Hooks,
     /// The `init.lua` state (D10), id 0. Reach it through `script()`,
     /// which points it at this App — the struct moves after `initWith`
@@ -2105,6 +2115,7 @@ pub const App = struct {
         if (self.find_term) |t| self.gpa.free(t.query);
         for (self.plugin_invocations.items) |p| gpa.free(p);
         self.plugin_invocations.deinit(gpa);
+        self.ipc_gate.deinit(gpa);
         if (self.cmd_complete) |*c| c.deinit(gpa);
         if (self.cmdline) |*c| c.deinit(gpa);
         if (self.preview_hl) |*h| h.deinit();
@@ -2276,6 +2287,7 @@ pub const App = struct {
                 const url = try self.frame.allocator().dupe(u8, u.url);
                 @import("app/git.zig").openExternal(self, url);
             },
+            .ipc_review => |r| try @import("app/ipc_gate.zig").review(self, r.request),
             .focus_session => |f| {
                 const sid: ?[]const u8 = if (f.session_id) |s| try self.frame.allocator().dupe(u8, s) else null;
                 @import("app/session_attention.zig").focus(self, f.pane, sid) catch |err| switch (err) {
@@ -3486,6 +3498,10 @@ pub const App = struct {
                     // the loop post it (`tui/loop.zig`); it becomes the
                     // key and mouse events a person's hands would.
                     else => {
+                        // Only the terminal loop posts here, so this is
+                        // where the file channel asks before a command
+                        // above `view` or a terminal (`app/ipc_gate.zig`).
+                        if (!try @import("app/ipc_gate.zig").check(self, &e.cmd)) return;
                         var arena_state = std.heap.ArenaAllocator.init(self.gpa);
                         defer arena_state.deinit();
                         if (!try ipc.effects.applyInput(self, arena_state.allocator(), &e.cmd) and
@@ -3597,6 +3613,7 @@ pub const App = struct {
             } else i += 1;
         }
         if (self.undo_chip) |u| if (now >= u.expires_ms) self.dropUndo();
+        try @import("app/ipc_gate.zig").tick(self, now);
         try dispatch.finishDeferredInserts(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
@@ -3697,6 +3714,7 @@ pub const App = struct {
             if (next == null or t.expires_ms < next.?) next = t.expires_ms;
         }
         if (self.undo_chip) |u| next = @min(next orelse std.math.maxInt(i64), u.expires_ms);
+        if (@import("app/ipc_gate.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         return next;
     }
 
@@ -3887,6 +3905,7 @@ test {
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
     _ = @import("app/session_attention.zig");
+    _ = @import("app/ipc_gate.zig");
     _ = @import("app/session_ready.zig");
     _ = @import("app/session_search.zig");
     _ = @import("app/welcome.zig");

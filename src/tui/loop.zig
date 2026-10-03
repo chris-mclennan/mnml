@@ -224,6 +224,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
         // A command an integration registered over IPC was invoked: its
         // `plugin-command` line, as the headless loop writes it.
         try app_driver.emitPluginEvents(&app, if (channel) |*c| c else null, app.frame.allocator());
+        // The file channel's gate: its decisions, into audit.jsonl and
+        // events.jsonl (`app/ipc_gate.zig`).
+        @import("../app/ipc_gate.zig").flush(&app, if (channel) |*c| c else null, app.frame.allocator());
         if (app.bell_pending) {
             app.bell_pending = false;
             term.writeRaw("\x07") catch {};
@@ -613,6 +616,49 @@ test "the live loop takes the tier-2 set and refuses input: a segment lands, a k
     n = app.events.drain(t.io, &buf);
     try t.expectEqual(@as(usize, 1), n);
     buf[0].ipc.destroy();
+}
+
+test "the live loop's file channel asks before run-command of an edit command and before open-pty, and audits the answer" {
+    // `api-design.md` §5.7: any process in a pane can write this file;
+    // the line is acknowledged as read, but nothing runs until the
+    // person answers — and their answer is a line in audit.jsonl.
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const ws = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var ch = try ipc.Channel.init(t.allocator, t.io, ws, .{});
+    defer ch.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var buf: [8]event.AppEvent = undefined;
+    const gate = @import("../app/ipc_gate.zig");
+
+    for ([_][]const u8{
+        "{\"cmd\":\"run-command\",\"id\":\"scratch.new\"}",
+        "{\"cmd\":\"open-pty\",\"command\":[\"sh\"]}",
+    }) |line| {
+        try dispatchIpcLine(&ch, &app, arena, line);
+        try t.expectEqual(@as(usize, 1), app.events.drain(t.io, &buf));
+        try app.handle(buf[0]);
+    }
+    try t.expectEqual(@as(usize, 2), app.ipc_gate.pending.items.len);
+    try t.expect(app.activeEditor() == null);
+    gate.flush(&app, &ch, arena);
+    const events_path = try std.fs.path.join(arena, &.{ ch.dirPath(), "events.jsonl" });
+    const log = try std.Io.Dir.cwd().readFileAlloc(t.io, events_path, arena, .limited(1 << 16));
+    try t.expectEqual(@as(usize, 2), std.mem.count(u8, log, "\"decision\":\"pending\""));
+
+    // Denied, both: nothing ran, and audit.jsonl says who said no.
+    while (app.ipc_gate.pending.items.len > 0) try gate.answer(&app, app.ipc_gate.pending.items[0].id, 2);
+    try t.expect(app.activeEditor() == null);
+    gate.flush(&app, &ch, arena);
+    const audit_path = try std.fs.path.join(arena, &.{ ch.dirPath(), "audit.jsonl" });
+    const audit = try std.Io.Dir.cwd().readFileAlloc(t.io, audit_path, arena, .limited(1 << 16));
+    try t.expectEqual(@as(usize, 2), std.mem.count(u8, audit, "\"decision\":\"denied\",\"by\":\"user\""));
+    try t.expect(std.mem.indexOf(u8, audit, "\"method\":\"open-pty\",\"target\":\"sh\",\"class\":\"exec\"") != null);
 }
 
 test "with allow_input the live loop's input lines MOVE the App: a key opens the picker, open + type edit a file, a click lands" {

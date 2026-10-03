@@ -26,6 +26,7 @@ editor: Editor = .{},
 ui: Ui = .{},
 session: Session = .{},
 ipc: Ipc = .{},
+api: Api = .{},
 terminal: Terminal = .{},
 cloud_run: CloudRun = .{},
 cloud_agents: CloudAgents = .{},
@@ -897,6 +898,32 @@ pub const Ipc = struct {
     /// was pressed is never written.
     report_input: bool = false,
 };
+
+/// What a program may have mnml do without asking the person at the
+/// keyboard (`docs/research/api-design.md` §5.5). Lists only, so it
+/// lives here and not in the settings overlay. Today the one caller it
+/// reads is the file channel — `<workspace>/.mnml/ipc/command`, which
+/// any process in a pane can write — and what it gates is that
+/// channel's `run-command` (a command whose class is above `view`) and
+/// `open-pty`. Everything else on the channel is untouched, and the
+/// headless loop, which is the test driver, is never asked.
+pub const Api = struct {
+    /// Command ids any caller may run without a prompt.
+    allow_commands: []const []const u8 = &.{},
+    /// Callers the user trusts, by name. `file-channel` is the file
+    /// channel; `allow` names the classes it may use unasked
+    /// (`.view | .edit | .write | .exec` — `.exec` covers `open-pty`)
+    /// and `commands` the ids it may run unasked.
+    clients: []const ApiClient = &.{},
+};
+
+pub const ApiClient = struct {
+    name: []const u8 = "",
+    allow: []const ApiEffect = &.{},
+    commands: []const []const u8 = &.{},
+};
+
+pub const ApiEffect = @import("../commands/specs.zig").Effect;
 
 pub const CloudRunDefaults = struct {
     agent_id: []const u8 = "",
