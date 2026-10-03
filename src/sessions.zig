@@ -4456,7 +4456,7 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
         else => {},
     };
     try testing.expect(row0 != null and sort_chip != null);
-    try testing.expectEqual(card_h, row0.?.h);
+    try testing.expectEqual(card_h + card_gap, row0.?.h);
     try app.handle(.{ .mouse = .{ .x = row0.?.x + 1, .y = row0.?.y, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
     // Pin, four moves, Auto sort, Rename…, Color, Focus, transcript,
@@ -4833,13 +4833,14 @@ test "the card at 26 cells is Rust's, cell for cell: rows 3–18 of rust-session
     var y: u16 = 3;
     while (y <= 18) : (y += 1) try testing.expectEqualStrings(specRow(y), f.row(y, &buf));
     // Hits: the New chip alone on its row, the blanks take none, a card's
-    // hit covers its four rows and the gap none.
+    // hit covers its four rows and the gap under it — Rust's left the gap
+    // bare, so the wheel there scrolled nothing (`list_panel`).
     try testing.expectEqual(hit.ChipKind.new, f.hits.at(3, 3).?.chip.kind);
     try testing.expect(f.hits.at(5, 2) == null);
     try testing.expect(f.hits.at(5, 4) == null);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
     try testing.expectEqual(@as(u32, 0), f.hits.at(20, 8).?.row.idx);
-    try testing.expect(f.hits.at(5, 9) == null);
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 9).?.row.idx);
     try testing.expectEqual(@as(u32, 1), f.hits.at(5, 10).?.row.idx);
     try testing.expectEqual(@as(u32, 2), f.hits.at(5, 15).?.row.idx);
     try testing.expectEqual(hit.PanelId.sessions, f.hits.at(10, 1).?.filter_input);
@@ -5065,7 +5066,7 @@ test "pins lead the list on either axis; p toggles and follows the card; the row
         else => {},
     };
     try testing.expect(row0 != null and new_chip != null);
-    try testing.expectEqual(card_h, row0.?.h);
+    try testing.expectEqual(card_h + card_gap, row0.?.h);
     try app.handle(.{ .mouse = .{ .x = row0.?.x + 3, .y = row0.?.y + 2, .kind = .press, .button = .right } });
     try testing.expect(app.overlay == .menu);
     try testing.expectEqualStrings("Unpin", app.overlay.menu.items[0].label);

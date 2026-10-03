@@ -462,7 +462,13 @@ pub fn ListPanel(comptime Row: type) type {
                 // chips, a link): last painted wins.
                 // // changed (http-panel): was registered after `paintRow`,
                 // so a painter's targets could never be clicked.
-                if (p.targets) |tg| ui.hit(row_rect, tg.row(@intCast(idx))) else if (p.pane) |id| ui.hit(row_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(row_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
+                // The hit takes the gap under the item as well, and the
+                // last item of a list that scrolls the rows left under
+                // it: the wheel over a gap between two cards, or under
+                // the last whole one, lands on the list and scrolls it.
+                const hit_h: u16 = if (i + 1 < win.visible) stride else if (win.needs_bar) (rest.y + list_h) -| row_rect.y else row_rect.h;
+                const hit_rect = Rect.init(row_rect.x, row_rect.y, row_rect.w, @max(row_rect.h, hit_h));
+                if (p.targets) |tg| ui.hit(hit_rect, tg.row(@intCast(idx))) else if (p.pane) |id| ui.hit(hit_rect, .{ .script_hit = .{ .pane = id, .id = hit.ListHit.row(@intCast(idx)) } }) else ui.hit(hit_rect, .{ .row = .{ .panel = p.panel, .idx = @intCast(idx) } });
                 if (content.h > 1 and first.w != content.w) {
                     // Painted twice, each pass clipped to its rows: the
                     // first row against the narrow width, the rest
@@ -1040,8 +1046,12 @@ test "cards: row_h items with a gap, the hit over every row of one, the window c
     try testing.expectEqual(@as(usize, 2), st.visible);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 2).?.row.idx);
     try testing.expectEqual(@as(u32, 0), f.hits.at(5, 5).?.row.idx);
-    try testing.expect(f.hits.at(5, 6) == null);
+    // The gap is the card's above it, and the rows under the last whole
+    // card of a list that scrolls are that card's: the wheel anywhere
+    // over the list lands on it.
+    try testing.expectEqual(@as(u32, 0), f.hits.at(5, 6).?.row.idx);
     try testing.expectEqual(@as(u32, 1), f.hits.at(5, 7).?.row.idx);
+    try testing.expectEqual(@as(u32, 1), f.hits.at(5, 13).?.row.idx);
     // The selected card keeps the panel ground: the row paints its own signal.
     try testing.expect(f.bgEql(10, 2, f.theme.panel_bg));
     try testing.expectEqualStrings("\u{258c}", f.cell(1, 2).char.grapheme);
