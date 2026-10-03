@@ -437,7 +437,11 @@ test "a pane opens a file at a line, lists panes, runs a view command unasked, a
     defer t.allocator.free(init_line);
     try feed(app, 1, init_line);
 
-    const open = try std.fmt.allocPrint(t.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"editor.open\",\"params\":{{\"path\":\"{s}\",\"line\":3}}}}", .{file});
+    // The path is JSON-encoded: on Windows it carries backslashes.
+    var path_json: std.Io.Writer.Allocating = .init(t.allocator);
+    defer path_json.deinit();
+    try std.json.Stringify.encodeJsonString(file, .{}, &path_json.writer);
+    const open = try std.fmt.allocPrint(t.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"editor.open\",\"params\":{{\"path\":{s},\"line\":3}}}}", .{path_json.written()});
     defer t.allocator.free(open);
     try feed(app, 1, open);
     try t.expect(has(app, 1, "\"result\":{\"pane\":"));
