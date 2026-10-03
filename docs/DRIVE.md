@@ -144,7 +144,11 @@ mnml-drive quit
 `--allow-input` turns `ipc.allow_input` on in the harness config, so a
 script drives the window through the file channel — JSONL lines in
 `<ws>/.mnml/ipc-zig/command`, `key`, `type`, `click`, `run-command`… —
-without the harness ever being the active application. That is the way
+without the harness ever being the active application. It also writes an
+`.api.clients` row for `file-channel` allowing every class, so the
+channel's `run-command` and `open-pty` run without the ask a program in a
+pane gets (`docs/CONFIG.md`, "Commands a program asks for"); without the
+flag, a `run-command` above `view` sits on a toast until someone answers. That is the way
 `tools/tour.sh` and `tools/look.sh` drive it (`docs/LOOK.md`); `key` /
 `type` / the mouse verbs here need `focus`, which takes the keyboard.
 

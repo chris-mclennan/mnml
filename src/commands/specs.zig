@@ -1361,6 +1361,119 @@ pub const specs = [_]Spec{
     .{ .id = "help.pin_toggle", .title = "Info panel: pin the entry it shows, so the pointer can go anywhere (again to unpin)", .group = "help", .short = "pin hover help", .keys = .{ .vim = &.{"space t p"}, .standard = &.{"ctrl+k shift+h"} } },
 };
 
+// ─── what a command can change ──────────────────────────────────────────
+
+/// What running a command can change — the class a caller that is not
+/// the person at the keyboard is asked about (`docs/research/api-design.md`
+/// §5.3). Ordered by reach: a `view` command only moves what is shown,
+/// so anyone may run it; the others ask first (`app/ipc_gate.zig`).
+pub const Effect = enum {
+    /// Moves the view, opens an overlay, a picker or a read-only pane.
+    view,
+    /// Changes a buffer, not the disk.
+    edit,
+    /// Disk, git, the network, config.
+    write,
+    /// Starts or kills a process, or types into one.
+    exec,
+};
+
+/// Every palette group's class. A group missing here does not compile a
+/// class for its commands (`effects` below), so a new group has to be
+/// classed when it is added.
+pub const group_effects = [_]struct { []const u8, Effect }{
+    .{ "view", .view },     .{ "go", .view },         .{ "find", .view },          .{ "search", .view },
+    .{ "grep", .view },     .{ "picker", .view },     .{ "help", .view },          .{ "tab", .view },
+    .{ "harpoon", .view },  .{ "dock", .view },       .{ "todos", .view },         .{ "findings", .view },
+    .{ "notes", .view },    .{ "toast", .view },      .{ "clock", .view },         .{ "perf", .view },
+    .{ "lsp", .view },      .{ "markdown", .view },   .{ "debug", .view },         .{ "coverage", .view },
+    .{ "misc", .view },     .{ "project", .view },    .{ "editor", .edit },        .{ "edit", .edit },
+    .{ "buffer", .edit },   .{ "vim", .edit },        .{ "file", .write },         .{ "files", .write },
+    .{ "git", .write },     .{ "http", .write },      .{ "integrations", .write }, .{ "zon", .write },
+    .{ "session", .write }, .{ "workspace", .write }, .{ "trusted", .write },      .{ "pr", .write },
+    .{ "sonos", .write },   .{ "ai", .exec },         .{ "sessions", .exec },      .{ "term", .exec },
+    .{ "terminal", .exec }, .{ "test", .exec },       .{ "dap", .exec },           .{ "browser", .exec },
+    .{ "script", .exec },   .{ "transfer", .exec },   .{ "tools", .exec },         .{ "audio", .exec },
+    .{ "app", .exec },      .{ "mount", .exec },
+};
+
+/// The commands whose group's class is wrong for them — a `view`-group
+/// row that writes config, an editor command that runs a formatter. Only
+/// ever upward from the group's class: the gate is the reason for the
+/// list, and a command classed too low runs without asking.
+pub const effect_overrides = [_]struct { []const u8, Effect }{
+    // `view` rows that write: config, files, the network.
+    .{ "view.add_workspace", .write },    .{ "view.remove_workspace", .write },
+    .{ "layout.save", .write },           .{ "layout.delete", .write },
+    .{ "setup.install_to_path", .write }, .{ "markdown.link_check", .write },
+    .{ "dock.add_preset", .write },       .{ "dock.remove", .write },
+    .{ "dock.edit", .write },             .{ "dock.rename", .write },
+    .{ "todos.new", .write },             .{ "todos.ignore_file", .write },
+    .{ "todos.mark_done", .write },       .{ "findings.new", .write },
+    .{ "findings.resolve", .write },      .{ "findings.delete", .write },
+    .{ "notes.new", .write },             .{ "notes.delete", .write },
+    .{ "find.grep_replace", .write },
+    // `view` rows that start something.
+        .{ "cloud_agents.new_run", .exec },
+    .{ "agents.new_from_pr", .exec },     .{ "todos.fix_with_agent", .exec },
+    .{ "todos.open_claude", .exec },      .{ "todos.open_codex", .exec },
+    .{ "toast.run_action", .exec },       .{ "lsp.code_lens_run", .exec },
+    // `view` rows that change a buffer.
+    .{ "find.replace", .edit },           .{ "lsp.rename", .edit },
+    .{ "lsp.format", .edit },             .{ "lsp.format_selection", .edit },
+    .{ "lsp.code_action", .edit },        .{ "lsp.quick_fix", .edit },
+    .{ "lsp.organize_imports", .edit },
+    // Editor commands that run a program or open a page, and the ex
+    // line again (`:!…` is a shell).
+      .{ "editor.format_external", .exec },
+    .{ "editor.lint_external", .exec },   .{ "editor.open_url_at_cursor", .exec },
+    .{ "vim.replay_last_ex", .exec },
+};
+
+/// A group's class, or null for a group `group_effects` does not name.
+pub fn groupEffect(group: []const u8) ?Effect {
+    for (group_effects) |g| if (std.mem.eql(u8, g[0], group)) return g[1];
+    return null;
+}
+
+/// A spec's class: its override, else its group's.
+pub fn effectOf(s: Spec) ?Effect {
+    for (effect_overrides) |o| if (std.mem.eql(u8, o[0], s.id)) return o[1];
+    return groupEffect(s.group);
+}
+
+/// `effects[i]` is `specs[i]`'s class — resolved at compile time, so an
+/// unclassed command is a build error, not a runtime surprise.
+pub const effects: [specs.len]Effect = blk: {
+    @setEvalBranchQuota(4_000_000);
+    var out: [specs.len]Effect = undefined;
+    for (specs, 0..) |s, i| out[i] = effectOf(s) orelse @compileError("command " ++ s.id ++ " has no effect class: add its group to `group_effects`");
+    break :blk out;
+};
+
+test "every command has an effect class, and every override names a real command and raises its group's class" {
+    for (specs, 0..) |s, i| try std.testing.expectEqual(effectOf(s).?, effects[i]);
+    for (specs) |s| try std.testing.expect(groupEffect(s.group) != null);
+    for (effect_overrides) |o| {
+        var found: ?Spec = null;
+        for (specs) |s| if (std.mem.eql(u8, s.id, o[0])) {
+            found = s;
+        };
+        const s = found orelse {
+            std.debug.print("effect override names no command: {s}\n", .{o[0]});
+            return error.TestUnexpectedResult;
+        };
+        // Upward only: a downward override is a command run unasked.
+        try std.testing.expect(@intFromEnum(o[1]) > @intFromEnum(groupEffect(s.group).?));
+    }
+    // Every group in the table is one some command uses.
+    for (group_effects) |g| {
+        var used = false;
+        for (specs) |s| used = used or std.mem.eql(u8, s.group, g[0]);
+        try std.testing.expect(used);
+    }
+}
+
 test "1176 specs, unique ids" {
     // + `file.save_as`, Save As (Ctrl+Shift+S) (stdfix3)
     // 797 Rust ids + the eight Zig-only menu commands + seven git row commands

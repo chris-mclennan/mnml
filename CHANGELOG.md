@@ -12,6 +12,22 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.2 (unreleased)
 
+### Safety
+
+- A program in a pane can no longer run commands through the file channel
+  without asking. A `run-command` of anything that changes more than the
+  view, and every `open-pty`, now waits on a toast with a **Review**
+  button; Review opens a box with *Allow once*, *Allow for the session*,
+  *Deny* and *Cancel*, and nothing answered in two minutes is denied. The
+  toast never takes the key you are typing.
+- Every command now has a class — view, edit, write or exec — listed in
+  `docs/commands.md`; a grant for the session covers one class until mnml
+  quits.
+- Each answer is a line in `.mnml/ipc/audit.jsonl` and in `events.jsonl`.
+- `.api.allow_commands` and `.api.clients` in `config.zon` let a command
+  or the file channel through unasked; a workspace you have not trusted
+  cannot set them.
+
 ### Sessions
 
 - The Sessions row of the activity bar enters the sessions mode: the editor

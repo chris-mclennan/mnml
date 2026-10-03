@@ -1172,6 +1172,9 @@ fn restoreFocus(app: *App) void {
 fn closeOverlay(app: *App) void {
     // A confirm that a worker is parked on answers no before it goes.
     ai_app.overlayClosing(app);
+    // A file-channel request whose box closed unanswered goes back on
+    // its toast.
+    @import("ipc_gate.zig").overlayClosing(app);
     menu_bar.menuClosed(app);
     http_app.overlayClosing(app);
     // Esc on a `:s///c` box keeps what was replaced and stops.
@@ -1854,6 +1857,7 @@ fn toastOnFail(app: *App, result: command.CommandError!void) Allocator.Error!voi
 fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allocator.Error!void {
     switch (purpose) {
         .trust_workspace => try @import("trust.zig").answer(app, choice),
+        .ipc_grant => |id| try @import("ipc_gate.zig").answer(app, id, choice),
         .script_install => |i| try @import("scripts.zig").answerInstall(app, i, choice),
         .remove_script => |n| try @import("scripts.zig").answerRemove(app, n, choice),
         .layout_load => |n| try named_layouts.answerLoad(app, n, choice),
@@ -2885,7 +2889,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     const is_git_log = if (app.toasts.items[at].id) |tid| std.mem.eql(u8, tid, git_app.log_toast_id) else false;
                     // A session waiting on you: the message is the
                     // session, so the click goes to it (`Focus`).
-                    if (app.toasts.items[at].action) |action| if (action == .focus_session) {
+                    // A request the file channel holds: the message is
+                    // the request, so the click reviews it.
+                    if (app.toasts.items[at].action) |action| if (action == .focus_session or action == .ipc_review) {
                         app.toasts.items[at].action = null;
                         defer action.deinit(app.gpa);
                         app.dismissToastAt(at);

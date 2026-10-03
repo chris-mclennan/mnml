@@ -70,6 +70,11 @@ pub const Sink = enum {
     /// on trust, so a workspace must not be able to put it on its own
     /// scripts.
     script_marketplace,
+    /// `api.allow_commands` / `api.clients` — the commands and classes a
+    /// program in a pane may have mnml run without asking
+    /// (`app/ipc_gate.zig`). Nothing runs from the key itself, but a
+    /// cloned repo that could set it would answer its own prompt.
+    api_grant,
 
     /// Human label for the trust dialog's bullet list.
     pub fn label(s: Sink) []const u8 {
@@ -90,6 +95,7 @@ pub const Sink = enum {
             .script_install => "script",
             .script_source => "script folder",
             .script_marketplace => "script marketplace",
+            .api_grant => "commands run without asking",
         };
     }
 
@@ -111,6 +117,7 @@ pub const Sink = enum {
             .script_install => "every time mnml starts",
             .script_source => "every time mnml starts",
             .script_marketplace => "when you install from the Marketplace tab, badged official",
+            .api_grant => "when a program in a pane asks mnml to run a command",
         };
     }
 };
@@ -137,6 +144,8 @@ pub const exec_bearing = [_]Rule{
     .{ .path = ".mnml/integrations/*.zon (the manifests beside the config)", .sink = .workspace_manifests },
     .{ .path = "<data root>/scripts/<name>/ (an installed script's directory)", .sink = .script_install },
     .{ .path = "scripts.dev_roots", .sink = .script_source },
+    .{ .path = "api.allow_commands", .sink = .api_grant },
+    .{ .path = "api.clients", .sink = .api_grant },
     .{ .path = "scripts.private_sources", .sink = .script_source },
     .{ .path = "scripts.marketplace_local", .sink = .script_marketplace },
 };
@@ -287,6 +296,21 @@ fn stripSink(comptime sink: Sink, arena: Allocator, p: *Patch(Config)) Allocator
         // Nothing in the patch: a script is installed by hand, and the
         // dialog that installs it is the gate.
         .script_install => return 0,
+        // Not an argv — the list of what may run unasked. Stripped, an
+        // untrusted workspace's grants read as none: every request asks.
+        .api_grant => {
+            const a = &(p.api orelse return 0);
+            var n: usize = 0;
+            if (a.allow_commands) |ids| {
+                n += ids.len;
+                a.allow_commands = null;
+            }
+            if (a.clients) |rows| {
+                n += rows.len;
+                a.clients = null;
+            }
+            return n;
+        },
         .script_source => {
             const s = &(p.scripts orelse return 0);
             var n: usize = 0;
@@ -402,6 +426,19 @@ fn collect(comptime sink: Sink, arena: Allocator, p: Patch(Config), facts: Facts
         .script_install => {},
         // One claim per folder: what runs is every script's `init.lua`
         // under it, so that is the command the dialog spells.
+        .api_grant => {
+            const a = p.api orelse return;
+            for (a.allow_commands orelse &.{}) |id| try out.append(arena, .{
+                .sink = sink,
+                .key = "api.allow_commands",
+                .command = try std.fmt.allocPrint(arena, "let any program run {s} without asking", .{id}),
+            });
+            for (a.clients orelse &.{}) |c| try out.append(arena, .{
+                .sink = sink,
+                .key = "api.clients",
+                .command = try std.fmt.allocPrint(arena, "let {s} run commands without asking", .{c.name}),
+            });
+        },
         .script_source => {
             const s = p.scripts orelse return;
             inline for (.{ "dev_roots", "private_sources" }) |field| {
@@ -649,6 +686,29 @@ test "an untrusted layer loses exactly the exec-bearing keys" {
     try t.expectEqual(@as(usize, 0), try strip(arena, &p)); // idempotent
 }
 
+test "an untrusted workspace cannot let a program in a pane run commands unasked" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = Diagnostics.init(arena);
+    // A repo you cloned allowlisting its own script's requests: the file
+    // channel would answer its own prompt (`app/ipc_gate.zig`).
+    var p = try load.parseLayer(arena,
+        \\.{ .api = .{
+        \\    .allow_commands = .{"term.shell_bottom"},
+        \\    .clients = .{ .{ .name = "file-channel", .allow = .{ .exec } } },
+        \\} }
+    , "ws.zon", &diags);
+    try t.expectEqual(@as(usize, 0), diags.count());
+    const before = try claims(arena, p);
+    try t.expectEqual(@as(usize, 2), before.len);
+    for (before) |c| try t.expectEqual(Sink.api_grant, c.sink);
+    try t.expectEqual(@as(usize, 2), try strip(arena, &p));
+    try t.expect(p.api.?.allow_commands == null);
+    try t.expect(p.api.?.clients == null);
+    try t.expectEqual(@as(usize, 0), (try claims(arena, p)).len);
+}
+
 test "an untrusted workspace cannot opt itself into Copilot, nor choose the binary" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -839,6 +899,8 @@ const reviewed = [_]Reviewed{
     // Not exec-shaped by name — the switch that shares text — but a
     // row of the table, so it is reviewed here too.
     .{ .path = "ai.copilot_here", .verdict = .{ .sink = .copilot_share } },
+    .{ .path = "api.allow_commands", .verdict = .{ .sink = .api_grant } },
+    .{ .path = "api.clients[].commands", .verdict = .{ .sink = .api_grant } },
     .{ .path = "ai.extra", .verdict = .{ .inert = "model / token / backend knobs read by name (`suggest_backend`, `max_tokens`); no argv" } },
     .{ .path = "tools", .verdict = .{ .inert = "per-integration settings forwarded as JSON to an integration the user installed" } },
     .{ .path = "tasks", .verdict = .{ .inert = "task bodies run only when the user asks for one by name; `startup.tasks` is the exec-bearing half" } },

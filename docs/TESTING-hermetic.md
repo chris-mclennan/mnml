@@ -292,7 +292,8 @@ root under the checkout's `.verify/`, the app `env -i`-launched through a
 wrapper (ghostty's `login(1)` would otherwise hand it the real `HOME`), a
 clean `PATH`, a refusing proxy, the offline Jira and Bitbucket, a usage
 fixture instead of the keychain, the now-playing chip idle, and the
-window driven only through the file channel (`ipc.allow_input`) — it
+window driven only through the file channel (`ipc.allow_input`, plus
+an `.api` row that lets the same channel run commands unasked) — it
 never takes the keyboard. Three tools, three cadences:
 
 | | what | when | judged by |

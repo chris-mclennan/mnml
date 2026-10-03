@@ -88,6 +88,11 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .body = "A Claude Code or Codex session stopped to ask you something — a permission, a choice, a question. Click the box (or its Focus button) to go to it: its pane comes on screen with the keys, the same as a double-click on its SESSIONS card; a session no pane here runs is shown selected in the sessions table instead. The bell's right-click lists every session waiting right now.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"toast.dismiss_current", .label = "Dismiss" } }, ask },
     };
+    if (@import("../ipc_gate.zig").isGateToast(app, id)) return .{
+        .title = "A program asks to run a command",
+        .body = "Something running in a pane wrote a command to mnml's file channel (`.mnml/ipc/command`) that can change more than the view — edit a buffer, write a file, start a process. Nothing has run. Click the box (or its Review button) for the full request and the answers: Allow once, Allow that class for the rest of this run, Deny, or Cancel to leave it waiting. Unanswered, it is denied after two minutes. Every answer is written to `.mnml/ipc/audit.jsonl`.",
+        .links = &.{ .{ .command = .{ .id = .@"toast.run_action", .label = "Review it" } }, .{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }, ask },
+    };
     if (id >= toast_mod.button_base) return .{
         .title = "Toast",
         .body = "A message from something that just happened — a save, a git result, an error from a server — in the bottom-right corner, kept in the message history after it fades so the bell can find it again. Click dismisses this one; right-click offers dismiss, copy the text, dismiss all. A red toast is an error and its full text is in the history if the line was cut.",
