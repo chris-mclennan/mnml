@@ -2908,7 +2908,7 @@ fn drawMenu(ui: Ui, screen: Rect, m: *app_mod.MenuState, chords: MenuChords) voi
     const size = menuSize(ui, if (m.dropdown) null else m.title, m.items, chords.rows, m.dropdown, m.curatable);
     const w: u16 = @min(size.w, screen.w);
     const h: u16 = @min(size.h, screen.h);
-    const origin: [2]u16 = if (m.link) |span| linkMenuOrigin(screen, span, w, h) else .{ m.x, menuTop(screen, m.y, h) };
+    const origin: [2]u16 = if (m.link) |span| linkMenuOrigin(screen, span, w, h, m.x, m.y) else .{ m.x, menuTop(screen, m.y, h) };
     const x = @min(origin[0], (screen.x + screen.w) -| w);
     const y = origin[1];
     const frame = Rect.init(x, y, w, h);
@@ -3022,12 +3022,12 @@ fn rowLabel(ui: Ui, it: command.MenuItem) []const u8 {
 /// Where a link's menu opens: on the row under the link's cells, its
 /// left edge on the link's first cell, so the menu never covers the
 /// link it is for; above the link when the rows below cannot hold it;
-/// as `menuTop` places it when neither side can.
-pub fn linkMenuOrigin(screen: Rect, span: Rect, w: u16, h: u16) [2]u16 {
+/// at the pointer (`px`, `py`), as any menu, when neither side can.
+pub fn linkMenuOrigin(screen: Rect, span: Rect, w: u16, h: u16, px: u16, py: u16) [2]u16 {
     const x = @min(@max(span.x, screen.x), (screen.x + screen.w) -| w);
     if (span.bottom() + h <= screen.bottom()) return .{ x, span.bottom() };
     if (span.y >= screen.y + h) return .{ x, span.y - h };
-    return .{ x, menuTop(screen, span.y, h) };
+    return .{ px, menuTop(screen, py, h) };
 }
 
 fn menuSize(ui: Ui, title: ?[]const u8, items: []const command.MenuItem, chords: []const ?[]const u8, dropdown: bool, curatable: bool) MenuSize {
