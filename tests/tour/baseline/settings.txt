@@ -46,7 +46,7 @@
    │                                    │                 │   Workspace dots:                    off / [on]                                 █│
    │                                    │                 │   Hover help:                        off / [on]                                 █│
    │                                    │                 │   Hover tooltips:                    [off] / on                                 █│
-   │                                    │                 │ 1–36 of 123  ←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel │
+   │                                    │                 │ 1–36 of 128  ←→ adjust · type to search · ctrl+r reset · Enter save · Esc cancel │
    │                                    │                 ╰──────────────────────────────────────────────────────────────────────────────────╯
    │────────────────────────────────────│
    │ Sidebar                        󰐃 ⋮ │
@@ -56,5 +56,5 @@
    │ opens the palette.                 │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  19:52  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:19  ws   —
 
