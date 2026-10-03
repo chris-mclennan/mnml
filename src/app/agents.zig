@@ -335,7 +335,7 @@ fn descends(rows: anytype, pid: u32, ancestor: i32) bool {
     return false;
 }
 
-fn runningPids(io: Io, gpa: Allocator, arena: Allocator, scope: Scope) ScanError![]Pid {
+pub fn runningPids(io: Io, gpa: Allocator, arena: Allocator, scope: Scope) ScanError![]Pid {
     const result = std.process.run(gpa, io, .{ .argv = &.{ "ps", "-axo", "pid=,ppid=,pgid=,command=" }, .stdout_limit = .limited(4 * 1024 * 1024) }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -359,13 +359,107 @@ pub fn deriveState(has_pid: bool, age_s: i64, last_was_tool_call: bool, pending_
 }
 
 /// Walk both roots and append this machine's sessions to `rows`, every
-/// slice on `arena`.
+/// slice on `arena` — a one-shot pass with a cache of its own (the scan
+/// worker keeps one across passes: `walk`, `liveness`).
 pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scope: Scope, rows: *std.ArrayListUnmanaged(Item), totals: ?*TotalsCache) ScanError!void {
-    if (totals) |c| c.pass +%= 1;
+    var cache = LocalCache.init(gpa);
+    defer cache.deinit();
+    _ = try walk(io, gpa, &cache, home, totals);
+    const start = rows.items.len;
+    try rowsInto(&cache, arena, rows);
     const pids = try runningPids(io, gpa, arena, scope);
+    try liveness(arena, pids, rows.items[start..], Io.Timestamp.now(io, .real).toSeconds());
+}
+
+/// What the transcript walk built last time, by path: the row and the
+/// size and mtime it was built from. A walk stats every transcript and
+/// reads only one whose size or mtime moved, so a pass where nothing
+/// moved costs the directory listings and a stat per file — no read.
+/// Owned by `sessions.State` and touched only by the one scan worker in
+/// flight (`sessions.refresh` cancels the last before the next starts).
+pub const LocalCache = struct {
+    gpa: Allocator,
+    /// The keys and every slice of the rows.
+    arena: std.heap.ArenaAllocator,
+    /// Walk order, so the listing keeps the order the roots give.
+    map: std.StringArrayHashMapUnmanaged(Entry) = .empty,
+    pass: u32 = 0,
+    /// Rows replaced or dropped since the arena was last compacted.
+    garbage: usize = 0,
+    /// Transcripts opened for their contents (tail, head, totals) — one
+    /// per file read; what the tests count.
+    reads: u64 = 0,
+    /// A walk has finished: until then everything is new.
+    walked: bool = false,
+
+    pub const Entry = struct {
+        size: u64,
+        mtime_ns: i96,
+        /// State, pid and dirty count as the last liveness pass left
+        /// them (`writeBack`).
+        row: Item,
+        pass: u32,
+    };
+
+    pub fn init(gpa: Allocator) LocalCache {
+        return .{ .gpa = gpa, .arena = .init(gpa) };
+    }
+
+    pub fn deinit(self: *LocalCache) void {
+        self.map.deinit(self.gpa);
+        self.arena.deinit();
+    }
+
+    /// Whether any row has a process behind it — the only rows whose
+    /// state can change while their transcript stands still.
+    pub fn anyPid(self: *const LocalCache) bool {
+        for (self.map.values()) |e| if (e.row.pid != null) return true;
+        return false;
+    }
+
+    /// Whether any row is thinking or in a tool.
+    pub fn anyLive(self: *const LocalCache) bool {
+        for (self.map.values()) |e| if (e.row.state == .streaming or e.row.state == .tool_call) return true;
+        return false;
+    }
+
+    /// Copy what is kept into a fresh arena once the dead weight
+    /// outgrows it. On OOM the old arena stays, as good as before.
+    fn compact(self: *LocalCache) void {
+        if (self.garbage < 64 or self.garbage < self.map.count()) return;
+        var fresh = std.heap.ArenaAllocator.init(self.gpa);
+        const a = fresh.allocator();
+        const n = self.map.count();
+        const keys = a.alloc([]const u8, n) catch return fresh.deinit();
+        const rows = a.alloc(Item, n) catch return fresh.deinit();
+        for (self.map.keys(), self.map.values(), 0..) |k, v, i| {
+            keys[i] = a.dupe(u8, k) catch return fresh.deinit();
+            rows[i] = sessions.dupeItem(a, v.row) catch return fresh.deinit();
+        }
+        for (self.map.keys(), self.map.values(), 0..) |*k, *v, i| {
+            k.* = keys[i];
+            v.row = rows[i];
+        }
+        self.arena.deinit();
+        self.arena = fresh;
+        self.garbage = 0;
+    }
+};
+
+/// Both roots against `cache`: a stat per transcript, a read for each
+/// one that is new or whose size or mtime moved, and the ones gone
+/// dropped. Whether anything changed. A row read here has no process
+/// yet — `liveness` gives it one and its state.
+pub fn walk(io: Io, gpa: Allocator, cache: *LocalCache, home: []const u8, totals: ?*TotalsCache) ScanError!bool {
+    cache.pass +%= 1;
+    if (totals) |c| c.pass +%= 1;
+    var scratch_state = std.heap.ArenaAllocator.init(gpa);
+    defer scratch_state.deinit();
+    const scratch = scratch_state.allocator();
+    var changed = !cache.walked;
     const now = Io.Timestamp.now(io, .real).toSeconds();
     // Claude: <home>/.claude/projects/<encoded>/<sid>.jsonl
-    const projects = try std.fs.path.join(arena, &.{ home, ".claude", "projects" });
+    const projects = try std.fs.path.join(scratch, &.{ home, ".claude", "projects" });
     if (Io.Dir.cwd().openDir(io, projects, .{ .iterate = true })) |root_const| {
         var root = root_const;
         defer root.close(io);
@@ -375,99 +469,115 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
             try io.checkCancel();
             var sub = root.openDir(io, d.name, .{ .iterate = true }) catch continue;
             defer sub.close(io);
-            const ws_label = try arena.dupe(u8, transcript.decodeWorkspaceLabel(d.name));
             var files = sub.iterate();
             while (files.next(io) catch null) |f| {
                 if (f.kind != .file or !std.mem.endsWith(u8, f.name, ".jsonl")) continue;
-                const st = sub.statFile(io, f.name, .{}) catch continue;
-                const mtime = st.mtime.toSeconds();
-                if (now - mtime > max_age_s or st.size > max_file_bytes) continue;
-                try io.checkCancel();
-                const tail = transcript.readTail(gpa, io, sub, f.name, tail_cap) catch |err| switch (err) {
-                    error.Canceled => return error.Canceled,
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => continue,
-                };
-                defer gpa.free(tail);
-                const stats = try transcript.parseClaude(arena, tail);
-                const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, sub, f.name, .claude) else stats.first_user_msg;
-                const path = try std.fs.path.join(arena, &.{ projects, d.name, f.name });
-                // The tail names the state; the tokens and cost are the
-                // whole transcript's.
-                const sum: Totals = if (st.size <= tail_cap) .{ .usage = stats.usage.?, .capped = false } else try totalsOf(io, gpa, sub, f.name, path, st.size, totals_cap, totals);
-                const sid = try arena.dupe(u8, f.name[0 .. f.name.len - ".jsonl".len]);
-                var pid: ?u32 = null;
-                for (pids) |p| if (p.session_id) |s| if (std.mem.eql(u8, s, sid)) {
-                    pid = p.pid;
-                };
-                try rows.append(arena, .{
-                    .source = .claude,
-                    .session_id = sid,
-                    .workspace = ws_label,
-                    .cwd = stats.cwd,
-                    .model = stats.model,
-                    .transcript_path = path,
-                    .state = deriveState(pid != null, now - mtime, stats.last_was_tool_call, stats.pending_tool_uses, stats.last_error),
-                    .pid = pid,
-                    .tokens = sum.usage.tokens,
-                    .cost_usd = sum.usage.cost_usd,
-                    .cost_known = !sum.usage.unpriced,
-                    .totals_capped = sum.capped,
-                    .last_activity_s = mtime,
-                    .first_user_msg = first,
-                    .last_user_msg = stats.last_user_msg,
-                    .last_assistant_msg = stats.last_assistant_msg,
-                    .current_tool = stats.last_tool_name,
-                    .pending_tool_uses = stats.pending_tool_uses,
-                    .git_branch = stats.git_branch,
-                });
+                const path = try std.fs.path.join(scratch, &.{ projects, d.name, f.name });
+                if (try visit(io, gpa, cache, sub, f.name, path, .{ .claude = d.name }, now, totals)) changed = true;
             }
         }
     } else |_| {}
     // Codex: <home>/.codex/sessions/**/rollout-<ts>-<uuid>.jsonl
-    const sessions_dir = try std.fs.path.join(arena, &.{ home, ".codex", "sessions" });
+    const sessions_dir = try std.fs.path.join(scratch, &.{ home, ".codex", "sessions" });
     if (Io.Dir.cwd().openDir(io, sessions_dir, .{ .iterate = true })) |root_const| {
         var root = root_const;
         defer root.close(io);
         var walker = root.walk(gpa) catch return error.OutOfMemory;
         defer walker.deinit();
-        var claimed: std.ArrayListUnmanaged(u32) = .empty;
         while (walker.next(io) catch null) |entry| {
             if (entry.kind != .file or !std.mem.startsWith(u8, entry.basename, "rollout-") or !std.mem.endsWith(u8, entry.basename, ".jsonl")) continue;
             try io.checkCancel();
-            const stem = entry.basename[0 .. entry.basename.len - ".jsonl".len];
-            if (stem.len < 36) continue;
-            const sid = try arena.dupe(u8, stem[stem.len - 36 ..]);
-            const st = entry.dir.statFile(io, entry.basename, .{}) catch continue;
-            const mtime = st.mtime.toSeconds();
-            if (now - mtime > max_age_s or st.size > max_file_bytes) continue;
-            const tail = transcript.readTail(gpa, io, entry.dir, entry.basename, tail_cap) catch |err| switch (err) {
-                error.Canceled => return error.Canceled,
-                error.OutOfMemory => return error.OutOfMemory,
-                else => continue,
+            if (entry.basename.len - ".jsonl".len < 36) continue;
+            const path = try std.fs.path.join(scratch, &.{ sessions_dir, entry.path });
+            if (try visit(io, gpa, cache, entry.dir, entry.basename, path, .codex, now, totals)) changed = true;
+        }
+    } else |_| {}
+    // A whole pass: what it did not list is gone (a cancelled pass
+    // sweeps nothing).
+    var i: usize = 0;
+    while (i < cache.map.count()) {
+        if (cache.map.values()[i].pass != cache.pass) {
+            cache.map.orderedRemoveAt(i);
+            cache.garbage += 1;
+            changed = true;
+        } else i += 1;
+    }
+    if (totals) |c| c.sweep(gpa);
+    cache.walked = true;
+    cache.compact();
+    return changed;
+}
+
+const Origin = union(Source) {
+    /// The encoded workspace directory the transcript sits in.
+    claude: []const u8,
+    codex,
+};
+
+/// One transcript: kept as it was when its size and mtime stand still,
+/// else read and parsed into the cache. Whether it was read.
+fn visit(io: Io, gpa: Allocator, cache: *LocalCache, dir: Io.Dir, name: []const u8, path: []const u8, origin: Origin, now: i64, totals: ?*TotalsCache) ScanError!bool {
+    const st = dir.statFile(io, name, .{}) catch return false;
+    const mtime = st.mtime.toSeconds();
+    if (now - mtime > max_age_s or st.size > max_file_bytes) return false;
+    if (cache.map.getPtr(path)) |e| if (e.size == st.size and e.mtime_ns == st.mtime.nanoseconds) {
+        e.pass = cache.pass;
+        return false;
+    };
+    try io.checkCancel();
+    const kind: Source = origin;
+    const tail = transcript.readTail(gpa, io, dir, name, tail_cap) catch |err| switch (err) {
+        error.Canceled => return error.Canceled,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    defer gpa.free(tail);
+    cache.reads += 1;
+    const arena = cache.arena.allocator();
+    var row: Item = switch (kind) {
+        .claude => blk: {
+            const stats = try transcript.parseClaude(arena, tail);
+            const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, dir, name, .claude) else stats.first_user_msg;
+            // The tail names the state; the tokens and cost are the
+            // whole transcript's.
+            const sum: Totals = if (st.size <= tail_cap) .{ .usage = stats.usage.?, .capped = false } else try totalsOf(io, gpa, dir, name, path, st.size, totals_cap, totals);
+            break :blk .{
+                .source = .claude,
+                .session_id = try arena.dupe(u8, name[0 .. name.len - ".jsonl".len]),
+                .workspace = try arena.dupe(u8, transcript.decodeWorkspaceLabel(origin.claude)),
+                .cwd = stats.cwd,
+                .model = stats.model,
+                .transcript_path = path,
+                .state = deriveState(false, now - mtime, stats.last_was_tool_call, stats.pending_tool_uses, stats.last_error),
+                .pid = null,
+                .tokens = sum.usage.tokens,
+                .cost_usd = sum.usage.cost_usd,
+                .cost_known = !sum.usage.unpriced,
+                .totals_capped = sum.capped,
+                .last_activity_s = mtime,
+                .first_user_msg = first,
+                .last_user_msg = stats.last_user_msg,
+                .last_assistant_msg = stats.last_assistant_msg,
+                .current_tool = stats.last_tool_name,
+                .pending_tool_uses = stats.pending_tool_uses,
+                .last_was_tool_call = stats.last_was_tool_call,
+                .last_error = stats.last_error,
+                .git_branch = stats.git_branch,
             };
-            defer gpa.free(tail);
+        },
+        .codex => blk: {
             const stats = try transcript.parseCodex(arena, tail);
-            const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, entry.dir, entry.basename, .codex) else stats.first_user_msg;
-            // Codex carries no session id on its command line: the first
-            // unclaimed codex process is this session's, newest file first.
-            var pid: ?u32 = null;
-            if (now - mtime < 3600) for (pids) |p| {
-                if (p.exe != .codex) continue;
-                if (std.mem.indexOfScalar(u32, claimed.items, p.pid) != null) continue;
-                pid = p.pid;
-                try claimed.append(arena, p.pid);
-                break;
-            };
-            try rows.append(arena, .{
+            const first = if (st.size > tail_cap) try firstPrompt(gpa, io, arena, dir, name, .codex) else stats.first_user_msg;
+            const stem = name[0 .. name.len - ".jsonl".len];
+            break :blk .{
                 .source = .codex,
-                .session_id = sid,
+                .session_id = try arena.dupe(u8, stem[stem.len - 36 ..]),
                 .workspace = if (stats.cwd) |c| std.fs.path.basename(c) else "?",
                 .cwd = stats.cwd,
                 .model = stats.model,
-                .transcript_path = try std.fs.path.join(arena, &.{ sessions_dir, entry.path }),
-                .state = deriveState(pid != null, now - mtime, stats.last_was_tool_call, stats.pending_tool_uses, stats.last_error),
-                .pid = pid,
+                .transcript_path = path,
+                .state = deriveState(false, now - mtime, stats.last_was_tool_call, stats.pending_tool_uses, stats.last_error),
+                .pid = null,
                 .tokens = stats.tokens,
                 .cost_usd = stats.costUsd(),
                 .cost_known = stats.priced(),
@@ -477,13 +587,80 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, home: []const u8, scop
                 .last_assistant_msg = stats.last_assistant_msg,
                 .current_tool = stats.last_tool_name,
                 .pending_tool_uses = stats.pending_tool_uses,
+                .last_was_tool_call = stats.last_was_tool_call,
+                .last_error = stats.last_error,
                 .git_branch = stats.git_branch,
-            });
+            };
+        },
+    };
+    const gop = try cache.map.getOrPut(gpa, path);
+    if (gop.found_existing) {
+        cache.garbage += 1;
+    } else {
+        gop.key_ptr.* = arena.dupe(u8, path) catch |err| {
+            _ = cache.map.orderedRemove(path);
+            return err;
+        };
+    }
+    row.transcript_path = gop.key_ptr.*;
+    gop.value_ptr.* = .{ .size = st.size, .mtime_ns = st.mtime.nanoseconds, .row = row, .pass = cache.pass };
+    return true;
+}
+
+/// The cache's rows, copied onto `arena`, in walk order.
+pub fn rowsInto(cache: *const LocalCache, arena: Allocator, rows: *std.ArrayListUnmanaged(Item)) Allocator.Error!void {
+    try rows.ensureUnusedCapacity(arena, cache.map.count());
+    for (cache.map.values()) |e| rows.appendAssumeCapacity(try sessions.dupeItem(arena, e.row));
+}
+
+/// The process table against the local rows: a Claude session is its
+/// `--session-id`'s process; a Codex one (no id on its command line)
+/// takes the first unclaimed codex process, newest transcript first,
+/// within the hour. Then each row's state.
+pub fn liveness(arena: Allocator, pids: []const Pid, rows: []Item, now: i64) Allocator.Error!void {
+    var codex: std.ArrayListUnmanaged(usize) = .empty;
+    for (rows, 0..) |*r, i| {
+        if (r.where != .local) continue;
+        r.pid = null;
+        switch (r.source) {
+            .claude => for (pids) |p| if (p.session_id) |s| if (std.mem.eql(u8, s, r.session_id)) {
+                r.pid = p.pid;
+            },
+            .codex => if (now - r.last_activity_s < 3600) try codex.append(arena, i),
         }
-    } else |_| {}
-    // A whole pass: what it did not list is gone (a cancelled pass
-    // sweeps nothing).
-    if (totals) |c| c.sweep(gpa);
+    }
+    const Newest = struct {
+        fn lt(rs: []Item, a: usize, b: usize) bool {
+            return rs[a].last_activity_s > rs[b].last_activity_s;
+        }
+    };
+    std.mem.sort(usize, codex.items, rows, Newest.lt);
+    var claimed: std.ArrayListUnmanaged(u32) = .empty;
+    for (codex.items) |i| for (pids) |p| {
+        if (p.exe != .codex) continue;
+        if (std.mem.indexOfScalar(u32, claimed.items, p.pid) != null) continue;
+        rows[i].pid = p.pid;
+        try claimed.append(arena, p.pid);
+        break;
+    };
+    for (rows) |*r| if (r.where == .local) {
+        r.state = deriveState(r.pid != null, now - r.last_activity_s, r.last_was_tool_call, r.pending_tool_uses, r.last_error);
+    };
+}
+
+/// The liveness pass's answers back into the cache; whether any row's
+/// state, process or dirty count moved.
+pub fn writeBack(cache: *LocalCache, rows: []const Item) bool {
+    var moved = false;
+    for (rows) |r| {
+        if (r.where != .local) continue;
+        const e = cache.map.getPtr(r.transcript_path) orelse continue;
+        if (e.row.state != r.state or !std.meta.eql(e.row.pid, r.pid) or !std.meta.eql(e.row.dirty, r.dirty)) moved = true;
+        e.row.state = r.state;
+        e.row.pid = r.pid;
+        e.row.dirty = r.dirty;
+    }
+    return moved;
 }
 
 /// The first prompt of a transcript too long for its tail to hold it:

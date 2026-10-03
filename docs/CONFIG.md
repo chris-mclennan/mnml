@@ -201,6 +201,7 @@ otherwise. Copy what you need; leave the rest out.
         },
         .edge_grips = true, // the three-dot handle at the middle of a hidden slide-in's edge: `⋯` on the menu bar's row and on the dock's bottom row, `⋮` on a side column's screen edge (`--ascii` spends one `.` per cell). Dwelling on it reveals, a left click reveals and PINS, a right click opens that surface's own menu. False gives the invisible bands back — they never move, so every reveal works either way
         .animations = true, // false is the reduced-motion switch: chrome animations with an instant end state are skipped (today the overlay's three-frame slide). --headless and the .test harness behave as if it were false
+        .dashboard_refresh = .auto, // .auto | .fast | .slow | .manual — how SESSIONS, the sessions table and the cloud runs re-read on their own (the `sessions` / `agents` / `cloud_agents.refresh` intervals below): auto is fast while a session is live and slow otherwise while on screen; fast / slow pin that; manual reads only on the ⟳ chip or `sessions.refresh`. Settings → Integrations → Dashboard refresh
         .auto_equalize_splits = false, // every split and every close re-shares the sizes equally; Settings → UI → Auto-equalize splits, the Window menu's ticked row and `view.toggle_auto_equalize_splits` flip it (written to the workspace config)
         .relative_line_numbers = false,
         .line_numbers = true,
@@ -597,6 +598,23 @@ otherwise. Copy what you need; leave the rest out.
         .s3_artifacts_bucket = "",
         .default_workspace_label = "", // "" reads as "cloud"
         .managed_agents_enabled = false,
+        .refresh = .{ .fast_ms = 10000, .slow_ms = 30000, .idle_ms = 120000 }, // the cloud's own defaults, longer than the local ones because every read is an `aws` call. How often the runs table is read again: fast while SESSIONS or the sessions table is on screen and a run is in progress, slow while one is on screen with nothing running, idle while neither is; 0 is never. A response with the same bytes as the last is not parsed again
+    },
+
+    // ── dashboards ─────────────────────────────────────────────────────
+    // How often the SESSIONS listing is read again behind its views — the
+    // section, the sessions table. Milliseconds; 0 is never. `fast_ms`
+    // applies while a view is on screen and a session is thinking or in a
+    // tool, `slow_ms` while one is on screen with nothing live, `idle_ms`
+    // while none is (the listing stays warm for the next open). The first
+    // read starts with the app. `ui.dashboard_refresh` (Settings →
+    // Integrations → Dashboard refresh) picks auto / fast / slow / manual;
+    // the ⟳ chip and `sessions.refresh` read everything now, always.
+    .sessions = .{
+        .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the liveness pass: the process table, each session's state, `git status` per working directory — run only while a session has a process or a transcript moved
+    },
+    .agents = .{
+        .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the transcript walk under ~/.claude/projects and ~/.codex/sessions: a stat per file, and a read only for a transcript whose size or mtime moved
     },
 
     // ── keys ───────────────────────────────────────────────────────────

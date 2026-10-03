@@ -121,6 +121,75 @@ pub fn scanInto(io: Io, gpa: Allocator, arena: Allocator, o: Opts, rows: *std.Ar
     try parseRuns(arena, result.stdout, o.label, now, rows);
 }
 
+/// The last runs read, kept between passes: the scan worker reads the
+/// table on the cloud cadence only, and parses the answer only when its
+/// bytes differ from the last one's. A DynamoDB scan through the CLI
+/// carries no ETag or Last-Modified to ask with, so the hash of the
+/// response is the change check. Owned by `sessions.State`, touched only
+/// by the one scan worker in flight.
+pub const Cache = struct {
+    gpa: Allocator,
+    arena: std.heap.ArenaAllocator,
+    rows: []Item = &.{},
+    hash: ?u64 = null,
+    /// Responses parsed — what the tests count.
+    parses: u64 = 0,
+
+    pub fn init(gpa: Allocator) Cache {
+        return .{ .gpa = gpa, .arena = .init(gpa) };
+    }
+
+    pub fn deinit(self: *Cache) void {
+        self.arena.deinit();
+    }
+
+    /// Whether a run is still going.
+    pub fn anyLive(self: *const Cache) bool {
+        for (self.rows) |r| if (!r.state.ended()) return true;
+        return false;
+    }
+
+    /// Run the scan; whether the rows changed. A failed call keeps the
+    /// rows of the last good one.
+    pub fn read(self: *Cache, io: Io, o: Opts) agents.ScanError!bool {
+        var scratch = std.heap.ArenaAllocator.init(self.gpa);
+        defer scratch.deinit();
+        const argv = try scanArgv(scratch.allocator(), o);
+        const result = std.process.run(self.gpa, io, .{ .argv = argv, .stdout_limit = .limited(16 * 1024 * 1024) }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => return error.Canceled,
+            else => return false,
+        };
+        defer self.gpa.free(result.stdout);
+        defer self.gpa.free(result.stderr);
+        if (result.term != .exited or result.term.exited != 0) return false;
+        return self.absorb(result.stdout, o.label, Io.Timestamp.now(io, .real).toSeconds());
+    }
+
+    /// A response's bytes: parsed into fresh rows unless they are the
+    /// last response's. Whether the rows changed.
+    pub fn absorb(self: *Cache, text: []const u8, label: []const u8, now: i64) Allocator.Error!bool {
+        const h = std.hash.Wyhash.hash(0, text);
+        if (self.hash == h) return false;
+        var fresh = std.heap.ArenaAllocator.init(self.gpa);
+        errdefer fresh.deinit();
+        var rows: std.ArrayListUnmanaged(Item) = .empty;
+        try parseRuns(fresh.allocator(), text, label, now, &rows);
+        self.arena.deinit();
+        self.arena = fresh;
+        self.rows = rows.items;
+        self.hash = h;
+        self.parses += 1;
+        return true;
+    }
+
+    /// The rows, copied onto `arena`.
+    pub fn rowsInto(self: *const Cache, arena: Allocator, rows: *std.ArrayListUnmanaged(Item)) Allocator.Error!void {
+        try rows.ensureUnusedCapacity(arena, self.rows.len);
+        for (self.rows) |r| rows.appendAssumeCapacity(try sessions.dupeItem(arena, r));
+    }
+};
+
 /// The runner's word for a run → the row's state.
 pub fn mapState(raw: []const u8) agents.AgentState {
     if (std.mem.eql(u8, raw, "started") or std.mem.eql(u8, raw, "approved")) return .streaming;
@@ -449,6 +518,26 @@ test "configured needs a runs table and a region; the env region and profile ove
     try t.expectEqualStrings("--profile", argv[argv.len - 2]);
     const tail = try tailArgv(arena.allocator(), o, "run-1", true);
     try t.expectEqualStrings("--follow", tail[tail.len - 3]);
+}
+
+test "cloud cache: the same response bytes are not parsed again; new bytes replace the rows" {
+    var c = Cache.init(t.allocator);
+    defer c.deinit();
+    const a =
+        \\{"Items":[{"runId":{"S":"run-a"},"ticket":{"S":"ENG-1"},"state":{"S":"started"},"createdAt":{"S":"2026-09-01T10:00:00Z"}}]}
+    ;
+    const b =
+        \\{"Items":[{"runId":{"S":"run-a"},"ticket":{"S":"ENG-1"},"state":{"S":"done"},"createdAt":{"S":"2026-09-01T10:00:00Z"}}]}
+    ;
+    try t.expect(try c.absorb(a, "cloud", 0));
+    try t.expectEqual(@as(u64, 1), c.parses);
+    try t.expect(c.anyLive());
+    try t.expect(!try c.absorb(a, "cloud", 0));
+    try t.expectEqual(@as(u64, 1), c.parses);
+    try t.expect(try c.absorb(b, "cloud", 0));
+    try t.expectEqual(@as(u64, 2), c.parses);
+    try t.expectEqual(@as(usize, 1), c.rows.len);
+    try t.expect(!c.anyLive());
 }
 
 test "parseRuns: the DynamoDB items become cloud rows — the ticket as the prompt, the runner's state mapped, staged is waiting" {

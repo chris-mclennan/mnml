@@ -30,6 +30,12 @@ api: Api = .{},
 terminal: Terminal = .{},
 cloud_run: CloudRun = .{},
 cloud_agents: CloudAgents = .{},
+/// The SESSIONS listing's liveness pass — the process table, each row's
+/// state, `git status` (`app/refresh_cadence.zig`).
+sessions: Dashboard = .{},
+/// The transcript walk behind SESSIONS: a stat per file, a read only
+/// for a file that moved.
+agents: Dashboard = .{},
 keys: Keys = .{},
 lsp: Map(LspServer) = .empty,
 ai: Ai = .{},
@@ -587,6 +593,9 @@ pub const Ui = struct {
     /// bottom panel (`ui.bottom_panel_*`) and not the dock widgets.
     dock: Dock = .{},
     auto_equalize_splits: bool = false,
+    /// How the dashboards (SESSIONS, the sessions table, the cloud runs)
+    /// re-read on their own (`app/refresh_cadence.zig`).
+    dashboard_refresh: DashboardRefresh = .auto,
     relative_line_numbers: bool = false,
     line_numbers: bool = true,
     cursor_line: bool = false,
@@ -954,6 +963,27 @@ pub const CloudAgents = struct {
     /// Empty reads as `"cloud"`.
     default_workspace_label: []const u8 = "",
     managed_agents_enabled: bool = false,
+    /// How often the runs are read again (`app/refresh_cadence.zig`).
+    refresh: RefreshCadence = .{ .fast_ms = 10_000, .slow_ms = 30_000, .idle_ms = 120_000 },
+};
+
+/// A dashboard source's three intervals, in milliseconds; 0 is never.
+/// Fast while a view of it is on screen and something is live, slow
+/// while one is on screen with nothing live, idle while none is.
+pub const RefreshCadence = struct {
+    fast_ms: u32 = 2000,
+    slow_ms: u32 = 5000,
+    idle_ms: u32 = 30_000,
+};
+
+/// `ui.dashboard_refresh`: `auto` picks the interval by what is on
+/// screen and live; `fast` / `slow` pin the on-screen one; `manual`
+/// re-reads only on the refresh chip or command.
+pub const DashboardRefresh = enum { auto, fast, slow, manual };
+
+/// `sessions = .{ .refresh = … }`, `agents = .{ .refresh = … }`.
+pub const Dashboard = struct {
+    refresh: RefreshCadence = .{},
 };
 
 // ─── keys ────────────────────────────────────────────────────────────────

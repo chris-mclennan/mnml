@@ -61,8 +61,14 @@
 //! The `sort:` chip is SESSIONS' own axis — State (approval-shaped
 //! first, then live, tool, idle, ended, newest within) or Manual (the
 //! order `J` / `K` build, persisted in the session file with the
-//! aliases); pinned sessions lead on either. While the panel is shown
-//! it rescans every `refresh_ms`.
+//! aliases); pinned sessions lead on either.
+//!
+//! The listing is a cache the views paint from; the scan worker keeps
+//! it current on `app/refresh_cadence.zig`'s cadences — fast while a
+//! view is on screen and a session is live, slow while one is on screen
+//! with nothing live, idle while none is — and a pass where nothing on
+//! disk or in the cloud moved costs a stat per transcript and posts
+//! nothing. The first pass starts with the app, not with the first open.
 
 const std = @import("std");
 const Io = std.Io;
@@ -93,6 +99,7 @@ const todos = @import("todos.zig");
 const agents = @import("app/agents.zig");
 const cloud_agents = @import("app/cloud_agents.zig");
 const sessions_table = @import("app/sessions_table.zig");
+const refresh_cadence = @import("app/refresh_cadence.zig");
 const pty_pane_mod = @import("app/pty_pane.zig");
 const cli = @import("ai/cli.zig");
 const pty_pane = @import("app/pty_pane.zig");
@@ -163,6 +170,11 @@ pub const Item = struct {
     last_assistant_msg: ?[]const u8,
     current_tool: ?[]const u8 = null,
     pending_tool_uses: usize = 0,
+    /// What the state was derived from besides the pid and the age, so a
+    /// row the walk did not re-read can be derived again
+    /// (`agents.liveness`).
+    last_was_tool_call: bool = false,
+    last_error: bool = false,
     git_branch: ?[]const u8 = null,
     /// `git status --porcelain` entries in the cwd; null = not asked,
     /// or the cwd is gone or no repository.
@@ -310,6 +322,8 @@ pub const ScanResult = struct {
     /// is on. `App.now_ms` is the awake clock, so an age or the
     /// hidden-ended rule must not read it (`wallNowS`).
     at_s: i64 = 0,
+    /// Nothing moved since the last pass: the listing stands as it is.
+    unchanged: bool = false,
 
     pub fn create(gpa: Allocator, generation: u32) Allocator.Error!*ScanResult {
         const r = try gpa.create(ScanResult);
@@ -365,8 +379,6 @@ pub const table = .{
     .@"ai.dashboard.resume_in_pty" = &openCmd,
 };
 
-/// A shown panel rescans this often (the dashboard's cadence).
-pub const refresh_ms: i64 = 3000;
 const double_click_ms: i64 = 500;
 
 pub const Alias = struct { id: []u8, name: []u8 };
@@ -492,6 +504,22 @@ pub const State = struct {
     scanning: bool = false,
     scanned_once: bool = false,
     last_scan_ms: i64 = 0,
+    /// When each part last ran (`App.now_ms`): the liveness pass, the
+    /// transcript walk, the cloud read — `refresh_cadence` against
+    /// `sessions.refresh`, `agents.refresh`, `cloud_agents.refresh`.
+    live_ms: i64 = 0,
+    walk_ms: i64 = 0,
+    cloud_ms: i64 = 0,
+    /// The last adopted listing had a local session thinking or in a
+    /// tool / a cloud run in progress: the fast interval applies.
+    live_local: bool = false,
+    live_cloud: bool = false,
+    /// The scan worker's caches between passes — touched only by the
+    /// worker in flight. `local.reads` / `cloud_runs.parses` count work.
+    local: agents.LocalCache,
+    cloud_runs: cloud_agents.Cache,
+    /// Passes that found nothing moved and posted nothing.
+    quiet_passes: u64 = 0,
     last_click: ?struct { idx: u32, at_ms: i64 } = null,
     /// A home directory to scan instead of the loader's `$HOME` —
     /// what a test points at a fixture. Owned.
@@ -531,12 +559,14 @@ pub const State = struct {
     totals: agents.TotalsCache = .{},
 
     pub fn init(gpa: Allocator, sort: SessionsSort) State {
-        return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort, .keys = std.heap.ArenaAllocator.init(gpa) };
+        return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort, .keys = std.heap.ArenaAllocator.init(gpa), .local = .init(gpa), .cloud_runs = .init(gpa) };
     }
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.group.cancel(io);
         self.totals.deinit(gpa);
+        self.local.deinit();
+        self.cloud_runs.deinit();
         self.cards.deinit(gpa);
         self.keys.deinit();
         self.external.deinit(gpa);
@@ -667,11 +697,28 @@ pub const State = struct {
 // ─── the scan worker (D1 + D3) ──────────────────────────────────────────
 
 /// Cancel any scan in flight, bump the generation, start a new one over
-/// the home directory. No home (the `.test` runner's apps) is an empty
-/// list, not an error.
+/// the home directory — every part, whatever moved (the ⟳ chip, the
+/// command, the first pass). No home (the `.test` runner's apps) is an
+/// empty list, not an error.
 pub fn refresh(app: *App) CommandError!void {
+    return startScan(app, .{});
+}
+
+/// Which parts a pass runs. `force` posts a listing even when nothing
+/// moved.
+pub const Want = struct {
+    live: bool = true,
+    walk: bool = true,
+    cloud: bool = true,
+    force: bool = true,
+};
+
+fn startScan(app: *App, want: Want) CommandError!void {
     const st = &app.sessions;
     st.last_scan_ms = app.now_ms;
+    if (want.live or want.force) st.live_ms = app.now_ms;
+    if (want.walk or want.force) st.walk_ms = app.now_ms;
+    if (want.cloud or want.force) st.cloud_ms = app.now_ms;
     st.scanned_once = true;
     const home = try homeFor(app) orelse {
         st.scanning = false;
@@ -683,11 +730,12 @@ pub fn refresh(app: *App) CommandError!void {
     st.group.cancel(app.io);
     st.generation +%= 1;
     st.scanning = true;
-    app.needs_render = true;
+    if (want.force) app.needs_render = true;
     // The cloud settings the worker reads, renewed while no worker runs.
     if (st.cloud) |*c| c.deinit(app.gpa);
     st.cloud = try cloud_agents.Opts.fromConfig(app.gpa, &app.cfg.cloud_agents, &app.env);
-    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, home, app.workspace, st.cloud, agents.scopeFrom(&app.env), st.generation, &st.totals }) catch |err| {
+    const job: Job = .{ .home = home, .cloud = st.cloud, .scope = agents.scopeFrom(&app.env), .generation = st.generation, .want = want, .totals = &st.totals, .local = &st.local, .cloud_runs = &st.cloud_runs };
+    st.group.concurrent(app.io, scanWorker, .{ app.events, app.io, app.gpa, job }) catch |err| {
         st.scanning = false;
         return app.diag.fail(app.frame.allocator(), "sessions: could not start the scan: {s}", .{@errorName(err)});
     };
@@ -720,13 +768,24 @@ pub fn homeFor(app: *App) Allocator.Error!?[]const u8 {
     return st.home.?;
 }
 
-fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u8, workspace: []const u8, cloud: ?cloud_agents.Opts, scope: agents.Scope, generation: u32, totals: *agents.TotalsCache) Io.Cancelable!void {
-    const result = ScanResult.create(gpa, generation) catch {
+const Job = struct {
+    home: []const u8,
+    cloud: ?cloud_agents.Opts,
+    scope: agents.Scope,
+    generation: u32,
+    want: Want,
+    totals: *agents.TotalsCache,
+    local: *agents.LocalCache,
+    cloud_runs: *cloud_agents.Cache,
+};
+
+fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: Job) Io.Cancelable!void {
+    const result = ScanResult.create(gpa, job.generation) catch {
         postErr(events, io, gpa, "out of memory starting the scan");
         return;
     };
     errdefer result.destroy(gpa);
-    scanInto(io, gpa, home, workspace, cloud, scope, result, totals) catch |err| switch (err) {
+    scanCached(io, gpa, job, result) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
         error.OutOfMemory => {
             postErr(events, io, gpa, "out of memory during the scan");
@@ -734,6 +793,42 @@ fn scanWorker(events: *event.EventQueue, io: Io, gpa: Allocator, home: []const u
         },
     };
     events.post(io, .{ .sessions = result });
+}
+
+/// One pass over the caches: the transcript walk (a stat per file, a
+/// read for what moved), the liveness pass (`ps`, the states, `git
+/// status`) only when a row has a process or something moved, the cloud
+/// read when due. Nothing moved and not forced: `r.unchanged`, no rows.
+pub fn scanCached(io: Io, gpa: Allocator, j: Job, r: *ScanResult) ScanError!void {
+    const arena = r.arena.allocator();
+    const now = Io.Timestamp.now(io, .real).toSeconds();
+    var moved = false;
+    if (j.want.walk or j.want.force) moved = try agents.walk(io, gpa, j.local, j.home, j.totals);
+    const has_rows = j.local.map.count() > 0;
+    const live = has_rows and (j.want.force or moved or (j.want.live and j.local.anyPid()));
+    var cloud_moved = false;
+    if (j.cloud) |c| if (j.want.cloud or j.want.force) {
+        cloud_moved = try j.cloud_runs.read(io, c);
+    };
+    if (!j.want.force and !moved and !cloud_moved and !live) {
+        r.unchanged = true;
+        return;
+    }
+    var rows: std.ArrayListUnmanaged(Item) = .empty;
+    try agents.rowsInto(j.local, arena, &rows);
+    if (live) {
+        const pids = try agents.runningPids(io, gpa, arena, j.scope);
+        try agents.liveness(arena, pids, rows.items, now);
+        try agents.dirtyScan(io, gpa, arena, rows.items, now);
+        if (agents.writeBack(j.local, rows.items)) moved = true;
+    }
+    if (!j.want.force and !moved and !cloud_moved) {
+        r.unchanged = true;
+        return;
+    }
+    if (j.cloud != null) try j.cloud_runs.rowsInto(arena, &rows);
+    r.items = rows.items;
+    r.at_s = now;
 }
 
 fn postErr(events: *event.EventQueue, io: Io, gpa: Allocator, msg: []const u8) void {
@@ -766,6 +861,20 @@ pub fn handle(app: *App, result: *ScanResult) Allocator.Error!void {
     defer result.destroy(app.gpa);
     if (result.generation != st.generation) return;
     st.scanning = false;
+    if (result.unchanged) {
+        st.quiet_passes += 1;
+        return;
+    }
+    st.live_local = false;
+    st.live_cloud = false;
+    for (result.items) |it| switch (it.where) {
+        .local => if (it.state == .streaming or it.state == .tool_call) {
+            st.live_local = true;
+        },
+        else => if (!it.state.ended()) {
+            st.live_cloud = true;
+        },
+    };
     const frame = app.frame.allocator();
     const keep: ?[]const u8 = if (st.selectedCard()) |c| try frame.dupe(u8, c.key) else null;
     try sessions_table.noteSelection(app);
@@ -1368,29 +1477,97 @@ pub fn setSort(app: *App, sort: SessionsSort) Allocator.Error!void {
     app.needs_render = true;
 }
 
-/// Whether a view of the rows is on screen and wants the cadence: the
-/// section shown with auto-refresh on, or a table pane not paused.
+/// Whether a view of the rows is on screen: the section shown, or a
+/// table pane open that is not paused.
 pub fn wantsScan(app: *const App) bool {
-    if (side.isShown(app, .sessions) and auto_refresh.on(app, .sessions)) return true;
+    if (side.isShown(app, .sessions)) return true;
     return sessions_table.wantsScan(app);
 }
 
-/// Every tick: the panes' needs-you answers; a shown view rescans on
-/// the cadence.
+/// `ui.dashboard_refresh`, read as `manual` while the section's own
+/// auto-refresh is off or the only view is a paused table.
+fn refreshMode(app: *const App) refresh_cadence.Mode {
+    if (!auto_refresh.on(app, .sessions)) return .manual;
+    if (!side.isShown(app, .sessions) and sessions_table.pausedOpen(app)) return .manual;
+    return app.cfg.ui.dashboard_refresh;
+}
+
+/// The three parts' phases now: arithmetic on the last adoption's
+/// flags, no allocation.
+const Phases = struct { live: refresh_cadence.Phase, cloud: refresh_cadence.Phase };
+
+fn phases(app: *const App) Phases {
+    const st = &app.sessions;
+    const m = refreshMode(app);
+    const shown = wantsScan(app);
+    return .{ .live = refresh_cadence.phase(m, shown, st.live_local), .cloud = refresh_cadence.phase(m, shown, st.live_cloud) };
+}
+
+fn cloudOn(app: *const App) bool {
+    return cloud_agents.configured(&app.cfg.cloud_agents, &app.env);
+}
+
+/// Whether the home has a transcript directory to walk — two stats,
+/// once, before the first pass.
+fn hasTranscripts(app: *App) bool {
+    const home = (homeFor(app) catch return true) orelse return false;
+    const arena = app.frame.allocator();
+    for ([_][]const []const u8{ &.{ ".claude", "projects" }, &.{ ".codex", "sessions" } }) |sub| {
+        const path = std.fs.path.join(arena, &.{ home, sub[0], sub[1] }) catch return true;
+        Io.Dir.cwd().access(app.io, path, .{}) catch continue;
+        return true;
+    }
+    return false;
+}
+
+/// Every tick: the panes' needs-you answers; the first pass at start
+/// (the prefetch), then each part on its own cadence.
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
     trackNeedsYou(app) catch {};
-    if (st.scanning or !st.scanned_once or !wantsScan(app)) return;
-    if (now - st.last_scan_ms < refresh_ms) return;
-    refresh(app) catch {};
+    if (st.scanning) return;
+    if (!st.scanned_once) {
+        if (refreshMode(app) == .manual) return;
+        // Nothing to read (no transcript directory, no cloud table): the
+        // first pass is a no-op, so the clocks start without a worker.
+        if (cloudOn(app) or hasTranscripts(app)) {
+            refresh(app) catch {};
+        } else {
+            st.scanned_once = true;
+            st.last_scan_ms = now;
+            st.live_ms = now;
+            st.walk_ms = now;
+            st.cloud_ms = now;
+        }
+        return;
+    }
+    const p = phases(app);
+    const want: Want = .{
+        .force = false,
+        .live = refresh_cadence.isDue(app.cfg.sessions.refresh, p.live, st.live_ms, now),
+        .walk = refresh_cadence.isDue(app.cfg.agents.refresh, p.live, st.walk_ms, now),
+        .cloud = cloudOn(app) and refresh_cadence.isDue(app.cfg.cloud_agents.refresh, p.cloud, st.cloud_ms, now),
+    };
+    if (want.live or want.walk or want.cloud) startScan(app, want) catch {};
 }
 
 pub fn nextDeadlineMs(app: *const App) ?i64 {
     const st = &app.sessions;
     const pane_due = needsYouDeadlineMs(app);
-    if (!st.scanned_once or !wantsScan(app)) return pane_due;
-    const scan_due = if (st.scanning) app.now_ms + 80 else st.last_scan_ms + refresh_ms;
-    return @min(scan_due, pane_due orelse scan_due);
+    if (st.scanning) return @min(app.now_ms + 80, pane_due orelse app.now_ms + 80);
+    // Before the first pass: the loop's first tick starts it; no wake.
+    if (!st.scanned_once) return pane_due;
+    var next: ?i64 = pane_due;
+    const p = phases(app);
+    const dues = [_]?i64{
+        refresh_cadence.dueAt(app.cfg.sessions.refresh, p.live, st.live_ms),
+        refresh_cadence.dueAt(app.cfg.agents.refresh, p.live, st.walk_ms),
+        if (cloudOn(app)) refresh_cadence.dueAt(app.cfg.cloud_agents.refresh, p.cloud, st.cloud_ms) else null,
+    };
+    for (dues) |d| if (d) |at| {
+        next = @min(at, next orelse at);
+    };
+    return next;
 }
 
 // ─── commands (D2, D5) ──────────────────────────────────────────────────
@@ -3297,6 +3474,11 @@ const Fixture = struct {
         f.app.sessions.generation = 1;
         try handle(&f.app, r);
         f.app.sessions.scanned_once = true;
+        // As a pass that just ran: no part is due for a while.
+        const now = App.nowMs(testing.io);
+        f.app.sessions.live_ms = now;
+        f.app.sessions.walk_ms = now;
+        f.app.sessions.cloud_ms = now;
     }
 
     fn settle(f: *Fixture, max: usize) !void {
@@ -4305,24 +4487,117 @@ test "headless: a card owning a scanned transcript reads it; w widens ENDED; J a
     try testing.expect(std.mem.indexOf(u8, txt3, "nightly build  (aaaaaaaa)") != null);
 }
 
-test "tick rescans a shown panel on the cadence and leaves a hidden one alone" {
+test "tick: the first pass starts with the app, hidden; then idle off screen, slow on screen, fast with a session live; manual waits for the chip" {
     var f = try Fixture.init(80, 20);
     defer f.deinit();
     try f.seedHome();
     const st = &f.app.sessions;
-    st.scanned_once = true;
-    st.last_scan_ms = 0;
-    tick(&f.app, refresh_ms + 1); // hidden: nothing
-    try testing.expectEqual(@as(u32, 0), st.generation);
-    side.place(&f.app, .sessions, false);
-    f.app.now_ms = refresh_ms - 1;
-    tick(&f.app, refresh_ms - 1);
-    try testing.expectEqual(@as(u32, 0), st.generation);
-    f.app.now_ms = refresh_ms + 1;
-    tick(&f.app, refresh_ms + 1);
+    const c: Config.RefreshCadence = .{ .fast_ms = 100, .slow_ms = 1000, .idle_ms = 10_000 };
+    f.app.cfg.sessions.refresh = c;
+    f.app.cfg.agents.refresh = c;
+    // The prefetch: nothing on screen, and the first tick scans.
+    try testing.expect(!wantsScan(&f.app));
+    f.app.now_ms = 0;
+    tick(&f.app, 0);
     try testing.expectEqual(@as(u32, 1), st.generation);
-    try testing.expect(nextDeadlineMs(&f.app) != null);
     try f.settle(2000);
+    try testing.expect(st.items.len > 0);
+    // From here each step starts the parts' clocks at 0 (`settle` ticks
+    // on the real clock) and asks one tick before the interval and one
+    // on it.
+    const Step = struct {
+        fn at(fx: *Fixture, now: i64) u32 {
+            const before = fx.app.sessions.generation;
+            fx.app.now_ms = now;
+            tick(&fx.app, now);
+            return fx.app.sessions.generation - before;
+        }
+        fn zero(s2: *State) void {
+            s2.live_ms = 0;
+            s2.walk_ms = 0;
+            s2.cloud_ms = 0;
+        }
+    };
+    // Off screen: the idle interval.
+    Step.zero(st);
+    try testing.expectEqual(@as(?i64, 10_000), nextDeadlineMs(&f.app));
+    try testing.expectEqual(@as(u32, 0), Step.at(&f, 9_999));
+    try testing.expectEqual(@as(u32, 1), Step.at(&f, 10_000));
+    try f.settle(2000);
+    // On screen, nothing live: slow.
+    side.place(&f.app, .sessions, false);
+    Step.zero(st);
+    st.live_local = false;
+    try testing.expectEqual(@as(u32, 0), Step.at(&f, 999));
+    try testing.expectEqual(@as(u32, 1), Step.at(&f, 1000));
+    try f.settle(2000);
+    // A session live: fast.
+    Step.zero(st);
+    st.live_local = true;
+    try testing.expectEqual(@as(u32, 0), Step.at(&f, 99));
+    try testing.expectEqual(@as(u32, 1), Step.at(&f, 100));
+    try f.settle(2000);
+    // Manual: no tick runs a pass; the chip's command still does.
+    f.app.cfg.ui.dashboard_refresh = .manual;
+    Step.zero(st);
+    try testing.expectEqual(@as(u32, 0), Step.at(&f, 1_000_000));
+    try testing.expectEqual(@as(?i64, null), nextDeadlineMs(&f.app));
+    const g = st.generation;
+    try command.run(&f.app, .{ .static = .@"sessions.refresh" });
+    try testing.expectEqual(g + 1, st.generation);
+    try f.settle(2000);
+}
+
+test "a pass where no transcript moved reads nothing and posts nothing; a grown transcript is read again" {
+    var f = try Fixture.init(80, 20);
+    defer f.deinit();
+    try f.seedHome();
+    var local = agents.LocalCache.init(testing.allocator);
+    defer local.deinit();
+    var totals: agents.TotalsCache = .{};
+    defer totals.deinit(testing.allocator);
+    var cloud_runs = cloud_agents.Cache.init(testing.allocator);
+    defer cloud_runs.deinit();
+    const job = struct {
+        fn of(home: []const u8, l: *agents.LocalCache, t: *agents.TotalsCache, c: *cloud_agents.Cache, want: Want) Job {
+            return .{ .home = home, .cloud = null, .scope = .{ .pgid = -1, .self_pid = 0 }, .generation = 1, .want = want, .totals = t, .local = l, .cloud_runs = c };
+        }
+    }.of;
+    const home = f.app.sessions.home.?;
+    // The first pass reads every transcript.
+    {
+        const r = try ScanResult.create(testing.allocator, 1);
+        defer r.destroy(testing.allocator);
+        try scanCached(testing.io, testing.allocator, job(home, &local, &totals, &cloud_runs, .{}), r);
+        try testing.expectEqual(@as(usize, 2), r.items.len);
+    }
+    const first = local.reads;
+    try testing.expectEqual(@as(u64, 2), first);
+    // Nothing moved: a stat each, no read, nothing posted.
+    {
+        const r = try ScanResult.create(testing.allocator, 1);
+        defer r.destroy(testing.allocator);
+        try scanCached(testing.io, testing.allocator, job(home, &local, &totals, &cloud_runs, .{ .force = false }), r);
+        try testing.expect(r.unchanged);
+        try testing.expectEqual(@as(usize, 0), r.items.len);
+        try testing.expectEqual(first, local.reads);
+    }
+    // One transcript grows: that one is read, and the listing posts.
+    const path = local.map.keys()[0];
+    {
+        var file = try Io.Dir.cwd().openFile(testing.io, path, .{ .mode = .read_write });
+        defer file.close(testing.io);
+        const len = try file.length(testing.io);
+        try file.writePositionalAll(testing.io, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"more\"}}\n", len);
+    }
+    {
+        const r = try ScanResult.create(testing.allocator, 1);
+        defer r.destroy(testing.allocator);
+        try scanCached(testing.io, testing.allocator, job(home, &local, &totals, &cloud_runs, .{ .force = false }), r);
+        try testing.expect(!r.unchanged);
+        try testing.expectEqual(@as(usize, 2), r.items.len);
+        try testing.expectEqual(first + 1, local.reads);
+    }
 }
 
 // ─── the card against the spec ──────────────────────────────────────────
