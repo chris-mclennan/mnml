@@ -870,6 +870,14 @@ const Fx = struct {
         try handle(&fx.app, inc);
     }
 
+    /// A path as a JSON string, quotes included — on Windows it carries
+    /// backslashes, which a raw `{s}` in a JSON literal cannot hold.
+    fn jsonStr(arena: Allocator, path: []const u8) ![]const u8 {
+        var w: std.Io.Writer.Allocating = .init(arena);
+        try std.json.Stringify.encodeJsonString(path, .{}, &w.writer);
+        return w.written();
+    }
+
     fn call(fx: *Fx, pane: PaneId, conn: u32, id: u32, name: []const u8, args: []const u8) !void {
         const line = try std.fmt.allocPrint(t.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"tools/call\",\"params\":{{\"name\":\"{s}\",\"arguments\":{s}}}}}", .{ id, name, args });
         defer t.allocator.free(line);
@@ -1027,7 +1035,7 @@ test "each read tool runs unasked as pane:<id>, on the audit trail; executeCode 
     try t.expect(fx.has(900, "\\\"start\\\":{\\\"line\\\":1,\\\"character\\\":0}"));
     try fx.call(6, 900, 4, "getDiagnostics", "{}");
     try t.expect(fx.has(900, "\"id\":4,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[]\"}]}"));
-    try fx.call(6, 900, 5, "checkDocumentDirty", try std.fmt.allocPrint(app.frame.allocator(), "{{\"filePath\":\"{s}\"}}", .{path}));
+    try fx.call(6, 900, 5, "checkDocumentDirty", try std.fmt.allocPrint(app.frame.allocator(), "{{\"filePath\":{s}}}", .{try Fx.jsonStr(app.frame.allocator(), path)}));
     try t.expect(fx.has(900, "\\\"isDirty\\\":false"));
     try fx.call(6, 900, 6, "openFile", "{\"filePath\":\"auth.zig\",\"startText\":\"three\"}");
     try t.expect(fx.has(900, "Opened file:"));
@@ -1049,7 +1057,7 @@ test "saveDocument is write: it asks as pane:<id>, saves on yes, and answers no 
     try fx.link(6, 900);
     const id = try app.openPath(path);
     try app.splice(app.panes.editor(id).?, 0, 0, "b");
-    const args = try std.fmt.allocPrint(t.allocator, "{{\"filePath\":\"{s}\"}}", .{path});
+    const args = try std.fmt.allocPrint(t.allocator, "{{\"filePath\":{s}}}", .{try Fx.jsonStr(app.frame.allocator(), path)});
     defer t.allocator.free(args);
 
     const before = app.ide.unsent.items.len;
@@ -1078,7 +1086,7 @@ test "openDiff shows the review; accept saves the file and answers FILE_SAVED wi
     const path = try fx.file("d.txt", "one\ntwo\n");
     defer t.allocator.free(path);
     try fx.link(6, 900);
-    const args = try std.fmt.allocPrint(t.allocator, "{{\"old_file_path\":\"{s}\",\"new_file_path\":\"{s}\",\"new_file_contents\":\"one\\nTWO\\n\",\"tab_name\":\"d.txt (claude)\"}}", .{ path, path });
+    const args = try std.fmt.allocPrint(t.allocator, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"one\\nTWO\\n\",\"tab_name\":\"d.txt (claude)\"}}", .{ try Fx.jsonStr(app.frame.allocator(), path), try Fx.jsonStr(app.frame.allocator(), path) });
     defer t.allocator.free(args);
 
     const before = app.ide.unsent.items.len;
