@@ -19,6 +19,10 @@
 //!             `<data root>/cache/<service>/` keyed by the SERVER's
 //!             own `updated` stamp, so a pane paints on open and only
 //!             asks about what moved
+//!   cache     the recent-items cache: small typed records (tickets,
+//!             PRs, pipelines, releases) the integrations already
+//!             polled, shared under `recent/<source>/<kind>.json` for
+//!             the host and any pane to read
 //!   request_log
 //!             one JSON line per request under
 //!             `<data root>/requests/<service>.jsonl` — what a slow
@@ -143,6 +147,7 @@ pub const request_log = @import("request_log.zig");
 pub const budget = @import("budget.zig");
 pub const feed = @import("feed.zig");
 pub const store = @import("store.zig");
+pub const cache = @import("cache.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
@@ -189,6 +194,7 @@ test {
     _ = budget;
     _ = feed;
     _ = store;
+    _ = cache;
     _ = warm;
     _ = pane;
     _ = zon_edit;
