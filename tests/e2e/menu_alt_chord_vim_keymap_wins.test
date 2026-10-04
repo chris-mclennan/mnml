@@ -1,0 +1,11 @@
+# width: 120
+# vim: a chord the keymap binds wins over the menu bar's Alt+<letter>
+# mnemonic. NvChad's `<A-h>` with an editor focused toggles the scratch
+# terminal strip; the Help menu (its first row "Welcome") stays shut.
+write a.txt "AAA-top\n"
+open a.txt
+command editor.use_vim
+key alt+h
+wait 1500
+expect status contains "scratch"
+expect screen lacks "Keybindings"

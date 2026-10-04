@@ -49,6 +49,12 @@ take these keys while another overlay is open, while the bar is
 `hidden`, or while a terminal pane has the keys — the program in the
 pane gets them.
 
+Under the vim profile a chord your keymap binds wins over the letter —
+`Alt+H` is NvChad's scratch terminal and `Alt+R` toggles regex search, so
+*Help* and *Run* open from the bar or `F10` instead; an `Alt` letter vim
+leaves unbound still opens its menu. Under standard the letters stay the
+menus', as in VS Code.
+
 Inside an open menu:
 
 | Key | Does |

@@ -460,8 +460,9 @@ pub fn hoverSwitch(app: *App, id: u32, r: Rect) Allocator.Error!bool {
 }
 
 /// F10 opens File; Alt+<letter> the menu with that initial. Nothing
-/// while an overlay is up, in a terminal pane, or (F10) while a debug
-/// session owns step-over. True when a menu opened.
+/// while an overlay is up, in a terminal pane, (F10) while a debug
+/// session owns step-over, or (vim) when the keymap binds the Alt
+/// chord. True when a menu opened.
 pub fn interceptKey(app: *App, k: key_mod.Key) Allocator.Error!bool {
     if (mode(app) == .hidden or app.overlay != .none) return false;
     if (app.active) |id| if (app.panes.get(id)) |p| if (p.* == .pty) return false;
@@ -471,6 +472,11 @@ pub fn interceptKey(app: *App, k: key_mod.Key) Allocator.Error!bool {
             return true;
         },
         .char => |c| if (k.mods.alt and !k.mods.ctrl and !k.mods.shift and !k.mods.super and c < 0x80) {
+            // Under vim a chord the keymap binds wins over the mnemonic:
+            // NvChad's `<A-h>` is the scratch terminal, not the Help
+            // menu. Standard keeps VS Code's rule — the letter is the
+            // menu's.
+            if (app.input_style == .vim and app.keymap.resolveSeq(&.{key_mod.Chord.of(k)}) != .none) return false;
             const want = std.ascii.toLower(@intCast(c));
             for (Menu.all) |m| if (m.accelerator() == want) {
                 try openIndex(app, @intFromEnum(m));
@@ -1096,4 +1102,25 @@ test "the pin chip's menus: the bar's word menu grows a pin row, and the chip's 
     try t.expect(try context_menus.openButtonMenu(&app, button_base + @intFromEnum(Menu.file), 12, 0));
     try t.expectEqualStrings("Open", app.overlay.menu.items[0].label);
     try t.expectEqualStrings("Unpin menu bar", app.overlay.menu.items[1].label);
+}
+
+test "Alt+letter: under vim a bound chord goes to the keymap, an unbound one opens its menu; standard keeps every letter for the menus" {
+    const alt_h: key_mod.Key = .{ .code = .{ .char = 'h' }, .mods = .{ .alt = true } };
+    const alt_f: key_mod.Key = .{ .code = .{ .char = 'f' }, .mods = .{ .alt = true } };
+    for ([_]bool{ true, false }) |vim| {
+        var cfg: app_mod.Config = .{};
+        if (vim) cfg.editor.input_style = .vim;
+        var app = try App.initWith(t.allocator, t.io, .{ .cfg = cfg, .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
+        defer app.deinit();
+        // Alt+H: NvChad's `<A-h>` under vim, the Help menu under standard.
+        try t.expectEqual(!vim, try interceptKey(&app, alt_h));
+        if (!vim) {
+            try t.expectEqual(@as(?Menu, .help), app.menu_bar.open);
+            try app.handle(.{ .key = .{ .code = .esc } });
+            try t.expect(app.overlay == .none);
+        }
+        // Alt+F: no binding in either profile — the File menu both ways.
+        try t.expect(try interceptKey(&app, alt_f));
+        try t.expectEqual(@as(?Menu, .file), app.menu_bar.open);
+    }
 }

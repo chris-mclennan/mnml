@@ -51,6 +51,10 @@ and `.keys.vim` / `.keys.standard` add to or override their own.
    comment `Ctrl+/` — and never a leader chord: a command whose only
    chord is a `Space …` row prints none, and the hover help says which
    leader row reaches it. The vim profile prints its leader chords.
+8. **The menu bar's Alt+letter mnemonics** keep every letter in
+   standard, as VS Code's do; in vim a chord the keymap binds wins
+   (`Alt+H` is NvChad's scratch terminal, `Alt+R` regex search) and
+   only unbound letters open their menus (`menu_bar.interceptKey`).
 
 ## Chords that differ between the profiles
 

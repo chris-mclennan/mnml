@@ -38,6 +38,14 @@ the release ships one file), and one line per change a user can see.
   manifest's chip glyph as `$MNML_CHIP_GLYPH`
   (`sdk.pane.chipGlyphFromEnv`), so a chip and its segment show one mark.
 
+### Keys
+
+- Under vim, an Alt chord the keymap binds now beats the menu bar's
+  Alt+letter: `Alt+H` from an editor toggles NvChad's scratch terminal
+  instead of opening *Help*, and `Alt+R` toggles regex search instead of
+  opening *Run*. Unbound Alt letters still open their menus; standard keeps
+  every letter for the menus, as VS Code does.
+
 ## v0.3.2
 
 mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own

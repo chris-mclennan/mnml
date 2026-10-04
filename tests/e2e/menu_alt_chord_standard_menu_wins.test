@@ -1,0 +1,10 @@
+# width: 120
+# standard: the menu bar's Alt+<letter> mnemonic keeps every letter, as
+# in VS Code — Alt+H with an editor focused opens the Help menu, not the
+# scratch terminal vim binds to `<A-h>`.
+write a.txt "AAA-top\n"
+open a.txt
+key alt+h
+expect screen contains "Welcome"
+expect screen contains "Keybindings"
+expect status lacks "scratch"
