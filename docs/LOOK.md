@@ -71,10 +71,16 @@ recorded (`.verify/look/current`).
 * **One workspace, one live mnml.** The channel directory is the
   workspace's (`<ws>/.mnml/ipc-zig`): quit the headless instance before
   launching the window on the same workspace, and the other way round.
-* **Launching borrows the foreground for a moment.** ghostty activates as
-  it opens; `mnml-drive launch` hands the keyboard straight back to
-  whichever app had it. Launch once and drive many steps, not one launch
-  per step.
+* **The window opens behind you.** ghostty activates as it opens;
+  `mnml-drive launch` watches for that through the whole launch (every
+  relaunch included) and hands the keyboard straight back to whichever
+  app had it, with all of that app's windows, so the harness lands
+  behind them and your typing stays where it was. Shots and pixels
+  read the window by id (`screencapture -l`, `CGWindowListCreateImage`),
+  so a harness covered by other windows still photographs as itself.
+  `MNML_LOOK_FRONT=1` (or `launch --take-focus`) keeps it in front, the
+  tour's permissions hop included. Launch once and drive many steps,
+  not one launch per step.
 
 `launch --sandbox` starts the app with `--sandbox` (docs/CONFIG.md,
 *Sandbox*): it re-executes into a fresh `mnml-sandbox-*` under the

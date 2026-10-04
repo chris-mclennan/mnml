@@ -318,6 +318,17 @@ pub fn frontWindowPid() ?i32 {
 /// is the one thing this tool does that the person at the machine will
 /// notice, so it is never a side effect.
 pub fn activate(pid: i32) bool {
+    // AppKit first: AXFrontmost alone lags by up to seconds, and every
+    // one of them is the person's keystrokes landing in the harness.
+    // AllWindows | IgnoringOtherApps (1 | 2): the whole app comes
+    // forward, so the harness window ends up behind all of it.
+    if (objc_getClass("NSRunningApplication")) |cls| {
+        const lookup: *const fn (?*anyopaque, ?*anyopaque, i32) callconv(.c) ?*anyopaque = @ptrCast(&objc_msgSend);
+        const act: *const fn (?*anyopaque, ?*anyopaque, usize) callconv(.c) bool = @ptrCast(&objc_msgSend);
+        if (lookup(cls, sel_registerName("runningApplicationWithProcessIdentifier:"), pid)) |running| {
+            _ = act(running, sel_registerName("activateWithOptions:"), 3);
+        }
+    }
     const app = AXUIElementCreateApplication(pid) orelse return false;
     defer CFRelease(app);
     const k_front = CFStringCreateWithCString(null, "AXFrontmost", kCFStringEncodingUTF8);
@@ -326,6 +337,28 @@ pub fn activate(pid: i32) bool {
 }
 
 extern const kCFBooleanTrue: CFTypeRef;
+extern "c" fn objc_getClass(name: [*:0]const u8) ?*anyopaque;
+extern "c" fn sel_registerName(name: [*:0]const u8) ?*anyopaque;
+extern "c" fn objc_msgSend() void;
+extern "c" fn AXUIElementCreateSystemWide() CFTypeRef;
+extern "c" fn AXUIElementGetPid(el: CFTypeRef, pid: *i32) i32;
+
+/// The application that has the keyboard right now, asked live through
+/// the accessibility tree. Not the window list's first entry (an app with
+/// no window in front can still have the keyboard), and not NSWorkspace's
+/// `frontmostApplication`, which a process with no run loop reads stale.
+pub fn frontAppPid() ?i32 {
+    const sys = AXUIElementCreateSystemWide() orelse return frontWindowPid();
+    defer CFRelease(sys);
+    const k = CFStringCreateWithCString(null, "AXFocusedApplication", kCFStringEncodingUTF8);
+    defer CFRelease(k);
+    var app: CFTypeRef = null;
+    if (AXUIElementCopyAttributeValue(sys, k, &app) != 0 or app == null) return frontWindowPid();
+    defer CFRelease(app);
+    var pid: i32 = 0;
+    if (AXUIElementGetPid(app, &pid) != 0) return frontWindowPid();
+    return pid;
+}
 
 /// Every process that owns an on-screen ghostty window, except our own.
 /// Used for ONE thing: measuring how big the user's own terminal is, so

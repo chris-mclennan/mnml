@@ -15,7 +15,7 @@
 # Ghostty opens its first window only once it is the active app, so
 # the launch takes the keyboard; the first thing the window does is hand
 # it back to the app that was in front (NSRunningApplication activation
-# plus AXFrontmost — the AX call alone lags by seconds — and only while
+# with all its windows, so this one lands behind them, plus AXFrontmost — the AX call alone lags by seconds — and only while
 # our Ghostty is the one in front; the grant it holds allows the AX part).
 # The window closes when the command exits (`quit-after-last-window-
 # closed`, `wait-after-command=false`, no too-quick-exit error page;
@@ -43,8 +43,10 @@ mkdir -p "$DIR"
 OUT="$DIR/stdout.log" ERR="$DIR/stderr.log" CODE="$DIR/exit" PIDF="$DIR/pid"
 : > "$OUT"; : > "$ERR"
 
-# The app in front now gets the keyboard back once the window is up.
+# The app in front now gets the keyboard back once the window is up
+# (MNML_LOOK_FRONT=1: leave this window in front instead).
 FRONT=$(lsappinfo info -only pid "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*=\([0-9][0-9]*\).*/\1/p')
+[ "${MNML_LOOK_FRONT:-}" = 1 ] && FRONT=""
 
 # Ghostty runs its command through login(1), which starts from a fresh
 # environment: carry over the working directory, PATH and the MNML_*
@@ -60,14 +62,14 @@ FRONT=$(lsappinfo info -only pid "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*
 # Ghostty (login's parent) is the app in front; each hand-back is logged.
 me=$(ps -o ppid= -p "$PPID" | tr -d ' ')
 (
-  for _ in $(seq 1 80); do
+  for _ in $(seq 1 160); do
     front=$(lsappinfo info -only pid "$(lsappinfo front)" 2>/dev/null | sed 's/.*=//')
     if [ -n "$prev" ] && [ "$front" = "$me" ] && kill -0 "$prev" 2>/dev/null; then
-      osascript -l JavaScript -e "ObjC.import('ApplicationServices'); ObjC.import('AppKit'); \$.NSRunningApplication.runningApplicationWithProcessIdentifier($prev).activateWithOptions(2); \$.AXUIElementSetAttributeValue(\$.AXUIElementCreateApplication($prev), \$('AXFrontmost'), \$.kCFBooleanTrue)" >/dev/null 2>&1
+      osascript -l JavaScript -e "ObjC.import('ApplicationServices'); ObjC.import('AppKit'); \$.NSRunningApplication.runningApplicationWithProcessIdentifier($prev).activateWithOptions(3); \$.AXUIElementSetAttributeValue(\$.AXUIElementCreateApplication($prev), \$('AXFrontmost'), \$.kCFBooleanTrue)" >/dev/null 2>&1
       echo "$(date +%T) front was $front (ours); handed back to $prev: $?" >> "$hlog"
       sleep 0.4  # the switch takes a moment to show in lsappinfo
     fi
-    sleep 0.1
+    sleep 0.05
   done
 ) &
 HANDBACK

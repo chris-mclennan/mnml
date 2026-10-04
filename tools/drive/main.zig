@@ -364,10 +364,15 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
 
     // Whoever has the keyboard now. A ghostty started from a shell
     // activates itself as it opens, which took the keyboard from the
-    // person at the machine mid-sentence on every launch; once the
-    // window is up it is handed back (unless `--take-focus`).
-    const front_before = mac.frontWindowPid();
-    const take_focus = hasFlag(args, "--take-focus");
+    // person at the machine mid-sentence on every launch. It is handed
+    // back the moment ghostty takes it — watched through every wait
+    // below, not once at the end, because a launch can relaunch and
+    // each one activates again — so the window comes up BEHIND the
+    // app that had the keyboard. `--take-focus` or MNML_LOOK_FRONT=1
+    // leaves the harness in front.
+    const take_focus = hasFlag(args, "--take-focus") or
+        std.mem.eql(u8, init_env.get("MNML_LOOK_FRONT") orelse "", "1");
+    var guard: FocusGuard = .{ .prev = if (take_focus) null else mac.frontAppPid() };
 
     try Io.Dir.cwd().createDirPath(io, data_root);
     // mnml's own config, in the isolated data root (harness.mnml_config
@@ -467,8 +472,9 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             return exit_refused;
         };
         const pid: i32 = @intCast(child.id.?);
+        guard.pid = pid;
 
-        const found = waitForWindow(io, pid, harness.window_title, timeout_ms) orelse {
+        const found = waitForWindow(io, &guard, harness.window_title, timeout_ms) orelse {
             try e.print(
                 "mnml-drive launch: no window titled \"{s}\" appeared for pid {d} within {d} ms.\n" ++
                     "  If a window opened in YOUR ghostty instead, this build handed the launch to\n" ++
@@ -483,7 +489,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
         // knows how big it is: the very first status.json is written
         // before the winsize event lands and says 0x0, which read as
         // "the window came up the wrong size" the first time this ran.
-        const got = waitForGrid(gpa, io, ipc_dir, timeout_ms) orelse {
+        const got = waitForGrid(gpa, io, &guard, ipc_dir, timeout_ms) orelse {
             try e.print(
                 "mnml-drive launch: the window is up but {s}/status.json never reported a size.\n" ++
                     "  mnml writes it only with `ipc.write_screen = true`, which the harness puts in\n" ++
@@ -567,7 +573,7 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
             };
             const rec_path = try std.fs.path.join(gpa, &.{ data_root, "drive.json" });
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = rec_path, .data = try harness.writeRecord(gpa, rec) });
-            if (!take_focus) giveFocusBack(io, pid, front_before);
+            guard.settle(io);
             try w.print("{s}\n", .{rec_path});
             return 0;
         }
@@ -610,22 +616,35 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
 /// otherwise take the keyboard from the person at the machine once a
 /// file. The app it hands back to is the one that was frontmost a
 /// moment ago — nothing is raised that was not already in front.
-fn giveFocusBack(io: Io, pid: i32, before: ?i32) void {
-    const prev = before orelse return;
-    if (prev == pid) return;
-    var waited: u64 = 0;
-    // The activation can land after the window is listed; watch for it
-    // briefly rather than checking once too early.
-    while (waited < 1500) : (waited += 50) {
-        if (mac.frontWindowPid()) |front| {
-            if (front == pid) {
-                _ = mac.activate(prev);
-                return;
-            }
+const FocusGuard = struct {
+    /// The app that had the keyboard before the launch; null when the
+    /// harness is meant to stay in front (or nothing had it).
+    prev: ?i32,
+    /// The ghostty being launched, once spawned.
+    pid: i32 = 0,
+
+    /// Hand the keyboard back if OUR ghostty has it. Only ever to the
+    /// app that had it a moment ago, and only off our own pid: an app
+    /// the person switched to by hand mid-launch is left alone.
+    fn check(g: *const FocusGuard) void {
+        const prev = g.prev orelse return;
+        if (g.pid == 0 or prev == g.pid) return;
+        if (mac.frontAppPid()) |front| {
+            if (front == g.pid) _ = mac.activate(prev);
         }
-        sleepMs(io, 50);
     }
-}
+
+    /// The window is up: keep watching a little longer, since ghostty
+    /// activates again as its window settles.
+    fn settle(g: *const FocusGuard, io: Io) void {
+        if (g.prev == null) return;
+        var waited: u64 = 0;
+        while (waited < 1500) : (waited += 30) {
+            g.check();
+            sleepMs(io, 30);
+        }
+    }
+};
 
 /// The font size that WOULD fit, from the one measurement that exists:
 /// how many points a cell took at the size just tried. Null when even the
@@ -647,17 +666,18 @@ fn nextFontSize(current: u16, cell_w: f64, cell_h: f64, cols: u16, rows: u16, sc
 /// Poll `status.json` until it reports a non-zero grid, and return it.
 /// The size is the App's own screen, so this is also the check that the
 /// window came up the size the config asked for.
-fn waitForGrid(gpa: Allocator, io: Io, ipc_dir: []const u8, timeout_ms: u64) ?struct { cols: u16, rows: u16 } {
+fn waitForGrid(gpa: Allocator, io: Io, guard: *const FocusGuard, ipc_dir: []const u8, timeout_ms: u64) ?struct { cols: u16, rows: u16 } {
     const p = std.fs.path.join(gpa, &.{ ipc_dir, "status.json" }) catch return null;
     var waited: u64 = 0;
-    while (waited < timeout_ms) : (waited += 120) {
+    while (waited < timeout_ms) : (waited += 40) {
+        guard.check();
         if (Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(1 << 20))) |text| {
             defer gpa.free(text);
             const c = jsonInt(text, "cols") orelse 0;
             const r = jsonInt(text, "rows") orelse 0;
             if (c > 0 and r > 0) return .{ .cols = c, .rows = r };
         } else |_| {}
-        sleepMs(io, 120);
+        sleepMs(io, 40);
     }
     return null;
 }
@@ -685,17 +705,21 @@ fn envWith(gpa: Allocator, io: Io, base: *std.process.Environ.Map, pairs: []cons
     return m;
 }
 
-fn waitForWindow(io: Io, pid: i32, title: []const u8, timeout_ms: u64) ?mac.Window {
+fn waitForWindow(io: Io, guard: *const FocusGuard, title: []const u8, timeout_ms: u64) ?mac.Window {
+    const pid = guard.pid;
     var waited: u64 = 0;
     var buf: [32]mac.Window = undefined;
-    while (waited < timeout_ms) : (waited += 120) {
+    // Short polls: ghostty activates before its window is listed, and
+    // every poll it holds the keyboard is keystrokes lost by the person.
+    while (waited < timeout_ms) : (waited += 30) {
+        guard.check();
         for (mac.windowsOf(pid, &buf)) |win| {
             if (std.mem.eql(u8, win.title(), title)) return win;
         }
         // A ghostty that died (a bad config, a missing binary) will never
         // produce a window; say so at once rather than at the timeout.
         if (!mac.processAlive(pid)) return null;
-        sleepMs(io, 120);
+        sleepMs(io, 30);
     }
     return null;
 }

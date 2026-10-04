@@ -607,6 +607,10 @@ pub fn build(b: *std.Build) void {
         drive_mod.linkFramework("CoreGraphics", .{});
         drive_mod.linkFramework("CoreFoundation", .{});
         drive_mod.linkFramework("ApplicationServices", .{});
+        // NSRunningApplication, to hand the keyboard back at once
+        // (tools/drive/mac.zig `activate`).
+        drive_mod.linkFramework("AppKit", .{});
+        drive_mod.linkSystemLibrary("objc", .{});
         const drive_exe = b.addExecutable(.{ .name = "mnml-drive", .root_module = drive_mod });
         b.installArtifact(drive_exe);
         const drive_step = b.step("drive", "Build mnml-drive (zig-out/bin/mnml-drive)");

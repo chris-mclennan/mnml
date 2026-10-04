@@ -171,8 +171,10 @@ display; the move to the main display is tried first and is refused by
 some setups.
 
 `launch` hands the keyboard back: ghostty activates as it opens, so the
-app that was frontmost before the launch is re-activated once the
-window is listed. `--take-focus` leaves the harness in front.
+app that had the keyboard before the launch is re-activated (with all
+its windows) the moment ghostty takes it, through every wait of the
+launch. `--take-focus` or `MNML_LOOK_FRONT=1` leaves the harness in
+front.
 
 `pixel --fx F --fy F` samples at a fraction of the cell (0..1) instead
 of its centre — a `▌` half block's centre is background.
