@@ -734,7 +734,7 @@ const Run = struct {
             },
             .mouse => |m| {
                 const r = switch (m.action) {
-                    .click => d.click(m.x, m.y, .left, .{}),
+                    .click => d.click(m.x, m.y, .left, m.mods),
                     .right_click => d.click(m.x, m.y, .right, .{}),
                     .double_click => blk: {
                         d.click(m.x, m.y, .left, .{}) catch |e| break :blk e;
