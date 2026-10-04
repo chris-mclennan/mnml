@@ -18,7 +18,7 @@
    │                                    │                                                               _ __ ___    _ __    _ __ ___   | |
   │                                    │                                                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
    │                                    │              ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
- 󱘣 │                                    │              │  git                                                                       500 of 1179 │
+ 󱘣 │                                    │              │  git                                                                       500 of 1182 │
    │                                    │              │▌★ git  ·  Git: status / staging view  ·  git.status_pane                    space g s █│
  󰢱 │                                    │              │ ★ view  ·  Activity: open git graph  ·  view.activity_git                ctrl+shift+g █│
    │                                    │              │ git  ·  Git: diff the worktree  ·  git.diff                     space g D / space g d █│

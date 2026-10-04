@@ -76,6 +76,11 @@ const phase_one = [_]Row{
         .keys = &.{.{ .command = .palette, .label = "The command palette" }},
         .links = &.{ .{ .command = .{ .id = .@"editor.use_standard", .label = "Switch to standard" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
     } },
+    .{ .menu = "Keymap", .label = "Toggle keymap", .entry = .{
+        .title = "Toggle keymap",
+        .body = "Flips the input style to the other profile — vim to standard or back — the same as a left click on the mode chip. The choice is written to `editor.input_style` in the home config and every chord is rebuilt at once.",
+        .links = &.{ .{ .command = .{ .id = .@"editor.toggle_keymap", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
+    } },
     .{ .menu = "Keymap", .label = "Open the cheatsheet", .entry = .{
         .title = "The cheatsheet",
         .body = "A pane listing every chord in the active profile with the command it runs, grouped by area, your rebinds included — the reference for the keymap you have rather than the one the docs describe. `/` filters, Enter runs the row. F1 opens the same list as an overlay.",
@@ -370,6 +375,15 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
     if (std.mem.eql(u8, menu, "File")) if (parent) |p| if (std.mem.eql(u8, p, "Open recent file") and item.action == .command and menu_bar.isRecentId(item.action.command)) return try menu_bar.recentFile(app, arena, label);
     if (std.mem.eql(u8, menu, "Create…")) if (parent) |p| if (std.mem.eql(u8, p, "Integrations")) return try plus.integration(arena, label);
     if (item.action == .claude_account) return try claudeAccountRow(arena, item.action.claude_account);
+    // The statusline's own menu: *Segments ▸* and one row per segment.
+    if (std.mem.eql(u8, menu, "Statusline") and std.mem.eql(u8, label, "Segments")) return .{
+        .title = "Statusline segments",
+        .body = "Every segment the statusline can show, ticked while it is shown — the built-in chips first, then the ones integrations and scripts publish, by id. A row shows or hides its segment at once and writes `statusline.hidden` to the home config, so the row stays the same in every workspace. RESTRICTED and the sandbox chip are not listed: they never hide.",
+    };
+    if (item.action == .toggle_statusline_segment) return .{
+        .title = try std.fmt.allocPrint(arena, "{s} {s} on the statusline", .{ if (item.checked) "Hide" else "Show", label }),
+        .body = try std.fmt.allocPrint(arena, "{s} the `{s}` segment and writes `statusline.hidden` to the home config. A hidden segment only leaves the row: what it counts goes on counting, and its command still runs from the palette.", .{ if (item.checked) "Takes off the row" else "Puts back on the row", item.action.toggle_statusline_segment }),
+    };
     return null;
 }
 

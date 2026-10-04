@@ -650,7 +650,7 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
-    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), sdk.pane.asciiFromEnv(env)) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), Mark.fromEnv(env)) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;
@@ -661,14 +661,33 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     return 0;
 }
 
-/// The chip's text for a values result: `󰂨 4(2)`, or `󰂨 !` on a failure.
+/// What the PRs figure wears: the chip's mark — the host's, through
+/// `$MNML_CHIP_GLYPH`, else the manifest's own — or its plain twin.
+pub const Mark = struct {
+    ascii: bool = false,
+    glyph: []const u8 = app_mod.App.chip_glyph,
+
+    pub fn fromEnv(env: *const std.process.Environ.Map) Mark {
+        return .{ .ascii = sdk.pane.asciiFromEnv(env), .glyph = sdk.pane.chipGlyphFromEnv(env, app_mod.App.chip_glyph) };
+    }
+
+    pub fn of(app: *const app_mod.App) Mark {
+        return .{ .ascii = app.ascii, .glyph = app.chip_mark };
+    }
+
+    pub fn chip(m: Mark) []const u8 {
+        return if (m.ascii) app_mod.App.chip_ascii else m.glyph;
+    }
+};
+
+/// The chip's text for a values result: the chip's mark and `4(2)`, or `!` on a failure.
 ///
 /// Through `sdk.pane.figure` because the shape is the family's, not
 /// this pane's: the figure is the pull requests of mine that are open,
 /// and the bracket is the SUBSET of them nobody has approved yet. A
 /// pane with no such subset publishes the figure alone.
-pub fn segmentText(buf: []u8, v: fetch.ValuesResult, ascii: bool) []const u8 {
-    const g = if (ascii) app_mod.App.chip_ascii else app_mod.App.chip_glyph;
+pub fn segmentText(buf: []u8, v: fetch.ValuesResult, mark: Mark) []const u8 {
+    const g = mark.chip();
     if (v.error_text.len > 0) return std.fmt.bufPrint(buf, "{s} !", .{g}) catch g;
     return sdk.pane.figure.text(buf, .{ .glyph = g, .n = v.open_mine, .subset = v.unapproved_mine });
 }
@@ -762,11 +781,11 @@ pub fn awaitingTooltip(arena: Allocator, v: fetch.ValuesResult) Allocator.Error!
 /// The review chip is published only when the count was taken — a zero
 /// there would read as "nothing outstanding" when it may mean "not
 /// counted this run".
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesResult, bucket: ?Bucket, ascii: bool) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesResult, bucket: ?Bucket, mark: Mark) !void {
     var buf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
-        .text = segmentText(&buf, v, ascii),
+        .text = segmentText(&buf, v, mark),
         .color = if (v.error_text.len > 0) "red" else segment_color,
         .click_command = segment_click,
         .priority = 60,
@@ -777,7 +796,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
         var rbuf: [64]u8 = undefined;
         try ipc.statuslineSetSegment(.{
             .id = review_segment_id,
-            .text = reviewText(&rbuf, n, ascii),
+            .text = reviewText(&rbuf, n, mark.ascii),
             .color = if (n > 0) review_segment_color else "green",
             .click_command = segment_click,
             .priority = 59,
@@ -788,7 +807,7 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
     var abuf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = awaiting_segment_id,
-        .text = awaitingText(&abuf, v.reviews_pending, ascii),
+        .text = awaitingText(&abuf, v.reviews_pending, mark.ascii),
         .color = if (v.reviews_pending > 0) awaiting_segment_color else "green",
         .click_command = awaiting_segment_click,
         .priority = 58,
@@ -864,7 +883,7 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     var ipc = try ipcFor(gpa, io, env, workspace);
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
-    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), sdk.pane.asciiFromEnv(env)) catch {};
+    if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), Mark.fromEnv(env)) catch {};
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --refresh: {s}\n", .{v.error_text});
         return 1;
@@ -1483,6 +1502,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     app.now_secs = nowSecs(io);
     app.tab_indicator = mount.hello.tab_indicator;
     app.ascii = !nerd;
+    app.chip_mark = sdk.pane.chipGlyphFromEnv(env, app_mod.App.chip_glyph);
 
     var progress: fetch.Progress = .{};
     app.progress = &progress;
@@ -1659,7 +1679,7 @@ fn drain(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sd
                 // chip is actually being published, and not once per
                 // pass of a loop that runs at sixty hertz.
                 var bucket_name: [64]u8 = undefined;
-                publishSegments(ipc, arena_state.allocator(), v, bucketOf(gpa, io, limiter, &bucket_name), app.ascii) catch {};
+                publishSegments(ipc, arena_state.allocator(), v, bucketOf(gpa, io, limiter, &bucket_name), Mark.of(app)) catch {};
             }
         },
         // The one destructive action either pane offers goes through a
@@ -1882,10 +1902,10 @@ test "the chip's Tier-2 lines are the exact JSON mnml reads: the segment, its ro
         .unapproved_mine = 1,
         .approved_mine = 0,
         .open_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .key = "api#1234" }},
-    }, null, false);
+    }, null, .{});
     const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expectEqualStrings(
-        "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 1(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f1c15} 1(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
             "\"tooltip\":\"Bitbucket \u{b7} 1 open pull request you authored \u{2014} 1 still unapproved, 0 approved \u{2014} \u{201c}Fix the login redirect\u{201d}\"," ++
             "\"items\":[{\"text\":\"Fix the login redirect\",\"sub\":\"acme/api \u{b7} unapproved\",\"command\":\"bitbucket_prs.open_mine\",\"args\":[\"--focus\",\"api#1234\"]}]}\n" ++
             "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"side\":\"right\",\"text\":\"\u{f0e5} 0\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_awaiting\",\"priority\":58,\"min_width\":4,\"max_width\":30," ++
@@ -1919,7 +1939,7 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
         .open_items = &.{ .{ .text = "Fix the login redirect", .sub = "acme/api · unapproved", .key = "api#1198" }, .{ .text = "Redesign the empty state", .sub = "acme/web · approved", .key = "web#820" } },
         .comment_items = &.{.{ .text = "Fix the login redirect", .sub = "acme/api · 2 waiting", .key = "api#1198" }},
         .awaiting_items = &.{ .{ .text = "Bump the client timeout to 30s", .sub = "acme/api", .key = "api#1234" }, .{ .text = "Tidy the footer links", .sub = "acme/web", .key = "web#77" } },
-    }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } }, false);
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 40, .rate = 0.11, .baseline_rate = 0.22, .throttles = 127, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 83 } }, .{});
     var got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "\"id\":\"bitbucket_prs.prs_mine\"") != null);
     try t.expect(std.mem.indexOf(u8, got, "4 open pull requests you authored — 2 still unapproved, 2 approved") != null);
@@ -1952,12 +1972,12 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     // open pull requests of mine — so it is the family's `12(11)`
     // shape and the other two chips are one figure each.
     var fbuf: [32]u8 = undefined;
-    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, false));
+    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, .{ .ascii = false }));
     try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3, false));
     try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2, false));
     // And the twins keep the family's shape, so `--ascii` reads the
     // same figure rather than a run of tofu.
-    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, true));
+    try sdk.pane.expect.statuslineFigure(segmentText(&fbuf, .{ .open_mine = 12, .unapproved_mine = 11 }, .{ .ascii = true }));
     try sdk.pane.expect.statuslineFigure(reviewText(&fbuf, 3, true));
     try sdk.pane.expect.statuslineFigure(awaitingText(&fbuf, 2, true));
 
@@ -1979,7 +1999,7 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
     // Not counted: the second chip is not published at all. A zero
     // there would read as "nothing outstanding".
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
-    try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 }, null, false);
+    try publishSegments(&ipc, arena, .{ .open_mine = 1, .unapproved_mine = 0, .approved_mine = 1 }, null, .{});
     got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "bitbucket_prs.reviews_mine") == null);
     // One reads as one, and a figure with no names behind it simply
@@ -1993,7 +2013,7 @@ test "the three chips carry their counts, what they mean and WHICH; the review c
 
     // A failure says so on the chip it belongs to.
     try tmp.dir.writeFile(t.io, .{ .sub_path = "command", .data = "" });
-    try publishSegments(&ipc, arena, .{ .error_text = "HTTP 401: auth" }, null, false);
+    try publishSegments(&ipc, arena, .{ .error_text = "HTTP 401: auth" }, null, .{});
     got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, "Bitbucket: HTTP 401: auth") != null);
 }
@@ -2014,7 +2034,7 @@ test "--ascii: all three chips publish their twin, and no Nerd Font glyph goes o
         .approved_mine = 2,
         .reviews_pending = 2,
         .unresolved_comments = 3,
-    }, null, true);
+    }, null, .{ .ascii = true });
     const got = try tmp.dir.readFileAlloc(t.io, "command", arena, .unlimited);
     try t.expect(std.mem.indexOf(u8, got, app_mod.App.chip_ascii ++ " 4(2)") != null);
     try t.expect(std.mem.indexOf(u8, got, review_segment_ascii ++ " 3") != null);
@@ -2027,7 +2047,7 @@ test "--ascii: all three chips publish their twin, and no Nerd Font glyph goes o
     // And the failure form wears it too, rather than falling back to
     // the comptime concatenation it used to be.
     var fbuf: [64]u8 = undefined;
-    try t.expectEqualStrings(app_mod.App.chip_ascii ++ " !", segmentText(&fbuf, .{ .error_text = "nope" }, true));
+    try t.expectEqualStrings(app_mod.App.chip_ascii ++ " !", segmentText(&fbuf, .{ .error_text = "nope" }, .{ .ascii = true }));
 }
 
 test "--only spells the reference's families; the last one wins; an unknown flag is refused" {
@@ -2066,7 +2086,7 @@ test "the three chips keep what they list: every segment and every hover row sur
         fn line(app: *app_mod.App, out_ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
             var scratch = std.heap.ArenaAllocator.init(t.allocator);
             defer scratch.deinit();
-            try publishSegments(out_ipc, scratch.allocator(), app.values orelse return error.NoValues, null, false);
+            try publishSegments(out_ipc, scratch.allocator(), app.values orelse return error.NoValues, null, .{});
             const text = try d.readFileAlloc(t.io, "command", out, .unlimited);
             try d.deleteFile(t.io, "command");
             return text;
@@ -2186,7 +2206,7 @@ const Probe = struct {
     pub fn paint(p: *Probe, arena: Allocator) !sdk.testing.Painted(Target) {
         try screen.paint(arena, &p.f, &p.rig.app, !p.ascii);
         var segs: std.ArrayList([]const u8) = .empty;
-        try segs.append(arena, segmentText(try arena.alloc(u8, 64), .{ .open_mine = 12, .unapproved_mine = 11 }, p.ascii));
+        try segs.append(arena, segmentText(try arena.alloc(u8, 64), .{ .open_mine = 12, .unapproved_mine = 11 }, .{ .ascii = p.ascii }));
         try segs.append(arena, reviewText(try arena.alloc(u8, 64), 3, p.ascii));
         try segs.append(arena, awaitingText(try arena.alloc(u8, 64), 2, p.ascii));
         return .{
@@ -2204,4 +2224,22 @@ const Probe = struct {
 
 test "the design language: the SDK's conformance suite at 120x40 and 80x24, with and without --ascii" {
     try sdk.testing.conformance(Probe);
+}
+
+test "the PRs figure wears the chip's glyph — the manifest's, or the host's" {
+    var buf: [64]u8 = undefined;
+    const chip = spec.chip.?.glyph;
+    // The default mark is the manifest's own chip glyph.
+    try t.expect(std.mem.startsWith(u8, segmentText(&buf, .{ .open_mine = 4, .unapproved_mine = 2 }, .{}), chip));
+    // The resting text the manifest declares wears it too.
+    for (spec.statusline) |seg| if (std.mem.eql(u8, seg.id, "prs_mine")) {
+        try t.expect(std.mem.startsWith(u8, seg.text, chip));
+    };
+    // And whatever the host says its chip paints wins.
+    try t.expect(std.mem.startsWith(u8, segmentText(&buf, .{ .open_mine = 4 }, .{ .glyph = "\u{f1c19}" }), "\u{f1c19}"));
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put(sdk.pane.chrome.chip_glyph_env, "\u{f1c19}");
+    try t.expectEqualStrings("\u{f1c19}", Mark.fromEnv(&env).glyph);
+    try t.expectEqualStrings(app_mod.App.chip_ascii, (Mark{ .ascii = true }).chip());
 }

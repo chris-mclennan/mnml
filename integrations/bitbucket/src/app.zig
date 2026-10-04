@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const sdk = @import("mnml_sdk");
+const manifest_spec: sdk.Manifest = @import("../manifest.zon");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const cfg = @import("config.zig");
@@ -514,6 +515,9 @@ pub const App = struct {
     /// `Ui` it is handed; the statusline chip this app republishes for
     /// itself has no `Ui` to read, so it reads this.
     ascii: bool = false,
+    /// The glyph the host paints on the PRs chip (`$MNML_CHIP_GLYPH`),
+    /// which the figure wears; the manifest's own until main sets it.
+    chip_mark: []const u8 = chip_glyph,
     /// Sessions this pane started and wants told about, waiting to go
     /// out over the mount.
     watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,
@@ -2786,8 +2790,11 @@ pub const App = struct {
         }
     }
 
-    /// nf-md-bitbucket, the reference's chip glyph.
-    pub const chip_glyph = "\u{f00a8}";
+    /// The PRs chip's own mark — `manifest.zon`'s `chip.glyph`, read
+    /// from the file `--install` writes, never a codepoint of this
+    /// file's. A pane the host started wears the host's instead
+    /// (`chip_mark`), so the chip and its figure are one mark.
+    pub const chip_glyph = (manifest_spec.chip orelse @compileError("manifest.zon declares no chip")).glyph;
     /// What the chip wears on a terminal with no Nerd Font — the same
     /// two-cell shape, so the figure beside it stays where it was.
     /// `sdk.pane.figure`'s own tests name this twin for the forge pane.
@@ -2795,7 +2802,7 @@ pub const App = struct {
 
     /// The chip glyph this pane's host can actually paint.
     pub fn chipGlyph(app: *const App) []const u8 {
-        return if (app.ascii) chip_ascii else chip_glyph;
+        return if (app.ascii) chip_ascii else app.chip_mark;
     }
     pub const chip_tooltip = "Open PRs you authored (last 90 days, non-release) — parens = still-needs-review count. Click to open the mine-only PRs tab.";
 

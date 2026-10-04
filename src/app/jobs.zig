@@ -399,7 +399,7 @@ pub fn handleEvent(app: *App, ev: *Event) void {
 
 pub const Tone = enum { busy, failed, idle };
 /// `short`: the chip's form when the statusline is out of room — the
-/// mark and the count or the kind (` ⠋ 2 `, ` ✗ tests `).
+/// mark and the count or the kind (` ⣾ 2 `, ` ✗ tests `).
 pub const Chip = struct { text: []const u8, tone: Tone, short: ?[]const u8 = null };
 
 /// The widest a failure's words get on the chip.
@@ -779,10 +779,10 @@ test "chip: spinner and count while running, the failure dimmed after, nothing i
     try testing.expect(try chip(a, &r, 0, false, .auto, null) == null);
     try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 0, false, .always, null)).?.text);
     const one = try r.begin(gpa, 0, .{ .kind = .lsp, .key = 1, .label = "fake" });
-    try testing.expectEqualStrings(" ⠋ 1 job ", (try chip(a, &r, 0, false, .auto, null)).?.text);
+    try testing.expectEqualStrings(" ⣾ 1 job ", (try chip(a, &r, 0, false, .auto, null)).?.text);
     const two = try r.begin(gpa, 0, .{ .kind = .git, .label = "fetch" });
     const busy = (try chip(a, &r, 0, false, .auto, null)).?;
-    try testing.expectEqualStrings(" ⠋ 2 jobs ", busy.text);
+    try testing.expectEqualStrings(" ⣾ 2 jobs ", busy.text);
     try testing.expectEqual(Tone.busy, busy.tone);
     try testing.expectEqualStrings(" | 2 jobs ", (try chip(a, &r, 0, true, .auto, null)).?.text);
     try testing.expect(try chip(a, &r, 0, false, .hidden, null) == null);

@@ -50,6 +50,7 @@ const alloc = @import("../core/alloc.zig");
 const panel = @import("../core/panel.zig");
 const ListSort = panel.ListSort;
 const manifest_mod = @import("../bridge/manifest.zig");
+const sdk_chrome = @import("mnml_sdk").pane.chrome;
 const Manifest = manifest_mod.Manifest;
 const mount_pane = @import("mount_pane.zig");
 const pty_pane = @import("pty_pane.zig");
@@ -1417,7 +1418,33 @@ fn settingsEnv(app: *App, arena: Allocator, id: []const u8) Allocator.Error![]mo
         for (name["MNML_SETTING_".len..]) |*c| c.* = std.ascii.toUpper(c.*);
         try out.append(arena, .{ .name = name, .value = value });
     }
+    if (try chipGlyphEnv(arena, m)) |g| try out.append(arena, .{ .name = sdk_chrome.chip_glyph_env, .value = g });
     return out.toOwnedSlice(arena);
+}
+
+/// The glyph this manifest's chip paints, for `$MNML_CHIP_GLYPH`: the
+/// mark a segment the integration publishes wears, so the chip and its
+/// segment are one mark wherever the manifest moves it. Null with no
+/// chip or no glyph.
+pub fn chipGlyphEnv(arena: Allocator, m: manifest_mod.Manifest) Allocator.Error!?[]const u8 {
+    const c = m.chip orelse return null;
+    var buf: [4]u8 = undefined;
+    const g = c.glyphText(&buf);
+    if (g.len == 0) return null;
+    return try arena.dupe(u8, g);
+}
+
+test "chipGlyphEnv hands a child the chip's own glyph" {
+    const a = std.testing.allocator;
+    const with: manifest_mod.Manifest = .{ .id = "x", .label = "X", .chip = .{ .glyph = "\u{f1c15}" } };
+    const g = (try chipGlyphEnv(a, with)).?;
+    defer a.free(g);
+    try std.testing.expectEqualStrings("\u{f1c15}", g);
+    const cp: manifest_mod.Manifest = .{ .id = "x", .label = "X", .chip = .{ .glyph_codepoint = "F1C19" } };
+    const g2 = (try chipGlyphEnv(a, cp)).?;
+    defer a.free(g2);
+    try std.testing.expectEqualStrings("\u{f1c19}", g2);
+    try std.testing.expect((try chipGlyphEnv(a, .{ .id = "x", .label = "X" })) == null);
 }
 
 /// Run the integration's first command (what the chip and Enter do).

@@ -150,8 +150,24 @@ pub fn ageText(ui: Ui, now_s: i64, then_s: i64) []const u8 {
     return ui.fmt("{d}y", .{@divFloor(d, 365 * 86_400)});
 }
 
-pub const spinner_frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+/// Eight-dot braille, one dot dark and walking round: every frame fills
+/// all four of the cell's dot rows, so the spinner sits on the text's
+/// centre. The six-dot ring (`⠋⠙⠹…`) lit only the top three rows and
+/// rode above the figure beside it.
+pub const spinner_frames = [_][]const u8{ "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" };
 pub const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
+
+test "every spinner frame spans the braille cell's four dot rows, so it sits on the text's centre" {
+    for (spinner_frames) |f| {
+        const cp = try std.unicode.utf8Decode(f);
+        try std.testing.expect(cp >= 0x2800 and cp <= 0x28ff);
+        const dots: u8 = @intCast(cp - 0x2800);
+        // Row one is dots 1 / 4, row four dots 7 / 8: a frame with
+        // nothing in row four is the six-dot ring that rode high.
+        try std.testing.expect(dots & (0x01 | 0x08) != 0);
+        try std.testing.expect(dots & (0x40 | 0x80) != 0);
+    }
+}
 /// One turn of the frame ring, in ms.
 pub const spinner_step_ms: i64 = 80;
 

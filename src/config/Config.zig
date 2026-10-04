@@ -67,6 +67,13 @@ pub const Statusline = struct {
     /// generous enough for a normal day's pull requests. 0 turns the
     /// list off and leaves the one-line hover every chip had.
     hover_items: u8 = 8,
+    /// The segments the row leaves out, by name: a built-in one's
+    /// (`clock`, `jobs`, `branch` — the *Segments* submenu of the
+    /// statusline's right-click lists them all) or a host segment's id
+    /// (`bitbucket_prs.prs_mine`). A name the row does not know is
+    /// kept and ignored. RESTRICTED and the sandbox chip are never
+    /// hidden: they say the setup is not what it looks like.
+    hidden: []const []const u8 = &.{},
 };
 
 // ─── editor ──────────────────────────────────────────────────────────────

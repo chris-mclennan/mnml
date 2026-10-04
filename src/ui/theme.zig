@@ -164,6 +164,38 @@ pub const Palette = struct {
     dark_purple: Color,
     /// `base00`..`base0F`.
     base16: [16]Color,
+    /// The statusline segments' own colours — a theme's
+    /// `statusline_<segment>` keys, each else the colour it falls back to.
+    seg: Segments,
+};
+
+pub const Segments = struct {
+    /// `statusline_pr` → `purple`: the PR chip's text.
+    pr: Color,
+    /// `statusline_symbol` → `purple`: the enclosing symbol's text.
+    symbol: Color,
+    /// `statusline_find` → `yellow`: the find chip's ground.
+    find: Color,
+    /// `statusline_jobs` → `cyan`: the jobs chip's spinner and count.
+    jobs: Color,
+    /// `statusline_codex` → `cyan`: the Codex usage chip's ground.
+    codex: Color,
+    /// `statusline_coverage` → `teal`: the coverage chip's ground.
+    coverage: Color,
+    /// `statusline_transfer` → `cyan`: the transfers chip's ground.
+    transfer: Color,
+    /// `statusline_lsp` → `blue`: the LSP chip's ground.
+    lsp: Color,
+    /// `statusline_wrap` → `purple`: the WRAP chip's ground.
+    wrap: Color,
+    /// `statusline_autosave` → `green`: the autosave chip's ground.
+    autosave: Color,
+    /// `statusline_sel` → `yellow`: the selection chip's ground.
+    sel: Color,
+    /// `statusline_workspace` → `blue`: the workspace chip's text.
+    workspace: Color,
+    /// `statusline_language` → `blue`: the language chip's ground.
+    language: Color,
 };
 
 pub fn rgb(hex: u24) Color {
@@ -202,7 +234,18 @@ pub fn resolve(src: Source) Palette {
     inline for (std.meta.fields(themes.Base16), 0..) |f, i| {
         base16[i] = rgb(@field(src.base_16, f.name) orelse onedark_base16[i]);
     }
+    const purple = pick(src, &.{"purple"}, white);
+    const yellow = pick(src, &.{"yellow"}, white);
+    const blue = pick(src, &.{"blue"}, white);
+    const green = pick(src, &.{"green"}, white);
+    const teal = pick(src, &.{"teal"}, white);
+    const cyan = pick(src, &.{ "cyan", "blue" }, white);
+    var seg: Segments = undefined;
+    inline for (.{ .{ "pr", purple }, .{ "symbol", purple }, .{ "find", yellow }, .{ "jobs", cyan }, .{ "codex", cyan }, .{ "coverage", teal }, .{ "transfer", cyan }, .{ "lsp", blue }, .{ "wrap", purple }, .{ "autosave", green }, .{ "sel", yellow }, .{ "workspace", blue }, .{ "language", blue } }) |kv| {
+        @field(seg, kv[0]) = pick(src, &.{"statusline_" ++ kv[0]}, kv[1]);
+    }
     return .{
+        .seg = seg,
         .bg = pick(src, &.{ "one_bg", "black" }, black),
         .bg2 = pick(src, &.{ "one_bg2", "one_bg" }, black),
         .bg3 = pick(src, &.{ "one_bg3", "one_bg2" }, black),
@@ -655,4 +698,13 @@ test "every bundled theme keeps the focus cue and the needs-you mark visible" {
     try testing.expectEqual(@as(usize, 0), failures);
     // Dark themes keep yellow; the default is unchanged.
     try testing.expect(Color.eql(byName("onedark").?.attention_fg.fg, byName("onedark").?.palette.yellow));
+}
+
+test "a theme's statusline_<segment> key colours that segment; without one it wears the colour it always did" {
+    const plain = resolve(.{ .name = "t", .kind = .dark, .base_30 = .{ .blue = 0x0000ff, .purple = 0x800080 } });
+    try std.testing.expect(Color.eql(plain.seg.lsp, rgb(0x0000ff)));
+    try std.testing.expect(Color.eql(plain.seg.wrap, rgb(0x800080)));
+    const own = resolve(.{ .name = "t", .kind = .dark, .base_30 = .{ .blue = 0x0000ff, .statusline_lsp = 0x123456 } });
+    try std.testing.expect(Color.eql(own.seg.lsp, rgb(0x123456)));
+    try std.testing.expect(Color.eql(own.seg.language, rgb(0x0000ff)));
 }

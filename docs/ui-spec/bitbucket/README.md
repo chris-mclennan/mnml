@@ -176,7 +176,7 @@ The six the user settled:
    `closed_glyph`, the host's `src/ui/expander.zig` codepoints, `v` /
    `>` under `--ascii`) rather than the reference's `▾` / `▸`. And
    **the header says what a fetch is doing** while one is out —
-   `⠋ fetching… 2/13 repos`, `queued behind 3 requests`, `waiting for
+   `⣾ fetching… 2/13 repos`, `queued behind 3 requests`, `waiting for
    the API budget`, `fetch failed: …`, `no pull requests match` — with
    the refresh chip turning the host's own spinner ring (the SESSIONS
    section's frames and step, pinned equal in `src/ui/list_panel.zig`);

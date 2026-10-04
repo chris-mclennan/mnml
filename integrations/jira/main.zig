@@ -75,7 +75,27 @@ pub const version = "0.2.1";
 /// how much is on your plate, the other how much is waiting on you to
 /// look at it.
 pub const segment_id = "jira_work.assigned";
-pub const segment_glyph = "\u{f0303}"; // nf-md-jira
+/// The Work chip's own mark — `manifest.zon`'s `chip.glyph`, never a
+/// codepoint of this file's. A run the host started wears the host's
+/// instead (`Mark`), so the chip and the figure are one mark.
+pub const segment_glyph = (spec_work.chip orelse @compileError("manifest.zon declares no chip")).glyph;
+
+/// What the assigned figure wears: the chip's mark — the host's,
+/// through `$MNML_CHIP_GLYPH`, else the manifest's own — or its plain
+/// twin. The QA figure keeps its own glyph: it is a second thing, not
+/// the chip.
+pub const Mark = struct {
+    ascii: bool = false,
+    glyph: []const u8 = segment_glyph,
+
+    pub fn fromEnv(env: *const std.process.Environ.Map) Mark {
+        return .{ .ascii = sdk.pane.asciiFromEnv(env), .glyph = sdk.pane.chipGlyphFromEnv(env, segment_glyph) };
+    }
+
+    pub fn chip(m: Mark) []const u8 {
+        return if (m.ascii) segment_ascii else m.glyph;
+    }
+};
 /// What the chip says on a terminal with no Nerd Font: the same shape,
 /// a figure a reader can still act on. `sdk.pane.figure`'s own tests
 /// name this twin for the tracker pane.
@@ -546,7 +566,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.watch.started(app.last_refresh_ms);
     try repaint(&paint_arena, &frame, &app, ui);
     mount.send(&frame) catch return 0;
-    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, ui.ascii or !ui.nerd);
+    publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, .{ .ascii = ui.ascii or !ui.nerd, .glyph = sdk.pane.chipGlyphFromEnv(env, segment_glyph) });
 
     while (true) {
         var ended = false;
@@ -619,7 +639,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         try app.tick(app.nowMs());
         try repaint(&paint_arena, &frame, &app, ui);
         mount.send(&frame) catch break;
-        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, ui.ascii or !ui.nerd);
+        publishSide(&app, mount, if (ipc) |*i| i else null, gpa, io, &limiter, .{ .ascii = ui.ascii or !ui.nerd, .glyph = sdk.pane.chipGlyphFromEnv(env, segment_glyph) });
         // While a refetch is in flight the loop wakes sooner, so its
         // rows land as soon as they arrive rather than up to half a
         // second later.
@@ -641,7 +661,7 @@ fn repaint(paint_arena: *std.heap.ArenaAllocator, frame: *sdk.Frame, app: *app_m
 
 /// The toast, the statusline segment, and the sessions this pane just
 /// started and wants told about.
-fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter, ascii: bool) void {
+fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: Allocator, io: Io, limiter: *ratelimit.Limiter, mark: Mark) void {
     for (app.watch_out.items) |w| {
         mount.watchSession(w.key, .{ .cwd = w.cwd, .prompt_line = w.prompt_line }) catch {};
     }
@@ -669,7 +689,7 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
             // the tab the figure was counted off — no second search.
             var rows_arena = std.heap.ArenaAllocator.init(gpa);
             defer rows_arena.deinit();
-            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name), ascii) catch {};
+            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name), mark) catch {};
         };
     }
 }
@@ -819,12 +839,13 @@ fn nameIsQaActionable(name: []const u8) bool {
 /// The Work chips' statusline segments: the glyph and the count, the
 /// breakdown on hover, a click opens the pane — the manifest's slots,
 /// live.
-pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket, ascii: bool) !void {
+pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket, mark: Mark) !void {
+    const ascii = mark.ascii;
     var buf: [32]u8 = undefined;
     // One figure, and no bracketed subset: a tracker has no subset of
     // "assigned to me" it can name, and `43(2)` invented to match the
     // forge pane's shape would be a number nobody could believe.
-    const label = sdk.pane.figure.text(&buf, .{ .glyph = if (ascii) segment_ascii else segment_glyph, .n = v.assigned_open });
+    const label = sdk.pane.figure.text(&buf, .{ .glyph = mark.chip(), .n = v.assigned_open });
     const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
@@ -862,8 +883,8 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket:
 /// issues. It used to publish the figure alone, so the hover's list
 /// vanished the moment the pane opened and did not come back until the
 /// next poll five minutes later.
-pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const model.Issue, bucket: ?Bucket, ascii: bool) !void {
-    return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket, ascii);
+pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const model.Issue, bucket: ?Bucket, mark: Mark) !void {
+    return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket, mark);
 }
 
 /// The hover text with the shared bucket's own two lines under it:
@@ -1182,7 +1203,7 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
         var name_buf: [64]u8 = undefined;
         var ipc = ipc_ptr.*;
         defer ipc.deinit();
-        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf), sdk.pane.asciiFromEnv(env)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
+        publishSegments(&ipc, arena, v, bucketOf(gpa, io, &limiter, &name_buf), Mark.fromEnv(env)) catch |e| try err.print("mnml-jira --values: could not publish the segments: {s}\n", .{@errorName(e)});
     }
     return 0;
 }
@@ -1545,7 +1566,7 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    try publishSegment(&ipc, arena, &chip_issues, null, false);
+    try publishSegment(&ipc, arena, &chip_issues, null, .{});
     const line = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
@@ -1576,7 +1597,7 @@ test "the pane's own publish is the `--values` publish for the same listing, row
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     var pane_ipc = try sdk.Ipc.init(testing.allocator, testing.io, pbuf[0..try pane_tmp.dir.realPath(testing.io, &pbuf)]);
     defer pane_ipc.deinit();
-    try publishSegment(&pane_ipc, arena, &chip_issues, null, false);
+    try publishSegment(&pane_ipc, arena, &chip_issues, null, .{});
     const pane_line = try pane_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
 
     // …and what a `--values` run sends for the same issues. Byte for
@@ -1587,7 +1608,7 @@ test "the pane's own publish is the `--values` publish for the same listing, row
     var qbuf: [std.fs.max_path_bytes]u8 = undefined;
     var poll_ipc = try sdk.Ipc.init(testing.allocator, testing.io, qbuf[0..try poll_tmp.dir.realPath(testing.io, &qbuf)]);
     defer poll_ipc.deinit();
-    try publishSegments(&poll_ipc, arena, try assignedValues(arena, &chip_issues), null, false);
+    try publishSegments(&poll_ipc, arena, try assignedValues(arena, &chip_issues), null, .{});
     const poll_line = try poll_tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
 
     try testing.expectEqualStrings(poll_line, pane_line);
@@ -1727,10 +1748,10 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .assigned_open = 7,
         .assigned_by_status = &.{ .{ .status = "In Progress", .n = 4 }, .{ .status = "To Do", .n = 3 } },
         .assigned_items = &.{ .{ .text = "ENG-1  Checkout rewrite", .sub = "In Progress", .key = "ENG-1" }, .{ .text = "ENG-5  Basket total wrong with a voucher", .sub = "To Do", .key = "ENG-5" } },
-    }, null, false);
+    }, null, .{});
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "\u{f0303} 7") != null);
+    try testing.expect(std.mem.indexOf(u8, got, segment_glyph ++ " 7") != null);
     try testing.expect(std.mem.indexOf(u8, got, "7 open items assigned to me — 4 In Progress · 3 To Do") != null);
     // No tab, no chip: a zero here would read as "nothing to do" when
     // it means "not set up".
@@ -1751,7 +1772,7 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .qa_by_status = &.{.{ .status = "Ready for QA", .n = 3 }},
         .qa_tab_name = "QA Actionable Now",
         .qa_items = &.{.{ .text = "ENG-9  Voucher stacking", .sub = "Ready for QA" }},
-    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } }, false);
+    }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } }, .{});
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
@@ -1783,7 +1804,7 @@ test "--ascii: both chips publish their twin, and no Nerd Font glyph goes out" {
         .assigned_open = 7,
         .qa_actionable = 3,
         .qa_tab_name = "QA Actionable Now",
-    }, null, true);
+    }, null, .{ .ascii = true });
     const got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, segment_ascii ++ " 7") != null);
     try testing.expect(std.mem.indexOf(u8, got, qa_segment_ascii ++ " 3") != null);
@@ -1852,7 +1873,7 @@ test "the chip keeps what it lists: every segment and every hover row survives a
         fn line(app: *app_mod.App, ipc: *const sdk.Ipc, d: Io.Dir, out: Allocator) ![]const u8 {
             var scratch = std.heap.ArenaAllocator.init(testing.allocator);
             defer scratch.deinit();
-            try publishSegment(ipc, scratch.allocator(), app.assignedIssues(), null, false);
+            try publishSegment(ipc, scratch.allocator(), app.assignedIssues(), null, .{});
             const text_ = try d.readFileAlloc(testing.io, "command", out, .unlimited);
             try d.deleteFile(testing.io, "command");
             return text_;
@@ -2028,4 +2049,29 @@ const Probe = struct {
 
 test "the design language: the SDK's conformance suite at 120x40 and 80x24, with and without --ascii" {
     try sdk.testing.conformance(Probe);
+}
+
+test "the assigned figure wears the Work chip's glyph — the manifest's, or the host's" {
+    const chip = spec_work.chip.?.glyph;
+    try testing.expectEqualStrings(chip, (Mark{}).chip());
+    // The resting text the manifest declares wears it too.
+    for (spec_work.statusline) |seg| if (std.mem.eql(u8, seg.id, "assigned")) {
+        try testing.expect(std.mem.startsWith(u8, seg.text, chip));
+    };
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put(sdk.pane.chrome.chip_glyph_env, "\u{f1c15}");
+    try testing.expectEqualStrings("\u{f1c15}", Mark.fromEnv(&env).chip());
+    // Published, the figure leads with the mark the host named.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
+    defer ipc.deinit();
+    try publishSegments(&ipc, arena_state.allocator(), .{ .assigned_open = 7 }, null, Mark.fromEnv(&env));
+    const got = try tmp.dir.readFileAlloc(testing.io, "command", arena_state.allocator(), .unlimited);
+    try testing.expect(std.mem.indexOf(u8, got, "\u{f1c15} 7") != null);
 }

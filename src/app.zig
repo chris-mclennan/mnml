@@ -1474,6 +1474,9 @@ pub const App = struct {
     /// `plus_menu_hidden` and written back there (owned ids).
     plus_pinned: std.ArrayListUnmanaged([]u8) = .empty,
     plus_hidden: std.ArrayListUnmanaged([]u8) = .empty,
+    /// `statusline.hidden`, owned: the segments the row leaves out
+    /// (`app/statusline.zig`'s *Segments* submenu writes it back).
+    statusline_hidden: std.ArrayListUnmanaged([]u8) = .empty,
     /// The command a curation submenu was opened on (`menu.pin_row`…).
     menu_ctx: ?command.CommandId = null,
     /// How images reach the terminal (`image.detect`, set by the loop;
@@ -2106,6 +2109,8 @@ pub const App = struct {
         self.plus_pinned.deinit(gpa);
         for (self.plus_hidden.items) |p| gpa.free(p);
         self.plus_hidden.deinit(gpa);
+        for (self.statusline_hidden.items) |p| gpa.free(p);
+        self.statusline_hidden.deinit(gpa);
         self.messages.deinit(gpa);
         self.jobs.deinit(gpa);
         self.harpoon.deinit(gpa);
@@ -2528,6 +2533,11 @@ pub const App = struct {
         self.plus_hidden.clearRetainingCapacity();
         for (self.cfg.ui.plus_menu_pinned) |id| try self.plus_pinned.append(self.gpa, try self.gpa.dupe(u8, id));
         for (self.cfg.ui.plus_menu_hidden) |id| try self.plus_hidden.append(self.gpa, try self.gpa.dupe(u8, id));
+        // The statusline's hidden segments ride the same seeding: both
+        // are lists the home config holds and a menu writes back.
+        for (self.statusline_hidden.items) |p| self.gpa.free(p);
+        self.statusline_hidden.clearRetainingCapacity();
+        for (self.cfg.statusline.hidden) |id| try self.statusline_hidden.append(self.gpa, try self.gpa.dupe(u8, id));
     }
 
     // ─── the Undo chip ───
