@@ -89,20 +89,18 @@ keeps its chip.
 
 ### The Jira and Bitbucket chips
 
-Jira and Bitbucket put five chips between them, one per pane. Four wear
-Atlassian's own icons — the ones Jira's and Bitbucket's sidebars draw
-for the same pages — so each chip says what it opens rather than which
-product it belongs to:
+Jira and Bitbucket put five chips between them, one per pane, and all
+five wear Atlassian's own icons — the ones Jira's and Bitbucket's
+sidebars draw for the same pages — so each chip says what it opens
+rather than which product it belongs to:
 
 | Chip | Icon | Codepoint | With `--ascii` |
 | ---- | ---- | --------- | -------------- |
+| Jira Work | the work-items card with a check | `U+F1C19` | `JW` |
 | Bitbucket PRs | the two-branch pull request | `U+F1C15` | `BP` |
 | Bitbucket Pipelines | the pipeline loop | `U+F1C16` | `BL` |
 | Jira Boards | the three-column board | `U+F1C17` | `JB` |
 | Jira Fix Versions | the ship (a release) | `U+F1C18` | `JV` |
-
-The Jira Work chip keeps the Jira logo, a Nerd Font glyph, and reads
-`JW` under `--ascii`.
 
 The four marks are Atlassian's design-system SVGs, from the
 `@atlaskit/icon` and `@atlaskit/icon-lab` packages (Apache-2.0;
