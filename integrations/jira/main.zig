@@ -48,7 +48,7 @@ pub const text = @import("src/text.zig");
 pub const os = @import("src/os.zig");
 pub const ratelimit = @import("src/ratelimit.zig");
 
-pub const spec_work: sdk.Manifest = @import("manifest.zon");
+pub const spec_work: sdk.Manifest = sdk.manifest.withChipMark(@import("manifest.zon"));
 pub const spec_fix_versions: sdk.Manifest = @import("manifest_fix_versions.zon");
 pub const spec_boards: sdk.Manifest = @import("manifest_boards.zon");
 pub const specs = [_]sdk.Manifest{ spec_work, spec_fix_versions, spec_boards };
@@ -2076,4 +2076,29 @@ test "the assigned figure wears the Work chip's glyph — the manifest's, or the
     try publishSegments(&ipc, arena_state.allocator(), .{ .assigned_open = 7 }, null, Mark.fromEnv(&env));
     const got = try tmp.dir.readFileAlloc(testing.io, "command", arena_state.allocator(), .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\u{f1c15} 7") != null);
+}
+
+test "one mark: the Work chip's glyph, the assigned figure's resting text and its published figure are one glyph, spelled once" {
+    const chip = spec_work.chip.?.glyph;
+    // Spelled once: the manifest's segment writes the token, not the glyph.
+    const raw: sdk.Manifest = @import("manifest.zon");
+    for (raw.statusline) |seg| try testing.expect(std.mem.indexOf(u8, seg.text, chip) == null);
+    var resting: ?[]const u8 = null;
+    for (spec_work.statusline) |seg| if (std.mem.eql(u8, seg.id, "assigned")) {
+        resting = seg.text;
+    };
+    const first_len = try std.unicode.utf8ByteSequenceLength(resting.?[0]);
+    try testing.expectEqualStrings(chip, resting.?[0..first_len]);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(testing.allocator, testing.io, dir);
+    defer ipc.deinit();
+    try publishSegments(&ipc, arena_state.allocator(), .{ .assigned_open = 4 }, null, .{});
+    const got = try tmp.dir.readFileAlloc(testing.io, "command", arena_state.allocator(), .unlimited);
+    const text_at = std.mem.indexOf(u8, got, "\"text\":\"").? + "\"text\":\"".len;
+    try testing.expectEqualStrings(chip, got[text_at..][0..first_len]);
 }

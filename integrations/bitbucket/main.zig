@@ -47,7 +47,7 @@ const theme_mod = @import("src/theme.zig");
 const os = @import("src/os.zig");
 const j = @import("src/json.zig");
 
-pub const spec: sdk.Manifest = @import("manifest.zon");
+pub const spec: sdk.Manifest = sdk.manifest.withChipMark(@import("manifest.zon"));
 pub const spec_pipelines: sdk.Manifest = @import("manifest_pipelines.zon");
 
 /// The manifest chip colour of the family a pane was opened on — the
@@ -2312,4 +2312,20 @@ test "after a poll the range table is saved and published as the one link-ranges
     defer again.deinit();
     try t.expectEqual(@as(usize, 2), again.rows.items.len);
     try t.expectEqual(@as(u64, 5490), again.rows.items[0].low);
+}
+
+test "one mark: the chip's glyph, the PRs figure's resting text and its published figure are one glyph, spelled once" {
+    const chip = spec.chip.?.glyph;
+    // Spelled once: the manifest's segment writes the token, not the glyph.
+    const raw: sdk.Manifest = @import("manifest.zon");
+    for (raw.statusline) |seg| try t.expect(std.mem.indexOf(u8, seg.text, chip) == null);
+    var resting: ?[]const u8 = null;
+    for (spec.statusline) |seg| if (std.mem.eql(u8, seg.id, "prs_mine")) {
+        resting = seg.text;
+    };
+    const first_len = try std.unicode.utf8ByteSequenceLength(resting.?[0]);
+    try t.expectEqualStrings(chip, resting.?[0..first_len]);
+    var buf: [64]u8 = undefined;
+    const published = segmentText(&buf, .{ .open_mine = 3 }, .{});
+    try t.expectEqualStrings(chip, published[0..first_len]);
 }

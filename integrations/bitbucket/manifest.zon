@@ -26,15 +26,18 @@
         .{ .id = "bitbucket_prs.refresh", .title = "Bitbucket PRs: refresh the statusline chip", .ex = "term mnml-bitbucket --refresh --workspace {{workspace}}" },
     },
     .statusline = .{
-        .{ .id = "prs_mine", .text = "\u{f1c15} …", .color = "green", .click_command = "bitbucket_prs.open_mine", .priority = 60, .tooltip = "Bitbucket: open pull requests you authored, and how many are still unapproved. Hover after a poll for the live figures." },
+        .{ .id = "prs_mine", .text = "{chip} …", .color = "green", .click_command = "bitbucket_prs.open_mine", .priority = 60, .tooltip = "Bitbucket: open pull requests you authored, and how many are still unapproved. Hover after a poll for the live figures." },
         // The second figure. It rests blank: `--values` publishes it
         // only once the count has been taken, and a zero before then
         // would read as "nothing outstanding".
         .{ .id = "reviews_mine", .text = "", .color = "yellow", .click_command = "bitbucket_prs.open_mine", .priority = 59, .tooltip = "Bitbucket: review threads on your open pull requests that are neither resolved nor replied to." },
         // The third figure, and the one that is your move: pull
-        // requests you are a reviewer on and have not voted. The
-        // example values below are invented.
-        .{ .id = "reviews_pending", .text = "\u{f0e5} 2", .color = "orange", .click_command = "bitbucket_prs.open_awaiting", .priority = 58, .tooltip = "Bitbucket: open pull requests waiting on YOUR review \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Bump the client timeout\u{201d}. Hover after a poll for the live names." },
+        // requests you are a reviewer on and have not voted. It rests
+        // blank like the second: its mark is its own, not the chip's,
+        // and a resting glyph that is not the chip's is the drift the
+        // host's install audit flags — the binary publishes it with its
+        // count. The tooltip's example names are invented.
+        .{ .id = "reviews_pending", .text = "", .color = "orange", .click_command = "bitbucket_prs.open_awaiting", .priority = 58, .tooltip = "Bitbucket: open pull requests waiting on YOUR review \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Bump the client timeout\u{201d}. Hover after a poll for the live names." },
     },
     .auth = .{
         .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },
