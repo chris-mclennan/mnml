@@ -76,6 +76,9 @@ pub const State = struct {
 pub const table = .{
     .@"messages.show" = &show,
     .@"messages.clear" = &clearCmd,
+    .@"messages.mark_read" = &markReadCmd,
+    .@"messages.copy_last" = &copyLastCmd,
+    .@"messages.copy_all" = &copyAllCmd,
 };
 
 fn tag(level: Level) []const u8 {
@@ -124,6 +127,32 @@ fn clearCmd(app: *App) CommandError!void {
     const n = app.messages.items.items.len;
     app.messages.clear(app.gpa);
     app.toast("messages: cleared {d}", .{n});
+}
+
+/// The bell's *Mark N read*: the counts go, the history stays.
+fn markReadCmd(app: *App) CommandError!void {
+    app.messages.markRead();
+    app.needs_render = true;
+}
+
+/// The bell's *Copy last message*.
+fn copyLastCmd(app: *App) CommandError!void {
+    const items = app.messages.items.items;
+    if (items.len == 0) return app.toast("messages: none to copy", .{});
+    try app.clipboard.copy(items[items.len - 1].text);
+    app.toast("copied the last message", .{});
+}
+
+/// The bell's *Copy all (N)*: the log oldest first, a line each, as
+/// `:messages!` writes it.
+fn copyAllCmd(app: *App) CommandError!void {
+    const st = &app.messages;
+    if (st.items.items.len == 0) return app.toast("messages: none to copy", .{});
+    var out: std.Io.Writer.Allocating = .init(app.gpa);
+    defer out.deinit();
+    for (st.items.items) |m| out.writer.print("{s: <5} {s}\n", .{ tag(m.level), m.text }) catch return error.OutOfMemory;
+    try app.clipboard.copy(out.written());
+    app.toast("copied {d} message{s}", .{ st.items.items.len, if (st.items.items.len == 1) "" else "s" });
 }
 
 /// `:messages!` — the whole log into a scratch buffer, oldest first.

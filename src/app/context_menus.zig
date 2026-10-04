@@ -252,6 +252,7 @@ pub fn openModeMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const rows = try items(app, &.{
         .{ .label = "vim keymap", .action = .{ .command = .@"editor.use_vim" }, .checked = vim },
         .{ .label = "standard keymap", .action = .{ .command = .@"editor.use_standard" }, .checked = !vim },
+        .{ .label = "Toggle keymap", .action = .{ .command = .@"editor.toggle_keymap" } },
         .{ .label = "Open the cheatsheet", .action = .{ .command = .@"view.cheatsheet" }, .separator_before = true },
     });
     errdefer app.gpa.free(rows);
@@ -334,8 +335,20 @@ pub fn openBellMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
     const waiting = try @import("session_attention.zig").bellRows(app, mem.allocator());
+    // Rust's notification menu: mark the unread read, copy the last
+    // or the whole log — the rows carry the counts they act on.
+    const u = app.messages.unread();
+    const total = app.messages.items.items.len;
+    var extra: std.ArrayListUnmanaged(MenuItem) = .empty;
+    const a = mem.allocator();
+    if (u.err + u.warn > 0) try extra.append(a, .{ .label = try std.fmt.allocPrint(a, "Mark {d} read", .{u.err + u.warn}), .action = .{ .command = .@"messages.mark_read" } });
+    if (total > 0) {
+        try extra.append(a, .{ .label = "Copy last message", .action = .{ .command = .@"messages.copy_last" } });
+        try extra.append(a, .{ .label = try std.fmt.allocPrint(a, "Copy all ({d})", .{total}), .action = .{ .command = .@"messages.copy_all" } });
+    }
     const rows = try std.mem.concat(app.gpa, MenuItem, &.{ waiting, &.{
         .{ .label = "Show messages", .action = .{ .command = .@"messages.show" }, .separator_before = waiting.len > 0 },
+    }, extra.items, &.{
         .{ .label = "Clear history", .action = .{ .command = .@"messages.clear" }, .separator_before = true },
     } });
     errdefer app.gpa.free(rows);
@@ -2843,4 +2856,29 @@ test "Set width… reads cells or a share, inside 10..80, and nothing else" {
     try t.expectEqual(TreeWidthAnswer{ .out_of_range = 0 }, parseTreeWidth("0%", 200));
     try t.expectEqual(TreeWidthAnswer{ .out_of_range = std.math.maxInt(u32) }, parseTreeWidth("4294967295%", 200));
     try t.expectEqual(TreeWidthAnswer.junk, parseTreeWidth("3.5", 200));
+}
+
+test "the bell's menu: Mark N read, Copy last message and Copy all (N) — Rust's notification rows, each carrying its count" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
+    defer app.deinit();
+    try app.messages.record(app.gpa, "first", .info, 0);
+    try app.messages.record(app.gpa, "disk nearly full", .warn, 1);
+    try openBellMenu(&app, 90, 28);
+    const m = &app.overlay.menu;
+    var labels: [16][]const u8 = undefined;
+    for (m.items, 0..) |it, i| labels[i] = it.label;
+    const got = labels[0..m.items.len];
+    var has_mark = false;
+    var has_all = false;
+    for (got) |l| {
+        has_mark = has_mark or std.mem.eql(u8, l, "Mark 1 read");
+        has_all = has_all or std.mem.eql(u8, l, "Copy all (2)");
+    }
+    try t.expect(has_mark and has_all);
+    try command.runNamed(&app, "messages.copy_last");
+    try t.expectEqualStrings("disk nearly full", app.clipboard.text());
+    try command.runNamed(&app, "messages.mark_read");
+    try t.expectEqual(@as(u32, 0), app.messages.unread().warn);
+    try command.runNamed(&app, "messages.copy_all");
+    try t.expect(std.mem.indexOf(u8, app.clipboard.text(), "first\n") != null);
 }

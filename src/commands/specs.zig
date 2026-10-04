@@ -1323,6 +1323,9 @@ pub const specs = [_]Spec{
     .{ .id = "app.check_updates", .title = "Check GitHub for a newer mnml release now", .group = "app" },
     .{ .id = "app.startup_picker", .title = "Startup picker — new file / open file / recent files / workspaces", .group = "app" },
     .{ .id = "messages.clear", .title = "Messages: clear the toast history", .group = "view" },
+    .{ .id = "messages.mark_read", .title = "Messages: mark every message read (the bell goes quiet)", .group = "view" },
+    .{ .id = "messages.copy_last", .title = "Messages: copy the last message", .group = "view" },
+    .{ .id = "messages.copy_all", .title = "Messages: copy the whole history", .group = "view" },
     // ── the terminal icon (terminal-icon) ──
     .{ .id = "view.terminal_glyph_ghostty", .title = "Terminal icon: the Ghostty ghost (mnml's own mark)", .group = "view" },
     .{ .id = "view.terminal_glyph_terminal", .title = "Terminal icon: the plain codicon terminal", .group = "view" },

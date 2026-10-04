@@ -76,6 +76,11 @@ const phase_one = [_]Row{
         .keys = &.{.{ .command = .palette, .label = "The command palette" }},
         .links = &.{ .{ .command = .{ .id = .@"editor.use_standard", .label = "Switch to standard" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
     } },
+    .{ .menu = "Keymap", .label = "Toggle keymap", .entry = .{
+        .title = "Toggle keymap",
+        .body = "Flips the input style to the other profile — vim to standard or back — the same as a left click on the mode chip. The choice is written to `editor.input_style` in the home config and every chord is rebuilt at once.",
+        .links = &.{ .{ .command = .{ .id = .@"editor.toggle_keymap", .label = "Toggle it" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
+    } },
     .{ .menu = "Keymap", .label = "Open the cheatsheet", .entry = .{
         .title = "The cheatsheet",
         .body = "A pane listing every chord in the active profile with the command it runs, grouped by area, your rebinds included — the reference for the keymap you have rather than the one the docs describe. `/` filters, Enter runs the row. F1 opens the same list as an overlay.",

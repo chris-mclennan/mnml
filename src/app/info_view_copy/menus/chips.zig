@@ -368,6 +368,21 @@ pub const rows = [_]Row{
         .body = "One row per Claude Code or Codex session in this window whose program exited since you last looked at it. The row brings its pane on screen — with the exit status and the restart offer — and once you have seen it the row goes; an exit is news once.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.next_waiting", .label = "Next session ready for you" } }, .{ .command = .{ .id = .@"view.activity_sessions", .label = "The SESSIONS section" } }, ask },
     } },
+    .{ .menu = "Messages", .label = "Mark ", .prefix = true, .command = .@"messages.mark_read", .entry = .{
+        .title = "Mark the messages read",
+        .body = "Counts every warning and error in the log as seen, so the bell drops its number and its colour — the history itself stays, and *Show messages* still lists every entry. The number on the row is how many unread warnings and errors it clears.",
+        .links = &.{ .{ .command = .{ .id = .@"messages.show", .label = "Read them instead" } }, .{ .command = .{ .id = .@"messages.mark_read", .label = "Mark them read" } } },
+    } },
+    .{ .menu = "Messages", .label = "Copy last message", .command = .@"messages.copy_last", .entry = .{
+        .title = "Copy the last message",
+        .body = "Puts the newest entry of the toast log on the clipboard, word for word — the toast that just went by, for a bug report or a search, without opening the history.",
+        .links = &.{.{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }},
+    } },
+    .{ .menu = "Messages", .label = "Copy all (", .prefix = true, .command = .@"messages.copy_all", .entry = .{
+        .title = "Copy the whole history",
+        .body = "Puts every entry of the toast log on the clipboard, oldest first, one line each with its level — the same text `:messages!` writes into a scratch buffer. The number is how many entries go.",
+        .links = &.{.{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }},
+    } },
     .{ .label = "Clear history", .command = .@"messages.clear", .entry = .{
         .title = "Clear history",
         .body = "Empties the toast log and toasts how many entries went, which clears the bell's unread warning and error counts with them. They are gone: the log is not written anywhere else, and the session file loses them on its next save. Read them through *Show messages* first if a warning still matters.",
