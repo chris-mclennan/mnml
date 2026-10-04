@@ -30,13 +30,14 @@
 //! tab, by name — the one jump to a tab pages away. It is the pager's
 //! companion and nothing more: no pager, no ` ⋯ `.
 //!
-//! As the strip narrows, what gives way, in order: the active tab's
-//! name, cut with an ellipsis down to `min_title` cells; the ` ⋯ `; the
-//! pager's number, then its arrows; the 󰐕; the split cluster's buttons
-//! from its left end (the AI chips first, maximize last) — the active
-//! tab then painted alone; the name below `min_title`; and last of all
-//! the active tab's close, which is never cut while a cell of anything
-//! else stands. A session strip
+//! As the strip narrows, what gives way, in order: the ` ⋯ `; the
+//! pager's number, then its arrows; the 󰐕 — the active tab then painted
+//! alone; the active tab's name, cut with an ellipsis down to
+//! `min_title` cells; the split cluster's buttons from its left end (the
+//! AI chips first, maximize last); the name below `min_title`; and last
+//! of all the active tab's close, which is never cut while a cell of
+//! anything else stands. A title that fits once the furniture has gone
+//! is never cut. A session strip
 //! wears the session control and neither: its arrows bring a hidden tab
 //! into view by stepping to it, and the sessions rail lists the rest.
 //!
@@ -397,10 +398,10 @@ fn chipWidthAt(ui: Ui, tab: Tab, cap: u16) u16 {
     return icon + verb + ui.width(chipName(ui, tab, cap)) + 1 + mark + diag + 2;
 }
 
-/// The fewest cells the active tab's name is cut to before the strip's
-/// furniture gives way: past it the pager goes, then the 󰐕, then the
-/// pane buttons — and only on a strip with none of them left is the name
-/// cut further, and last of all the badge.
+/// The fewest cells the active tab's name is cut to before the pane
+/// buttons give way (the pager and the 󰐕 have gone before any cut) —
+/// only on a strip with none of them left is the name cut further, and
+/// last of all the badge.
 pub const min_title: u16 = 6;
 
 /// The active chip at its narrowest before the furniture gives way: its
@@ -540,10 +541,10 @@ const Geometry = struct {
 const Shed = struct { plus: bool = true, drop: usize = 0 };
 
 /// The widest session-control form that still leaves the active tab
-/// its `keepWidth` next to the rest of the furniture (`fixed`: the split
-/// cluster and the mode chip; the 󰐕 is added here). The active name is
-/// cut to `min_title` first, then the number gives way, then the
-/// arrows. Nothing to step (one session) is no control at all.
+/// whole (`keepWidth`) next to the rest of the furniture (`fixed`: the
+/// split cluster and the mode chip; the 󰐕 is added here). The number
+/// gives way first, then the arrows — the session's own name on its tab
+/// outranks both. Nothing to step (one session) is no control at all.
 fn navFormFor(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, fixed: u16) NavForm {
     const nav = opts.session_nav orelse return .none;
     const reserved = fixed + plus_w + keepWidth(ui, tabs);
@@ -556,10 +557,10 @@ fn activeIndex(tabs: []const Tab) ?usize {
 }
 
 /// The cells the tabs keep before a pager or session control gives way:
-/// the active chip at `min_title`, and never less than `narrow_room`.
+/// the active chip whole, and never less than `narrow_room`.
 fn keepWidth(ui: Ui, tabs: []const Tab) u16 {
     const a = activeIndex(tabs) orelse return narrow_room;
-    return @max(narrow_room, minChipWidth(ui, tabs[a]));
+    return @max(narrow_room, chipWidth(ui, tabs[a]));
 }
 
 /// The furniture with `pager_w` cells given to the pager, and the ` ⋯ `
@@ -615,18 +616,18 @@ fn pagedGeometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
     return layoutWith(ui, area, tabs, opts, alone.w, alone.form, false, .{});
 }
 
-/// The strip's give-way order as it narrows: the active name is cut to
-/// `min_title` (`keepWidth`), then the ` ⋯ `, the pager's number and its
-/// arrows go (`pagedGeometry`); a strip that still cannot hold the
-/// active chip at `min_title` gives way the 󰐕, then the split cluster's
-/// buttons from its left end, one by one, and paints the active tab
-/// alone (`narrow`). Only then is the name cut further — and the badge,
-/// the tab's close, last of all (`paintChip`).
+/// The strip's give-way order as it narrows: the ` ⋯ `, the pager's
+/// number and its arrows go to keep the active chip whole (`keepWidth`,
+/// `pagedGeometry`); a strip that still cannot hold it whole gives way
+/// the 󰐕 and paints the active tab alone (`narrow`), its name cut with
+/// an ellipsis down to `min_title`; short of that, the split cluster's
+/// buttons go from its left end, one by one. Only then is the name cut
+/// further — and the badge, the tab's close, last of all (`paintChip`).
 fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
     const g = pagedGeometry(ui, area, tabs, opts);
     const a = activeIndex(tabs) orelse return g;
+    if (g.tabs_right -| area.x >= chipWidth(ui, tabs[a])) return g;
     const need = minChipWidth(ui, tabs[a]);
-    if (g.tabs_right -| area.x >= need) return g;
     const base: usize = if (opts.split) |sp| (if (sp.max != null) 4 else 3) else 0;
     const buttons = base + g.n_ai;
     var shed: Shed = .{ .plus = false };
@@ -1479,20 +1480,20 @@ test "a session pane's strip: ` ‹ 3/7 › ` before the cluster, each arrow a b
     try h.expectLacks(nav_next_glyph);
     try h.expectContains(" x claude ");
 
-    // A long session name is cut before the nav gives way, down to
-    // `min_title`: at 44 the nav is whole beside the cut name and its
-    // close; at 36 the name is at six cells and the nav still whole.
+    // The session's own name outranks the nav: an 18-cell name keeps
+    // its chip whole, and the nav takes only what is left over.
     const long = [_]Tab{.{ .id = 1, .title = "fix the failing te", .glyph = "x", .active = true }};
     var l = try Fixture.init(44, 1);
     defer l.deinit();
     _ = draw(l.ui(), l.full(), &long, opts);
-    try l.expectContains(" x fix the faili\u{2026} " ++ close_glyph);
-    try l.expectContains(nav_prev_glyph ++ " 3/7 " ++ nav_next_glyph);
-    var m = try Fixture.init(36, 1);
+    try l.expectContains(" x fix the failing te " ++ close_glyph);
+    try l.expectLacks(nav_prev_glyph);
+    var m = try Fixture.init(45, 1);
     defer m.deinit();
     _ = draw(m.ui(), m.full(), &long, opts);
-    try m.expectContains(" x fix t\u{2026} " ++ close_glyph);
-    try m.expectContains("3/7");
+    try m.expectContains(" x fix the failing te " ++ close_glyph);
+    try m.expectContains(nav_prev_glyph ++ "  " ++ nav_next_glyph);
+    try m.expectLacks("3/7");
 
     // `--ascii`: `<` and `>`.
     var a = try Fixture.init(50, 1);
@@ -1793,34 +1794,38 @@ fn expectClose(f: *Fixture) !void {
 const crop_ai = [_]AiChip{.{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .fg = brand.claude }};
 const crop_split: SplitIds = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &crop_ai };
 
-test "the user's crops: a Claude Code and a Jira Fix Versions leaf keep their close at the widths that dropped it, the name ellipsised" {
+test "the user's crops: a Claude Code and a Jira Fix Versions leaf keep their close at the widths that dropped it" {
     // The crops are a three-leaf window at ~122 columns (the larger
     // font) and ~138: the Claude Code leaf's strip is 35 cells there
     // and 43 here, the Jira one's 34 and 42. Each wears the `+`, an AI
-    // chip and the four split buttons — 18 cells of furniture.
+    // chip and the four split buttons — 18 cells of furniture. Short of
+    // room the `+` goes first: Claude Code is whole again; Jira Fix
+    // Versions still is not, and its name is cut, never its close.
     const claude = [_]Tab{.{ .id = 1, .title = "Claude Code", .glyph = "x", .active = true, .linked = true }};
     const jira = [_]Tab{.{ .id = 2, .title = "Jira Fix Versions", .glyph = "x", .active = true }};
     const opts: Opts = .{ .new_tab = 77, .split = crop_split, .session_nav = .{ .index = 0, .count = 1, .prev = 60, .next = 61 } };
-    const Case = struct { tabs: []const Tab, w: u16, name: []const u8 };
+    const Case = struct { tabs: []const Tab, w: u16, name: []const u8, plus: bool };
     for ([_]Case{
-        .{ .tabs = &claude, .w = 35, .name = " x Claude C\u{2026} " },
-        .{ .tabs = &claude, .w = 43, .name = " x Claude Code " },
-        .{ .tabs = &jira, .w = 34, .name = " x Jira Fix \u{2026} " },
-        .{ .tabs = &jira, .w = 42, .name = " x Jira Fix Versions " },
+        .{ .tabs = &claude, .w = 35, .name = " x Claude Code ", .plus = false },
+        .{ .tabs = &claude, .w = 43, .name = " x Claude Code ", .plus = true },
+        .{ .tabs = &jira, .w = 34, .name = " x Jira Fix Ver\u{2026} ", .plus = false },
+        .{ .tabs = &jira, .w = 42, .name = " x Jira Fix Versions ", .plus = true },
     }) |c| {
         var f = try Fixture.init(c.w, 1);
         defer f.deinit();
         _ = draw(f.ui(), f.full(), c.tabs, opts);
         try f.expectContains(c.name);
         try expectClose(&f);
-        // The furniture stands: the `+` and all five buttons.
-        for ([_]u32{ 77, 40, 1, 2, 3, 4 }) |id| try testing.expect(hasButton(&f, id));
+        try testing.expectEqual(c.plus, hasButton(&f, 77));
+        // The pane buttons all stand.
+        for ([_]u32{ 40, 1, 2, 3, 4 }) |id| try testing.expect(hasButton(&f, id));
     }
 }
 
-test "the strip gives way in order as it narrows — the name to six cells, the pager, the +, the pane buttons, the name further — and the close is last" {
+test "the strip gives way in order as it narrows — the pager, the +, the name to six cells, the pane buttons, the name further — and the close is last" {
     var tabs = twelveTabs(4);
     tabs[4].title = "Jira Fix Versions";
+    const full_name: u16 = 17;
     const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .all_tabs = 8, .split = crop_split };
     const buttons = [_]u32{ 40, 1, 2, 3, 4 };
     var w: u16 = 80;
@@ -1841,27 +1846,28 @@ test "the strip gives way in order as it narrows — the name to six cells, the 
         for (buttons) |id| kept += @intFromBool(hasButton(&f, id));
         // Buttons give way from the cluster's left end, the maximize last.
         for (buttons[0 .. buttons.len - kept]) |id| try testing.expect(!hasButton(&f, id));
-        if (pager) try testing.expect(name_w >= min_title and plus and kept == buttons.len);
+        if (pager) try testing.expect(plus and name_w == full_name);
         if (!plus) try testing.expect(!pager);
-        if (kept < buttons.len) try testing.expect(!plus);
-        if (name_w < min_title) try testing.expect(!pager and !plus and kept == 0);
+        if (name_w < full_name) try testing.expect(!pager and !plus);
+        if (kept < buttons.len) try testing.expect(!plus and name_w < full_name);
+        if (name_w < min_title) try testing.expect(kept == 0);
     }
-    // 40: the pager stands beside the name; 30: the pager has gone, the
-    // `+` and the buttons stand, the name at six; 20: the `+`, the AI
-    // chip, the terminal and split-right have gone, the name at eight.
+    // 40: the pager and the `+` have gone, the name whole; 30: the name
+    // cut, every button standing; 20: the AI chip, the terminal and
+    // split-right have gone too, the name at eight.
     var a = try Fixture.init(40, 1);
     defer a.deinit();
     var o = opts;
     o.first = fitActive(a.ui(), a.full(), &tabs, 4, opts);
     _ = draw(a.ui(), a.full(), &tabs, o);
-    try expectClose(&a);
-    try testing.expect(hasButton(&a, 70) and hasButton(&a, 77) and hasButton(&a, 40));
+    try a.expectContains(" x Jira Fix Versions " ++ close_glyph);
+    try testing.expect(!hasButton(&a, 70) and !hasButton(&a, 77) and hasButton(&a, 40));
     var b = try Fixture.init(30, 1);
     defer b.deinit();
     o.first = fitActive(b.ui(), b.full(), &tabs, 4, opts);
     _ = draw(b.ui(), b.full(), &tabs, o);
-    try b.expectContains(" x Jira \u{2026} " ++ close_glyph);
-    try testing.expect(!hasButton(&b, 70) and hasButton(&b, 77) and hasButton(&b, 40));
+    try b.expectContains(" x Jira Fix\u{2026} " ++ close_glyph);
+    try testing.expect(!hasButton(&b, 77) and hasButton(&b, 40));
     var c = try Fixture.init(20, 1);
     defer c.deinit();
     o.first = fitActive(c.ui(), c.full(), &tabs, 4, opts);

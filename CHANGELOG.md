@@ -48,9 +48,10 @@ the release ships one file), and one line per change a user can see.
 
 - A narrow pane keeps its tab's close button. At a larger font the strip
   used to cut the tab at its edge and drop the close while still showing
-  the `+` and the pane buttons. Now the tab's name is cut first, with an
-  ellipsis, down to six cells. After that the pager goes, then the `+`, then
-  the pane buttons from the left. The close is the last thing to go.
+  the `+` and the pane buttons. Now the pager goes first, then the `+`.
+  Only then is the tab's name cut, with an ellipsis, down to six cells, and
+  after that the pane buttons go from the left. The close is the last thing
+  to go. A name that fits once the pager and `+` are gone is never cut.
 
 ### Jira and Bitbucket chips
 
