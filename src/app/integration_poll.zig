@@ -332,6 +332,9 @@ fn buildJob(
     // reads `ui.ascii_icons` off its `hello`; a `--values` child has no
     // mount, so the environment carries it (`sdk.pane.asciiFromEnv`).
     try env.put(sdk_chrome.ascii_env, if (app.cfg.ui.ascii_icons) "1" else "0");
+    // And the chip's own glyph, so the figure it publishes wears the
+    // mark the chip does (`sdk.pane.chipGlyphFromEnv`).
+    if (try integrations.chipGlyphEnv(arena, inst.manifest)) |g| try env.put(sdk_chrome.chip_glyph_env, g);
     if (app.data_root.len > 0) try env.put("MNML_DATA_ROOT", app.data_root);
     // The poller's child writes to the same request log a pane does:
     // a `poll` line beside a `pane_open` one is half the point of the

@@ -59,6 +59,30 @@ pub fn asciiFromEnv(env: *const std.process.Environ.Map) bool {
     return v.len > 0 and (v[0] == '1' or v[0] == 't' or v[0] == 'T');
 }
 
+/// The glyph the host paints on this integration's chip — the
+/// INSTALLED manifest's `chip.glyph`, which a user may have changed —
+/// set on every pane and `--values` child the host starts. A segment
+/// that wears the chip's mark reads it here, so the chip and the
+/// segment never disagree.
+pub const chip_glyph_env = "MNML_CHIP_GLYPH";
+
+/// `$MNML_CHIP_GLYPH`, else `fallback` (the binary's own manifest's
+/// glyph): what a run started by hand from a shell gets.
+pub fn chipGlyphFromEnv(env: *const std.process.Environ.Map, fallback: []const u8) []const u8 {
+    const v = env.get(chip_glyph_env) orelse return fallback;
+    return if (v.len > 0) v else fallback;
+}
+
+test "chipGlyphFromEnv reads the host's chip glyph, else the fallback" {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try std.testing.expectEqualStrings("F", chipGlyphFromEnv(&env, "F"));
+    try env.put(chip_glyph_env, "");
+    try std.testing.expectEqualStrings("F", chipGlyphFromEnv(&env, "F"));
+    try env.put(chip_glyph_env, "\u{f1c15}");
+    try std.testing.expectEqualStrings("\u{f1c15}", chipGlyphFromEnv(&env, "F"));
+}
+
 // ─── the glyphs the chrome owns ──────────────────────────────────────────
 
 pub const gutter_glyph = "\u{258c}"; // ▌ left half block
