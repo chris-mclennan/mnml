@@ -10,6 +10,16 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
+## v0.3.3 (unreleased)
+
+### Jira and Bitbucket chips
+
+- The Jira Work chip wears Atlassian's work-items icon, a card with a check,
+  as Bitbucket's sidebar draws it for Jira work items, instead of the Jira
+  logo. It is baked into `MnmlSymbols.ttf` at `U+F1C19`; run `./run.sh
+  install-font` to pick it up. The chip's statusline count keeps the Jira
+  logo.
+
 ## v0.3.2
 
 mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own

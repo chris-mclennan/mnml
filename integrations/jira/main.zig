@@ -1463,13 +1463,13 @@ test "the three manifests: one binary, three families, the Work chip carries the
         try testing.expectEqual(@as(usize, 3), s.auth.len);
         try sdk.manifest.validateId(s.id);
     }
-    // Boards and Fix Versions wear Atlassian's own board and release
-    // marks, baked into MnmlSymbols at these codepoints
-    // (`src/glyph/builder.zig`'s `atl_board` / `atl_release`); Work
-    // keeps the Jira logo.
+    // Each chip wears Atlassian's own mark for its surface, baked into
+    // MnmlSymbols at these codepoints (`src/glyph/builder.zig`'s
+    // `atl_work_items` / `atl_board` / `atl_release`). The Work chip's
+    // statusline count keeps the Jira logo.
+    try testing.expectEqualStrings("\u{f1c19}", spec_work.chip.?.glyph);
     try testing.expectEqualStrings("\u{f1c17}", spec_boards.chip.?.glyph);
     try testing.expectEqualStrings("\u{f1c18}", spec_fix_versions.chip.?.glyph);
-    try testing.expectEqualStrings("\u{f0303}", spec_work.chip.?.glyph);
     // Two chips, because they are two numbers about two different
     // things: what is on my plate, and what is waiting for me to look
     // at it. Each carries its own resting hover text.
