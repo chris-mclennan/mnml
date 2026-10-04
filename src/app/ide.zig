@@ -15,8 +15,9 @@
 //! workspace folders, dirty state), open things to look at (`openFile`,
 //! `openDiff`), close a tab, and — the one write — `saveDocument`, which
 //! asks you (or matches `.api`). `openDiff` shows the proposal in the
-//! review pane (`ai_apply.zig`) and answers when you accept or reject it;
-//! an accept lands in the buffer and leaves it unsaved.
+//! review pane (`ai_apply.zig`, painted by the git diff view) and
+//! answers when you accept or reject it; an accept lands in the buffer
+//! as one undo step and is saved before the session hears FILE_SAVED.
 //!
 //! mnml tells the session about your selection (`selection_changed`, to
 //! the session pane you looked at last, at most one per 100 ms) and,
@@ -1114,6 +1115,47 @@ test "openDiff shows the review; accept saves the file and answers FILE_SAVED wi
     _ = try ai_apply.handleKey(app, rid2, &app.panes.get(rid2).?.ai_apply, .{ .code = .esc });
     try t.expect(fx.has(900, "\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
     try t.expect(fx.audited("\"client\":\"pane:6\",\"method\":\"ide\",\"target\":\"openDiff "));
+}
+
+test "openDiff: a second proposal supersedes the first (DIFF_REJECTED); the review is the diff view, Split when wide, cycled by git.diff_toggle_view; Y accepts every hunk and answers FILE_SAVED" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    const path = try fx.file("e.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n");
+    defer t.allocator.free(path);
+    try fx.link(6, 900);
+    const fa = app.frame.allocator();
+    const proposal = "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\n";
+    const args = try std.fmt.allocPrint(t.allocator, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"A\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nL\\n\",\"tab_name\":\"e.txt (claude)\"}}", .{ try Fx.jsonStr(fa, path), try Fx.jsonStr(fa, path) });
+    defer t.allocator.free(args);
+
+    try fx.call(6, 900, 1, "openDiff", args);
+    try fx.call(6, 900, 2, "openDiff", args);
+    try t.expect(fx.has(900, "\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
+    const rid = app.active.?;
+    const ap = &app.panes.get(rid).?.ai_apply;
+    try t.expectEqual(@as(usize, 2), ap.hunks.len);
+    ai_apply.fitMode(ap, ai_apply.split_min_w);
+    try t.expectEqual(@import("../ui/diff_view.zig").Mode.split, ap.mode);
+    try command.run(app, .{ .static = .@"git.diff_toggle_view" });
+    try t.expectEqual(@import("../ui/diff_view.zig").Mode.hunk, ap.mode);
+    // Skip the first hunk; Y takes it back and applies the whole proposal.
+    _ = try ai_apply.handleKey(app, rid, ap, .{ .code = .{ .char = ' ' } });
+    try t.expectEqual(@as(usize, 1), ap.accepted());
+    const before = app.ide.unsent.items.len;
+    _ = try ai_apply.handleKey(app, rid, ap, .{ .code = .{ .char = 'Y' } });
+    try t.expect(app.panes.get(rid) == null);
+    try t.expect(app.ide.unsent.items.len > before);
+    try t.expect(fx.has(900, "\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"FILE_SAVED\"},{\"type\":\"text\",\"text\":\"A\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nL\\n\"}]}"));
+    const on_disk = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(64));
+    defer t.allocator.free(on_disk);
+    try t.expectEqualStrings(proposal, on_disk);
+    // The diff toolbar's × rejects, like Esc.
+    try fx.call(6, 900, 3, "openDiff", args);
+    const rid3 = app.active.?;
+    try ai_apply.click(app, rid3, &app.panes.get(rid3).?.ai_apply, @import("../ui/diff_view.zig").close_id, .{ .x = 0, .y = 0, .kind = .press, .button = .left });
+    try t.expect(fx.has(900, "\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
 }
 
 test "selection_changed goes only to the pointed session, at most once per 100 ms; ai.send_selection sends at_mentioned" {

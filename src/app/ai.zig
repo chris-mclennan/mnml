@@ -68,6 +68,7 @@ pub const table = .{
     .@"ai.cancel" = &cancelCmd,
     .@"ai.promote" = &promoteCmd,
     .@"ai.apply" = &applyCmd,
+    .@"ai.apply_accept_all" = &applyAcceptAllCmd,
     .@"ai.session_view" = &sessionViewCmd,
     .@"ai.chat" = &chatCmd,
     .@"ai.claude_code" = &claudeCode,
@@ -1404,6 +1405,13 @@ fn promoteCmd(app: *App) CommandError!void {
 /// `a`: the first code block becomes a proposal for what the action
 /// was run on, reviewed hunk by hunk in `Pane.ai_apply` before any of
 /// it reaches the editor (`ai_apply.zig`).
+/// From the review pane (`ai.apply`'s, or an `openDiff`): every hunk,
+/// applied — `Y` there.
+fn applyAcceptAllCmd(app: *App) CommandError!void {
+    const r = ai_apply.active(app) orelse return app.diag.fail(app.frame.allocator(), "no proposal is under review", .{});
+    return ai_apply.acceptAll(app, r.id, r.p);
+}
+
 fn applyCmd(app: *App) CommandError!void {
     const source = app.active orelse return error.NoActivePane;
     const p = try activeAi(app);
