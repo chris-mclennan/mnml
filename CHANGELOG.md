@@ -89,6 +89,15 @@ the release ships one file), and one line per change a user can see.
   glyph. The host hands every integration it starts its installed
   manifest's chip glyph as `$MNML_CHIP_GLYPH`
   (`sdk.pane.chipGlyphFromEnv`), so a chip and its segment show one mark.
+- One mark, spelled once: a manifest's segment writes `{chip}` in its
+  resting text for the chip's glyph (`sdk.manifest.withChipMark` fills it
+  in when the binary is built; mnml fills in any it still meets). Jira's
+  assigned figure and Bitbucket's PRs figure do, and each integration
+  tests that its chip, its resting text and its published figure agree.
+  Bitbucket's reviews-waiting figure rests blank until it is counted,
+  as the review-threads figure already did. Installing an integration
+  whose segment rests on a different private-use glyph than its chip now
+  warns, naming the integration, the segment and both glyphs.
 
 ### Keys
 
