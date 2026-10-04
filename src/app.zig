@@ -3970,6 +3970,7 @@ test {
     _ = @import("ui/focus_cue.zig");
     _ = @import("app/pane_accent.zig");
     _ = @import("app/ai.zig");
+    _ = @import("app/ai_grid.zig");
     _ = @import("app/agents.zig");
     _ = @import("app/sessions_table.zig");
     _ = @import("app/session_attention.zig");

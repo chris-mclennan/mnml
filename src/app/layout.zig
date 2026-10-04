@@ -456,6 +456,16 @@ pub const Layout = struct {
         self.equalizeAxisUnder(top, dir);
     }
 
+    /// `equalizeAxis` confined to the subtree at `id`: the run of
+    /// same-direction splits from `id` down is shared out evenly, and
+    /// everything above `id` keeps its ratios.
+    pub fn equalizeAxisBelow(self: *Layout, id: NodeId) void {
+        switch (self.nodes.items[id]) {
+            .split => |s| self.equalizeAxisUnder(id, s.dir),
+            else => {},
+        }
+    }
+
     /// The highest split of the unbroken run of `id`-direction splits
     /// that `id` is part of. A non-split is its own root.
     pub fn axisRoot(self: *const Layout, id: NodeId) NodeId {

@@ -526,6 +526,39 @@ test "batch arrange: ×3 ▸ Columns is three full-height panes of equal width, 
     try t.expectEqual(@as(usize, 0), try g.empties());
 }
 
+test "batch arrange: ×3 ▸ Columns beside an open editor leaves the editor its width and shares only the rest between the three" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // The width one session beside the editor leaves it.
+    var one = try Fixture.init();
+    defer one.deinit();
+    const ed1 = try one.app.openScratch();
+    try dispatch.runMenuActionForTest(&one.app, .{ .open_batch = .{ .n = 1, .arrange = .columns } });
+    const w = (try one.rectOf(ed1)).w;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const ed = try app.openScratch();
+    try dispatch.runMenuActionForTest(app, .{ .open_batch = .{ .n = 3, .arrange = .columns } });
+    try t.expectEqual(@as(usize, 3), countOnPage(app));
+    const r = try f.rects();
+    try t.expectEqual(@as(usize, 4), r.panes.len);
+    const er = try f.rectOf(ed);
+    // The editor keeps its width, first in the row — not a fourth column.
+    try t.expectEqual(w, er.w);
+    try t.expect(er.w > app.panes_area.w / 3);
+    var sessions: [3]PaneId = undefined;
+    var n: usize = 0;
+    for (r.panes) |pr| if (pr.pane != ed) {
+        sessions[n] = pr.pane;
+        n += 1;
+        try t.expectEqual(@as(u16, 58), pr.rect.h);
+        try t.expect(pr.rect.x > er.x + er.w - 1);
+    };
+    try t.expectEqual(@as(usize, 3), n);
+    try sameWidth(&f, &sessions);
+    try t.expectEqual(@as(usize, 4), (try shape(&f, &.{ ed, sessions[0], sessions[1], sessions[2] })).cols);
+}
+
 test "the grid: the open slot paints the Add Claude Code card over the whole quadrant, and a press on it opens the fourth session there" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init();

@@ -808,7 +808,9 @@ otherwise. Copy what you need; leave the rest out.
         .session_columns = 2,
         // The arrangement last picked from an `Open ×N ▸` row of the
         // `+ New session` menu — Tabs, Columns (N full-height sessions side
-        // by side, equal widths) or Grid (from four up; two or three in a
+        // by side, equal widths; whatever was on the page keeps the width
+        // the first session's split leaves it, and the N share the rest)
+        // or Grid (from four up; two or three in a
         // grid are the columns) — which a plain click on `Open ×N` and
         // ai.claude_code_new_x2 … _x8 repeat. Written home by the pick.
         // Unset: the AI layout toggle decides (tabs mode → tabs, else the grid).
