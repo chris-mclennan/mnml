@@ -3,7 +3,13 @@ title: Try It First
 description: Run mnml in a throwaway home with --sandbox, or open a ready-made sample project with --demo, without touching your own config, sessions or credentials.
 ---
 
-Two flags let you look around before mnml has any of your settings:
+The quickest look needs no install at all: [mnml.sh/demo](/demo/) runs a
+real mnml in a fresh sandbox container in your browser, with the guided
+tour, a stand-in Claude Code session and offline Jira and Bitbucket.
+Nothing you do there leaves the container.
+
+On your own machine, two flags let you look around before mnml has any
+of your settings:
 
 - **`mnml --sandbox`** runs mnml against a throwaway home directory.
   You see what a brand-new user sees, and nothing you do reaches your
