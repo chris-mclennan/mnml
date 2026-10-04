@@ -19,6 +19,24 @@ the release ships one file), and one line per change a user can see.
   logo. It is baked into `MnmlSymbols.ttf` at `U+F1C19`; run `./run.sh
   install-font` to pick it up. The chip's statusline count keeps the Jira
   logo.
+### The statusline
+
+- Right-click the statusline between its chips for *Segments ▸*: every
+  segment, ticked while shown. A row hides or shows its chip at once and
+  writes `.statusline.hidden` to the home config. RESTRICTED and the
+  sandbox chip never hide.
+- A theme can colour the segments: `statusline_lsp`, `statusline_wrap`,
+  `statusline_language` and ten more `base_30` keys, each falling back to
+  the colour the segment wore before.
+- The bell's right-click marks the unread warnings read and copies the
+  last message or the whole log; the mode chip's offers *Toggle keymap*.
+- The spinner — the jobs chip's, the panels', an integration pane's — is
+  eight-dot braille now and sits on the text's centre instead of riding
+  above it.
+- The Bitbucket pull-request and Jira assigned figures wear their chip's
+  glyph. The host hands every integration it starts its installed
+  manifest's chip glyph as `$MNML_CHIP_GLYPH`
+  (`sdk.pane.chipGlyphFromEnv`), so a chip and its segment show one mark.
 
 ## v0.3.2
 
