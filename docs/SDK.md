@@ -688,6 +688,22 @@ What mnml does with each field:
 | `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary, a terminal pane, an editor, the Markdown preview, a commit's message in the git graph, a toast, an HTTP response body. See *Links* below |
 | `context_menu[]`, `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
 
+**One mark per chip.** A chip, its statusline segment and its pane wear
+one glyph, spelled once — the manifest's `chip.glyph`. A segment's
+resting `text` writes `{chip}` for it (`.text = "{chip} …"`), and the
+binary wraps its manifest in `sdk.manifest.withChipMark`
+(`pub const spec = sdk.manifest.withChipMark(@import("manifest.zon"));`),
+so what `--install` writes holds the glyph; mnml fills in a `{chip}` it
+still meets. A live figure takes the host's mark from `$MNML_CHIP_GLYPH`
+(`sdk.pane.chipGlyphFromEnv(env, <the manifest's glyph>)`), never a
+codepoint of the binary's own. A second figure with its own meaning
+(Bitbucket's review threads, Jira's QA count) may wear its own glyph
+when it publishes, but rests blank in the manifest: at install mnml
+names any segment whose resting text starts on a private-use glyph that
+is not its chip's, in a warning toast with the integration, the segment
+and both glyphs. Jira and Bitbucket each carry a test that the chip's
+glyph, the resting text's first glyph and the published figure agree.
+
 `binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
 path. `<data root>/bin/<binary>` is tried before PATH — that is where an
 install from the Dev tab or the marketplace links the built binary.
