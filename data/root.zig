@@ -42,6 +42,9 @@ pub const atlassian_pull_request_svg = @embedFile("glyphs/atlassian-pull-request
 pub const atlassian_pipeline_svg = @embedFile("glyphs/atlassian-pipeline.svg");
 pub const atlassian_board_svg = @embedFile("glyphs/atlassian-board.svg");
 pub const atlassian_release_svg = @embedFile("glyphs/atlassian-release.svg");
+/// The Jira Work chip's mark: `work-items` from the same `svgs/core/`
+/// (a card with a check, a second card's edge behind it).
+pub const atlassian_work_items_svg = @embedFile("glyphs/atlassian-work-items.svg");
 
 /// The shell integration a shell pane's shell loads
 /// (`src/app/shell_integration.zig`): the files mnml writes into its
