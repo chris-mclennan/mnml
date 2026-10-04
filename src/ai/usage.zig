@@ -228,6 +228,8 @@ pub const FetchErr = struct {
 pub const AccountState = enum {
     checking,
     signed_in,
+    /// Expired, and a fetch that renews it is in flight.
+    refreshing,
     expired,
     other_login,
     no_login,
@@ -235,10 +237,19 @@ pub const AccountState = enum {
     pub fn wantsReauth(s: AccountState) bool {
         return switch (s) {
             .expired, .other_login, .no_login => true,
-            .checking, .signed_in => false,
+            .checking, .signed_in, .refreshing => false,
         };
     }
 };
+
+/// The state as the pane shows it: an account whose token is expired —
+/// as last read, or by its file's own clock — with a fetch out is
+/// `refreshing`, not yet `expired`.
+pub fn shownState(u: *const Usage, renewing: bool) AccountState {
+    const s = accountState(u);
+    if (renewing and (s == .expired or s == .signed_in or s == .checking)) return .refreshing;
+    return s;
+}
 
 pub fn accountState(u: *const Usage) AccountState {
     return switch (u.auth) {
@@ -591,6 +602,20 @@ pub fn refreshTokenOf(arena: Allocator, raw: []const u8) ?[]const u8 {
     return tokenField(arena, raw, "refreshToken", false);
 }
 
+/// A JSON token file's `expiresAt`, in Unix seconds; null for a plain
+/// token or one without the field.
+pub fn expiresAtOf(arena: Allocator, raw: []const u8) ?u64 {
+    const s = std.mem.trim(u8, raw, " \t\r\n");
+    if (s.len == 0 or s[0] != '{') return null;
+    const v = std.json.parseFromSliceLeaky(std.json.Value, arena, s, .{}) catch return null;
+    const inner = field(v, "claudeAiOauth") orelse v;
+    const f = field(inner, "expiresAt") orelse return null;
+    return switch (f) {
+        .integer => |ms| if (ms > 0) @intCast(@divTrunc(ms, 1000)) else null,
+        else => null,
+    };
+}
+
 fn tokenField(arena: Allocator, raw: []const u8, key: []const u8, plain_ok: bool) ?[]const u8 {
     const s = std.mem.trim(u8, raw, " \t\r\n");
     if (s.len == 0) return null;
@@ -860,14 +885,14 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
     };
     var token = accessTokenOf(arena, raw) orelse return .{ .err = .{ .message = "not linked", .auth = .missing } };
     var reply = try httpGet(gpa, io, arena, live.usage_url, token);
-    if (reply.status == 401 or reply.status == 403) {
-        if (refreshTokenOf(arena, raw)) |rt| if (try refreshToken(gpa, io, arena, live.token_url, rt, token_path)) |fresh| {
-            token = fresh;
-            reply = try httpGet(gpa, io, arena, live.usage_url, token);
-        };
-    }
+    // A token turned down is renewed, for every account and on every
+    // system: first, on macOS, from the keychain when it holds THIS
+    // account's login (the CLI keeps that one fresh as it is used);
+    // otherwise by the refresh grant on the account's own refresh token,
+    // written back to the account's own file.
     var recaptured = false;
-    if ((reply.status == 401 or reply.status == 403) and live.keychain) {
+    var other_login: ?[]const u8 = null;
+    if (rejected(reply.status) and live.keychain) {
         if (readKeychain(gpa, io, arena)) |blob| if (!std.mem.eql(u8, std.mem.trim(u8, blob, " \t\r\n"), std.mem.trim(u8, raw, " \t\r\n"))) {
             const candidate = accessTokenOf(arena, blob) orelse blob;
             const again = try httpGet(gpa, io, arena, live.usage_url, candidate);
@@ -881,21 +906,28 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
                     const email = if (prof) |p| p.email else null;
                     const pinned = try pinnedEmail(arena, io, live.data_root, name);
                     if (email != null and pinned != null and std.mem.eql(u8, email.?, pinned.?)) belongs = true;
-                    if (!belongs) {
-                        return .{ .err = .{
-                            .message = try std.fmt.allocPrint(arena, "the keychain login is {s}, not {s}'s", .{ email orelse "unknown", name }),
-                            .needs_reauth = true,
-                            .auth = .other_login,
-                        } };
-                    }
+                    if (!belongs) other_login = email orelse "unknown";
                 }
-                writeSecret(io, token_path, blob) catch {};
-                token = candidate;
-                reply = again;
-                recaptured = true;
+                if (belongs) {
+                    writeSecret(io, token_path, blob) catch {};
+                    token = candidate;
+                    reply = again;
+                    recaptured = true;
+                }
             }
         };
     }
+    if (rejected(reply.status)) {
+        if (refreshTokenOf(arena, raw)) |rt| if (try refreshToken(gpa, io, arena, live.token_url, rt, token_path)) |fresh| {
+            token = fresh;
+            reply = try httpGet(gpa, io, arena, live.usage_url, token);
+        };
+    }
+    if (rejected(reply.status)) if (other_login) |email| return .{ .err = .{
+        .message = try std.fmt.allocPrint(arena, "the keychain login is {s}, not {s}'s", .{ email, name }),
+        .needs_reauth = true,
+        .auth = .other_login,
+    } };
     try writeLastResponse(arena, io, live.data_root, reply, now);
     if (reply.status < 200 or reply.status >= 300) {
         const msg = if (reply.status == 401 or reply.status == 403)
@@ -919,6 +951,10 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
         if (p.email) |e| out.warning = try pinIdentity(arena, io, live.data_root, name, e);
     }
     return .{ .ok = out };
+}
+
+fn rejected(status: u16) bool {
+    return status == 401 or status == 403;
 }
 
 fn profileOf(gpa: Allocator, io: Io, arena: Allocator, url: []const u8, token: []const u8) HttpError!?Profile {
@@ -962,6 +998,34 @@ pub fn readKeychain(gpa: Allocator, io: Io, arena: Allocator) ?[]const u8 {
     const out = std.mem.trim(u8, result.stdout, " \t\r\n");
     if (out.len == 0) return null;
     return arena.dupe(u8, out) catch null;
+}
+
+/// Where the Claude Code CLI keeps its login outside the keychain:
+/// `$CLAUDE_CONFIG_DIR/.credentials.json`, else
+/// `<home>/.claude/.credentials.json` — Linux and Windows always, macOS
+/// when the keychain refused the write.
+pub fn credentialsPath(arena: Allocator, home: ?[]const u8, config_dir: ?[]const u8) Allocator.Error!?[]const u8 {
+    if (config_dir) |d| if (d.len > 0) return try std.fs.path.join(arena, &.{ d, credentials_file });
+    const h = home orelse return null;
+    if (h.len == 0) return null;
+    return try std.fs.path.join(arena, &.{ h, ".claude", credentials_file });
+}
+
+pub const credentials_file = ".credentials.json";
+
+/// The credentials file's login, raw, when it holds one.
+pub fn readCredentialsFile(arena: Allocator, io: Io, path: []const u8) ?[]const u8 {
+    const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch return null;
+    const out = std.mem.trim(u8, text, " \t\r\n");
+    if (out.len == 0 or accessTokenOf(arena, out) == null) return null;
+    return out;
+}
+
+/// Wherever the CLI put its login on this system: the macOS keychain
+/// (then the file it falls back to), the credentials file elsewhere.
+pub fn readCliLogin(gpa: Allocator, io: Io, arena: Allocator, creds_path: ?[]const u8) ?[]const u8 {
+    if (builtin.os.tag == .macos) if (readKeychain(gpa, io, arena)) |blob| return blob;
+    return readCredentialsFile(arena, io, creds_path orelse return null);
 }
 
 /// Create-or-truncate `path` at mode 0600 (the parent made as needed).
@@ -1835,6 +1899,9 @@ const FakeServer = struct {
     var saw_auth: [128]u8 = undefined;
     var saw_auth_len: usize = 0;
     var mode: enum { ok, throttle } = .ok;
+    /// The refresh grant: how many came in, and whether it is granted.
+    var refresh_hits: usize = 0;
+    var refresh_ok: bool = true;
 
     fn serve(io: Io, server: *Io.net.Server) Io.Cancelable!void {
         while (true) {
@@ -1854,6 +1921,18 @@ const FakeServer = struct {
             @memcpy(saw_auth[0..auth.len], auth);
             saw_auth_len = auth.len;
             const target = request.head.target;
+            if (std.mem.endsWith(u8, target, "/oauth/token")) {
+                var body_buf: [1024]u8 = undefined;
+                const body = request.readerExpectNone(&body_buf);
+                _ = body.discardRemaining() catch {};
+                refresh_hits += 1;
+                if (refresh_ok) {
+                    request.respond("{\"access_token\":\"sk-ant-oat01-FIXTURE-ACCESS\",\"refresh_token\":\"sk-ant-ort01-FIXTURE-NEXT\",\"expires_in\":3600}", .{ .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} }) catch return;
+                } else {
+                    request.respond("{\"error\":\"invalid_grant\"}", .{ .status = .bad_request }) catch return;
+                }
+                continue;
+            }
             if (mode == .throttle) {
                 request.respond("{\"error\":\"rate_limit_error\"}", .{ .status = .too_many_requests, .extra_headers = &.{.{ .name = "retry-after", .value = "3150" }} }) catch return;
             } else if (!std.mem.eql(u8, auth, "Bearer sk-ant-oat01-FIXTURE-ACCESS")) {
@@ -1918,4 +1997,102 @@ test "fetchLive against a loopback server: the bearer, the numbers, the profile,
     // No token file at all.
     const none = try fetchLive(t.allocator, io, a, live, "default", try std.fs.path.join(a, &.{ root, "ai_token.none" }), 80);
     try t.expect(std.mem.startsWith(u8, none.err.message, "read token "));
+}
+
+/// A token file whose access token the server turns down, with a refresh
+/// token the fake grant renews.
+const stale_blob_fixture =
+    \\{"claudeAiOauth":{"accessToken":"sk-ant-oat01-FIXTURE-EXPIRED","refreshToken":"sk-ant-ort01-FIXTURE-STALE","expiresAt":1000}}
+;
+
+test "a turned-down token renews by the refresh grant, for the account it belongs to, keychain or none; a refused grant is expired" {
+    const io = t.io;
+    var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+    var group: Io.Group = .init;
+    try group.concurrent(io, FakeServer.serve, .{ io, &server });
+    defer group.cancel(io);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ai_token.fresh", .data = token_blob_fixture });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ai_token.stale", .data = stale_blob_fixture });
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const live: Live = .{
+        .data_root = root,
+        .account_count = 2,
+        .usage_url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/api/oauth/usage", .{port}),
+        .profile_url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/api/oauth/profile", .{port}),
+        .token_url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/v1/oauth/token", .{port}),
+        .keychain = false,
+    };
+    FakeServer.refresh_hits = 0;
+    FakeServer.refresh_ok = true;
+    defer FakeServer.refresh_ok = true;
+    // The account whose token works: no grant, its file untouched.
+    const fresh = try fetchLive(t.allocator, io, a, live, "fresh", try std.fs.path.join(a, &.{ root, "ai_token.fresh" }), 77);
+    try t.expectEqual(@as(u16, 95), fresh.ok.usage.percent);
+    try t.expectEqual(@as(usize, 0), FakeServer.refresh_hits);
+    // The expired one: one grant, written back to ITS file, then read.
+    const stale = try fetchLive(t.allocator, io, a, live, "stale", try std.fs.path.join(a, &.{ root, "ai_token.stale" }), 78);
+    try t.expectEqual(@as(u16, 95), stale.ok.usage.percent);
+    try t.expectEqual(@as(usize, 1), FakeServer.refresh_hits);
+    const renewed = try tmp.dir.readFileAlloc(t.io, "ai_token.stale", a, .limited(1 << 16));
+    try t.expectEqualStrings("sk-ant-oat01-FIXTURE-ACCESS", accessTokenOf(a, renewed).?);
+    try t.expectEqualStrings("sk-ant-ort01-FIXTURE-NEXT", refreshTokenOf(a, renewed).?);
+    try t.expect(expiresAtOf(a, renewed).? > 1000);
+    const kept = try tmp.dir.readFileAlloc(t.io, "ai_token.fresh", a, .limited(1 << 16));
+    try t.expectEqualStrings(token_blob_fixture, kept);
+    // A grant the server refuses: expired, the file as it was.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "ai_token.stale", .data = stale_blob_fixture });
+    FakeServer.refresh_ok = false;
+    const refused = try fetchLive(t.allocator, io, a, live, "stale", try std.fs.path.join(a, &.{ root, "ai_token.stale" }), 79);
+    try t.expectEqual(Auth.rejected, refused.err.auth);
+    try t.expectEqual(@as(usize, 2), FakeServer.refresh_hits);
+    const same = try tmp.dir.readFileAlloc(t.io, "ai_token.stale", a, .limited(1 << 16));
+    try t.expectEqualStrings(stale_blob_fixture, same);
+}
+
+test "the CLI's login off the keychain: the credentials file, under CLAUDE_CONFIG_DIR or ~/.claude" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try sdk_testing.expectPath("/home/u/.claude/.credentials.json", (try credentialsPath(a, "/home/u", null)).?);
+    try sdk_testing.expectPath("/cfg/work/.credentials.json", (try credentialsPath(a, "/home/u", "/cfg/work")).?);
+    try sdk_testing.expectPath("/home/u/.claude/.credentials.json", (try credentialsPath(a, "/home/u", "")).?);
+    try t.expect((try credentialsPath(a, null, null)) == null);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "login.json", .data = token_blob_fixture ++ "\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "empty.json", .data = "  \n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "junk.json", .data = "{\"other\":1}" });
+    const blob = readCredentialsFile(a, t.io, try std.fs.path.join(a, &.{ root, "login.json" })).?;
+    try t.expectEqualStrings(token_blob_fixture, blob);
+    try t.expectEqualStrings("sk-ant-ort01-FIXTURE-REFRESH", refreshTokenOf(a, blob).?);
+    try t.expect(readCredentialsFile(a, t.io, try std.fs.path.join(a, &.{ root, "empty.json" })) == null);
+    try t.expect(readCredentialsFile(a, t.io, try std.fs.path.join(a, &.{ root, "junk.json" })) == null);
+    try t.expect(readCredentialsFile(a, t.io, try std.fs.path.join(a, &.{ root, "none.json" })) == null);
+}
+
+test "the renewal's states: expired with a fetch out is refreshing; renewed is signed in; a refused grant wants Re-auth" {
+    var u: Usage = .{};
+    applyFetchError(&u, .{ .message = "HTTP 401: token rejected", .auth = .rejected }, 100);
+    try t.expectEqual(AccountState.expired, shownState(&u, false));
+    try t.expectEqual(AccountState.refreshing, shownState(&u, true));
+    try t.expect(!AccountState.refreshing.wantsReauth());
+    try t.expect(AccountState.expired.wantsReauth());
+    // The renewal landed: a fresh reading, signed in.
+    const ok: Usage = .{ .fetched_at = 200, .percent = 10 };
+    try t.expectEqual(AccountState.signed_in, shownState(&ok, false));
+    // Another account's login is not something a grant fixes.
+    var other: Usage = .{};
+    applyFetchError(&other, .{ .message = "x", .auth = .other_login, .needs_reauth = true }, 100);
+    try t.expectEqual(AccountState.other_login, shownState(&other, true));
 }

@@ -28,6 +28,8 @@ pub const AccountView = struct {
     email: ?[]const u8 = null,
     org: ?[]const u8 = null,
     is_active: bool = false,
+    /// A fetch is out for an expired token: it renews it.
+    renewing: bool = false,
 };
 
 pub const Props = struct {
@@ -185,6 +187,7 @@ fn colored(th: *const Theme, color: Theme.Color) Theme.Style {
 pub fn statePrefix(a: std.mem.Allocator, state: usage.AccountState, u: *const usage.Usage, now: u64, tz: Tz) std.mem.Allocator.Error![]const u8 {
     return switch (state) {
         .checking => "checking…",
+        .refreshing => "expired — refreshing…",
         .expired => "expired —",
         .other_login => "keychain holds another account —",
         .no_login => "no login yet —",
@@ -253,7 +256,7 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
         // The state line: where the sign-in stands, and when it wants
         // one, the button that does it.
-        const sign_in = usage.accountState(u);
+        const sign_in = usage.shownState(u, acc.renewing);
         const wants = sign_in.wantsReauth();
         const prefix = try statePrefix(a, sign_in, u, props.now, props.tz);
         if (wants) {

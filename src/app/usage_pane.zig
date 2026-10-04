@@ -80,7 +80,14 @@ pub const Account = struct {
 
 /// The per-account schedule: when it was last spawned, whether a fetch
 /// is in flight.
-const Sched = struct { name: []u8, last_at: u64 = 0, pending: bool = false };
+const Sched = struct {
+    name: []u8,
+    last_at: u64 = 0,
+    pending: bool = false,
+    /// The fetch in flight renews an expired token (`expired —
+    /// refreshing…`).
+    renewing: bool = false,
+};
 
 /// A Re-auth in flight: the account, the `claude login` pane it opened,
 /// the keychain's refresh token when it started — a login has landed
@@ -306,6 +313,7 @@ fn refresh(app: *App, force: bool) Allocator.Error!void {
         }
         sched.last_at = now;
         sched.pending = true;
+        sched.renewing = try renews(app, acc, c, now);
         s.last_spawn_at = now;
         spawnClaude(app, c, cfg.len, now) catch |err| {
             sched.pending = false;
@@ -398,6 +406,17 @@ const ClaudeJob = struct {
     }
 };
 
+/// Whether a fetch of `c` now renews its token: the last read was
+/// turned down, or the token file's own clock says it has expired.
+fn renews(app: *App, acc: ?*Account, c: usage.AccountCfg, now: u64) Allocator.Error!bool {
+    if (acc) |a| if (usage.accountState(&a.usage) == .expired) return true;
+    if (c.token_path.len == 0) return false;
+    const arena = app.frame.allocator();
+    const raw = Io.Dir.cwd().readFileAlloc(app.io, c.token_path, arena, .limited(64 * 1024)) catch return false;
+    const at = usage.expiresAtOf(arena, raw) orelse return false;
+    return at <= now and usage.refreshTokenOf(arena, raw) != null;
+}
+
 fn spawnClaude(app: *App, c: usage.AccountCfg, count: usize, now: u64) Allocator.Error!void {
     const gpa = app.gpa;
     const job = try gpa.create(ClaudeJob);
@@ -487,9 +506,13 @@ const KeychainJob = struct {
     target: ?[]u8 = null,
     /// Ask the profile endpoint whose login it is.
     want_email: bool = false,
+    /// Owned. The CLI's credentials file — read where there is no
+    /// keychain (`usage.readCliLogin`).
+    creds: ?[]u8 = null,
 
     fn destroy(job: *KeychainJob, gpa: Allocator) void {
         if (job.baseline) |b| gpa.free(b);
+        if (job.creds) |x| gpa.free(x);
         if (job.target) |x| gpa.free(x);
         gpa.destroy(job);
     }
@@ -505,6 +528,7 @@ fn spawnKeychain(app: *App, mode: usage.KeychainMode, o: KeychainOpts) Allocator
     errdefer job.destroy(gpa);
     if (o.baseline) |b| job.baseline = try gpa.dupe(u8, b);
     if (o.target) |x| job.target = try gpa.dupe(u8, x);
+    if (try cliCredentialsPath(app, app.frame.allocator())) |c| job.creds = try gpa.dupe(u8, c);
     s.keychain_pending = true;
     s.group.concurrent(app.io, keychainWorker, .{ app.events, app.io, gpa, job }) catch {
         s.keychain_pending = false;
@@ -519,7 +543,7 @@ fn keychainWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Keych
     const arena = r.arena.allocator();
     var k: usage.Keychain = .{ .mode = job.mode };
     if (job.target) |x| k.target = arena.dupe(u8, x) catch return;
-    if (usage.readKeychain(gpa, io, arena)) |blob| {
+    if (usage.readCliLogin(gpa, io, arena, job.creds)) |blob| {
         k.blob = blob;
         k.refresh_token = usage.refreshTokenOf(arena, blob);
         const changed = if (job.baseline) |b| (if (k.refresh_token) |rt| !std.mem.eql(u8, rt, b) else true) else true;
@@ -548,7 +572,10 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
     switch (r.payload) {
         .none => return,
         .claude => |c| {
-            if (s.schedFor(c.name)) |sched| sched.pending = false;
+            if (s.schedFor(c.name)) |sched| {
+                sched.pending = false;
+                sched.renewing = false;
+            }
             const arena = app.frame.allocator();
             const cfg = try configured(app, arena);
             if (!named(cfg, c.name)) return;
@@ -732,6 +759,17 @@ fn keychainReadable(app: *App) bool {
     return builtin.os.tag == .macos and fixtureDir(app) == null;
 }
 
+/// Whether Re-auth can read the CLI's login here: the keychain on macOS,
+/// the credentials file everywhere — never in fixture mode.
+fn loginReadable(app: *App) bool {
+    return fixtureDir(app) == null;
+}
+
+/// The CLI's credentials file: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+fn cliCredentialsPath(app: *App, arena: Allocator) Allocator.Error!?[]const u8 {
+    return usage.credentialsPath(arena, app.homeDir(), app.env.get("CLAUDE_CONFIG_DIR"));
+}
+
 /// The configured account named `name`, its token path resolved.
 fn cfgOf(app: *App, arena: Allocator, name: []const u8) Allocator.Error!?usage.AccountCfg {
     for (try configured(app, arena)) |c| if (std.mem.eql(u8, c.name, name)) return c;
@@ -778,8 +816,7 @@ pub fn startReauth(app: *App, name: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const gpa = app.gpa;
     _ = (try cfgOf(app, arena, name)) orelse return app.diag.fail(arena, "no Claude account named {s}", .{name});
-    if (fixtureDir(app) != null) return app.diag.fail(arena, "fixture mode: Re-auth reads no keychain", .{});
-    if (builtin.os.tag != .macos) return app.diag.fail(arena, "Re-auth reads Claude Code's login from the macOS keychain — here, link {s} with Advanced ▸ Paste a token…", .{name});
+    if (!loginReadable(app)) return app.diag.fail(arena, "fixture mode: Re-auth reads no keychain", .{});
     const s = st(app);
     if (s.reauth) |*r| {
         if (std.mem.eql(u8, r.name, name)) if (r.pane) |id| if (app.panes.pty(id) != null) {
@@ -847,7 +884,7 @@ pub fn reauthRead(app: *App, k: usage.Keychain) Allocator.Error!void {
     const blob = k.blob orelse null;
     if (!changed or blob == null) {
         if (r.final_polled) {
-            app.toast("the login for {s} closed with nothing new in the keychain — Re-auth to try again", .{r.name});
+            app.toast("the login for {s} closed with no new Claude Code login — Re-auth to try again", .{r.name});
             try endReauth(app, false);
         }
         return;
@@ -905,7 +942,7 @@ fn openFileUnder(app: *App, name: []const u8, other: []const u8, email: []const 
 /// The guard's *File under*: read the keychain again for `target`.
 pub fn fileUnderAccept(app: *App, target: []const u8, choice: usize) CommandError!void {
     if (choice != 0) return;
-    if (!keychainReadable(app)) return app.diag.fail(app.frame.allocator(), "the keychain cannot be read here", .{});
+    if (!loginReadable(app)) return app.diag.fail(app.frame.allocator(), "the Claude Code login cannot be read here", .{});
     try spawnKeychain(app, .file_under, .{ .target = target });
 }
 
@@ -1498,7 +1535,10 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *UsagePane, area: Rect) Allocator.
     const s = st(app);
     const now = nowSecs(app);
     const views = try ui.arena.alloc(usage_view.AccountView, s.accounts.items.len);
-    for (s.accounts.items, 0..) |*a, i| views[i] = a.view();
+    for (s.accounts.items, 0..) |*a, i| {
+        views[i] = a.view();
+        if (s.schedFor(a.name)) |sched| views[i].renewing = sched.pending and sched.renewing;
+    }
     usage_view.draw(ui, id, area, p, .{
         .accounts = views,
         .codex = s.codex,
@@ -1920,6 +1960,11 @@ test "the state line's words, per state" {
     // The session reset passed: the week's, in the long form.
     u.resets_at = now - 10;
     try t.expectEqualStrings("signed in · resets Sep 18 at 8pm", try usage_view.stateLine(ar, usage.accountState(&u), &u, now, tz));
+    // Expired with a fetch out renewing it: no button yet.
+    var stale: usage.Usage = .{ .fetched_at = now, .percent = 40 };
+    usage.applyFetchError(&stale, .{ .message = "HTTP 401: token rejected", .auth = .rejected }, now);
+    try t.expectEqualStrings("expired — refreshing…", try usage_view.stateLine(ar, usage.shownState(&stale, true), &stale, now, tz));
+    try t.expectEqualStrings("expired — Re-auth", try usage_view.stateLine(ar, usage.shownState(&stale, false), &stale, now, tz));
     // No reading yet.
     var fresh: usage.Usage = .{};
     try t.expectEqualStrings("checking…", try usage_view.stateLine(ar, usage.accountState(&fresh), &fresh, now, tz));
