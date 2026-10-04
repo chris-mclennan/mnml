@@ -1416,6 +1416,8 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             else => {},
         },
         .toggle_statusline_segment => |seg_key| try statusline_app.toggleHidden(app, seg_key),
+        .move_statusline_segment => |mv| _ = try statusline_app.moveSegment(app, mv.key, mv.left),
+        .reset_statusline_order => try statusline_app.resetOrder(app),
         .rail_show => |s| activity_bar.setHidden(app, s, false) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
@@ -2805,7 +2807,10 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .pr => if (right) try context_menus.openPrMenu(app, m.x, m.y) else if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
                     .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y),
                     .symbol => if (right) try context_menus.openSymbolMenu(app, m.x, m.y),
-                    .macro => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    // A chip whose left click is its command opens, on
+                    // the right, the menu `addMoveRows` builds below: that
+                    // command first, then the moves.
+                    .macro => {},
                     .find => if (right) try context_menus.openFindMenu(app, m.x, m.y),
                     .test_run => if (right) try context_menus.openTestMenu(app, m.x, m.y) else if (tests_pane.find(app)) |id_pane| {
                         app.setActive(id_pane);
@@ -2819,7 +2824,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y),
                     // Background jobs: either button opens the list —
                     // the chip is a count, the list is what it counts.
-                    .jobs => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    .jobs => {},
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
                     .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
@@ -2830,9 +2835,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     // (`:LspStatus`), the LSP menu on the right.
                     .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y),
                     .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y),
-                    .autosave => app.toast("autosave: {d}s (`.editor.autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
+                    .autosave => if (!right) app.toast("autosave: {d}s (`.editor.autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
                     // The one-click override for the file at hand.
-                    .highlight => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    .highlight => {},
                     .filesize => if (right) try context_menus.openSizeMenu(app, m.x, m.y) else if (app.activeEditor()) |e| {
                         const n = e.buf.editor.bytes().len;
                         app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
@@ -2842,12 +2847,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y),
                     .clock => if (right) try clock_mod.openMenu(app, m.x, m.y),
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y),
-                    .zoom => try runCmd(app, primary_command.statusSeg(app, seg).?),
                     // The session ring's chip and its arrows.
-                    .sessions => try runCmd(app, primary_command.statusSeg(app, seg).?),
-                    .session_prev => try runCmd(app, primary_command.statusSeg(app, seg).?),
-                    .session_next => try runCmd(app, primary_command.statusSeg(app, seg).?),
-                    .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
+                    .zoom, .sessions, .session_prev, .session_next => {},
+                    .dev_profile => if (!right) app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     .sandbox => if (app.sandboxState() == .unsafe)
                         app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
                     else if (app.demoActive())
@@ -2862,6 +2864,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     if (right) try context_menus.openIntegrationSegmentMenu(app, slot, m.x, m.y) else try ipc.effects.clickSegment(app, slot);
                 },
             }
+            // Every chip that moves ends its right-click menu on *Move
+            // left* / *Move right* (`ui.statusline_segment_order`).
+            if (right) try statusline_app.addMoveRows(app, seg, m.x, m.y);
         },
         .dock => |d| try dock.mouse(app, d.id, d.part, m),
         .launcher_dock => |part| try launcher_dock.mouse(app, part, m),

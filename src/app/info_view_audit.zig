@@ -591,6 +591,19 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         fn lspChip(a: *App) Allocator.Error!void {
             return statusline_app.openLspChipMenu(a, 5, 5);
         }
+        // A chip's right-click as the row builds it: its own menu, then
+        // *Move left* / *Move right*.
+        fn bellMoves(a: *App) Allocator.Error!void {
+            try cm.openBellMenu(a, 5, 5);
+            return statusline_app.addMoveRows(a, statusline_app.SegId.bell.raw(), 5, 5);
+        }
+        // A chip with no menu of its own: its command, then the moves.
+        fn jobsMoves(a: *App) Allocator.Error!void {
+            return statusline_app.addMoveRows(a, statusline_app.SegId.jobs.raw(), 5, 5);
+        }
+        fn statuslineBar(a: *App) Allocator.Error!void {
+            return statusline_app.openBarMenu(a, 5, 5);
+        }
         fn link(a: *App) Allocator.Error!void {
             return cm.openLinkMenu(a, "https://example.com/", null, 5, 5);
         }
@@ -665,6 +678,9 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         .{ .name = "coverage", .open = &Fns.coverageMode },
         .{ .name = "now_playing", .open = &Fns.nowPlaying },
         .{ .name = "lsp_chip", .open = &Fns.lspChip },
+        .{ .name = "bell_moves", .open = &Fns.bellMoves },
+        .{ .name = "jobs_moves", .open = &Fns.jobsMoves },
+        .{ .name = "statusline_bar", .open = &Fns.statuslineBar },
         .{ .name = "link", .open = &Fns.link },
         .{ .name = "breadcrumb", .open = &Fns.breadcrumb },
         .{ .name = "welcome_recent", .open = &Fns.welcomeRecent },
