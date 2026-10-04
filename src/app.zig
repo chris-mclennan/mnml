@@ -4104,6 +4104,7 @@ test {
     _ = @import("app/trash.zig");
     _ = @import("app/transfers.zig");
     _ = @import("ui/files_view.zig");
+    _ = @import("ui/requests_view.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

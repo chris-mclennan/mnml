@@ -21,6 +21,8 @@ const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const ids = @import("../core/ids.zig");
 const requests = @import("../app/requests.zig");
+const columns = @import("mnml_sdk").pane.columns;
+const cellWidth = @import("mnml_sdk").pane.width;
 
 const Style = vaxis.Style;
 const PaneId = ids.PaneId;
@@ -76,6 +78,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused
 
     const body = Rect.init(area.x, area.y + head_rows, area.w, area.h - head_rows);
     const win = list_panel.scrollWindow(&p.scroll, p.cursor, p.shown.len, body.h);
+    const cw = fitColumns(ui, p, win.first, body);
     var y: u16 = 0;
     var i = win.first;
     while (i < p.shown.len and y < body.h) : ({
@@ -91,8 +94,8 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused
         var x = line.x;
         x += ui.putStr(x, line.y, line.w, if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", Theme.onBg(t.accent, bg));
         x += ui.putStr(x, line.y, line.right() -| x, ui.fmt("{s}  ", .{clock(ui, r.ts)}), Theme.onBg(t.muted, bg));
-        x += ui.putStr(x, line.y, line.right() -| x, pad(ui, r.integration, 16), Theme.onBg(t.fg, bg));
-        x += ui.putStr(x, line.y, line.right() -| x, pad(ui, r.reason, 11), Theme.onBg(t.accent, bg));
+        x += ui.putStr(x, line.y, line.right() -| x, pad(ui, r.integration, cw.integration), Theme.onBg(t.fg, bg));
+        x += ui.putStr(x, line.y, line.right() -| x, pad(ui, r.reason, cw.reason), Theme.onBg(t.accent, bg));
         x += ui.putStr(x, line.y, line.right() -| x, pad(ui, r.method, 5), Theme.onBg(t.muted, bg));
 
         // The three numbers come off the right, so they line up
@@ -115,6 +118,36 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *requests.RequestsPane, focused
             _ = ui.putStr(d.x, d.y, d.w, ui.clipStr(ui.fmt("    {s}", .{r.raw}), d.w), Theme.onBg(t.muted, t.bg.bg));
         }
     }
+}
+
+const ColWidths = struct { integration: u16 = 16, reason: u16 = 11 };
+
+/// The integration and reason columns' widths for the rows on screen:
+/// 16 and 11 at least, and on a pane with room to spare, what their
+/// longest cell needs (`sdk.pane.columns`, the rule every table in the
+/// family follows) — shared with the path, which takes what is left.
+fn fitColumns(ui: Ui, p: *const requests.RequestsPane, first: usize, body: Rect) ColWidths {
+    var need = [3]u16{ 0, 0, 0 };
+    var tail_w: usize = 0;
+    const last = @min(p.shown.len, first + body.h);
+    for (p.shown[first..last]) |idx| {
+        const r = p.rows[idx];
+        need[0] = @max(need[0], @as(u16, @intCast(@min(cellWidth(r.integration) + 1, 60))));
+        need[1] = @max(need[1], @as(u16, @intCast(@min(cellWidth(r.reason) + 1, 60))));
+        need[2] = @max(need[2], @as(u16, @intCast(@min(cellWidth(r.path), 200))));
+        tail_w = @max(tail_w, ui.fmt("{s}  {s}  {s}", .{ statusText(ui, r), msText(ui, r.ms), waitText(ui, r) }).len);
+    }
+    // The cursor marker, the clock and the method go first; the path
+    // keeps two cells of air before the numbers.
+    const avail: u16 = body.w -| @as(u16, @intCast(@min(2 + 10 + 5 + tail_w + 2, body.w)));
+    const specs = [_]columns.Spec{
+        .{ .w = 16, .need = need[0] },
+        .{ .w = 11, .need = need[1] },
+        .{ .w = 1, .rest = true, .need = need[2] },
+    };
+    var out: [3]u16 = undefined;
+    columns.fit(&out, &specs, avail, 0);
+    return .{ .integration = @max(out[0], 16), .reason = @max(out[1], 11) };
 }
 
 /// `last hour — jira 27 req · 1 429 · 1.1s avg wait · 3 cached` per
@@ -189,7 +222,7 @@ fn clock(ui: Ui, ts: f64) []const u8 {
 /// columns move with their content cannot be read down.
 fn pad(ui: Ui, s: []const u8, w: u16) []const u8 {
     const cut = ui.clipStr(s, w);
-    const spaces = "                         ";
+    const spaces = " " ** 64;
     const n = @min(@as(usize, w) -| cut.len, spaces.len);
     return ui.fmt("{s}{s}", .{ cut, spaces[0..n] });
 }
@@ -298,6 +331,28 @@ test "the view paints the hour's totals, who drew on the buckets, one row per re
     p.filtering = true;
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectRow(4, "  \u{f0349} 429█");
+}
+
+test "a long integration or reason reads whole on a wide view; a narrow one cuts it as before" {
+    var p = requests.RequestsPane.init(testing.allocator);
+    defer p.deinit();
+    const a = p.snapshot.allocator();
+    const rows = try a.alloc(requests.Row, 1);
+    rows[0] = .{ .ts = 51723, .service = "jira", .integration = "mnml-integration-long-name", .reason = "background_prefetch", .method = "GET", .host = "h", .path = "/x", .status = 200, .ms = 4, .raw = "{}" };
+    p.rows = rows;
+    p.shown = try a.dupe(u32, &.{0});
+    for ([_]u16{ 160, 60 }) |w| {
+        var f = try Fixture.init(w, 12);
+        defer f.deinit();
+        draw(f.ui(), 9, f.full(), &p, true);
+        if (w == 160) {
+            try f.expectContains("mnml-integration-long-name");
+            try f.expectContains("background_prefetch");
+        } else {
+            try f.expectLacks("mnml-integration-long-name");
+            try f.expectLacks("background_prefetch");
+        }
+    }
 }
 
 test "an empty view says where the files would be; a filter that matches nothing says so" {
