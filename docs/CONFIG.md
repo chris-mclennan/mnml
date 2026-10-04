@@ -2118,9 +2118,11 @@ mnml's own, which no NvChad palette sets: `statusline_pr`,
 a chip's text; `statusline_find`, `statusline_codex`,
 `statusline_coverage`, `statusline_transfer`, `statusline_lsp`,
 `statusline_wrap`, `statusline_autosave`, `statusline_sel` and
-`statusline_language` a chip's ground. A theme that leaves one out gets
-the colour that segment always wore (`purple`, `yellow`, `cyan`,
-`teal`, `blue`, `green`). Which segments show at all is
+`statusline_language` a chip's ground, and `statusline_pager` the
+session pager's (` ‹ ▣ 3/7 › `, its arrows and count in the dark ink).
+A theme that leaves one out gets the colour that segment always wore
+(`purple`, `yellow`, `cyan`, `teal`, `blue`, `green`; `sun` for the
+pager). Which segments show at all is
 `.statusline.hidden`, not the theme.
 
 ### First launch

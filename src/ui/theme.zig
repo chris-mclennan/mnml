@@ -196,6 +196,10 @@ pub const Segments = struct {
     workspace: Color,
     /// `statusline_language` → `blue`: the language chip's ground.
     language: Color,
+    /// `statusline_pager` → `sun`: the session pager's ground
+    /// (` ‹ ▣ 3/7 › `) — a colour the chips beside it do not wear, so
+    /// it no longer reads as a gap in the bar.
+    pager: Color,
 };
 
 pub fn rgb(hex: u24) Color {
@@ -240,8 +244,9 @@ pub fn resolve(src: Source) Palette {
     const green = pick(src, &.{"green"}, white);
     const teal = pick(src, &.{"teal"}, white);
     const cyan = pick(src, &.{ "cyan", "blue" }, white);
+    const sun = pick(src, &.{ "sun", "yellow" }, white);
     var seg: Segments = undefined;
-    inline for (.{ .{ "pr", purple }, .{ "symbol", purple }, .{ "find", yellow }, .{ "jobs", cyan }, .{ "codex", cyan }, .{ "coverage", teal }, .{ "transfer", cyan }, .{ "lsp", blue }, .{ "wrap", purple }, .{ "autosave", green }, .{ "sel", yellow }, .{ "workspace", blue }, .{ "language", blue } }) |kv| {
+    inline for (.{ .{ "pr", purple }, .{ "symbol", purple }, .{ "find", yellow }, .{ "jobs", cyan }, .{ "codex", cyan }, .{ "coverage", teal }, .{ "transfer", cyan }, .{ "lsp", blue }, .{ "wrap", purple }, .{ "autosave", green }, .{ "sel", yellow }, .{ "workspace", blue }, .{ "language", blue }, .{ "pager", sun } }) |kv| {
         @field(seg, kv[0]) = pick(src, &.{"statusline_" ++ kv[0]}, kv[1]);
     }
     return .{
@@ -263,7 +268,7 @@ pub fn resolve(src: Source) Palette {
         .green = pick(src, &.{"green"}, white),
         .vibrant_green = pick(src, &.{ "vibrant_green", "green" }, white),
         .yellow = pick(src, &.{"yellow"}, white),
-        .sun = pick(src, &.{ "sun", "yellow" }, white),
+        .sun = sun,
         .orange = pick(src, &.{"orange"}, white),
         .blue = pick(src, &.{"blue"}, white),
         .nord_blue = pick(src, &.{ "nord_blue", "blue" }, white),
@@ -707,4 +712,7 @@ test "a theme's statusline_<segment> key colours that segment; without one it we
     const own = resolve(.{ .name = "t", .kind = .dark, .base_30 = .{ .blue = 0x0000ff, .statusline_lsp = 0x123456 } });
     try std.testing.expect(Color.eql(own.seg.lsp, rgb(0x123456)));
     try std.testing.expect(Color.eql(own.seg.language, rgb(0x0000ff)));
+    // The session pager: `sun`, else `yellow`, unless the theme names it.
+    try std.testing.expect(Color.eql(resolve(.{ .name = "t", .kind = .dark, .base_30 = .{ .yellow = 0xffff00 } }).seg.pager, rgb(0xffff00)));
+    try std.testing.expect(Color.eql(resolve(.{ .name = "t", .kind = .dark, .base_30 = .{ .sun = 0xeecc00, .statusline_pager = 0x654321 } }).seg.pager, rgb(0x654321)));
 }

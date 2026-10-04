@@ -50,8 +50,11 @@ the release ships one file), and one line per change a user can see.
   writes `.statusline.hidden` to the home config. RESTRICTED and the
   sandbox chip never hide.
 - A theme can colour the segments: `statusline_lsp`, `statusline_wrap`,
-  `statusline_language` and ten more `base_30` keys, each falling back to
+  `statusline_language` and eleven more `base_30` keys, each falling back to
   the colour the segment wore before.
+- The session pager, ` ‹ ▣ 1/1 › `, has a ground of its own instead of the
+  bar's dark grey: `sun` (a theme sets `statusline_pager`), its arrows and
+  count in the dark ink the other coloured chips use.
 - The bell's right-click marks the unread warnings read and copies the
   last message or the whole log; the mode chip's offers *Toggle keymap*.
 - The spinner — the jobs chip's, the panels', an integration pane's — is

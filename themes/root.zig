@@ -64,6 +64,7 @@ pub const Base30 = struct {
     statusline_sel: ?u24 = null,
     statusline_workspace: ?u24 = null,
     statusline_language: ?u24 = null,
+    statusline_pager: ?u24 = null,
 };
 
 /// The syntax palette, `base00`..`base0F`. A missing slot falls back
