@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const config = @import("config.zig");
 const model = @import("model.zig");
+const recent = @import("recent.zig");
 const jira = @import("jira.zig");
 const ratelimit = @import("ratelimit.zig");
 const bitbucket = @import("bitbucket.zig");
@@ -177,6 +178,13 @@ pub const RefreshJob = struct {
     /// and a refetch of one cost the same requests and mean different
     /// things when the log is read back.
     reason: jira.Reason = .pane_open,
+    /// Where the shared recent-items cache lives (`src/recent.zig`);
+    /// null when it is off. Borrowed from the App, which outlives jobs.
+    recent_root: ?[]const u8 = null,
+    /// What the cache calls this tab's listing: `tab:<name>`. On the
+    /// job's arena.
+    listing: []const u8 = "",
+    refresh_interval_secs: u32 = 0,
 
     pub fn deinit(j: *RefreshJob) void {
         j.arena.deinit();
@@ -363,6 +371,9 @@ pub const App = struct {
     /// (`sdk.feed`). `main` builds it from the config; the default
     /// never polls, which is what a test gets.
     watch: sdk.feed.Watcher = .{ .poll = .init(0, 0) },
+    /// The shared recent-items cache's directory (`src/recent.zig`);
+    /// null when it is off. Owned by main's arena.
+    recent_root: ?[]const u8 = null,
     /// Tickets refetched on their own because the feed named them.
     feed_fetches: u32 = 0,
     /// The one refetch in flight, and the group it runs on. With no
@@ -1032,9 +1043,12 @@ pub const App = struct {
             .extra_fields = &.{},
             .team_field_id = a.cfg.team_field_id,
             .reason = if (t.fetched) .refresh else .pane_open,
+            .recent_root = a.recent_root,
+            .refresh_interval_secs = a.cfg.refresh_interval_secs,
         };
         errdefer job.deinit();
         const arena = job.arena.allocator();
+        job.listing = try std.fmt.allocPrint(arena, "tab:{s}", .{t.cfg.name});
         // A board tab is fetched through the agile endpoint, whose
         // query is a list of clauses rather than one JQL string — the
         // window would have to be spliced somewhere else, so it is not
@@ -1099,6 +1113,7 @@ pub const App = struct {
         };
         switch (answer) {
             .failed => |f| {
+                recent.failed(job.arena.child_allocator, client.io, job.recent_root);
                 const msg = ar.dupe(u8, f.message) catch "out of memory";
                 return .{ .idx = job.idx, .arena = arena, .error_text = msg };
             },
@@ -1119,6 +1134,7 @@ pub const App = struct {
                         if (!still) gone.append(ar, ar.dupe(u8, k) catch "") catch {};
                     }
                     const base = ar.dupe(u8, job.base_jql) catch "";
+                    _ = recent.publish(job.arena.child_allocator, client.io, job.recent_root, job.listing, false, job.refresh_interval_secs, issues);
                     return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = true, .base_jql = base, .departed = gone.items, .feed = true };
                 }
                 if (delta and job.shown_keys.len > 0) {
@@ -1149,6 +1165,9 @@ pub const App = struct {
                 // seeded from the cache and queued behind the paint
                 // instead (`applyRefresh`, `pumpPrs`).
                 const base = ar.dupe(u8, job.base_jql) catch "";
+                // The listing as the shared cache's: whole unless this
+                // was a window onto it.
+                _ = recent.publish(job.arena.child_allocator, client.io, job.recent_root, job.listing, !delta, job.refresh_interval_secs, issues);
                 return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = delta, .base_jql = base, .departed = departed };
             },
         }

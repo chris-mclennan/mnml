@@ -25,6 +25,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const sdk = @import("mnml_sdk");
+const recent = @import("src/recent.zig");
 
 pub const config = @import("src/config.zig");
 pub const auth = @import("src/auth.zig");
@@ -501,6 +502,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .shared_bucket = try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.budget.shared_bucket),
     });
     // When to ask again, and what an event file says changed.
+    app.recent_root = try recent.rootFor(arena, env);
     app.watch = .init(io, .issue, rd.cfg.refresh_interval_secs, rd.cfg.poll_max_secs, rd.cfg.feed, try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.feed.file));
     client.budget = &app.budget;
     // What the last run learned about each ticket's linked PRs, keyed
@@ -1159,17 +1161,23 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
     client.gate = &gate;
 
     var v: Values = .{};
+    // Every listing this run polls also lands in the shared
+    // recent-items cache (`src/recent.zig`), so a key elsewhere gets
+    // its title. Never a request of its own.
+    const recent_root = try recent.rootFor(arena, env);
     const base = config.TabKind.work_assigned.defaultJql().?;
     const jql = try jira.withProjects(arena, base, c.projects);
     switch (jira.search(&client, arena, jql, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
         .ok => |items| {
             const issues = try jira.parseIssues(arena, items, c.team_field_id);
+            _ = recent.publish(gpa, io, recent_root, "assigned_open", true, c.refresh_interval_secs, issues);
             const a = try assignedValues(arena, issues);
             v.assigned_open = a.assigned_open;
             v.assigned_by_status = a.assigned_by_status;
             v.assigned_items = a.assigned_items;
         },
         .failed => |f| {
+            recent.failed(gpa, io, recent_root);
             try err.print("mnml-jira --values: {s}\n", .{f.message});
             try out.writeAll("{\"assigned_open\":null}\n");
             return 1;
@@ -1186,6 +1194,7 @@ fn values(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Al
             switch (jira.search(&client, arena, scoped, &.{}, .poll) catch jira.Answer([]const std.json.Value){ .failed = .{ .status = 0, .message = "the site did not answer" } }) {
                 .ok => |items| {
                     const issues = try jira.parseIssues(arena, items, c.team_field_id);
+                    _ = recent.publish(gpa, io, recent_root, "qa_actionable", true, c.refresh_interval_secs, issues);
                     v.qa_actionable = items.len;
                     v.qa_by_status = try countByStatus(arena, issues);
                     v.qa_items = try issueItems(arena, issues);
