@@ -720,6 +720,7 @@ pub fn apply(app: *App, cmd: *const ipc_command.Command) Allocator.Error!bool {
         }),
         .statusline_clear_segment => |id| _ = app.ipc_fx.clearSegment(app.gpa, id),
         .set_activity_badge => |b| try app.ipc_fx.setBadge(app.gpa, b.section, b.count),
+        .link_ranges => |r| try app.link_rules.setRanges(app.gpa, r.id, r.ranges),
         .notify => |n| try notify(app, .{ .title = n.title, .body = n.body, .level = n.level, .sound = n.sound, .source = n.source }),
         .open_pty => |p| try openPty(app, .{ .cwd = p.cwd, .command = p.command }),
         .focus_session => |f| _ = sessions_table.focusSession(app, .{

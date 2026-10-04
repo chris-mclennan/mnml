@@ -23,6 +23,14 @@
 //! (`env_fallback`). A rule with a value still missing is not in force
 //! (`notes` says which), and one whose address would not be `http(s)`
 //! is refused.
+//!
+//! A `.range` rule (`resolve = .range`) is for a number that names no
+//! repo — `Pull request 5505`. Its integration publishes, over IPC
+//! (`link-ranges`), which numbers each of its repos is using; group 1
+//! of a match is the number, and the repos whose rows of the rule's
+//! kind hold it fill `{repo}` (`resolveRange`). One repo: a link. More:
+//! a link to the first — the workspace's own repo first — and its menu
+//! lists each (`candidates`). None: no link.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -34,6 +42,18 @@ const link_span = @import("../ui/link_span.zig");
 const integrations = @import("integrations.zig");
 
 pub const Span = link_span.Span;
+const ipc_command = @import("../ipc/command.zig");
+const remote_mod = @import("../git/remote.zig");
+
+/// A published row's high, plus this: a number created since the
+/// integration's last poll still resolves to the repo just under it.
+pub const range_slack: u64 = 50;
+
+/// One row of an integration's range table, gpa-owned.
+pub const RangeRow = struct { repo: []u8, kind: []u8, low: u64, high: u64 };
+
+/// One repo a `.range` link could mean: the menu's `Open in <repo>`.
+pub const Candidate = struct { repo: []const u8, url: []const u8 };
 
 /// One integration's pattern, compiled, with its address template's
 /// values bound.
@@ -41,8 +61,12 @@ pub const Rule = struct {
     /// The manifest id, gpa-owned.
     owner: []u8,
     re: regex.Regex,
-    /// The template, gpa-owned: only `{0}`–`{9}` / `{match}` left.
+    /// The template, gpa-owned: only `{0}`–`{9}` / `{match}` left
+    /// (and `{repo}`, on a `.range` rule).
     url: []u8,
+    /// `.range`: the row kind the number is looked up in, gpa-owned;
+    /// empty on a literal rule.
+    kind: []u8 = &.{},
 };
 
 const Entry = struct {
@@ -69,6 +93,16 @@ pub const State = struct {
     /// moving (`pty_links.zig`): the next frame should come even with
     /// nothing else to show, so the line links once it stops.
     pending: bool = false,
+    /// Each integration's latest range table (`link-ranges`), by
+    /// manifest id; keys and rows gpa-owned.
+    tables: std.StringHashMapUnmanaged([]RangeRow) = .empty,
+    /// A `.range` link that could mean more than one repo: its address
+    /// (the first candidate's) → every candidate, for its menu. Filled
+    /// as links are found, emptied with the cache; gpa-owned.
+    alts: std.StringHashMapUnmanaged([]Candidate) = .empty,
+    /// The workspace's own repo (`acme/widget`, off its git remote) —
+    /// the candidate a `.range` link opens first. gpa-owned.
+    home: []u8 = &.{},
     gpa: Allocator = undefined,
 
     pub fn deinit(self: *State, gpa: Allocator) void {
@@ -77,6 +111,14 @@ pub const State = struct {
         self.notes.deinit(gpa);
         self.clearCache(gpa);
         self.cache.deinit(gpa);
+        self.alts.deinit(gpa);
+        var it = self.tables.iterator();
+        while (it.next()) |e| {
+            freeRows(gpa, e.value_ptr.*);
+            gpa.free(e.key_ptr.*);
+        }
+        self.tables.deinit(gpa);
+        gpa.free(self.home);
     }
 
     fn clearRules(self: *State, gpa: Allocator) void {
@@ -84,6 +126,7 @@ pub const State = struct {
             r.re.deinit();
             gpa.free(r.owner);
             gpa.free(r.url);
+            gpa.free(r.kind);
         }
         self.rules.clearRetainingCapacity();
         for (self.notes.items) |n| gpa.free(n);
@@ -97,6 +140,60 @@ pub const State = struct {
             gpa.free(e.key_ptr.*);
         }
         self.cache.clearRetainingCapacity();
+        var at = self.alts.iterator();
+        while (at.next()) |e| {
+            freeCandidates(gpa, e.value_ptr.*);
+            gpa.free(e.key_ptr.*);
+        }
+        self.alts.clearRetainingCapacity();
+    }
+
+    /// Every repo the link to `url` could mean, the one it opens first;
+    /// empty for a link that means one thing.
+    pub fn candidates(self: *const State, url: []const u8) []const Candidate {
+        return self.alts.get(url) orelse &.{};
+    }
+
+    /// Replace integration `owner`'s range table and drop what was
+    /// found under the old one.
+    pub fn setRanges(self: *State, gpa: Allocator, owner: []const u8, rows: []const ipc_command.LinkRange) Allocator.Error!void {
+        const owned = try gpa.alloc(RangeRow, rows.len);
+        var n: usize = 0;
+        errdefer {
+            freeRows(gpa, owned[0..n]);
+        }
+        for (rows) |r| {
+            const repo = try gpa.dupe(u8, r.repo);
+            errdefer gpa.free(repo);
+            owned[n] = .{ .repo = repo, .kind = try gpa.dupe(u8, r.kind), .low = r.low, .high = r.high };
+            n += 1;
+        }
+        const gop = try self.tables.getOrPut(gpa, owner);
+        if (gop.found_existing) {
+            freeRows(gpa, gop.value_ptr.*);
+        } else {
+            gop.key_ptr.* = gpa.dupe(u8, owner) catch |err| {
+                self.tables.removeByPtr(gop.key_ptr);
+                return err;
+            };
+        }
+        gop.value_ptr.* = owned;
+        self.clearCache(gpa);
+        self.gen +%= 1;
+    }
+
+    /// Follow the workspace's remote: a new home repo re-finds every
+    /// text, since which candidate opens first may have changed.
+    pub fn setHome(self: *State, gpa: Allocator, remote: []const u8) void {
+        const path = if (remote_mod.parseRemote(remote)) |r| r.path else "";
+        if (std.mem.eql(u8, path, self.home)) return;
+        const owned = gpa.dupe(u8, path) catch return;
+        gpa.free(self.home);
+        self.home = owned;
+        if (self.tables.count() > 0) {
+            self.clearCache(gpa);
+            self.gen +%= 1;
+        }
     }
 
     /// The top of a frame: a new stamp, and — once the cache is full —
@@ -136,6 +233,22 @@ pub const State = struct {
     }
 };
 
+fn freeRows(gpa: Allocator, rows: []RangeRow) void {
+    for (rows) |r| {
+        gpa.free(r.repo);
+        gpa.free(r.kind);
+    }
+    gpa.free(rows);
+}
+
+fn freeCandidates(gpa: Allocator, cs: []Candidate) void {
+    for (cs) |c| {
+        gpa.free(c.repo);
+        gpa.free(c.url);
+    }
+    gpa.free(cs);
+}
+
 fn freeSpans(gpa: Allocator, spans: []Span) void {
     for (spans) |s| gpa.free(s.url);
     gpa.free(spans);
@@ -148,6 +261,7 @@ pub fn finder(app: *App) link_span.Finder {
 
 fn findFor(ctx: *anyopaque, text: []const u8) []const Span {
     const app: *App = @ptrCast(@alignCast(ctx));
+    app.link_rules.setHome(app.gpa, app.git.remote);
     return app.link_rules.spans(app.gpa, text);
 }
 
@@ -173,6 +287,12 @@ pub fn find(st: *State, gpa: Allocator, text: []const u8) Allocator.Error![]Span
             if (m.end == m.start) continue;
             if (!standsAlone(text, m.start, m.end)) continue;
             if (overlaps(out.items, m.start, m.end)) continue;
+            if (rule.kind.len > 0) {
+                const url = try rangeUrl(st, gpa, rule, text, m) orelse continue;
+                errdefer gpa.free(url);
+                try out.append(gpa, .{ .start = m.start, .end = m.end, .url = url });
+                continue;
+            }
             const url = try expand(gpa, rule.url, text, m);
             errdefer gpa.free(url);
             try out.append(gpa, .{ .start = m.start, .end = m.end, .url = url });
@@ -180,6 +300,63 @@ pub fn find(st: *State, gpa: Allocator, text: []const u8) Allocator.Error![]Span
     }
     std.mem.sort(Span, out.items, {}, byStart);
     return out.toOwnedSlice(gpa);
+}
+
+/// A `.range` match's address: its number's repos (`resolveRange`), the
+/// first filling `{repo}`; null when no repo holds it. Several record
+/// every candidate under the address, for its menu.
+fn rangeUrl(st: *State, gpa: Allocator, rule: *const Rule, text: []const u8, m: regex.Match) Allocator.Error!?[]u8 {
+    const g = m.group(1) orelse m.group(0).?;
+    const n = std.fmt.parseInt(u64, text[g.start..g.end], 10) catch return null;
+    const rows = st.tables.get(rule.owner) orelse return null;
+    var pick: [max_candidates]usize = undefined;
+    const got = resolveRange(rows, rule.kind, n, st.home, &pick);
+    if (got.len == 0) return null;
+    const expanded = try expand(gpa, rule.url, text, m);
+    defer gpa.free(expanded);
+    const first = try std.mem.replaceOwned(u8, gpa, expanded, "{" ++ manifest_mod.manifest.range_repo_var ++ "}", rows[got[0]].repo);
+    if (got.len == 1 or st.alts.contains(first)) return first;
+    errdefer gpa.free(first);
+    const cs = try gpa.alloc(Candidate, got.len);
+    var made: usize = 0;
+    errdefer freeCandidates(gpa, cs[0..made]);
+    for (got) |i| {
+        const repo = try gpa.dupe(u8, rows[i].repo);
+        errdefer gpa.free(repo);
+        cs[made] = .{ .repo = repo, .url = try std.mem.replaceOwned(u8, gpa, expanded, "{" ++ manifest_mod.manifest.range_repo_var ++ "}", rows[i].repo) };
+        made += 1;
+    }
+    const key = try gpa.dupe(u8, first);
+    errdefer gpa.free(key);
+    try st.alts.put(gpa, key, cs);
+    return first;
+}
+
+/// At most this many repos for one number; past it the menu would not
+/// fit, and a number that many repos share says little anyway.
+pub const max_candidates = 8;
+
+/// The rows of `kind` whose `low`..`high` hold `n`, the `home` repo
+/// first, then in the table's order; failing any, the rows `n` is at
+/// most `range_slack` past the high of (a number made since the poll).
+/// Indices into `rows`, in `buf`.
+pub fn resolveRange(rows: []const RangeRow, kind: []const u8, n: u64, home: []const u8, buf: *[max_candidates]usize) []const usize {
+    var len: usize = 0;
+    for ([_]bool{ false, true }) |slack| {
+        // The home repo's row first, then the rest in order.
+        for ([_]bool{ true, false }) |want_home| for (rows, 0..) |r, i| {
+            if (len == buf.len) break;
+            if (!std.mem.eql(u8, r.kind, kind)) continue;
+            const is_home = home.len > 0 and std.ascii.eqlIgnoreCase(r.repo, home);
+            if (is_home != want_home) continue;
+            const holds = if (slack) n > r.high and n - r.high <= range_slack else n >= r.low and n <= r.high;
+            if (!holds) continue;
+            buf[len] = i;
+            len += 1;
+        };
+        if (len > 0) break;
+    }
+    return buf[0..len];
 }
 
 fn byStart(_: void, a: Span, b: Span) bool {
@@ -275,9 +452,13 @@ const Why = struct { text: []const u8, warn: bool };
 fn addRule(st: *State, gpa: Allocator, arena: Allocator, app: *App, m: manifest_mod.Manifest, l: manifest_mod.manifest.Link) Allocator.Error!?Why {
     if (l.pattern.len == 0) return .{ .text = "an empty pattern", .warn = true };
     var url = std.mem.trim(u8, l.url, " \t");
+    const range = l.resolve == .range;
+    const repo_var = manifest_mod.manifest.range_repo_var;
+    if (range and l.ranges.len == 0) return .{ .text = "a range link names no `ranges` kind", .warn = true };
+    if (range and std.mem.indexOf(u8, url, "{" ++ repo_var ++ "}") == null) return .{ .text = "a range link's url has no {repo}", .warn = true };
     // Bind what the manifest can answer, one `{key}` at a time.
     var guard: usize = 0;
-    while (manifest_mod.manifest.unboundLinkVar(url)) |name| : (guard += 1) {
+    while (manifest_mod.manifest.unboundLinkVarExcept(url, if (range) repo_var else "")) |name| : (guard += 1) {
         if (guard > 16) break;
         const value = varValue(app, m, name) orelse return .{
             .text = try std.fmt.allocPrint(arena, "{{{s}}} has no value — set it up (or `{s}`), then refresh", .{ name, envHint(m, name) orelse "reinstall the integration" }),
@@ -295,7 +476,9 @@ fn addRule(st: *State, gpa: Allocator, arena: Allocator, app: *App, m: manifest_
     errdefer gpa.free(owner);
     const owned_url = try gpa.dupe(u8, url);
     errdefer gpa.free(owned_url);
-    try st.rules.append(gpa, .{ .owner = owner, .re = re, .url = owned_url });
+    const kind = try gpa.dupe(u8, if (range) l.ranges else "");
+    errdefer gpa.free(kind);
+    try st.rules.append(gpa, .{ .owner = owner, .re = re, .url = owned_url, .kind = kind });
     return null;
 }
 
@@ -502,4 +685,142 @@ test "a forge's <repo>#<n>: the repo's PR in the workspace bound from the env; a
     try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/7", got[0].url);
     try t.expectEqualStrings("acme/widget#42", text[got[1].start..got[1].end]);
     try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/42", got[1].url);
+}
+
+// ─── a bare number, by the published ranges ────────────────────────────
+
+fn testRangeRule(st: *State, pattern: []const u8, url: []const u8, kind: []const u8) !void {
+    try st.rules.append(t.allocator, .{
+        .owner = try t.allocator.dupe(u8, "forge"),
+        .re = try regex.Regex.compile(pattern, .{ .dialect = .perl }),
+        .url = try t.allocator.dupe(u8, url),
+        .kind = try t.allocator.dupe(u8, kind),
+    });
+}
+
+/// The fake forge's table: widget's PRs 5490–7130, gadget's 7120–7166
+/// (7120–7130 shared), each one's pipelines elsewhere.
+fn testRanges(st: *State) !void {
+    try testRangeRule(st, "(?i)\\bpull request #?(\\d+)", "https://bitbucket.org/{repo}/pull-requests/{1}", "pr");
+    try testRangeRule(st, "(?i)\\bPR #?(\\d+)", "https://bitbucket.org/{repo}/pull-requests/{1}", "pr");
+    try testRangeRule(st, "(?i)\\bpipeline #?(\\d+)", "https://bitbucket.org/{repo}/pipelines/results/{1}", "pipeline");
+    try st.setRanges(t.allocator, "forge", &.{
+        .{ .repo = "acme/widget", .kind = "pr", .low = 5490, .high = 7130 },
+        .{ .repo = "acme/gadget", .kind = "pr", .low = 7120, .high = 7166 },
+        .{ .repo = "acme/widget", .kind = "pipeline", .low = 10540, .high = 10554 },
+        .{ .repo = "acme/gadget", .kind = "pipeline", .low = 3300, .high = 3321 },
+    });
+}
+
+test "range: a number one repo's range holds links to that repo's page; its kind's rows only" {
+    var st: State = .{};
+    defer st.deinit(t.allocator);
+    try testRanges(&st);
+    const text = "Pull request 5505 announcement";
+    const got = st.spans(t.allocator, text);
+    try t.expectEqual(@as(usize, 1), got.len);
+    try t.expectEqualStrings("Pull request 5505", text[got[0].start..got[0].end]);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/5505", got[0].url);
+    // One candidate: the menu has nothing more to list.
+    try t.expectEqual(@as(usize, 0), st.candidates(got[0].url).len);
+    // `pipeline 3310` is gadget's pipeline, though gadget's PRs are elsewhere.
+    const p = st.spans(t.allocator, "see pipeline #3310 fail");
+    try t.expectEqual(@as(usize, 1), p.len);
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pipelines/results/3310", p[0].url);
+    // A PR's number is not a pipeline's.
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "pipeline 5505").len);
+    // Case does not matter; `PR #n` is the same thing.
+    const pr = st.spans(t.allocator, "pr #5600 landed");
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/5600", pr[0].url);
+}
+
+test "range: a number several repos hold links to the first, and lists each for the menu" {
+    var st: State = .{};
+    defer st.deinit(t.allocator);
+    try testRanges(&st);
+    const got = st.spans(t.allocator, "PR 7125 is up");
+    try t.expectEqual(@as(usize, 1), got.len);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/7125", got[0].url);
+    const cs = st.candidates(got[0].url);
+    try t.expectEqual(@as(usize, 2), cs.len);
+    try t.expectEqualStrings("acme/widget", cs[0].repo);
+    try t.expectEqualStrings("acme/gadget", cs[1].repo);
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pull-requests/7125", cs[1].url);
+}
+
+test "range: a number no repo holds, or one with no table yet, does not link" {
+    var st: State = .{};
+    defer st.deinit(t.allocator);
+    try testRangeRule(&st, "(?i)\\bPR #?(\\d+)", "https://bitbucket.org/{repo}/pull-requests/{1}", "pr");
+    // No table published yet.
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "PR 5505").len);
+    try st.setRanges(t.allocator, "forge", &.{.{ .repo = "acme/widget", .kind = "pr", .low = 5490, .high = 7130 }});
+    // The new table re-finds the same words.
+    try t.expectEqual(@as(usize, 1), st.spans(t.allocator, "PR 5505").len);
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "PR 5000").len);
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "PR 9000").len);
+    // Another integration's table is not this rule's.
+    try st.setRanges(t.allocator, "forge", &.{});
+    try st.setRanges(t.allocator, "other", &.{.{ .repo = "acme/widget", .kind = "pr", .low = 1, .high = 9999 }});
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "PR 5505").len);
+}
+
+test "range: the workspace's own repo opens first" {
+    var st: State = .{};
+    defer st.deinit(t.allocator);
+    try testRanges(&st);
+    st.setHome(t.allocator, "git@bitbucket.org:acme/gadget.git");
+    const got = st.spans(t.allocator, "PR 7125 is up");
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pull-requests/7125", got[0].url);
+    const cs = st.candidates(got[0].url);
+    try t.expectEqual(@as(usize, 2), cs.len);
+    try t.expectEqualStrings("acme/gadget", cs[0].repo);
+    try t.expectEqualStrings("acme/widget", cs[1].repo);
+    // Home only orders: a number only widget holds is still widget's.
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/5505", st.spans(t.allocator, "PR 5505")[0].url);
+}
+
+test "range: just past a high is that repo's (a number made since the poll); a range that holds it outright wins" {
+    var st: State = .{};
+    defer st.deinit(t.allocator);
+    try testRanges(&st);
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pull-requests/7200", st.spans(t.allocator, "PR 7200")[0].url);
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pull-requests/7216", st.spans(t.allocator, "PR 7216")[0].url);
+    try t.expectEqual(@as(usize, 0), st.spans(t.allocator, "PR 7217").len);
+    // 7140 is within gadget outright and within widget's slack: gadget.
+    const got = st.spans(t.allocator, "PR 7140");
+    try t.expectEqualStrings("https://bitbucket.org/acme/gadget/pull-requests/7140", got[0].url);
+    try t.expectEqual(@as(usize, 0), st.candidates(got[0].url).len);
+}
+
+test "rebuild: a range link keeps {repo} for the match, binds the rest, and is refused without a kind or a {repo}" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    var list = [_]integrations.Installed{.{
+        .manifest = .{
+            .id = "forge",
+            .label = "Forge",
+            .links = &.{
+                .{ .pattern = "(?i)\\bPR #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
+                .{ .pattern = "(?i)\\bpipeline (\\d+)", .url = "https://bitbucket.org/{repo}/pipelines/{1}", .resolve = .range },
+                .{ .pattern = "(?i)\\bbuild (\\d+)", .url = "https://bitbucket.org/x/{1}", .resolve = .range, .ranges = "build" },
+            },
+        },
+        .path = "",
+        .source = .home,
+        .binary_found = true,
+        .slots = &.{},
+    }};
+    app.integrations.list = &list;
+    defer app.integrations.list = &.{};
+    try rebuild(&app);
+    try t.expectEqual(@as(usize, 1), app.link_rules.rules.items.len);
+    try t.expectEqual(@as(usize, 2), app.link_rules.notes.items.len);
+    try app.link_rules.setRanges(app.gpa, "forge", &.{.{ .repo = "acme/widget", .kind = "pr", .low = 5490, .high = 5512 }});
+    const got = app.link_rules.spans(app.gpa, "Pull request 1 and PR 5505");
+    try t.expectEqual(@as(usize, 1), got.len);
+    try t.expectEqualStrings("https://bitbucket.org/acme/widget/pull-requests/5505", got[0].url);
+    // A rebuild keeps the table: it is the integration's, not the manifest's.
+    try rebuild(&app);
+    try t.expectEqual(@as(usize, 1), app.link_rules.spans(app.gpa, "PR 5505").len);
 }
