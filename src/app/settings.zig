@@ -362,6 +362,8 @@ pub const rows = [_]RowSpec{
     // someone looking for them looks.
     .{ .path = "ui.session_notify", .label = "Session notifications", .section = .ai, .scope = .home },
     .{ .path = "ui.session_bell", .label = "Session bell", .section = .ai, .scope = .home },
+    // Where Claude Code's openDiff review opens (`ide.placeReview`).
+    .{ .path = "ai.review_placement", .label = "Claude Code review opens", .section = .ai, .scope = .home },
     // ── Integrations ──
     .{ .path = "sonos.enabled", .label = "Sonos", .section = .integrations, .scope = .home },
     .{ .path = "sonos.chip_label", .label = "Sonos chip label", .section = .integrations, .scope = .home },

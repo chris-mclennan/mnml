@@ -604,10 +604,11 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
     const total = p.hunks.len;
     const target = p.anchor.pane;
     const source = p.source;
+    const back = backTo(app, p, target);
     if (n == 0) {
         try app.forceClosePane(id);
         app.toast("nothing accepted — no change", .{});
-        app.showPane(target);
+        app.showPane(back);
         return;
     }
     // Where the reviewed text is now; refused when it is not there to
@@ -629,7 +630,7 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
         else => {},
     };
     try app.forceClosePane(id);
-    app.showPane(target);
+    app.showPane(back);
     if (from_session) return @import("ide.zig").acceptedToast(app, n, total);
     app.toast("applied {d} of {d} hunk{s}", .{ n, total, if (total == 1) "" else "s" });
 }
@@ -772,9 +773,17 @@ pub fn fitMode(p: *AiApplyPane, width: u16) void {
 }
 
 fn cancel(app: *App, id: PaneId, p: *AiApplyPane) Allocator.Error!void {
-    const back = p.source orelse p.anchor.pane;
+    const back = backTo(app, p, p.source orelse p.anchor.pane);
     try app.forceClosePane(id);
     if (app.panes.get(back) != null) app.showPane(back);
+}
+
+/// Where the focus goes as review `p` closes: the Claude Code session
+/// whose `openDiff` it is, while that pane lives — the review opened
+/// beside it (`ide.placeReview`) — else `fallback`.
+fn backTo(app: *App, p: *const AiApplyPane, fallback: PaneId) PaneId {
+    if (p.ide) |d| if (app.panes.get(d.session) != null) return d.session;
+    return fallback;
 }
 
 fn runToast(app: *App, result: CommandError!void) void {
