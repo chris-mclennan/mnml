@@ -14,6 +14,15 @@
 //!
 //! A column is never painted half-wide with its neighbour's header run
 //! into it: it is either there at a readable width, or gone.
+//!
+//! Wider than every preferred width, the spare goes first to the
+//! columns whose cells are being cut — each column's `need`, the
+//! longest visible cell, past its width — in proportion to what each is
+//! short of and never past its need. A `fixed` column (a number, a
+//! date) never grows. What is left after that is the `rest` column's,
+//! or empty at the right: a table never ends a name in `…` with blank
+//! cells beside it. Narrower than the preferred widths nothing changes:
+//! a pane that had to shrink or drop a column lays out as it always has.
 
 const std = @import("std");
 const frame_mod = @import("../frame.zig");
@@ -31,9 +40,20 @@ pub const Spec = struct {
     drop: u8 = 0,
     /// Takes what is left.
     rest: bool = false,
+    /// Cells the column's longest visible cell wants, header included;
+    /// 0 = not measured. A column whose need is past its width is being
+    /// cut, and is handed spare width before anything is left empty.
+    need: u16 = 0,
+    /// A number or a date: never wider than `w`, whatever its need.
+    fixed: bool = false,
 
     fn floor(s: Spec) u16 {
         return if (s.min == 0 or s.min > s.w) s.w else s.min;
+    }
+
+    /// The cells this column is still short of at width `at`.
+    fn short(s: Spec, at: u16) u16 {
+        return if (s.fixed or s.need <= at) 0 else s.need - at;
     }
 };
 
@@ -45,6 +65,7 @@ pub fn fit(out: []u16, cols: []const Spec, width: u16, gap: u16) void {
     std.debug.assert(cols.len <= kept_buf.len);
     const kept = kept_buf[0..cols.len];
     @memset(kept, true);
+    var dropped = false;
     while (true) {
         var pref: u32 = 0;
         var floor: u32 = 0;
@@ -59,7 +80,11 @@ pub fn fit(out: []u16, cols: []const Spec, width: u16, gap: u16) void {
         floor += gaps;
         if (pref <= width) {
             for (cols, kept, out) |c, k, *o| o.* = if (k) c.w else 0;
-            widenRest(out, cols, @intCast(width - pref));
+            // Spare cells go to the cut columns only when every column
+            // is there: once one has been dropped the pane is narrow,
+            // and lays out as it always has.
+            const spare: u16 = @intCast(width - pref);
+            widenRest(out, cols, if (dropped) spare else grow(out, cols, spare));
             return;
         }
         if (floor <= width) {
@@ -73,6 +98,7 @@ pub fn fit(out: []u16, cols: []const Spec, width: u16, gap: u16) void {
         };
         if (victim) |v| {
             kept[v] = false;
+            dropped = true;
             continue;
         }
         // Nothing left to drop: everything at its floor, and the rest
@@ -140,6 +166,43 @@ pub fn headerFor(f: *frame_mod.Frame, x0: u16, y: u16, max_w: u16, cols: anytype
 /// The header's ink: `Theme.label()`.
 pub fn headerStyle(th: theme_mod.Theme) frame_mod.Style {
     return th.label();
+}
+
+/// Hand `extra` spare cells to the kept columns being cut (`Spec.need`
+/// past their width), in proportion to what each is short of, never
+/// past its need. Returns what is left over: the `rest` column's, or
+/// empty at the right.
+fn grow(out: []u16, cols: []const Spec, extra: u16) u16 {
+    var total: u32 = 0;
+    for (cols, out) |c, o| if (o > 0) {
+        total += c.short(o);
+    };
+    if (total == 0 or extra == 0) return extra;
+    if (total <= extra) {
+        for (cols, out) |c, *o| if (o.* > 0) {
+            o.* += c.short(o.*);
+        };
+        return @intCast(extra - total);
+    }
+    var left: u32 = extra;
+    for (cols, out) |c, *o| if (o.* > 0) {
+        // Proportional, rounded down; the remainder is handed out below.
+        const give: u16 = @intCast(@as(u32, extra) * c.short(o.*) / total);
+        o.* += give;
+        left -= give;
+    };
+    // What rounding left over, one cell at a time from the left, to the
+    // columns still short.
+    while (left > 0) {
+        var moved = false;
+        for (cols, out) |c, *o| if (o.* > 0 and left > 0 and c.short(o.*) > 0) {
+            o.* += 1;
+            left -= 1;
+            moved = true;
+        };
+        if (!moved) break;
+    }
+    return @intCast(left);
 }
 
 fn widenRest(out: []u16, cols: []const Spec, extra: u16) void {
@@ -251,6 +314,84 @@ test "columns that do not shrink are dropped whole in rank order, gaps counted (
     try testing.expectEqualSlices(u16, &.{ 28, 10, 0, 0, 12, 27 }, &out);
     fit(&out, &forge, 40, 1);
     try testing.expectEqualSlices(u16, &.{ 28, 0, 0, 0, 0, 11 }, &out);
+}
+
+// The loops table from a private pane: no rest column, the spare used
+// to sit empty at the right while ITEM / KIND / RUNNER / USER were cut.
+const loops = [_]Spec{
+    .{ .w = 14, .min = 8 }, // ITEM
+    .{ .w = 14, .min = 8, .drop = 4 }, // KIND
+    .{ .w = 13, .min = 8, .drop = 3 }, // RUNNER
+    .{ .w = 10, .min = 6, .drop = 2 }, // USER
+    .{ .w = 10, .drop = 1 }, // LANE
+    .{ .w = 6, .fixed = true }, // HELD
+    .{ .w = 12, .fixed = true }, // EXPIRES
+    .{ .w = 9, .fixed = true }, // ACTIVITY
+};
+
+fn withNeeds(comptime base: []const Spec, needs: []const u16) [base.len]Spec {
+    var out: [base.len]Spec = undefined;
+    for (base, needs, &out) |b, n, *o| {
+        o.* = b;
+        o.need = n;
+    }
+    return out;
+}
+
+test "wide: a cut column grows to its need, and what is left stays empty at the right" {
+    const cols = withNeeds(&loops, &.{ 24, 22, 18, 12, 4, 6, 12, 9 });
+    var out: [loops.len]u16 = undefined;
+    fit(&out, &cols, 200, 1);
+    try testing.expectEqualSlices(u16, &.{ 24, 22, 18, 12, 10, 6, 12, 9 }, &out);
+    try testing.expect(sum(&out) + 7 < 200);
+}
+
+test "wide but short of every need: the spare is shared by what each is short of, none past its need" {
+    const cols = withNeeds(&loops, &.{ 34, 24, 23, 10, 4, 6, 12, 9 });
+    var out: [loops.len]u16 = undefined;
+    // Preferred 88 + 7 gaps = 95; 15 spare against 20 + 10 + 10 short.
+    fit(&out, &cols, 110, 1);
+    try testing.expectEqual(@as(u32, 110 - 7), sum(&out));
+    try testing.expectEqualSlices(u16, &.{ 22, 18, 16, 10, 10, 6, 12, 9 }, &out);
+    for (out, cols) |o, c| if (c.need > c.w) try testing.expect(o <= c.need);
+}
+
+test "with a rest column, the cut columns are fed first and the rest column takes what is left" {
+    var cols = tracker;
+    cols[1].need = 22; // STATUS: "Waiting for review" and its air
+    cols[2].need = 15; // ASSIGNEE: shorter than its width — never shrinks for it
+    var out: [tracker.len]u16 = undefined;
+    fit(&out, &cols, 118, 0);
+    try testing.expectEqualSlices(u16, &.{ 18, 22, 20, 12, 46 }, &out);
+}
+
+test "a fixed column never grows, whatever it needs" {
+    var cols = withNeeds(&loops, &.{ 14, 14, 13, 10, 10, 40, 40, 40 });
+    var out: [loops.len]u16 = undefined;
+    fit(&out, &cols, 200, 1);
+    try testing.expectEqualSlices(u16, &.{ 14, 14, 13, 10, 10, 6, 12, 9 }, &out);
+    cols[6].fixed = false;
+    fit(&out, &cols, 200, 1);
+    try testing.expectEqual(@as(u16, 40), out[6]);
+}
+
+fn expectSameNarrow(comptime n: usize, plain: []const Spec, measured: []const Spec, pref: u16, gap: u16) !void {
+    var a: [n]u16 = undefined;
+    var b: [n]u16 = undefined;
+    var w: u16 = 0;
+    while (w < pref) : (w += 1) {
+        fit(&a, plain, w, gap);
+        fit(&b, measured, w, gap);
+        try testing.expectEqualSlices(u16, &a, &b);
+    }
+}
+
+test "narrow: measured needs change nothing — every width short of the preferred lays out as before" {
+    const measured = withNeeds(&loops, &.{ 34, 24, 23, 12, 10, 20, 20, 20 });
+    try expectSameNarrow(loops.len, &loops, &measured, 95, 1);
+    var tr = tracker;
+    for (&tr) |*c| c.need = 60;
+    try expectSameNarrow(tracker.len, &tracker, &tr, 84, 0);
 }
 
 test "the column header: names in label ink, fitted to their widths, air between, cut at the row's end" {

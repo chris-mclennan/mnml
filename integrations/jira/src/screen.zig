@@ -575,10 +575,13 @@ pub const Painter = struct {
         var longest: usize = 0;
         for (t.issues) |iss| longest = @max(longest, sdk.pane.width(iss.key));
         const key_floor: u16 = @intCast(@min(@as(usize, 40), @max(@as(usize, config.Column.key.minWidth()), longest + 7)));
-        for (set[0..n], specs[0..n]) |c, *sp| sp.* = switch (c) {
+        var needs: [16]u16 = @splat(0);
+        try p.columnNeeds(set[0..n], needs[0..n]);
+        for (set[0..n], specs[0..n], needs[0..n]) |c, *sp, need| sp.* = switch (c) {
             .summary => .{ .w = c.minWidth(), .rest = true },
-            .key => .{ .w = @max(c.width().?, key_floor), .min = key_floor },
-            else => .{ .w = c.width().?, .min = c.minWidth(), .drop = c.dropRank() },
+            .key => .{ .w = @max(c.width().?, key_floor), .min = key_floor, .fixed = true },
+            .updated, .actions => .{ .w = c.width().?, .min = c.minWidth(), .drop = c.dropRank(), .fixed = true },
+            else => .{ .w = c.width().?, .min = c.minWidth(), .drop = c.dropRank(), .need = need },
         };
         const avail: u16 = p.lay.list_w -| 2;
         sdk.pane.columns.fit(widths[0..n], specs[0..n], avail, 0);
@@ -590,6 +593,33 @@ pub const Painter = struct {
             x += w;
         }
         return out.toOwnedSlice(p.arena);
+    }
+
+    /// The cells each column's longest cell on the tab's visible rows
+    /// wants, with the cell of air `paintTree` leaves after it — so a
+    /// wide pane hands a cut status or name the room it needs.
+    fn columnNeeds(p: *Painter, set: []const config.Column, out: []u16) Allocator.Error!void {
+        const t = p.a.tab();
+        const r = (try p.a.treeRows(p.arena)) orelse return;
+        for (set, out) |c, *o| o.* = @intCast(c.header().len + 1);
+        for (r.rows) |row| switch (row) {
+            .ticket => |tk| {
+                const iss = t.issues[tk.issue_idx];
+                for (set, out) |c, *o| {
+                    const s: []const u8 = switch (c) {
+                        .status => tk.effective_status,
+                        .assignee => iss.assigneeName(),
+                        .reporter => iss.reporterName(),
+                        .priority => iss.priority,
+                        .type => iss.issuetype,
+                        .fix_version => if (iss.fix_versions.len > 0) iss.fix_versions[0] else "—",
+                        else => continue,
+                    };
+                    o.* = @max(o.*, @as(u16, @intCast(@min(sdk.pane.width(s) + 1, 200))));
+                }
+            },
+            else => {},
+        };
     }
 
     fn paintColumns(p: *Painter, y: u16) Allocator.Error!void {
@@ -2561,4 +2591,34 @@ test "hover help names each element: the assignee chip, a row, a hint entry — 
     try testing.expectEqualStrings("API budget", try Probe.at(a, .{ .chip = .budget }, &buf));
     try testing.expectEqualStrings("Row", try Probe.at(a, .{ .row = 1 }, &buf));
     try testing.expectEqualStrings("r — refresh", try Probe.at(a, .{ .hint = .refresh }, &buf));
+}
+
+test "a wide pane hands a cut name the room it needs; a narrow one cuts it as before" {
+    const h = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer h.stop();
+    const a = &h.app;
+    try a.ensureLoaded();
+    const long = "Augusta Ada King-Noel Lovelace";
+    for (@constCast(a.tab().issues)) |*iss| if (iss.assignee) |*u| {
+        u.display_name = long;
+    };
+    for ([_]u16{ 200, 80 }) |cols| {
+        a.resize(cols, 16);
+        var f = try Frame.init(testing.allocator, cols, 16);
+        defer f.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const ar = arena.allocator();
+        try paint(ar, &f, a, .{});
+        const y = (try findRow(ar, &f, "ENG-1")).?;
+        const row = try rowText(ar, &f, y);
+        if (cols == 200) {
+            // Every cell whole, the summary still beside it.
+            try testing.expect(std.mem.indexOf(u8, row, long) != null);
+            try testing.expect(std.mem.indexOf(u8, row, "Checkout rewrite") != null);
+        } else {
+            // Too narrow to spare a cell: the name is cut as it always was.
+            try testing.expect(std.mem.indexOf(u8, row, long) == null);
+        }
+    }
 }

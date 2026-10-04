@@ -9,6 +9,7 @@
 //! app's one click handler can tell a row from a crumb from a chip.
 
 const std = @import("std");
+const mnml_sdk = @import("mnml_sdk");
 const vaxis = @import("vaxis");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
@@ -128,6 +129,25 @@ pub fn humanAge(arena: std.mem.Allocator, mtime: i64, now: i64) []const u8 {
     return std.fmt.allocPrint(arena, "{d}-{d:0>2}-{d:0>2}", .{ ymd.year, md.month.numeric(), md.day_index + 1 }) catch "";
 }
 
+/// The kind column's width on a listing `w` wide: five cells, and on a
+/// wide listing what its longest kind needs, shared with a name that is
+/// itself cut (`sdk.pane.columns`, the family's one table rule).
+fn kindWidth(doc: Doc, w: u16) u16 {
+    var need_kind: usize = 0;
+    var need_name: usize = 0;
+    for (doc.rows) |r| {
+        need_kind = @max(need_kind, mnml_sdk.pane.width(kindLabel(r)));
+        need_name = @max(need_name, mnml_sdk.pane.width(r.name) + 3);
+    }
+    const specs = [_]mnml_sdk.pane.columns.Spec{
+        .{ .w = 8, .rest = true, .need = @intCast(@min(need_name, 1000)) },
+        .{ .w = kind_w, .need = @intCast(@min(need_kind, 24)) },
+    };
+    var out: [2]u16 = undefined;
+    mnml_sdk.pane.columns.fit(&out, &specs, w -| (3 + size_w + 1 + mtime_w + 1), 0);
+    return @max(out[1], kind_w);
+}
+
 fn kindLabel(r: Row) []const u8 {
     if (r.is_link) return "link";
     if (r.is_dir) return "dir";
@@ -193,7 +213,8 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) ?Caret {
 
     // ── the column header ──
     const head = list.splitTop(1);
-    drawColumns(ui, pane, head.top);
+    const kw = kindWidth(doc, head.top.w);
+    drawColumns(ui, pane, head.top, kw);
     list = head.rest;
     if (list.isEmpty()) return caret;
 
@@ -223,7 +244,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) ?Caret {
         // band is the cursor — else the cursor's bar.
         const marker: []const u8 = if (row.marked) (if (ui.ascii) "*" else "✓") else if (selected) (if (ui.ascii) list_panel.marker_ascii else list_panel.marker_glyph) else " ";
         _ = ui.putStr(r.x, r.y, 1, marker, Theme.withFg(base, if (selected and doc.focused) t.accent.fg else if (row.marked) t.accent.fg else t.muted.fg));
-        paintRow(ui, Rect.init(r.x + 1, r.y, r.w -| 1, 1), row, base, doc.now_s);
+        paintRow(ui, Rect.init(r.x + 1, r.y, r.w -| 1, 1), row, base, doc.now_s, kw);
         ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = @intCast(idx) } });
         if (ui.hovered(r) and r.w > list_panel.kebab_w + 4) {
             const kr = r.rightCells(list_panel.kebab_w);
@@ -235,7 +256,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, doc: Doc, scroll: *usize) ?Caret {
 }
 
 /// `<git> <name>            <size> <modified> <kind>` inside `r`.
-fn paintRow(ui: Ui, r: Rect, row: Row, base: Style, now_s: i64) void {
+fn paintRow(ui: Ui, r: Rect, row: Row, base: Style, now_s: i64, kw: u16) void {
     const t = ui.theme;
     if (r.isEmpty()) return;
     const end = r.right();
@@ -248,7 +269,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, base: Style, now_s: i64) void {
     }
     x += ui.putStr(x, r.y, end -| x, " ", base);
     const wide = r.w >= 1 + 1 + 8 + size_w + 1 + mtime_w + 1 + kind_w;
-    const cols_w: u16 = if (wide) size_w + 1 + mtime_w + 1 + kind_w else 0;
+    const cols_w: u16 = if (wide) size_w + 1 + mtime_w + 1 + kw else 0;
     const name_w: u16 = (end -| x) -| cols_w;
     const name_style = if (row.is_dir) Theme.withFg(base, t.accent.fg) else base;
     var shown = row.name;
@@ -264,7 +285,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, base: Style, now_s: i64) void {
     const age: []const u8 = if (row.mtime) |m| humanAge(ui.arena, m, now_s) else "";
     _ = ui.putStrRight(x + mtime_w, r.y, mtime_w, age, dim);
     x += mtime_w + 1;
-    _ = ui.putStr(x, r.y, kind_w, ui.clipStr(kindLabel(row), kind_w), dim);
+    _ = ui.putStr(x, r.y, kw, ui.clipStr(kindLabel(row), kw), dim);
 }
 
 /// The path as crumbs, each a click target, then the chips right-aligned.
@@ -349,14 +370,14 @@ fn drawCrumbs(ui: Ui, pane: PaneId, r: Rect, doc: Doc) void {
 }
 
 /// `Name … Size Modified Kind`, each a click target that sorts by it.
-fn drawColumns(ui: Ui, pane: PaneId, r: Rect) void {
+fn drawColumns(ui: Ui, pane: PaneId, r: Rect, kw: u16) void {
     const t = ui.theme;
     var style = Theme.onBg(t.muted, t.bg.bg);
     style.bold = true;
     ui.fill(r, t.bg);
     if (r.w < 4) return;
     const wide = r.w >= 1 + 1 + 1 + 8 + size_w + 1 + mtime_w + 1 + kind_w;
-    const cols_w: u16 = if (wide) size_w + 1 + mtime_w + 1 + kind_w else 0;
+    const cols_w: u16 = if (wide) size_w + 1 + mtime_w + 1 + kw else 0;
     const name_x = r.x + 3;
     const name_w: u16 = (r.right() -| name_x) -| cols_w;
     _ = ui.putStr(name_x, r.y, name_w, "Name", style);
@@ -369,8 +390,8 @@ fn drawColumns(ui: Ui, pane: PaneId, r: Rect) void {
     _ = ui.putStrRight(x + mtime_w, r.y, mtime_w, "Modified", style);
     ui.hit(Rect.init(x, r.y, mtime_w, 1), .{ .script_hit = .{ .pane = pane, .id = Hit.column_base + @intFromEnum(Hit.Column.modified) } });
     x += mtime_w + 1;
-    _ = ui.putStr(x, r.y, kind_w, "Kind", style);
-    ui.hit(Rect.init(x, r.y, kind_w, 1), .{ .script_hit = .{ .pane = pane, .id = Hit.column_base + @intFromEnum(Hit.Column.kind) } });
+    _ = ui.putStr(x, r.y, kw, "Kind", style);
+    ui.hit(Rect.init(x, r.y, kw, 1), .{ .script_hit = .{ .pane = pane, .id = Hit.column_base + @intFromEnum(Hit.Column.kind) } });
 }
 
 /// The head of the cursor file, one line per row, dim, inside a left rule.
@@ -518,6 +539,21 @@ test "an error and an empty listing paint their message and only the body hit; t
         _ = draw(g.ui(), 1, g.full(), sampleDoc(&rows), &scroll);
         for (g.hits.items.items) |e| try testing.expect(g.full().intersect(e.rect).eql(e.rect));
     }
+}
+
+test "a long kind reads whole on a wide listing and is cut to five cells on a narrow one" {
+    const rows = [_]Row{
+        .{ .name = "build.tsbuildinfo", .is_dir = false, .size = 512, .mtime = 1_700_000_000 },
+        .{ .name = "a.md", .is_dir = false, .size = 512, .mtime = 1_700_000_000 },
+    };
+    try testing.expectEqual(@as(u16, 11), kindWidth(sampleDoc(&rows), 120));
+    try testing.expectEqual(kind_w, kindWidth(sampleDoc(&rows), 30));
+    try testing.expectEqual(kind_w, kindWidth(sampleDoc(&sampleRows()), 120));
+    var f = try Fixture.init(120, 7);
+    defer f.deinit();
+    var scroll: usize = 0;
+    _ = draw(f.ui(), 4, f.full(), sampleDoc(&rows), &scroll);
+    try f.expectContains(" tsbuildinfo");
 }
 
 test "Hit.decode round-trips every id family" {

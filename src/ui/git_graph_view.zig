@@ -28,6 +28,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
+const columns = @import("mnml_sdk").pane.columns;
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const border = @import("border.zig");
@@ -628,7 +629,7 @@ fn chipWidth(labels: []const RefLabel) usize {
 // ─── columns ────────────────────────────────────────────────────────────
 
 pub const Cols = struct { branch: usize = 0, author: usize = 0, age: usize = 0, sha: usize = 0 };
-pub const AutoSize = struct { branch_chars: usize, author_chars: usize, branch_override: ?u16, author_override: ?u16 };
+pub const AutoSize = struct { branch_chars: usize, author_chars: usize, branch_override: ?u16, author_override: ?u16, subject_chars: usize = 0 };
 
 /// Rust `compute_column_widths`: the sha, the date, the author and the
 /// branch chips take their room in that order, each with its ` │ `,
@@ -657,7 +658,26 @@ pub fn computeColumnWidths(total: usize, graph_w: usize, auto: AutoSize) Cols {
         remaining -= author_target + 3;
     }
     const branch_target: usize = if (auto.branch_override) |n| n else (if (auto.branch_chars == 0) 0 else std.math.clamp(auto.branch_chars, 8, 24));
-    if (branch_target > 0 and remaining >= branch_target + 3) w.branch = @min(branch_target, remaining -| 3);
+    if (branch_target > 0 and remaining >= branch_target + 3) {
+        w.branch = @min(branch_target, remaining -| 3);
+        remaining -= w.branch + 3;
+    }
+    // What is still spare beyond the subject's twenty goes first to an
+    // author or a branch cut at its cap, shared with a subject that is
+    // itself cut (`sdk.pane.columns`, the family's one table rule); a
+    // width the person set by hand stays as set.
+    if (remaining > 0 and (w.author > 0 or w.branch > 0)) {
+        const cap = std.math.maxInt(u16);
+        const specs = [_]columns.Spec{
+            .{ .w = @intCast(@min(w.author, cap)), .need = @intCast(@min(auto.author_chars, 200)), .fixed = auto.author_override != null },
+            .{ .w = @intCast(@min(w.branch, cap)), .need = @intCast(@min(auto.branch_chars, 200)), .fixed = auto.branch_override != null },
+            .{ .w = 20, .rest = true, .need = @intCast(@min(auto.subject_chars, 2000)) },
+        };
+        var out: [3]u16 = undefined;
+        columns.fit(&out, &specs, @intCast(@min(w.author + w.branch + 20 + remaining, cap)), 0);
+        w.author = out[0];
+        w.branch = out[1];
+    }
     return w;
 }
 
@@ -747,6 +767,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     var graph_w: usize = 0;
     var auto_branch: usize = 0;
     var auto_author: usize = 0;
+    var auto_subject: usize = 0;
     var v = first;
     while (v < last) : (v += 1) {
         if (doc.has_wip and v == 0) continue;
@@ -755,6 +776,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         const labels = refLabels(arena, doc.commits[ci].refs) catch &.{};
         auto_branch = @max(auto_branch, chipWidth(labels));
         auto_author = @max(auto_author, chars(doc.commits[ci].author));
+        auto_subject = @max(auto_subject, chars(doc.commits[ci].subject));
     }
     graph_w = @min(graph_w, 24);
     const cols = computeColumnWidths(@as(usize, body.w) -| sha_right_pad, graph_w, .{
@@ -762,6 +784,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
         .author_chars = auto_author,
         .branch_override = doc.branch_col,
         .author_override = doc.author_col,
+        .subject_chars = auto_subject,
     });
     drawHeader(ui, pane, header_area, doc, cols, graph_w);
 
@@ -1784,6 +1807,16 @@ test "helpers: padOrTruncate and rightAlign by code points, the UTC date, the ag
     const wide = computeColumnWidths(150, 2, .{ .branch_chars = 12, .author_chars = 14, .branch_override = null, .author_override = null });
     try testing.expectEqual(@as(usize, 14), wide.author);
     try testing.expectEqual(@as(usize, 12), wide.branch);
+    // A long author and branch on a wide pane: past their 22 / 24 caps
+    // to what they need, while a short subject leaves room; a width
+    // set by hand stays; a narrow pane is cut as before.
+    const long = computeColumnWidths(220, 2, .{ .branch_chars = 40, .author_chars = 30, .branch_override = null, .author_override = null, .subject_chars = 30 });
+    try testing.expectEqual(@as(usize, 30), long.author);
+    try testing.expectEqual(@as(usize, 40), long.branch);
+    const pinned = computeColumnWidths(220, 2, .{ .branch_chars = 40, .author_chars = 30, .branch_override = null, .author_override = 16, .subject_chars = 30 });
+    try testing.expectEqual(@as(usize, 16), pinned.author);
+    const tight = computeColumnWidths(108, 2, .{ .branch_chars = 40, .author_chars = 30, .branch_override = null, .author_override = null, .subject_chars = 0 });
+    try testing.expectEqual(@as(usize, 22), tight.author);
     try testing.expectEqual(@as(usize, 7), revealScroll(10, 0, 10, true));
     try testing.expectEqual(@as(usize, 1), revealScroll(10, 0, 10, false));
     try testing.expectEqual(@as(usize, 0), revealScroll(3, 0, 10, true));

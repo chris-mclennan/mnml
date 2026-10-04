@@ -1,0 +1,11 @@
+# width: 200
+# A wide Files listing hands its spare cells to a column it would cut:
+# a long kind reads whole instead of ending in an ellipsis beside
+# blank cells (sdk.pane.columns). files_kind_column_narrow.test is the
+# same listing at 80, where the kind is cut as it always was.
+write build.tsbuildinfo "x"
+write notes.md "n"
+command files.open
+expect screen contains "build.tsbuildinfo"
+expect screen contains " tsbuildinfo"
+expect screen lacks "tsbu…"

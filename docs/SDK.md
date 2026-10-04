@@ -235,6 +235,36 @@ from two different target vocabularies and compares the frames cell for
 cell — the test that notices when a change moves one pane and not the
 other.
 
+### A table's column widths
+
+`sdk.pane.columns.fit(out, specs, width, gap)` lays a table's columns
+into a width — the one rule every table in the family follows. Each
+`Spec` has a preferred width `w`, a floor `min`, a drop rank, at most
+one `rest` column, and two fields for a wide pane:
+
+```zig
+const specs = [_]sdk.pane.columns.Spec{
+    .{ .w = 14, .min = 8, .need = longest_item + 1 },          // ITEM
+    .{ .w = 13, .min = 8, .drop = 3, .need = longest_runner + 1 }, // RUNNER
+    .{ .w = 12, .fixed = true },                                 // EXPIRES
+};
+sdk.pane.columns.fit(&widths, &specs, avail, 1);
+```
+
+- **Narrower than the preferred widths**: the shrinkable columns give up
+  cells together down to their floors, then the lowest-ranked droppable
+  column goes whole, and only then does the `rest` column shrink.
+  `need` and `fixed` change nothing here.
+- **Wider**: the spare goes first to the columns being cut — `need`, the
+  longest visible cell (with any air the row leaves after it), past `w`
+  — in proportion to what each is short of, and never past its need. A
+  `fixed` column (a number, a date) never grows. What is left is the
+  `rest` column's, or blank at the right.
+
+Measure `need` from the rows on screen, every frame. A pane that leaves
+it 0 keeps today's widths: its cut names end in `…` while the right of
+the pane sits empty.
+
 ### A table's column header, and a fill meter
 
 Two pieces a private pane used to have to draw itself are the toolkit's:
@@ -1784,7 +1814,8 @@ sdk/mnml-sdk/src/
   pane/expect.zig  the assertions your own tests make about the chrome
   pane/consistency_test.zig  the toolkit painted from both panes' vocabularies, cell for cell
   pane/columns.zig how a table gives way when narrow: shrink to floors,
-                   then drop whole by rank; the key column never clips
+                   then drop whole by rank; the key column never clips;
+                   when wide, a cut column grows to its measured need
   pane/help.zig    hover help: the toolkit chrome's one entry each, `key`
   pane/keysheet.zig  the `?` key sheet's keys and the family's chord spelling
 sdk/clients/ratelimit_broker.py   the broker's Python client, stdlib only

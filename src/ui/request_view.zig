@@ -34,6 +34,7 @@
 //! below, and rows add their index to a base.
 
 const std = @import("std");
+const mnml_sdk = @import("mnml_sdk");
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
@@ -995,7 +996,22 @@ fn drawKvTable(ui: Ui, pane: PaneId, r: Rect, data: []const Pair, draft: ?Draft,
     const table_w: u16 = std.math.clamp(r.w -| 2 -| 3, 20, 100);
     const x_col_w: u16 = 3;
     const inner_w: u16 = table_w -| x_col_w -| 4;
-    const name_w: u16 = @max(inner_w * 35 / 100, 8);
+    // The name keeps its 35% and the value the rest — unless a name is
+    // cut there, when the two share what the box has by what each is
+    // short of (`sdk.pane.columns`, the family's one table rule).
+    var need_k: usize = 0;
+    var need_v: usize = 0;
+    for (data) |pair| {
+        need_k = @max(need_k, mnml_sdk.pane.width(pair.key));
+        need_v = @max(need_v, mnml_sdk.pane.width(pair.value));
+    }
+    const specs = [_]mnml_sdk.pane.columns.Spec{
+        .{ .w = @max(inner_w * 35 / 100, 8), .need = @intCast(@min(need_k, 1000)) },
+        .{ .w = 1, .rest = true, .need = @intCast(@min(need_v, 1000)) },
+    };
+    var kv_w: [2]u16 = undefined;
+    mnml_sdk.pane.columns.fit(&kv_w, &specs, inner_w, 0);
+    const name_w: u16 = @max(kv_w[0], @min(specs[0].w, inner_w));
     const value_w: u16 = inner_w -| name_w;
     const line: Style = .{ .fg = p.bg3, .bg = p.bg_dark };
     const ascii = ui.ascii;
@@ -2217,6 +2233,34 @@ test "the var tip lands under its anchor" {
     try testing.expect(std.mem.indexOf(u8, txt2, "{{NOPE}} \u{2014} not defined in env dev") != null);
     drawVarTip(ui, ui.canvas.full(), Rect.init(10, 1, 8, 1), "jira", null, null);
     try testing.expect(std.mem.indexOf(u8, try fx.text(), "{{jira}} \u{2014} no env defines it") != null);
+}
+
+test "a key-value table: a long name takes room from a short value, a short name keeps its 35%" {
+    var buf: [256]u8 = undefined;
+    const long = [_]Pair{.{ .key = "X-Request-Correlation-Identifier", .value = "abc" }};
+    var fx = try fixture.init(70, 6);
+    defer fx.deinit();
+    _ = drawKvTable(fx.ui(), 0, Rect.init(0, 0, 70, 6), &long, null, .{ .kind = .headers, .row_hit = hit_header_row, .del_hit = null, .add = false, .cursor = 9, .focused = false });
+    var found = false;
+    var y: u16 = 0;
+    while (y < 6) : (y += 1) if (std.mem.indexOf(u8, fx.row(y, &buf), "X-Request-Correlation-Identifier") != null) {
+        found = true;
+    };
+    try testing.expect(found);
+    const short = [_]Pair{.{ .key = "Accept", .value = "abc" }};
+    var fx2 = try fixture.init(70, 6);
+    defer fx2.deinit();
+    _ = drawKvTable(fx2.ui(), 0, Rect.init(0, 0, 70, 6), &short, null, .{ .kind = .headers, .row_hit = hit_header_row, .del_hit = null, .add = false, .cursor = 9, .focused = false });
+    // The value column starts where 35% of the box puts it (bytes: the
+    // two rules before it are three bytes each, one cell on screen).
+    const inner: u16 = (70 - 5) - 3 - 4;
+    const value_x: u16 = 2 + 3 + 1 + inner * 35 / 100 + 1 + 3 + 1;
+    y = 0;
+    var at: ?usize = null;
+    while (y < 6) : (y += 1) if (std.mem.indexOf(u8, fx2.row(y, &buf), "abc")) |i| {
+        at = i;
+    };
+    try testing.expectEqual(@as(?usize, value_x), at);
 }
 
 test "the Headers table: rows in cells with their `{{VAR}}` spans, the draft's caret for the popup, the `?` tip under the cursor row" {

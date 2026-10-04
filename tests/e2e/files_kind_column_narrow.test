@@ -1,0 +1,10 @@
+# width: 48
+# The narrow twin of files_kind_column_wide.test: at 48 the name and the
+# kind are both short of room, they share the few spare cells, and the
+# long kind still ends in an ellipsis.
+write build.tsbuildinfo "x"
+write notes.md "n"
+command files.open
+expect screen contains "notes.md"
+expect screen contains " tsbu"
+expect screen lacks " tsbuildinfo"
