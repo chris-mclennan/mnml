@@ -12,6 +12,23 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### Tables use the width they have
+
+- A table no longer cuts a name with `…` while the right of the pane is
+  empty. `sdk.pane.columns.fit` takes each column's `need` (its longest
+  visible cell) and a `fixed` flag: on a wide pane the spare goes to the
+  columns being cut, in proportion to what each is short of and never
+  past its need; numbers and dates stay fixed; what is left goes to the
+  column that takes the rest, or stays blank. A narrow pane gives way
+  exactly as before. A private integration's table gets this by passing
+  `need` (see `docs/SDK.md`).
+- Jira's Work tree and Bitbucket's tables measure their rows, so a long
+  status, assignee, branch or author reads whole on a wide pane.
+- The requests log (integration, reason), the git graph (author and
+  branch past their 22 / 24 caps), a request's header and parameter
+  tables (a long name) and the Files listing (a long kind) follow the
+  same rule.
+
 ### Jira and Bitbucket chips
 
 - The Jira Work chip wears Atlassian's work-items icon, a card with a check,
