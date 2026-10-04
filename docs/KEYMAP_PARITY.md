@@ -431,7 +431,7 @@ Bound in mnml, defined by neither oracle for that profile. Most are the
 which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 `+integrations`, `+harpoon`, `+layouts`, …) and the `Ctrl+K` rows above.
 
-<details><summary>vim profile — 251 chords</summary>
+<details><summary>vim profile — 260 chords</summary>
 
 | chord | command |
 |---|---|
@@ -543,6 +543,15 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `space 8` | `harpoon.goto_8` |
 | `space 9` | `harpoon.goto_9` |
 | `space ?` | `view.cheatsheet` |
+| `space a 1` | `sessions.focus_1` |
+| `space a 2` | `sessions.focus_2` |
+| `space a 3` | `sessions.focus_3` |
+| `space a 4` | `sessions.focus_4` |
+| `space a 5` | `sessions.focus_5` |
+| `space a 6` | `sessions.focus_6` |
+| `space a 7` | `sessions.focus_7` |
+| `space a 8` | `sessions.focus_8` |
+| `space a 9` | `sessions.focus_9` |
 | `space a a` | `ai.ask` |
 | `space a b` | `ai.toggle_backend` |
 | `space a c` | `ai.claude_code` |
@@ -689,7 +698,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 
 </details>
 
-<details><summary>standard profile — 157 chords</summary>
+<details><summary>standard profile — 166 chords</summary>
 
 | chord | command |
 |---|---|
@@ -710,6 +719,15 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `ctrl+6` | `view.focus_tab_6` |
 | `ctrl+7` | `view.focus_tab_7` |
 | `ctrl+8` | `view.focus_tab_8` |
+| `ctrl+alt+1` | `sessions.focus_1` |
+| `ctrl+alt+2` | `sessions.focus_2` |
+| `ctrl+alt+3` | `sessions.focus_3` |
+| `ctrl+alt+4` | `sessions.focus_4` |
+| `ctrl+alt+5` | `sessions.focus_5` |
+| `ctrl+alt+6` | `sessions.focus_6` |
+| `ctrl+alt+7` | `sessions.focus_7` |
+| `ctrl+alt+8` | `sessions.focus_8` |
+| `ctrl+alt+9` | `sessions.focus_9` |
 | `ctrl+;` | `app.command_line` |
 | `ctrl+k a` | `view.activity_sessions` |
 | `ctrl+k b` | `git.blame_toggle` |
