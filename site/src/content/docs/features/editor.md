@@ -57,8 +57,10 @@ move through the list. The default is `onedark`.
 
 Around that frame are the parts you would expect from VS Code: a
 command palette that finds every command by name and shows its chord,
-right-click menus, and a mouse that works everywhere — click, drag,
-resize, scroll.
+a menu bar and right-click menus whose rows print their chords for
+your profile, and a mouse that works everywhere — click, drag, resize,
+scroll. [Menus, Tabs and Fields](/docs/features/menus) covers the
+menus, the tab strips, the picker and the text fields.
 
 Splits nest in any direction, and tab pages hold a layout each.
 `layout.save` (`space W s`) keeps the current tab page as a named

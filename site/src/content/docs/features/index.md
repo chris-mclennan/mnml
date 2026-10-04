@@ -37,6 +37,11 @@ there for reviewing and fixing what they wrote.
   base46 colour themes — with a command palette, right-click menus and
   the mouse everywhere.
 
+- **[Menus that teach the keys](/docs/features/menus)**: every menu
+  row prints its chord for your profile, tab strips page with every
+  tab one click away, and every text field takes the mouse, a
+  selection and a paste.
+
 - **[Terminal panes on libghostty](/docs/features/terminal)**: shells,
   runners and tools in splits, emulated by the same library Ghostty is
   built on.

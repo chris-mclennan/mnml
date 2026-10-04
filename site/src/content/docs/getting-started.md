@@ -81,7 +81,9 @@ You do not need to learn many keys, because these four find the rest:
 | `space` (vim) / `ctrl+k` (standard) | **which-key**: a menu of every leader chord, grouped. |
 
 Right-click almost anything — a file, a tab, a chip on the statusline —
-for a menu of what you can do with it.
+for a menu of what you can do with it. Each row prints its chord for
+your profile, so the menus teach the keys too; see
+[Menus, Tabs and Fields](/docs/features/menus).
 
 <!-- video: palette -->
 
