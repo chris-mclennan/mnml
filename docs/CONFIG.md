@@ -617,6 +617,7 @@ otherwise. Copy what you need; leave the rest out.
     // read at that tick — so a quiet machine stats and reads nothing.
     .sessions = .{
         .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 }, // the liveness pass: the process table, each session's state, `git status` per working directory — off screen it runs only while a session has a process or a transcript moved; on screen it runs every interval (a resumed session shows only as its process), and a view coming on screen runs one pass at once
+        .registry = true, // read Claude Code's live-session registry (`~/.claude/sessions/<pid>.json`) on the stat tick: an EXTERNAL row then shows the session's own name and its exact state (busy / idle / waiting), and offers Ask what it is doing and Take over. The registry is Claude Code's, undocumented and liable to change; a file it cannot read is skipped and the transcripts stay the listing. false reads transcripts only
     },
 
     // ── keys ───────────────────────────────────────────────────────────
