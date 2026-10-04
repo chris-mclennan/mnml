@@ -28,6 +28,13 @@ the release ships one file), and one line per change a user can see.
   branch past their 22 / 24 caps), a request's header and parameter
   tables (a long name) and the Files listing (a long kind) follow the
   same rule.
+### The pane tab strip
+
+- A narrow pane keeps its tab's close button. At a larger font the strip
+  used to cut the tab at its edge and drop the close while still showing
+  the `+` and the pane buttons. Now the tab's name is cut first, with an
+  ellipsis, down to six cells. After that the pager goes, then the `+`, then
+  the pane buttons from the left. The close is the last thing to go.
 
 ### Jira and Bitbucket chips
 
