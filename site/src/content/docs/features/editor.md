@@ -67,6 +67,26 @@ for a moment; `view.fullscreen` (`space t f`) hides the chrome.
 
 <!-- video: splits -->
 
+### Even splits
+
+`view.equalize_splits` (`ctrl+w =` in the vim profile) shares the
+current tab page's space equally between its splits, once. To have mnml
+do that every time a split opens or closes, turn on **Auto-equalize
+splits**:
+
+- the Window menu's *Auto-equalize splits* row, ticked while it is on;
+- Settings → **UI** → *Auto-equalize splits*;
+- `view.toggle_auto_equalize_splits` from the palette.
+
+With it on, closing one of three splits leaves two even halves instead
+of one pane twice the size of the other, and turning it on evens the
+splits out at once. It is off by default, and is written to the
+workspace's `config.zon` as `ui.auto_equalize_splits`.
+
+Integrations are a separate case: a split an integration opens evens
+out after itself whatever this switch says, unless you set
+`integrations.equalize_on_open = false`.
+
 ### The file tree
 
 Below the top level, every row in the tree carries neo-tree's

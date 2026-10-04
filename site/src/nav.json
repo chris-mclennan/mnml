@@ -44,7 +44,8 @@
         { "type": "link", "path": "/terminal", "title": "Terminal" },
         { "type": "link", "path": "/http", "title": "HTTP" },
         { "type": "link", "path": "/ai", "title": "AI sessions" },
-        { "type": "link", "path": "/api", "title": "API" }
+        { "type": "link", "path": "/api", "title": "API" },
+        { "type": "link", "path": "/links", "title": "Links" }
       ]
     },
     {

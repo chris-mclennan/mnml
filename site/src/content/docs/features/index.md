@@ -64,6 +64,10 @@ there for reviewing and fixing what they wrote.
   first, and a Claude Code session in an mnml pane uses mnml as its IDE
   with no setup.
 
+- **[Links](/docs/features/links)**: URLs, ticket keys and pull-request
+  references open from session cards, terminals, editors and toasts,
+  through one rule set the installed integrations declare.
+
 - **[Lua scripting](/docs/lua)**: an `init.lua` for your own commands,
   keys, hooks, statusline segments and pickers, with Lua 5.4 compiled in.
 
