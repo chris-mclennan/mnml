@@ -1,0 +1,43 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# env: ACME_SITE=https://tracker.example.com
+# env: MNML_SHARED_STATE_DIR=${MNML_E2E_WORKSPACE}/shared
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# A key in a terminal line says what it names on hover. The Jira
+# integration's `--values` poll (against the fake site) writes the
+# tickets it listed into the shared recent-items cache; mnml reads the
+# file on its stat tick, and hovering `ENG-5` shows the ticket's
+# summary and status. The right-click menu's first row says the same.
+write bin/claude #!/bin/bash\nprintf 'fix ENG-5 now\\n'\nexec sleep 600
+shell chmod +x bin/claude
+write acme.zon ".{ .id = \"acme\", .label = \"Acme\", .commands = .{ .{ .id = \"acme.hello\", .title = \"Acme: hello\", .run = \":echo hi\" } }, .auth = .{ .{ .key = \"site_url\", .label = \"Site\", .kind = .url, .env_fallback = \"ACME_SITE\" } }, .links = .{ .{ .pattern = \"[A-Z][A-Z0-9]+-[0-9]+\", .url = \"{site_url}/browse/{0}\" } } }"
+shell mkdir -p "$MNML_DATA_ROOT/integrations" && cp acme.zon "$MNML_DATA_ROOT/integrations/acme.zon"
+command integrations.refresh
+
+# ── the poll fills the cache ──────────────────────────────────────────
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 120 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 600
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 } }"
+shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
+expect file shared/recent/jira/ticket.json contains "\"assigned_open\""
+expect file shared/recent/jira/ticket.json contains "Basket total wrong with a voucher"
+
+# ── the hover ─────────────────────────────────────────────────────────
+command ai.claude_code_new
+expect within 5000 screen contains "fix ENG-5 now"
+# The stat tick reads the file within two seconds of mnml first looking.
+wait 2500
+# `ENG-5` is at columns 36..40 of row 2.
+hover 38 2
+expect within 3000 screen contains "ENG-5 · Basket total wrong with a voucher · To Do"
+# Off the link, no title.
+hover 45 2
+expect screen lacks "Basket total wrong with a voucher"
+# The Link menu leads with it, as a row that only says so.
+rightclick 38 2
+expect screen contains "ENG-5 · Basket total wrong with a voucher · To Do"
+expect screen contains "Copy link"
+key escape
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

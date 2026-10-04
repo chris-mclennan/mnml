@@ -1282,6 +1282,16 @@ otherwise. Copy what you need; leave the rest out.
         .hover_items = 8, // how many things a figure's hover lists before `… and N more`; 0 lists none
         .hidden = .{}, // segments left off the row, by name, e.g. `.{ "clock", "jobs", "bitbucket_prs.prs_mine" }`; right-click the statusline → Segments ▸ toggles one and writes this
     },
+
+    // ── recent items ───────────────────────────────────────────────────
+    // What the integrations last polled — a ticket's summary and status
+    // — kept under the shared state dir's recent/ (docs/SDK.md, "Cache")
+    // so a link to ACME-123 shows its title on hover and as the first
+    // row of its right-click menu. Off: mnml reads none of it and the
+    // integrations it starts write none (MNML_RECENT_ITEMS=0).
+    .recent_items = .{
+        .enabled = true,
+    },
 }
 ```
 

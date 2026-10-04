@@ -1325,6 +1325,9 @@ pub const App = struct {
     /// URLs and the installed integrations' `links[]`, compiled, and the
     /// spans of the texts painted lately (`app/link_rules.zig`).
     link_rules: link_rules.State = .{},
+    /// What the integrations last polled, for link titles
+    /// (`app/recent_items.zig`).
+    recent_items: @import("app/recent_items.zig").State = .{},
     marketplace: marketplace.State = .{},
     /// The installed Nerd Fonts and the latest release (`app/font_scan.zig`).
     fonts: font_scan.State,
@@ -2109,6 +2112,7 @@ pub const App = struct {
         self.docs.destroy();
         self.integrations.deinit(gpa);
         self.link_rules.deinit(gpa);
+        self.recent_items.deinit();
         self.activity_bar.deinit(gpa);
         self.lsp.deinit(gpa, self.io);
         self.snippets.deinit();
@@ -3687,6 +3691,7 @@ pub const App = struct {
         try watch.tick(self, now);
         todos.tick(self, now);
         sessions.tick(self, now);
+        @import("app/recent_items.zig").tick(self, now);
         clock.tick(self);
         now_playing.tick(self, now);
         integration_poll.tick(self);
@@ -4105,6 +4110,7 @@ test {
     _ = @import("app/conflict_cache.zig");
     _ = @import("app/auto_refresh.zig");
     _ = @import("app/refresh_cadence.zig");
+    _ = @import("app/recent_items.zig");
     _ = @import("app/clock.zig");
     _ = @import("core/localtime.zig");
     _ = @import("app/coverage.zig");

@@ -1423,6 +1423,9 @@ pub fn openWelcomeRecentMenu(app: *App, path: []const u8, x: u16, y: u16) Alloca
 /// several repos could mean (`link_rules`' `.range` links), one
 /// `Open in <repo>` per candidate, the one a click opens first.
 fn appendLinkRows(app: *App, arena: Allocator, all: *std.ArrayList(MenuItem), url: []const u8) Allocator.Error!void {
+    // What the link names, when an integration has lately seen it
+    // (`recent_items.zig`): a row that only says so.
+    if (try @import("recent_items.zig").menuInfo(app, arena, url)) |info| try all.append(arena, .{ .label = info, .action = .none });
     try all.append(arena, .{ .label = "Copy link", .action = .{ .copy_link = url } });
     const cs = app.link_rules.candidates(url);
     if (cs.len < 2) return all.append(arena, .{ .label = "Open link", .action = .{ .open_url = url } });
