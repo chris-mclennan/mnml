@@ -3453,7 +3453,8 @@ test "a wide frame has the palette bar on row 0 and the strip on row 1; each lea
     try t.expect(app.hits.at(9, 2).? == .editor_cell);
     try t.expectEqual(@as(u32, 0), app.hits.at(9, 2).?.editor_cell.line);
     try t.expectEqual(statusline.seg_mode, app.hits.at(2, 38).?.statusline_seg);
-    try t.expect(app.hits.at(60, 38) == null);
+    // Between the chips: the row's own hit (its right-click menu).
+    try t.expectEqual(statusline.seg_bar, app.hits.at(60, 38).?.statusline_seg);
 }
 
 test "the edge grips: one per hidden slide-in, each on its own zone's cells, each a hit that pins — and none at all when the surface is up, pinned, or `ui.edge_grips` is off" {
