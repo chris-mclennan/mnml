@@ -148,8 +148,11 @@ const Walk = struct {
         const title = try w.arena.dupe(u8, m.title);
         const items = try w.arena.dupe(command.MenuItem, m.items);
         for (items, 0..) |it, i| {
+            // A row that only says something (a width, a count) is its
+            // own help, and its label changes: not a target.
+            if (it.isInfo()) continue;
             try w.probe(try w.fmtKey("menu:{s}/{s}", .{ family, it.label }), .{ .menu_item = .{ .menu = 0, .idx = @intCast(i) } });
-            for (it.submenu) |sub| try w.probeEntry(try w.fmtKey("menu:{s}/{s}/{s}", .{ family, it.label, sub.label }), try copy.menus.resolve(w.app, w.arena, title, it.label, sub));
+            for (it.submenu) |sub| if (!sub.isInfo()) try w.probeEntry(try w.fmtKey("menu:{s}/{s}/{s}", .{ family, it.label, sub.label }), try copy.menus.resolve(w.app, w.arena, title, it.label, sub));
         }
         w.closeOverlay();
     }

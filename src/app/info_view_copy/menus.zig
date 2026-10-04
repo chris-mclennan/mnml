@@ -423,6 +423,19 @@ pub fn resolve(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u
 /// the command's title and its chord under the active profile, rather
 /// than the tooltip's `opens more rows`. Still a gap — the ladder
 /// marks it — but a useful one.
+/// The open menu's row a `.menu_item` target names, if it is one that
+/// only says something (`MenuItem.isInfo`): no action, nothing it opens.
+/// Its label is its own help — a width, a count — and changes too
+/// often for a curated entry to match it.
+pub fn infoRowLabel(app: *const App, menu: u32, idx: u16) ?[]const u8 {
+    if (app.overlay != .menu) return null;
+    const m = &app.overlay.menu;
+    const sub = menu == 1 or menu == 3;
+    const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
+    if (idx >= list.len or !list[idx].isInfo()) return null;
+    return list[idx].label;
+}
+
 pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?struct { title: []const u8, body: []const u8 } {
     if (app.overlay != .menu) return null;
     const m = &app.overlay.menu;

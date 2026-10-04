@@ -568,6 +568,9 @@ fn pickCopy(app: *App, arena: Allocator) Allocator.Error!Copy {
 /// new.
 fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Copy {
     if (target == .info_view) return null;
+    // A row that only says something is its own help: the label, no
+    // `no help written yet` mark.
+    if (target == .menu_item) if (copy.menus.infoRowLabel(app, target.menu_item.menu, target.menu_item.idx)) |label| return .{ .title = label };
     if (try copy.lookup(app, arena, target)) |entry| {
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
@@ -1490,4 +1493,17 @@ test "the Key line: a control's click command in the active profile's chord, las
     // A control whose click is no command: no line either.
     const tab_close: HitTarget = .{ .tab_close = .{ .leaf = 0, .idx = 0 } };
     try t.expectEqual(@as(?[]const u8, null), try keyLine(&app, arena, tab_close, @splat(null)));
+}
+
+test "hover: a menu row that only says something (the divider's Width row) is its own help — no `no help written yet` mark" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    try app.render();
+    try @import("context_menus.zig").openTreeDividerMenu(&app, 5, 5);
+    const row = app.overlay.menu.items[0];
+    try t.expect(row.isInfo());
+    const c = (try hoverCopy(&app, arena, .{ .menu_item = .{ .menu = 0, .idx = 0 } })).?;
+    try t.expectEqualStrings(row.label, c.title);
+    try t.expect(c.aside == null);
 }
