@@ -406,6 +406,7 @@ fn walkUsagePane(w: *Walk) Allocator.Error!void {
     try w.probe("script_hit:usage:account", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_account_base } });
     try w.probe("script_hit:usage:pencil", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_pencil_base } });
     try w.probe("script_hit:usage:breakdown", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_breakdown_base } });
+    try w.probe("script_hit:usage:reauth", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_reauth_base } });
 }
 
 fn walkOverlays(w: *Walk) Allocator.Error!void {

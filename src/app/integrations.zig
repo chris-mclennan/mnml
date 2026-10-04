@@ -2410,7 +2410,7 @@ fn openFirstPartyMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void 
         try rows.append(app.gpa, .{ .label = "Usage", .action = .{ .command = if (p == .codex) .@"ai.codex_usage" else .@"ai.claude_usage" } });
         // Codex has no login of its own — its reader counts
         // transcripts on disk, so there is nothing to link.
-        if (p == .claude) try rows.append(app.gpa, .{ .label = "Login", .action = .{ .command = .@"ai.link_claude_token" } });
+        if (p == .claude) try rows.append(app.gpa, .{ .label = "Login", .action = .{ .command = .@"ai.claude_reauth" } });
         try rows.append(app.gpa, .{ .label = "Configure profiles…", .action = .{ .ai_profile = .{ .product = p, .index = launch_profiles.legacy_index, .set_default = false } } });
     } else if (std.mem.eql(u8, fp.id, "browser")) {
         try rows.append(app.gpa, .{ .label = "Open", .action = .{ .command = .@"browser.open" } });

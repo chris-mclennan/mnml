@@ -506,7 +506,7 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
     const up = @import("../usage_pane.zig");
     if (id == up.hit_kebab) return .{
         .title = "Usage pane menu",
-        .body = "Add a Claude account, refresh every account now, or open the last raw response. A right-click on an account's own rows gives that account's menu instead — link a token, rename, remove.",
+        .body = "Add a Claude account, refresh every account now, or open the last raw response. A right-click on an account's own rows gives that account's menu instead — Re-auth, rename, remove, and under Advanced the paste-a-token prompt.",
         .keys = &.{ .{ .chord = "a", .label = "Add an account" }, .{ .chord = "r", .label = "Refresh" } },
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
     };
@@ -517,6 +517,12 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
             .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
             .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.show_last_response", .label = "The raw response" } } },
         };
+        if (up.isReauthHit(id)) return .{
+            .title = try std.fmt.allocPrint(arena, "Re-auth {s}", .{name}),
+            .body = "The fix for the state line beside it — `expired`, `keychain holds another account`, `no login yet`. Click opens a pane running `claude login`; once the login lands in the macOS keychain and its email is this account's, it is written to the account's token file, the pane closes and the figures come back. A login for another account on file is not filed here: a box says whose it is and offers to file it under that one.",
+            .keys = &.{.{ .chord = "Right-click", .label = "The account's menu" }},
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
+        };
         if (up.isPencilHit(id)) return .{
             .title = try std.fmt.allocPrint(arena, "Rename {s}", .{name}),
             .body = "Click opens the rename prompt, seeded with the name. The new name is written to `ai.claude_accounts` in the home config; the account's token file, numbers and identity pin go with it.",
@@ -524,14 +530,14 @@ fn usagePane(app: *App, arena: Allocator, id: u32) Allocator.Error!Entry {
         };
         return .{
             .title = try std.fmt.allocPrint(arena, "Claude account — {s}", .{name}),
-            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. Under the week, when the endpoint sends one, `This week by surface` splits it by where it was spent. Right-click is the account's menu — link a token, rename, remove. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
+            .body = "One account's windows, as Claude Code's own usage screen shows them: the five-hour session, the week across models, a week per model, and any other window the endpoint reports under a key this build does not name, each bar coloured by the endpoint's own severity with its reset time. Under the week, when the endpoint sends one, `This week by surface` splits it by where it was spent. The line under the name says where its sign-in stands — `signed in · resets 3:20am`, or `expired`, `keychain holds another account`, `no login yet`, each with a Re-auth button. An expired token whose account the Claude Code CLI is logged in as again is re-captured on its own. Right-click is the account's menu — Re-auth, rename, remove, Advanced. The green gutter and `(active)` mark the account the Claude Code CLI is logged in as.",
             .keys = &.{ .{ .chord = "Right-click", .label = "The account's menu" }, .{ .chord = "r", .label = "Refresh" } },
-            .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth" } }, .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } } },
         };
     }
     return .{
         .title = "Claude usage",
-        .body = "Every watched Claude account, one block each. `a` adds an account, `r` refreshes them all, `L` runs `claude login` and `R` captures that login into the matching account's token file. Right-click here or the kebab is the pane's menu.",
+        .body = "Every watched Claude account, one block each, with a line saying where its sign-in stands and a Re-auth button when it needs one. `a` adds an account, `r` refreshes them all. Right-click here or the kebab is the pane's menu.",
         .keys = &.{ .{ .chord = "a", .label = "Add an account" }, .{ .chord = "r", .label = "Refresh" }, .{ .chord = "Right-click", .label = "The pane's menu" } },
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add an account" } }, .{ .command = .{ .id = .@"ai.show_last_response", .label = "The raw response" } } },
     };

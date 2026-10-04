@@ -462,6 +462,10 @@ pub const ConfirmPurpose = union(enum) {
     remove_integration: []u8,
     /// `ai.claude_remove_account`: the account's name (owned).
     remove_claude_account: []u8,
+    /// Re-auth's mismatch guard: file the keychain's login under
+    /// `target` instead. All owned; `choices` is the box's own row, its
+    /// first label `label`.
+    claude_file_login: struct { target: []u8, label: []u8, choices: []Confirm.Choice },
     /// SESSIONS: the absolute transcript path to delete (owned).
     delete_session: []u8,
     /// // changed (sessions-worktree): merge the session worktree at
@@ -511,6 +515,11 @@ pub const ConfirmPurpose = union(enum) {
         switch (c) {
             .delete_path, .remove_integration, .remove_claude_account, .delete_session, .session_worktree_merge, .remove_script, .layout_load, .layout_overwrite => |s| gpa.free(s),
             .layout_delete => |d| gpa.free(d.name),
+            .claude_file_login => |f| {
+                gpa.free(f.target);
+                gpa.free(f.label);
+                gpa.free(f.choices);
+            },
             .script_install => |i| {
                 gpa.free(i.dir);
                 gpa.free(i.name);

@@ -46,6 +46,9 @@ pub const Product = enum { claude, codex };
 pub const UsagePane = struct {
     product: Product,
     scroll: usize = 0,
+    /// The account (by its place in the list) the next paint scrolls to
+    /// — the chip's `!` opens the pane at the account that needs it.
+    scroll_to: ?usize = null,
 
     /// The tab's words — Rust's `tab_title`.
     pub fn title(p: *const UsagePane) []const u8 {
@@ -79,6 +82,28 @@ pub const Account = struct {
 /// is in flight.
 const Sched = struct { name: []u8, last_at: u64 = 0, pending: bool = false };
 
+/// A Re-auth in flight: the account, the `claude login` pane it opened,
+/// the keychain's refresh token when it started — a login has landed
+/// once that changes.
+const Reauth = struct {
+    name: []u8,
+    pane: ?PaneId,
+    baseline: ?[]u8 = null,
+    baseline_set: bool = false,
+    last_poll_ms: i64 = 0,
+    /// The login pane has exited or closed: one last read, then done.
+    final: bool = false,
+    final_polled: bool = false,
+
+    fn deinit(r: *Reauth, gpa: Allocator) void {
+        gpa.free(r.name);
+        if (r.baseline) |b| gpa.free(b);
+    }
+};
+
+/// How often a Re-auth reads the keychain while its login runs.
+pub const reauth_poll_ms: i64 = 1500;
+
 pub const State = struct {
     group: Io.Group = .init,
     accounts: std.ArrayListUnmanaged(Account) = .empty,
@@ -94,6 +119,11 @@ pub const State = struct {
     keychain_rt: ?[]u8 = null,
     keychain_pending: bool = false,
     keychain_last_at: u64 = 0,
+    /// The Re-auth in flight, when one is.
+    reauth: ?Reauth = null,
+    /// The keychain refresh token the silent re-capture last looked at
+    /// (owned): one look per login, so one toast.
+    recapture_seen: ?[]u8 = null,
     /// `MNML_CLAUDE_USAGE_FIXTURE`, owned; read once.
     fixture: ?[]u8 = null,
     fixture_checked: bool = false,
@@ -123,6 +153,8 @@ pub const State = struct {
         self.sched.deinit(gpa);
         if (self.codex_error) |e| gpa.free(e);
         if (self.keychain_rt) |k| gpa.free(k);
+        if (self.recapture_seen) |k| gpa.free(k);
+        if (self.reauth) |*r| r.deinit(gpa);
         if (self.fixture) |f| gpa.free(f);
     }
 
@@ -234,6 +266,7 @@ fn iconEnabled(app: *const App, id: []const u8) bool {
 /// spawns every account at once (a pane opening, `r`,
 /// `ai.refresh_usage`).
 pub fn tick(app: *App) Allocator.Error!void {
+    try tickReauth(app);
     return refresh(app, false);
 }
 
@@ -253,7 +286,7 @@ fn refresh(app: *App, force: bool) Allocator.Error!void {
     try pruneTo(app, cfg);
     if (fixtureDir(app) == null and builtin.os.tag == .macos and !s.keychain_pending and (force or now -| s.keychain_last_at >= usage.keychain_interval_s)) {
         s.keychain_last_at = now;
-        try spawnKeychain(app, false);
+        try spawnKeychain(app, .poll, .{});
     }
     if (!force and now -| s.last_spawn_at < usage.spawn_gap_s) return;
     for (cfg) |c| {
@@ -445,31 +478,52 @@ fn codexWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *CodexJob
     events.post(io, .{ .usage = r });
 }
 
-const KeychainJob = struct { capture: bool };
+const KeychainJob = struct {
+    mode: usage.KeychainMode,
+    /// Owned. `.reauth`: the refresh token the login started from — the
+    /// profile is asked only once the keychain's differs.
+    baseline: ?[]u8 = null,
+    /// Owned. `.file_under`: the account to file the login under.
+    target: ?[]u8 = null,
+    /// Ask the profile endpoint whose login it is.
+    want_email: bool = false,
 
-fn spawnKeychain(app: *App, capture: bool) Allocator.Error!void {
+    fn destroy(job: *KeychainJob, gpa: Allocator) void {
+        if (job.baseline) |b| gpa.free(b);
+        if (job.target) |x| gpa.free(x);
+        gpa.destroy(job);
+    }
+};
+
+const KeychainOpts = struct { baseline: ?[]const u8 = null, target: ?[]const u8 = null, want_email: bool = false };
+
+fn spawnKeychain(app: *App, mode: usage.KeychainMode, o: KeychainOpts) Allocator.Error!void {
     const gpa = app.gpa;
     const s = st(app);
     const job = try gpa.create(KeychainJob);
-    job.* = .{ .capture = capture };
+    job.* = .{ .mode = mode, .want_email = o.want_email or mode == .capture or mode == .recapture or mode == .file_under };
+    errdefer job.destroy(gpa);
+    if (o.baseline) |b| job.baseline = try gpa.dupe(u8, b);
+    if (o.target) |x| job.target = try gpa.dupe(u8, x);
     s.keychain_pending = true;
     s.group.concurrent(app.io, keychainWorker, .{ app.events, app.io, gpa, job }) catch {
         s.keychain_pending = false;
-        gpa.destroy(job);
         return error.OutOfMemory;
     };
 }
 
 fn keychainWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *KeychainJob) Io.Cancelable!void {
-    defer gpa.destroy(job);
+    defer job.destroy(gpa);
     const r = usage.Result.create(gpa) catch return;
     errdefer r.destroy(gpa);
     const arena = r.arena.allocator();
-    var k: usage.Keychain = .{ .capture = job.capture };
+    var k: usage.Keychain = .{ .mode = job.mode };
+    if (job.target) |x| k.target = arena.dupe(u8, x) catch return;
     if (usage.readKeychain(gpa, io, arena)) |blob| {
         k.blob = blob;
         k.refresh_token = usage.refreshTokenOf(arena, blob);
-        if (job.capture) {
+        const changed = if (job.baseline) |b| (if (k.refresh_token) |rt| !std.mem.eql(u8, rt, b) else true) else true;
+        if (job.want_email and changed) {
             if (usage.accessTokenOf(arena, blob)) |token| {
                 const reply = usage.httpGet(gpa, io, arena, usage.profile_url, token) catch |err| switch (err) {
                     error.Canceled => return error.Canceled,
@@ -480,7 +534,7 @@ fn keychainWorker(events: *event.EventQueue, io: Io, gpa: Allocator, job: *Keych
                 };
             }
         }
-    } else k.err = "the keychain has no Claude Code login (run `claude login`)";
+    } else k.err = "the keychain has no Claude Code login yet";
     r.payload = .{ .keychain = k };
     events.post(io, .{ .usage = r });
 }
@@ -518,6 +572,7 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
                     if (f.email) |e| next.email = try fa.dupe(u8, e);
                     if (f.org) |o| next.org = try fa.dupe(u8, o);
                     if (f.warning) |w| app.toast("{s}", .{w});
+                    if (f.recaptured) app.toast("signed {s} back in from the Claude Code login on this machine", .{c.name});
                 },
                 .err => |e| {
                     if (old) |o| {
@@ -525,7 +580,7 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
                         if (o.email) |em| next.email = try fa.dupe(u8, em);
                         if (o.org) |og| next.org = try fa.dupe(u8, og);
                     }
-                    usage.applyFetchError(&next.usage, .{ .message = try fa.dupe(u8, e.message), .retry_after = e.retry_after, .needs_reauth = e.needs_reauth }, now);
+                    usage.applyFetchError(&next.usage, .{ .message = try fa.dupe(u8, e.message), .retry_after = e.retry_after, .needs_reauth = e.needs_reauth, .auth = e.auth }, now);
                 },
             }
             if (old) |o| {
@@ -554,7 +609,13 @@ pub fn handle(app: *App, r: *usage.Result) Allocator.Error!void {
             if (s.keychain_rt) |old| app.gpa.free(old);
             s.keychain_rt = if (k.refresh_token) |rt| try app.gpa.dupe(u8, rt) else null;
             try restampActive(app);
-            if (k.capture) try captureLogin(app, k);
+            switch (k.mode) {
+                .poll => try maybeRecapture(app),
+                .capture => try captureLogin(app, k),
+                .reauth => try reauthRead(app, k),
+                .recapture => try recaptureRead(app, k),
+                .file_under => try fileUnderRead(app, k),
+            }
         },
     }
     app.needs_render = true;
@@ -641,7 +702,7 @@ fn captureLogin(app: *App, k: usage.Keychain) Allocator.Error!void {
     if (target == null) if (try onlyUnlinked(app, cfg)) |c| {
         target = c;
     };
-    const tgt = target orelse return app.toast("the keychain login ({s}) matches no account on file — press L to log in as the one you want, then R", .{k.email orelse "unknown"});
+    const tgt = target orelse return app.toast("the keychain login ({s}) matches no account on file — Re-auth the one you want", .{k.email orelse "unknown"});
     usage.writeSecret(app.io, tgt.token_path, blob) catch |err| return app.toast("could not write {s}: {s}", .{ app.relPath(tgt.token_path), @errorName(err) });
     app.toast("captured the keychain login for {s} ({s})", .{ tgt.name, k.email orelse "identity unknown" });
     if (st(app).schedFor(tgt.name)) |sched| sched.last_at = 0;
@@ -661,6 +722,256 @@ fn onlyUnlinked(app: *App, cfg: []const usage.AccountCfg) Allocator.Error!?usage
         };
     }
     return found;
+}
+
+// ─── Re-auth and the silent re-capture ──────────────────────────────────
+
+/// Whether this build can read Claude Code's login: the macOS keychain,
+/// and never in fixture mode.
+fn keychainReadable(app: *App) bool {
+    return builtin.os.tag == .macos and fixtureDir(app) == null;
+}
+
+/// The configured account named `name`, its token path resolved.
+fn cfgOf(app: *App, arena: Allocator, name: []const u8) Allocator.Error!?usage.AccountCfg {
+    for (try configured(app, arena)) |c| if (std.mem.eql(u8, c.name, name)) return c;
+    return null;
+}
+
+/// After a token file changed under an account: fetch it now.
+fn kick(app: *App, name: []const u8) Allocator.Error!void {
+    if (st(app).schedFor(name)) |sched| sched.last_at = 0;
+    if (st(app).find(name)) |a| a.usage.retry_after_at = 0;
+    try refresh(app, true);
+}
+
+/// Whether `path` already holds exactly `blob`.
+fn holds(app: *App, arena: Allocator, path: []const u8, blob: []const u8) bool {
+    const cur = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(64 * 1024)) catch return false;
+    return std.mem.eql(u8, std.mem.trim(u8, cur, " \t\r\n"), std.mem.trim(u8, blob, " \t\r\n"));
+}
+
+/// Whose login `email` is, for a Re-auth of `name`: its own (its pin,
+/// or no pin yet and no other account's); another account's (the
+/// mismatch guard offers to file it there); or nobody's — said, never
+/// filed. One account configured takes any login, as `R` always has.
+pub const Verdict = union(enum) { capture, other: []const u8, unknown };
+
+pub fn reauthVerdict(app: *App, arena: Allocator, name: []const u8, email: ?[]const u8) Allocator.Error!Verdict {
+    const cfg = try configured(app, arena);
+    const e = email orelse return if (cfg.len <= 1) .capture else .unknown;
+    const pin = try usage.pinnedEmail(arena, app.io, app.data_root, name);
+    if (pin) |p| if (std.mem.eql(u8, p, e)) return .capture;
+    for (cfg) |c| {
+        if (std.mem.eql(u8, c.name, name)) continue;
+        if (try usage.pinnedEmail(arena, app.io, app.data_root, c.name)) |other| if (std.mem.eql(u8, other, e)) return .{ .other = c.name };
+    }
+    if (pin == null or cfg.len <= 1) return .capture;
+    return .unknown;
+}
+
+/// `ai.claude_reauth`, an account's *Re-auth* button and menu row: a
+/// pane running `claude login`, watched — the keychain is read every
+/// 1.5 s, and the login that lands is filed under the account when it is
+/// the account's (`reauthRead`). Nothing to press afterwards.
+pub fn startReauth(app: *App, name: []const u8) CommandError!void {
+    const arena = app.frame.allocator();
+    const gpa = app.gpa;
+    _ = (try cfgOf(app, arena, name)) orelse return app.diag.fail(arena, "no Claude account named {s}", .{name});
+    if (fixtureDir(app) != null) return app.diag.fail(arena, "fixture mode: Re-auth reads no keychain", .{});
+    if (builtin.os.tag != .macos) return app.diag.fail(arena, "Re-auth reads Claude Code's login from the macOS keychain — here, link {s} with Advanced ▸ Paste a token…", .{name});
+    const s = st(app);
+    if (s.reauth) |*r| {
+        if (std.mem.eql(u8, r.name, name)) if (r.pane) |id| if (app.panes.pty(id) != null) {
+            app.showPane(id);
+            return;
+        };
+        try endReauth(app, true);
+    }
+    const label = try std.fmt.allocPrint(arena, "claude login — {s}", .{name});
+    const pane = pty_pane.open(app, .{ .argv = &.{ "claude", "login" }, .label = label, .placement = .below, .kind = .command }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return app.diag.fail(arena, "could not start `claude login`: {s}", .{@errorName(err)}),
+    };
+    s.reauth = .{ .name = try gpa.dupe(u8, name), .pane = pane };
+    app.toast("log in as {s} below — the login is filed under it when it lands", .{name});
+    app.needs_render = true;
+}
+
+/// Stop watching; `close` takes the login pane with it.
+fn endReauth(app: *App, close: bool) Allocator.Error!void {
+    const s = st(app);
+    var r = s.reauth orelse return;
+    s.reauth = null;
+    defer r.deinit(app.gpa);
+    if (close) if (r.pane) |id| if (app.panes.pty(id) != null) try app.forceClosePane(id);
+    if (findPane(app, .claude)) |id| app.showPane(id);
+    app.needs_render = true;
+}
+
+/// Whether the tick should wake the loop: a Re-auth is watching.
+pub fn watching(app: *const App) bool {
+    return app.ai.usage.reauth != null;
+}
+
+/// Per tick while a Re-auth runs: a keychain read every 1.5 s; once the
+/// login pane has exited or been closed, one more, then the watch ends.
+fn tickReauth(app: *App) Allocator.Error!void {
+    const s = st(app);
+    const r = if (s.reauth) |*x| x else return;
+    if (!r.final) if (r.pane) |id| {
+        const gone = if (app.panes.pty(id)) |p| p.exit != null else true;
+        if (gone) r.final = true;
+    };
+    if (s.keychain_pending or r.final_polled) return;
+    if (!r.final and app.now_ms - r.last_poll_ms < reauth_poll_ms) return;
+    r.last_poll_ms = app.now_ms;
+    if (r.final and r.baseline_set) r.final_polled = true;
+    try spawnKeychain(app, .reauth, .{ .baseline = r.baseline, .want_email = r.baseline_set });
+}
+
+/// A Re-auth's keychain read. The first sets the baseline; one whose
+/// refresh token differs is the new login, filed when it is the
+/// account's, else the mismatch guard. A read after the pane ended with
+/// nothing new ends the watch.
+pub fn reauthRead(app: *App, k: usage.Keychain) Allocator.Error!void {
+    const s = st(app);
+    const r = if (s.reauth) |*x| x else return;
+    const arena = app.frame.allocator();
+    if (!r.baseline_set) {
+        r.baseline_set = true;
+        r.baseline = if (k.refresh_token) |rt| try app.gpa.dupe(u8, rt) else null;
+        return;
+    }
+    const changed = if (k.refresh_token) |rt| (if (r.baseline) |b| !std.mem.eql(u8, b, rt) else true) else false;
+    const blob = k.blob orelse null;
+    if (!changed or blob == null) {
+        if (r.final_polled) {
+            app.toast("the login for {s} closed with nothing new in the keychain — Re-auth to try again", .{r.name});
+            try endReauth(app, false);
+        }
+        return;
+    }
+    const name = try arena.dupe(u8, r.name);
+    switch (try reauthVerdict(app, arena, name, k.email)) {
+        .capture => {
+            const c = (try cfgOf(app, arena, name)) orelse return endReauth(app, true);
+            usage.writeSecret(app.io, c.token_path, blob.?) catch |err| {
+                app.toast("could not write {s}: {s}", .{ app.relPath(c.token_path), @errorName(err) });
+                return endReauth(app, false);
+            };
+            if (k.email) |e| _ = try usage.pinIdentity(arena, app.io, app.data_root, name, e);
+            try endReauth(app, true);
+            app.toast("signed {s} in{s}{s}{s}", .{ name, if (k.email != null) " (" else "", k.email orelse "", if (k.email != null) ")" else "" });
+            try kick(app, name);
+        },
+        .other => |other| {
+            try endReauth(app, true);
+            try openFileUnder(app, name, other, k.email orelse "");
+        },
+        .unknown => {
+            try endReauth(app, true);
+            app.toast("that login is {s}, not {s}'s — nothing was filed; Re-auth again and log in as {s}", .{ k.email orelse "an account mnml cannot name", name, name });
+        },
+    }
+}
+
+pub const file_under_cancel = 'c';
+
+/// The mismatch guard: the login a Re-auth of `name` got is `other`'s.
+/// *File under <other>* reads the keychain again and files it there;
+/// *Cancel* leaves every token file as it was.
+fn openFileUnder(app: *App, name: []const u8, other: []const u8, email: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    const msg = try std.fmt.allocPrint(gpa, "The login that landed is {s} — that is {s}, not {s}. Nothing was filed under {s}.", .{ email, other, name, name });
+    errdefer gpa.free(msg);
+    const target = try gpa.dupe(u8, other);
+    errdefer gpa.free(target);
+    const label = try std.fmt.allocPrint(gpa, "File under {s}", .{other});
+    errdefer gpa.free(label);
+    const choices = try gpa.alloc(app_mod.Confirm.Choice, 2);
+    choices[0] = .{ .key = 'f', .label = label };
+    choices[1] = .{ .key = file_under_cancel, .label = "Cancel" };
+    app.overlay.deinit(gpa);
+    app.overlay = .{ .confirm = .{
+        .state = .{ .title = "Re-auth: another account's login", .message = msg, .choices = choices },
+        .purpose = .{ .claude_file_login = .{ .target = target, .label = label, .choices = choices } },
+        .message = msg,
+    } };
+    app.focus = .overlay;
+    app.needs_render = true;
+}
+
+/// The guard's *File under*: read the keychain again for `target`.
+pub fn fileUnderAccept(app: *App, target: []const u8, choice: usize) CommandError!void {
+    if (choice != 0) return;
+    if (!keychainReadable(app)) return app.diag.fail(app.frame.allocator(), "the keychain cannot be read here", .{});
+    try spawnKeychain(app, .file_under, .{ .target = target });
+}
+
+/// The *File under* read: filed under the target only when the login is
+/// still the one pinned to it.
+pub fn fileUnderRead(app: *App, k: usage.Keychain) Allocator.Error!void {
+    const arena = app.frame.allocator();
+    const name = k.target orelse return;
+    const blob = k.blob orelse return app.toast("{s}", .{k.err orelse "the keychain returned nothing"});
+    const pin = try usage.pinnedEmail(arena, app.io, app.data_root, name);
+    const ok = if (k.email) |e| (if (pin) |p| std.mem.eql(u8, p, e) else false) else false;
+    if (!ok) return app.toast("the keychain's login is no longer {s}'s — nothing was filed", .{name});
+    const c = (try cfgOf(app, arena, name)) orelse return;
+    usage.writeSecret(app.io, c.token_path, blob) catch |err| return app.toast("could not write {s}: {s}", .{ app.relPath(c.token_path), @errorName(err) });
+    app.toast("filed the login under {s}", .{name});
+    try kick(app, name);
+}
+
+/// The account a keychain login of `email` silently re-captures: one
+/// whose token was turned down (expired, or the keychain then held
+/// another account) and whose pin is that email. Null otherwise —
+/// another account's login is never filed without asking.
+pub fn recaptureTarget(app: *App, arena: Allocator, email: ?[]const u8) Allocator.Error!?[]const u8 {
+    const e = email orelse return null;
+    for (st(app).accounts.items) |*a| {
+        switch (usage.accountState(&a.usage)) {
+            .expired, .other_login => {},
+            else => continue,
+        }
+        const pin = (try usage.pinnedEmail(arena, app.io, app.data_root, a.name)) orelse continue;
+        if (std.mem.eql(u8, pin, e)) return a.name;
+    }
+    return null;
+}
+
+/// After a keychain poll: when an account's token was turned down and
+/// the keychain holds a login not looked at yet, ask whose it is.
+fn maybeRecapture(app: *App) Allocator.Error!void {
+    const s = st(app);
+    if (!keychainReadable(app) or s.keychain_pending or s.reauth != null) return;
+    const rt = s.keychain_rt orelse return;
+    if (s.recapture_seen) |seen| if (std.mem.eql(u8, seen, rt)) return;
+    for (s.accounts.items) |*a| switch (usage.accountState(&a.usage)) {
+        .expired, .other_login => break,
+        else => {},
+    } else return;
+    try spawnKeychain(app, .recapture, .{});
+}
+
+/// The re-capture read: the login filed under the expired account it
+/// belongs to, one toast; anyone else's login, nothing at all.
+pub fn recaptureRead(app: *App, k: usage.Keychain) Allocator.Error!void {
+    const s = st(app);
+    const arena = app.frame.allocator();
+    if (k.refresh_token) |rt| {
+        const owned = try app.gpa.dupe(u8, rt);
+        if (s.recapture_seen) |old| app.gpa.free(old);
+        s.recapture_seen = owned;
+    }
+    const blob = k.blob orelse return;
+    const name = (try recaptureTarget(app, arena, k.email)) orelse return;
+    const c = (try cfgOf(app, arena, name)) orelse return;
+    if (holds(app, arena, c.token_path, blob)) return;
+    usage.writeSecret(app.io, c.token_path, blob) catch return;
+    app.toast("signed {s} back in from the Claude Code login on this machine", .{name});
+    try kick(app, name);
 }
 
 // ─── the accounts: add, link, rename, remove ────────────────────────────
@@ -738,7 +1049,8 @@ fn writeAccounts(app: *App, list: []const ClaudeAccount) Allocator.Error!void {
 }
 
 /// `ai.claude_add_account`, `a` in the Claude pane, the pane's and the
-/// chip's menus: the name first, then the token prompt for it.
+/// chip's menus: the name; the account then shows `no login yet —
+/// Re-auth`.
 pub fn addCmd(app: *App) CommandError!void {
     app.overlay.deinit(app.gpa);
     app.overlay = .{ .prompt = .{ .state = app_mod.Prompt.init(app.gpa, "Name the Claude account to add"), .purpose = .claude_account_add } };
@@ -749,8 +1061,9 @@ pub fn addCmd(app: *App) CommandError!void {
 
 /// The name prompt's accept: the account joins `ai.claude_accounts` in
 /// the home config with a token file of its own under the data root —
-/// the first one added is the active one — its fetch starts, and the
-/// token prompt opens for it.
+/// the first one added is the active one — and its fetch starts. No
+/// token prompt: Re-auth signs it in (a token can still be pasted from
+/// the account's menu, Advanced ▸ Paste a token…).
 pub fn addAccept(app: *App, text: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     const name = std.mem.trim(u8, text, " \t\r\n");
@@ -763,7 +1076,7 @@ pub fn addAccept(app: *App, text: []const u8) CommandError!void {
     next[list.len] = .{ .name = name, .token_path = try freshTokenFile(app, arena, name, list), .active = list.len == 0 };
     try writeAccounts(app, next);
     try refreshAll(app);
-    try openTokenPrompt(app, name);
+    app.toast("added {s} — Re-auth signs it in", .{name});
 }
 
 /// The secret prompt that links `name`: the OAuth token pasted into it
@@ -776,7 +1089,7 @@ pub fn openTokenPrompt(app: *App, name: []const u8) CommandError!void {
     errdefer gpa.free(title);
     var ps = app_mod.Prompt.init(gpa, title);
     ps.secret = true;
-    ps.placeholder = "esc links it later: L logs in, R captures";
+    ps.placeholder = "the accessToken, or the whole login blob";
     app.overlay.deinit(gpa);
     app.overlay = .{ .prompt = .{ .state = ps, .purpose = .{ .claude_account_token = .{ .name = owned, .title = title } } } };
     app.focus = .overlay;
@@ -789,7 +1102,7 @@ pub fn tokenAccept(app: *App, name: []const u8, text: []const u8) CommandError!v
     const arena = app.frame.allocator();
     const token = std.mem.trim(u8, text, " \t\r\n");
     if (token.len == 0) {
-        app.toast("{s} is not linked yet — in the usage pane, L logs in as it and R captures the login", .{name});
+        app.toast("{s} is not linked yet — Re-auth signs it in", .{name});
         return;
     }
     const cfg = try configured(app, arena);
@@ -929,6 +1242,7 @@ pub fn removeAccount(app: *App, name: []const u8) CommandError!void {
 /// A `.claude_account` menu row.
 pub fn accountAction(app: *App, verb: command.ClaudeAccountAct.Verb, name: []const u8) CommandError!void {
     return switch (verb) {
+        .reauth => startReauth(app, name),
         .link => openTokenPrompt(app, name),
         .rename => openRenamePrompt(app, name),
         .remove => openRemoveConfirm(app, name),
@@ -948,7 +1262,8 @@ pub fn chooseAccount(app: *App, verb: command.ClaudeAccountAct.Verb) CommandErro
     errdefer app.gpa.free(rows);
     for (cfg, 0..) |c, i| rows[i] = .{ .label = try mem.allocator().dupe(u8, c.name), .action = .{ .claude_account = .{ .act = verb, .name = try mem.allocator().dupe(u8, c.name) } }, .checked = c.active };
     const title: []const u8 = switch (verb) {
-        .link => "Link which Claude account?",
+        .reauth => "Re-auth which Claude account?",
+        .link => "Paste a token for which Claude account?",
         .rename => "Rename which Claude account?",
         .remove => "Remove which Claude account?",
     };
@@ -977,6 +1292,46 @@ pub fn open(app: *App, product: Product) CommandError!void {
     }
     try refreshAll(app);
     app.needs_render = true;
+}
+
+/// The Claude chip menu's *Re-auth* row: the one account straight, or
+/// a submenu naming each. Strings on `mem`, the menu's own arena.
+pub fn chipReauthRows(app: *App, mem: Allocator) Allocator.Error![]const MenuItem {
+    const cfg = try configured(app, mem);
+    if (cfg.len == 0) return &.{};
+    if (cfg.len == 1) return mem.dupe(MenuItem, &.{.{ .label = "Re-auth", .action = .{ .claude_account = .{ .act = .reauth, .name = cfg[0].name } } }});
+    const kids = try mem.alloc(MenuItem, cfg.len);
+    for (cfg, 0..) |c, i| kids[i] = .{ .label = c.name, .action = .{ .claude_account = .{ .act = .reauth, .name = c.name } } };
+    return mem.dupe(MenuItem, &.{.{ .label = "Re-auth an account", .action = .none, .submenu = kids }});
+}
+
+/// The chip's `!`: the Claude pane, scrolled to account `i`.
+pub fn openAt(app: *App, i: usize) CommandError!void {
+    try open(app, .claude);
+    if (findPane(app, .claude)) |id| if (app.panes.get(id)) |pane| switch (pane.*) {
+        .ai_usage => |*p| p.scroll_to = i,
+        else => {},
+    };
+}
+
+/// The account the chip's `!` is about, by its place in the list: one
+/// that wants a Re-auth, else — in the compact meter — the one in the
+/// warning or critical tier it paints, else one whose last fetch failed.
+/// Null when nothing needs looking at.
+pub fn attention(app: *App) ?usize {
+    const s = st(app);
+    for (s.accounts.items, 0..) |*a, i| if (usage.accountState(&a.usage).wantsReauth()) return i;
+    if (s.accounts.items.len > 1 and app.cfg.ai.claude_meter_mode == .compact) if (warningIndex(s.accounts.items)) |i| return i;
+    for (s.accounts.items, 0..) |*a, i| if (a.usage.last_error != null) return i;
+    return null;
+}
+
+/// A click on the Claude chip: the pane at the account needing
+/// attention, when one does. False leaves the click to the chip's own.
+pub fn chipAttentionClick(app: *App) CommandError!bool {
+    const i = attention(app) orelse return false;
+    try openAt(app, i);
+    return true;
 }
 
 /// `ai.show_last_response`: the last usage body, as the fetcher wrote it.
@@ -1028,7 +1383,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *UsagePane, k: Key) Allocator.Error!b
                     } else if (st(app).keychain_pending) {
                         app.toast("the keychain is being read…", .{});
                     } else {
-                        try spawnKeychain(app, true);
+                        try spawnKeychain(app, .capture, .{});
                         app.toast("reading the keychain…", .{});
                     }
                 } else return false,
@@ -1050,19 +1405,25 @@ pub const hit_body: u32 = 2;
 pub const hit_account_base: u32 = 0x100;
 pub const hit_pencil_base: u32 = 0x1000;
 pub const hit_breakdown_base: u32 = 0x2000;
+/// Account `i`'s *Re-auth* button on its state line.
+pub const hit_reauth_base: u32 = 0x3000;
 
 pub fn isPencilHit(id: u32) bool {
     return id >= hit_pencil_base and id < hit_breakdown_base;
 }
 
 pub fn isBreakdownHit(id: u32) bool {
-    return id >= hit_breakdown_base;
+    return id >= hit_breakdown_base and id < hit_reauth_base;
+}
+
+pub fn isReauthHit(id: u32) bool {
+    return id >= hit_reauth_base;
 }
 
 /// The account a block, pencil or breakdown id names, in the order the
 /// pane lists them.
 pub fn accountOfHit(app: *App, id: u32) ?[]const u8 {
-    const base: u32 = if (id >= hit_breakdown_base) hit_breakdown_base else if (id >= hit_pencil_base) hit_pencil_base else if (id >= hit_account_base) hit_account_base else return null;
+    const base: u32 = if (id >= hit_reauth_base) hit_reauth_base else if (id >= hit_breakdown_base) hit_breakdown_base else if (id >= hit_pencil_base) hit_pencil_base else if (id >= hit_account_base) hit_account_base else return null;
     const i = id - base;
     const s = st(app);
     return if (i < s.accounts.items.len) s.accounts.items[i].name else null;
@@ -1077,6 +1438,7 @@ pub fn click(app: *App, p: *UsagePane, hit_id: u32, m: @import("../core/key.zig"
     if (hit_id == hit_kebab) return openPaneMenu(app, m.x, m.y);
     if (accountOfHit(app, hit_id)) |name| {
         if (isPencilHit(hit_id) and !right) return toastFail(app, openRenamePrompt(app, name));
+        if (isReauthHit(hit_id) and !right) return toastFail(app, startReauth(app, name));
         if (right) return openAccountMenu(app, name, m.x, m.y);
         return;
     }
@@ -1105,16 +1467,20 @@ pub fn openPaneMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     try app.openMenu("Claude usage", rows, x, y);
 }
 
-/// One account's menu, titled with its name: link a token to it, rename
-/// it, remove it; then the pane's own rows.
+/// One account's menu, titled with its name: Re-auth it, rename it,
+/// remove it, Advanced ▸ Paste a token…; then the pane's own rows.
 pub fn openAccountMenu(app: *App, name: []const u8, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
     const n = try mem.allocator().dupe(u8, name);
+    const advanced = try mem.allocator().dupe(MenuItem, &.{
+        .{ .label = "Paste a token…", .action = .{ .claude_account = .{ .act = .link, .name = n } } },
+    });
     const rows = try context_menus.items(app, &.{
-        .{ .label = "Link a token…", .action = .{ .claude_account = .{ .act = .link, .name = n } } },
+        .{ .label = "Re-auth", .action = .{ .claude_account = .{ .act = .reauth, .name = n } } },
         .{ .label = "Rename…", .action = .{ .claude_account = .{ .act = .rename, .name = n } } },
         .{ .label = "Remove…", .action = .{ .claude_account = .{ .act = .remove, .name = n } } },
+        .{ .label = "Advanced", .action = .none, .submenu = advanced },
         .{ .label = "Add Claude account…", .action = .{ .command = .@"ai.claude_add_account" }, .separator_before = true },
         .{ .label = "Refresh usage now", .action = .{ .command = .@"ai.refresh_usage" } },
     });
@@ -1157,6 +1523,10 @@ pub const ChipParts = struct {
     /// chip (the percent on the coral itself was unreadable — Rust's
     /// #1139 took it off for that).
     tier: ?usage.Tier = null,
+    /// The accent paints on the dark ink (the single chip's pill); off,
+    /// it is the tier colour on the chip's own coral (the compact
+    /// meter's warning account).
+    on_ink: bool = true,
 
     pub fn joined(c: ChipParts, arena: Allocator) Allocator.Error![]const u8 {
         return std.mem.concat(arena, u8, &.{ c.head, c.accent, c.tail });
@@ -1190,7 +1560,22 @@ pub fn claudeChipParts(app: *App, arena: Allocator, glyph: []const u8) Allocator
             for (s.accounts.items, 0..) |*a, i| rows[i] = a.chip();
             const c = try usage.compactChip(arena, rows, opts);
             if (c.spark.len == 0) return .{ .head = c.text };
-            return .{ .head = c.text[0 .. c.text.len - c.spark.len - c.rest.len], .accent = c.spark, .tail = c.rest, .tier = alarm(c.tier) };
+            const head = c.text[0 .. c.text.len - c.spark.len - c.rest.len];
+            // An account in warning or critical: its letter and percent
+            // in the tier's colour on the coral, then one `!`, then the
+            // arrow as it was — no ink block.
+            if (warningIndex(s.accounts.items)) |wi| {
+                const u = &s.accounts.items[wi].usage;
+                const rest = if (std.mem.startsWith(u8, c.rest, "!")) c.rest[1..] else c.rest;
+                return .{
+                    .head = head,
+                    .accent = try std.fmt.allocPrint(arena, "{c} {d}%", .{ usage.abbrev(s.accounts.items[wi].name), alarmPercent(u) }),
+                    .tail = try std.fmt.allocPrint(arena, "!{s}", .{rest}),
+                    .tier = usage.accountTier(u),
+                    .on_ink = false,
+                };
+            }
+            return .{ .head = head, .accent = c.spark, .tail = c.rest };
         },
         .ticker => {
             const a = &s.accounts.items[usage.tickerIndex(now, n)];
@@ -1219,7 +1604,14 @@ pub const TipLine = struct { text: []const u8, sub: []const u8 };
 pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
     const s = st(app);
     const now = nowSecs(app);
-    const out = try arena.alloc(TipLine, s.accounts.items.len);
+    // The account the `!` is about leads, named with its cause.
+    const lead: usize = if (attention(app) != null) 1 else 0;
+    const all = try arena.alloc(TipLine, s.accounts.items.len + lead);
+    if (attention(app)) |ai| all[0] = .{
+        .text = try std.fmt.allocPrint(arena, "! {s}: {s}", .{ s.accounts.items[ai].name, try attentionCause(app, arena, ai) }),
+        .sub = "click: the usage pane, at this account",
+    };
+    const out = all[lead..];
     for (s.accounts.items, 0..) |*a, i| {
         const u = &a.usage;
         const text = try std.fmt.allocPrint(arena, "{s}{s}", .{ a.name, if (a.is_active) " (active)" else "" });
@@ -1236,12 +1628,52 @@ pub fn chipTipLines(app: *App, arena: Allocator) Allocator.Error![]TipLine {
         };
         out[i] = .{ .text = text, .sub = sub };
     }
-    return out;
+    return all;
 }
 
 /// A tier worth painting: warning or critical.
 fn alarm(tier: usage.Tier) ?usage.Tier {
     return if (tier == .ok) null else tier;
+}
+
+/// The read account in the worst tier at warning or above (the higher
+/// percent between two of a tier), by its place in the list.
+pub fn warningIndex(accounts: []const Account) ?usize {
+    var best: ?usize = null;
+    for (accounts, 0..) |*a, i| {
+        if (a.usage.fetched_at == 0) continue;
+        const tier = usage.accountTier(&a.usage);
+        if (tier == .ok) continue;
+        if (best) |b| {
+            const bt = usage.accountTier(&accounts[b].usage);
+            if (@intFromEnum(tier) < @intFromEnum(bt)) continue;
+            if (tier == bt and alarmPercent(&a.usage) <= alarmPercent(&accounts[b].usage)) continue;
+        }
+        best = i;
+    }
+    return best;
+}
+
+/// The percent behind an account's tier: the week's when the week is the
+/// worse window, else the session's.
+fn alarmPercent(u: *const usage.Usage) u16 {
+    const session = usage.tierOfWire(u.percent, u.severity);
+    const week = usage.tierOfWire(u.weekly_percent, u.weekly_severity);
+    return if (@intFromEnum(week) > @intFromEnum(session)) u.weekly_percent else u.percent;
+}
+
+/// Why account `i` is the chip's `!`, in the state line's words or the
+/// tier's.
+pub fn attentionCause(app: *App, arena: Allocator, i: usize) Allocator.Error![]const u8 {
+    const a = &st(app).accounts.items[i];
+    const u = &a.usage;
+    const state = usage.accountState(u);
+    if (state.wantsReauth()) return usage_view.stateLine(arena, state, u, nowSecs(app), .{ .fixed = tzOffset(app, nowSecs(app)) });
+    if (u.last_error) |e| return std.fmt.allocPrint(arena, "the last fetch failed — {s}", .{e});
+    const session = usage.tierOfWire(u.percent, u.severity);
+    const week = usage.tierOfWire(u.weekly_percent, u.weekly_severity);
+    const tier = usage.worseTier(session, week);
+    return std.fmt.allocPrint(arena, "{d}% of the {s} — {s}", .{ alarmPercent(u), if (@intFromEnum(week) > @intFromEnum(session)) "week" else "session", if (tier == .hot) "critical" else "warning" });
 }
 
 /// The chip as one string.
@@ -1267,7 +1699,7 @@ pub fn codexChip(app: *App, arena: Allocator, glyph: []const u8) Allocator.Error
 pub fn claudeSummary(app: *App, arena: Allocator) Allocator.Error![]const u8 {
     const a = st(app).active() orelse return "not logged in";
     const u = &a.usage;
-    if (u.needs_reauth) return "not logged in";
+    if (usage.accountState(u).wantsReauth()) return "not logged in";
     if (u.fetched_at == 0) {
         if (u.last_error) |e| return std.fmt.allocPrint(arena, "no reading — {s}", .{e});
         return "not read yet";
@@ -1415,11 +1847,12 @@ test "ai.codex_usage: the spare pane — tokens today with thousands, the sessio
     try t.expect(std.mem.indexOf(u8, txt, "AI spend") == null);
 }
 
-test "the pane's states: fetching, not linked, needs re-auth with the guided steps" {
+test "the pane's states: a line per account — signed in, checking, no login, expired, another account's — and a Re-auth button where it wants one" {
     var fx = try Fixture.init();
     defer fx.deinit();
-    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "ghost\n*locked\n" });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "personal\nghost\n*locked\nstale\n" });
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "locked.error", .data = "needs-reauth: the keychain login is other@example.com, not locked's" });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "stale.error", .data = "HTTP 401: token rejected" });
     var app = try fx.app();
     defer app.deinit();
     app.tree.visible = false;
@@ -1428,24 +1861,85 @@ test "the pane's states: fetching, not linked, needs re-auth with the guided ste
     // Before any result: the empty state.
     try app.render();
     var txt = try screen_mod.toTestText(t.allocator, &app.screen);
-    try t.expect(std.mem.indexOf(u8, txt, "fetching… (link a token via `:ai.link_claude_token`)") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "fetching… (a adds an account)") != null);
     t.allocator.free(txt);
     try settle(&app);
+    const pid = findPane(&app, .claude).?;
+    switch (app.panes.get(pid).?.*) {
+        .ai_usage => |*p| p.scroll = 0,
+        else => unreachable,
+    }
+    try app.resize(120, 80);
     try app.render();
     txt = try screen_mod.toTestText(t.allocator, &app.screen);
     defer t.allocator.free(txt);
-    try t.expect(std.mem.indexOf(u8, txt, "no data yet · last error: not linked") != null);
-    // Backed off on our side, not the server's: no 429 wording.
-    try t.expect(std.mem.indexOf(u8, txt, "next fetch in 600s") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "(429)") == null);
-    try t.expect(std.mem.indexOf(u8, txt, "token expired — needs re-auth") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "1. press L to run `claude login` (as locked)") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "2. press R to capture it from the keychain") != null);
-    try t.expect(std.mem.indexOf(u8, txt, "the keychain login is other@example.com") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "signed in · resets 8:20pm") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "no login yet —  Re-auth") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "keychain holds another account —  Re-auth") != null);
+    try t.expect(std.mem.indexOf(u8, txt, "expired —  Re-auth") != null);
+    // The fix is the button: no steps, no backoff, no raw error.
+    try t.expect(std.mem.indexOf(u8, txt, "press L") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "press R") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "next fetch in") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "last error: not linked") == null);
+    try t.expect(std.mem.indexOf(u8, txt, "token rejected") == null);
     try t.expect(std.mem.indexOf(u8, txt, "(active) locked") != null);
-    // Nothing was ever read: no bar claims "0% used" (round-7 hunt).
-    try t.expect(std.mem.indexOf(u8, txt, "% used") == null);
-    try t.expect(std.mem.indexOf(u8, txt, "Current session") == null);
+    // Each button is its account's hit.
+    var buttons: usize = 0;
+    for (app.hits.items.items) |h| if (h.target == .script_hit and isReauthHit(h.target.script_hit.id)) {
+        buttons += 1;
+        const name = accountOfHit(&app, h.target.script_hit.id).?;
+        try t.expect(!std.mem.eql(u8, name, "personal"));
+    };
+    try t.expectEqual(@as(usize, 3), buttons);
+    // The chip's `!` is the first account wanting a Re-auth: a click
+    // opens the pane scrolled to its block.
+    try t.expectEqual(@as(?usize, 1), attention(&app));
+    try app.resize(120, 16);
+    try t.expect(try chipAttentionClick(&app));
+    try app.render();
+    switch (app.panes.get(pid).?.*) {
+        .ai_usage => |*p| {
+            try t.expect(p.scroll_to == null);
+            try t.expect(p.scroll > 0);
+        },
+        else => unreachable,
+    }
+}
+
+test "the state line's words, per state" {
+    const a = t.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const ar = arena.allocator();
+    const now: u64 = 1789243232; // 2026-09-12 20:00:32 UTC
+    const tz: usage_view.Tz = .{ .fixed = 0 };
+    var u: usage.Usage = .{ .fetched_at = now, .percent = 40, .resets_at = now + 1168, .weekly_resets_at = now + 86_400 * 6 };
+    try t.expectEqual(usage.AccountState.signed_in, usage.accountState(&u));
+    try t.expectEqualStrings("signed in · resets 8:20pm", try usage_view.stateLine(ar, usage.accountState(&u), &u, now, tz));
+    // The session reset passed: the week's, in the long form.
+    u.resets_at = now - 10;
+    try t.expectEqualStrings("signed in · resets Sep 18 at 8pm", try usage_view.stateLine(ar, usage.accountState(&u), &u, now, tz));
+    // No reading yet.
+    var fresh: usage.Usage = .{};
+    try t.expectEqualStrings("checking…", try usage_view.stateLine(ar, usage.accountState(&fresh), &fresh, now, tz));
+    // Each sign-in failure, the button's word after it.
+    const cases = [_]struct { auth: usage.Auth, want: []const u8 }{
+        .{ .auth = .rejected, .want = "expired — Re-auth" },
+        .{ .auth = .other_login, .want = "keychain holds another account — Re-auth" },
+        .{ .auth = .missing, .want = "no login yet — Re-auth" },
+    };
+    for (cases) |c| {
+        var f: usage.Usage = .{ .fetched_at = now, .percent = 40 };
+        usage.applyFetchError(&f, .{ .message = "x", .auth = c.auth, .needs_reauth = c.auth == .other_login }, now);
+        try t.expect(usage.accountState(&f).wantsReauth());
+        try t.expectEqualStrings(c.want, try usage_view.stateLine(ar, usage.accountState(&f), &f, now, tz));
+    }
+    // A failure that is not the sign-in's leaves it signed in (the stale
+    // reading keeps its own error line).
+    var net: usage.Usage = .{ .fetched_at = now, .percent = 40 };
+    usage.applyFetchError(&net, .{ .message = "HTTP 500: boom" }, now);
+    try t.expectEqual(usage.AccountState.signed_in, usage.accountState(&net));
 }
 
 test "the chip reads the same accounts: single, compact and ticker, the detail and the countdown" {
@@ -1474,7 +1968,9 @@ test "the chip reads the same accounts: single, compact and ticker, the detail a
     // Compact: a block per account (`!` for the throttled one, never read); personal is the
     // one to spend on (5 % left in 19 min beats an unread sibling), so the arrow points at it.
     app.cfg.ai.claude_meter_mode = .compact;
-    try t.expectEqualStrings(" G ▇! →P ", try claudeChip(&app, arena, "G"));
+    // personal is critical (95 %): its letter and percent stand in for the
+    // blocks, then one `!`, then the arrow as it was.
+    try t.expectEqualStrings(" G P 95%! →P ", try claudeChip(&app, arena, "G"));
     // Ticker: the account of the slot, its letter first.
     app.cfg.ai.claude_meter_mode = .ticker;
     try t.expectEqualStrings(" G P 95% 52% ", try claudeChip(&app, arena, "G"));
@@ -1650,7 +2146,7 @@ const AccountsFixture = struct {
     }
 };
 
-test "ai.claude_add_account: a name, then its token — the account joins the home config beside the default with a token file of its own (0600), and is fetched" {
+test "ai.claude_add_account: a name — the account joins the home config beside the default with a token file of its own; no token prompt opens on its own, Advanced ▸ Paste a token… links it (0600), and it is fetched" {
     var f = try AccountsFixture.init();
     defer f.fx.deinit();
     // The implicit `default` account is linked, so it must survive the add.
@@ -1663,6 +2159,21 @@ test "ai.claude_add_account: a name, then its token — the account joins the ho
     try command.run(&app, .{ .static = .@"ai.claude_add_account" });
     try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_add);
     try typeLine(&app, "Client A");
+    // No prompt for a token: the account waits for its Re-auth.
+    try t.expect(app.overlay != .prompt);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "Re-auth signs it in") != null);
+    // The account menu's Advanced ▸ Paste a token… is where one is pasted.
+    try openAccountMenu(&app, "Client A", 5, 5);
+    const adv = for (app.overlay.menu.items) |it| {
+        if (std.mem.eql(u8, it.label, "Advanced")) break it;
+    } else return error.NoAdvancedRow;
+    try t.expectEqual(@as(usize, 1), adv.submenu.len);
+    try t.expectEqualStrings("Paste a token…", adv.submenu[0].label);
+    try t.expectEqual(command.ClaudeAccountAct.Verb.link, adv.submenu[0].action.claude_account.act);
+    try t.expectEqualStrings("Re-auth", app.overlay.menu.items[0].label);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try accountAction(&app, .link, "Client A");
     try t.expect(app.overlay == .prompt and app.overlay.prompt.purpose == .claude_account_token);
     try t.expectEqualStrings("Client A", app.overlay.prompt.purpose.claude_account_token.name);
     try t.expect(app.overlay.prompt.state.secret);
@@ -1899,10 +2410,14 @@ test "the chip at a glance: the worst account's colour as a pill, no reset mark 
     try settle(&app);
     const arena = app.frame.allocator();
     const parts = try claudeChipParts(&app, arena, "G");
-    // A block per account, no mark after `spare`; personal's 95 % critical is the worst.
-    try t.expectEqualStrings("▇!▇", parts.accent);
+    // personal's 95 % critical is the worst: its letter and percent, the
+    // tier's colour on the coral — no ink block — then a `!`.
+    try t.expectEqualStrings("P 95%", parts.accent);
     try t.expectEqual(usage.Tier.hot, parts.tier.?);
-    // Painted: the blocks as a dark pill in red inside the coral chip.
+    try t.expect(!parts.on_ink);
+    try t.expect(std.mem.startsWith(u8, parts.tail, "!"));
+    try t.expect(std.mem.indexOf(u8, parts.tail, "→") != null);
+    // Painted: red on the chip's own coral.
     app.tree.visible = false;
     _ = try app.openScratch();
     try app.render();
@@ -1914,21 +2429,24 @@ test "the chip at a glance: the worst account's colour as a pill, no reset mark 
     while (x < r.x + r.w) : (x += 1) {
         const c = app.screen.readCell(x, r.y) orelse continue;
         try t.expect(!std.mem.eql(u8, c.char.grapheme, "↺"));
-        if (!std.mem.eql(u8, c.char.grapheme, "▇")) continue;
+        try t.expect(!std.mem.eql(u8, c.char.grapheme, "▇"));
+        if (!std.mem.eql(u8, c.char.grapheme, "%")) continue;
         try t.expect(@import("vaxis").Color.eql(c.style.fg, app.theme.palette.red));
-        try t.expect(!@import("vaxis").Color.eql(c.style.bg, app.screen.readCell(r.x, r.y).?.style.bg));
+        try t.expect(@import("vaxis").Color.eql(c.style.bg, app.screen.readCell(r.x, r.y).?.style.bg));
         seen = true;
     }
     try t.expect(seen);
-    // The hover: every account, its two percents and the next reset.
+    // The hover: the account the `!` is about and why, then every
+    // account, its two percents and the next reset.
     const tip = (try @import("discovery.zig").describe(&app, arena, .{ .statusline_seg = @import("statusline.zig").SegId.ai_claude.raw() })).?;
-    try t.expectEqual(@as(usize, 3), tip.rows.len);
-    try t.expectEqualStrings("personal (active)", tip.rows[0].text);
-    try t.expectEqualStrings("95% session · 52% week · resets 8:20pm", tip.rows[0].sub);
-    try t.expectEqualStrings("work", tip.rows[1].text);
-    try t.expect(std.mem.indexOf(u8, tip.rows[1].sub, "429") != null);
-    try t.expectEqualStrings("spare", tip.rows[2].text);
-    try t.expectEqualStrings("88% session · 61% week · resets 10pm", tip.rows[2].sub);
+    try t.expectEqual(@as(usize, 4), tip.rows.len);
+    try t.expectEqualStrings("! personal: 95% of the session — critical", tip.rows[0].text);
+    try t.expectEqualStrings("personal (active)", tip.rows[1].text);
+    try t.expectEqualStrings("95% session · 52% week · resets 8:20pm", tip.rows[1].sub);
+    try t.expectEqualStrings("work", tip.rows[2].text);
+    try t.expect(std.mem.indexOf(u8, tip.rows[2].sub, "429") != null);
+    try t.expectEqualStrings("spare", tip.rows[3].text);
+    try t.expectEqualStrings("88% session · 61% week · resets 10pm", tip.rows[3].sub);
     // Nothing alarming: the chip is Rust's, ink on coral, no pill.
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "accounts", .data = "*calm\nquiet\n" });
     try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "calm.json", .data = usage.usage_limits_only_fixture });
@@ -2007,4 +2525,127 @@ test "This week by surface: under the week, a row per surface with its bar and p
     // A left press on it renames nothing.
     try app.handle(.{ .mouse = .{ .x = rect.?.x + 2, .y = rect.?.y, .kind = .press, .button = .left } });
     try t.expect(app.overlay != .prompt);
+}
+
+/// Two accounts on the config with token files under the data root and
+/// identity pins — `work` is w@example.com, `home` h@example.com — both
+/// turned down by the endpoint (the fixture's 401).
+fn reauthApp(f: *AccountsFixture) !App {
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/ai_account_identity.json", .data = "{\"work\":\"w@example.com\",\"home\":\"h@example.com\"}" });
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "work.error", .data = "HTTP 401: token rejected" });
+    try f.fx.tmp.dir.writeFile(t.io, .{ .sub_path = "home.error", .data = "HTTP 401: token rejected" });
+    var app = try f.app();
+    errdefer app.deinit();
+    app.cfg.ai.claude_accounts = &reauth_accounts;
+    try refreshAll(&app);
+    try settle(&app);
+    return app;
+}
+
+const reauth_accounts = [_]app_mod.Config.ClaudeAccount{
+    .{ .name = "work", .token_path = "ai_token.work", .active = true },
+    .{ .name = "home", .token_path = "ai_token.home" },
+};
+
+fn exists(f: *AccountsFixture, rel: []const u8) bool {
+    f.fx.tmp.dir.access(t.io, rel, .{}) catch return false;
+    return true;
+}
+
+test "the silent re-capture: an expired account whose login the keychain holds is filed, once; another account's login is not" {
+    var f = try AccountsFixture.init();
+    defer f.fx.deinit();
+    var app = try reauthApp(&f);
+    defer app.deinit();
+    try t.expectEqual(usage.AccountState.expired, usage.accountState(&st(&app).find("work").?.usage));
+    try t.expectEqual(usage.AccountState.expired, usage.accountState(&st(&app).find("home").?.usage));
+    const arena = app.frame.allocator();
+    // The rule: the expired account pinned to the login's email.
+    try t.expectEqualStrings("work", (try recaptureTarget(&app, arena, "w@example.com")).?);
+    try t.expect((try recaptureTarget(&app, arena, "x@example.com")) == null);
+    try t.expect((try recaptureTarget(&app, arena, null)) == null);
+    // A login nobody on file has: nothing is written, nothing said.
+    app.dismissToasts();
+    try recaptureRead(&app, .{ .mode = .recapture, .blob = "fake-blob-x", .refresh_token = "rt-x", .email = "x@example.com" });
+    try t.expect(!exists(&f, "data/ai_token.work") and !exists(&f, "data/ai_token.home"));
+    try t.expect(app.lastToast() == null);
+    try t.expectEqualStrings("rt-x", st(&app).recapture_seen.?);
+    // work's login: filed under work, never home, with one toast.
+    try recaptureRead(&app, .{ .mode = .recapture, .blob = "fake-blob-w", .refresh_token = "rt-w", .email = "w@example.com" });
+    const tok = try f.read("data/ai_token.work");
+    defer t.allocator.free(tok);
+    try t.expectEqualStrings("fake-blob-w", tok);
+    try t.expect(!exists(&f, "data/ai_token.home"));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "signed work back in") != null);
+    // The same login again: the file already holds it — no second toast.
+    app.dismissToasts();
+    try recaptureRead(&app, .{ .mode = .recapture, .blob = "fake-blob-w", .refresh_token = "rt-w", .email = "w@example.com" });
+    try t.expect(app.lastToast() == null);
+    try settle(&app);
+}
+
+test "Re-auth: the first read is the baseline; the login that lands is filed under the account and the watch ends" {
+    var f = try AccountsFixture.init();
+    defer f.fx.deinit();
+    var app = try reauthApp(&f);
+    defer app.deinit();
+    st(&app).reauth = .{ .name = try app.gpa.dupe(u8, "work"), .pane = null };
+    // Before the login: what the keychain held is the baseline, not a login.
+    try reauthRead(&app, .{ .mode = .reauth, .blob = "fake-blob-old", .refresh_token = "rt-old" });
+    try t.expect(st(&app).reauth.?.baseline_set);
+    try t.expect(!exists(&f, "data/ai_token.work"));
+    // Unchanged: still watching.
+    try reauthRead(&app, .{ .mode = .reauth, .blob = "fake-blob-old", .refresh_token = "rt-old" });
+    try t.expect(st(&app).reauth != null);
+    // The login lands as work.
+    try reauthRead(&app, .{ .mode = .reauth, .blob = "fake-blob-w", .refresh_token = "rt-w", .email = "w@example.com" });
+    try t.expect(st(&app).reauth == null);
+    const tok = try f.read("data/ai_token.work");
+    defer t.allocator.free(tok);
+    try t.expectEqualStrings("fake-blob-w", tok);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "signed work in") != null);
+    try settle(&app);
+}
+
+test "Re-auth's mismatch guard: another account's login is offered to it, never filed under the one asked for; a stranger's is refused" {
+    var f = try AccountsFixture.init();
+    defer f.fx.deinit();
+    var app = try reauthApp(&f);
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    try t.expectEqual(Verdict.capture, try reauthVerdict(&app, arena, "work", "w@example.com"));
+    try t.expectEqualStrings("home", (try reauthVerdict(&app, arena, "work", "h@example.com")).other);
+    try t.expectEqual(Verdict.unknown, try reauthVerdict(&app, arena, "work", "x@example.com"));
+    try t.expectEqual(Verdict.unknown, try reauthVerdict(&app, arena, "work", null));
+    // home's login lands on a Re-auth of work.
+    st(&app).reauth = .{ .name = try app.gpa.dupe(u8, "work"), .pane = null, .baseline_set = true, .baseline = try app.gpa.dupe(u8, "rt-old") };
+    try reauthRead(&app, .{ .mode = .reauth, .blob = "fake-blob-h", .refresh_token = "rt-h", .email = "h@example.com" });
+    try t.expect(st(&app).reauth == null);
+    try t.expect(!exists(&f, "data/ai_token.work") and !exists(&f, "data/ai_token.home"));
+    try t.expect(app.overlay == .confirm);
+    const fl = app.overlay.confirm.purpose.claude_file_login;
+    try t.expectEqualStrings("home", fl.target);
+    try t.expectEqualStrings("File under home", app.overlay.confirm.state.choices[0].label);
+    try t.expectEqualStrings("Cancel", app.overlay.confirm.state.choices[1].label);
+    try t.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "not work") != null);
+    // Cancel files nothing.
+    try fileUnderAccept(&app, "home", 1);
+    try t.expect(!st(&app).keychain_pending);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // File under home: the read that follows files it there, if it is still home's.
+    try fileUnderRead(&app, .{ .mode = .file_under, .target = "home", .blob = "fake-blob-x", .email = "x@example.com" });
+    try t.expect(!exists(&f, "data/ai_token.home"));
+    try fileUnderRead(&app, .{ .mode = .file_under, .target = "home", .blob = "fake-blob-h", .email = "h@example.com" });
+    const tok = try f.read("data/ai_token.home");
+    defer t.allocator.free(tok);
+    try t.expectEqualStrings("fake-blob-h", tok);
+    try t.expect(!exists(&f, "data/ai_token.work"));
+    // A stranger's login on a Re-auth of work: said, not filed, no box.
+    st(&app).reauth = .{ .name = try app.gpa.dupe(u8, "work"), .pane = null, .baseline_set = true };
+    try reauthRead(&app, .{ .mode = .reauth, .blob = "fake-blob-x", .refresh_token = "rt-x", .email = "x@example.com" });
+    try t.expect(app.overlay != .confirm);
+    try t.expect(!exists(&f, "data/ai_token.work"));
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "nothing was filed") != null);
+    try settle(&app);
 }

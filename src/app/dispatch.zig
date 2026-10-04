@@ -1982,6 +1982,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
         .remove_claude_account => |name| if (choice == 0) try toastOnFail(app, usage_pane.removeAccount(app, name)),
+        .claude_file_login => |f| try toastOnFail(app, usage_pane.fileUnderAccept(app, f.target, choice)),
         .choose_data_layout => try toastOnFail(app, @import("setup.zig").acceptDataLayout(app, choice)),
         .reset_to_defaults => try toastOnFail(app, @import("setup.zig").acceptReset(app, choice)),
     }
@@ -3072,7 +3073,11 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 // The chips are the way to the SESSIONS panel; a click
                 // starts a session only when none of that product is
                 // running (`app/ai.zig`'s `chipClick`).
-                .ai_claude => try chipClick(app, .claude),
+                // The `!`: the usage pane at the account that needs it.
+                .ai_claude => if (!(usage_pane.chipAttentionClick(app) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => false,
+                })) try chipClick(app, .claude),
                 .ai_codex => try chipClick(app, .codex),
                 else => {},
             }

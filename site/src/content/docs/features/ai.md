@@ -232,9 +232,21 @@ many commits are waiting in it.
   does not know shows as *unknown*, not as $0.00.
 - The statusline's Claude chip shows your plan's session and weekly
   usage, as a percentage, from Anthropic's usage endpoint for your Claude
-  Code sign-in (link it with `ai.link_claude_token`). The Codex chip
-  shows today's tokens, from Codex's own session files.
-  `ai.claude_usage` and `ai.codex_usage` open the detail.
+  Code sign-in. The Codex chip shows today's tokens, from Codex's own
+  session files. `ai.claude_usage` and `ai.codex_usage` open the detail.
+
+In the Claude usage pane each account has one line saying where its
+sign-in stands — `signed in · resets 3:20am`, or `expired`, `keychain
+holds another account`, `no login yet` — and, when it needs one, a
+**Re-auth** button. Re-auth opens `claude login` in a pane, watches for
+the login to land in the macOS keychain, and files it under the account
+once its email is that account's; then the pane closes. A login for a
+different account you watch is never filed silently: mnml says whose it
+is and offers to file it there instead. When a token has expired and the
+CLI is signed in as that same account again, mnml re-captures it on its
+own. A `!` on the chip means an account wants looking at; clicking it
+opens the pane at that account. Pasting a token by hand is still there,
+under the account's right-click menu, *Advanced ▸ Paste a token…*.
 
 ## Ghost text
 

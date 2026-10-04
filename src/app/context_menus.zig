@@ -1258,9 +1258,13 @@ pub fn openAiChipMenu(app: *App, codex: bool, x: u16, y: u16) Allocator.Error!vo
         .{ .label = "All AI chips: compact", .action = .{ .command = .@"ai.chip_show_all_compact" }, .checked = meter == .compact },
         .{ .label = "All AI chips: ticker", .action = .{ .command = .@"ai.chip_show_all_ticker" }, .checked = meter == .ticker },
     };
-    const rows = try std.mem.concat(app.gpa, MenuItem, &.{ &head, if (codex) &.{} else &add, &tail });
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    // Claude's: each account's Re-auth, beside the row that adds one.
+    const reauth = if (codex) &.{} else try @import("usage_pane.zig").chipReauthRows(app, mem.allocator());
+    const rows = try std.mem.concat(app.gpa, MenuItem, &.{ &head, reauth, if (codex) &.{} else &add, &tail });
     errdefer app.gpa.free(rows);
-    try app.openMenu(if (codex) "Codex" else "Claude", rows, x, y);
+    try openOwned(app, if (codex) "Codex" else "Claude", rows, x, y, mem);
 }
 
 /// The enclosing-symbol chip (Zig-only): the outline and the two

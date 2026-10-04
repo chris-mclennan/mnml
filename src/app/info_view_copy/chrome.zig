@@ -598,7 +598,7 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         .spend_report, .ai_usage => .{
             .title = "AI usage",
             .body = "The Claude and Codex usage for the linked accounts — the five-hour and weekly windows, the tokens today, spend where the API route is on. Refresh asks the account's endpoint again; the statusline chips are the compact form of the same figures.",
-            .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh the figures" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link an account" } } },
+            .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh the figures" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } } },
         },
         .websocket => .{
             .title = "websocket",

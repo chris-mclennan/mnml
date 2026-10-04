@@ -17,6 +17,7 @@ const usage = @import("../ai/usage.zig");
 const usage_pane = @import("../app/usage_pane.zig");
 const list_panel = @import("list_panel.zig");
 const localtime = @import("../core/localtime.zig");
+const chip = @import("chip.zig");
 
 pub const PaneId = ids.PaneId;
 
@@ -94,9 +95,14 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *usage_pane.UsagePane, props: P
     if (area.isEmpty()) return;
     var rows: std.ArrayListUnmanaged(Row) = .empty;
     const bar_w: u16 = @min(area.w -| (suffix_cells + 2), max_bar_w);
+    var anchor: ?usize = null;
     switch (p.product) {
-        .claude => claudeRows(ui, &rows, props, focused) catch return,
+        .claude => claudeRows(ui, &rows, props, focused, p.scroll_to, &anchor) catch return,
         .codex => codexRows(ui, &rows, props, focused) catch return,
+    }
+    if (p.scroll_to != null) {
+        if (anchor) |at| p.scroll = at;
+        p.scroll_to = null;
     }
     const visible: usize = area.h;
     const max_scroll = rows.items.len -| @max(visible, 1);
@@ -173,7 +179,35 @@ fn colored(th: *const Theme, color: Theme.Color) Theme.Style {
     return Theme.onBg(Theme.withFg(th.fg, color), th.bg.bg);
 }
 
-fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused: bool) std.mem.Allocator.Error!void {
+/// The words before an account's *Re-auth* button, or the whole line
+/// when it needs none: `signed in · resets 3:20am`, `checking…`,
+/// `expired —`, `keychain holds another account —`, `no login yet —`.
+pub fn statePrefix(a: std.mem.Allocator, state: usage.AccountState, u: *const usage.Usage, now: u64, tz: Tz) std.mem.Allocator.Error![]const u8 {
+    return switch (state) {
+        .checking => "checking…",
+        .expired => "expired —",
+        .other_login => "keychain holds another account —",
+        .no_login => "no login yet —",
+        .signed_in => blk: {
+            const next = if (u.resets_at > now) u.resets_at else if (u.weekly_resets_at > now) u.weekly_resets_at else 0;
+            if (next == 0) break :blk "signed in";
+            var buf: [32]u8 = undefined;
+            const when = if (next - now < 86_400) usage.fmtShortTime(&buf, next, tz.at(next)) else usage.fmtLongTime(&buf, next, tz.at(next));
+            break :blk try std.fmt.allocPrint(a, "signed in · resets {s}", .{when});
+        },
+    };
+}
+
+/// The state line as text, the button's word included.
+pub fn stateLine(a: std.mem.Allocator, state: usage.AccountState, u: *const usage.Usage, now: u64, tz: Tz) std.mem.Allocator.Error![]const u8 {
+    const prefix = try statePrefix(a, state, u, now, tz);
+    return if (state.wantsReauth()) std.fmt.allocPrint(a, "{s} Re-auth", .{prefix}) else prefix;
+}
+
+/// The button's face: the chip idiom's dark text on the accent.
+pub const reauth_label = " Re-auth ";
+
+fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused: bool, scroll_to: ?usize, anchor: *?usize) std.mem.Allocator.Error!void {
     const th = ui.theme;
     const a = ui.arena;
     const pal = &th.palette;
@@ -190,14 +224,15 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
     const body_hit: ?u32 = usage_pane.hit_body;
     try rows.append(a, .{ .hit = body_hit, .kebab = true, .body = .{ .spans = try a.dupe(Span, &.{
         .{ .text = " Claude usage ", .style = head_style },
-        .{ .text = overlay.hintText(ui, "· r refresh · a add · L claude login · R capture · esc close"), .style = hint },
+        .{ .text = overlay.hintText(ui, "· r refresh · a add · esc close"), .style = hint },
     }) } });
     try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = &.{} } });
     if (props.accounts.len == 0) {
-        try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "fetching… (link a token via `:ai.link_claude_token`)", .style = muted }}) } });
+        try rows.append(a, .{ .hit = body_hit, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "fetching… (a adds an account)", .style = muted }}) } });
     }
     for (props.accounts, 0..) |acc, i| {
         const first = rows.items.len;
+        if (scroll_to == i) anchor.* = first;
         const u = &acc.usage;
         var gutter = colored(th, if (acc.is_active) pal.green else pal.bg_darker);
         gutter.bold = acc.is_active;
@@ -216,6 +251,20 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         if (acc.org) |o| try identity.print(a, " · {s}", .{o});
         if (identity.items.len > 0) try head.append(a, .{ .text = identity.items, .style = muted });
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = head.items } });
+        // The state line: where the sign-in stands, and when it wants
+        // one, the button that does it.
+        const sign_in = usage.accountState(u);
+        const wants = sign_in.wantsReauth();
+        const prefix = try statePrefix(a, sign_in, u, props.now, props.tz);
+        if (wants) {
+            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{
+                .{ .text = "  ", .style = plain },
+                .{ .text = try std.fmt.allocPrint(a, "{s} ", .{prefix}), .style = yellow },
+                .{ .text = reauth_label, .style = chip.modeStyle(th), .hit = usage_pane.hit_reauth_base + @as(u32, @intCast(i)) },
+            }) } });
+        } else {
+            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  {s}", .{prefix}), .style = muted }}) } });
+        }
         try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         const ctx: WindowCtx = .{ .ui = ui, .rows = rows, .g = g, .bold = bold, .muted = muted, .tz = props.tz, .now = props.now };
         // No reading yet: the windows would be empty bars saying "0%
@@ -242,22 +291,17 @@ fn claudeRows(ui: Ui, rows: *std.ArrayListUnmanaged(Row), props: Props, focused:
         }
         // A 429 is the server's own cooldown; any other failure backs
         // off on our side, and the row says which.
-        if (u.retry_after_at > props.now) {
+        if (u.retry_after_at > props.now and !wants) {
             const remaining = u.retry_after_at - props.now;
             const throttled = if (u.last_error) |e| std.mem.startsWith(u8, e, "HTTP 429") else false;
             const text = if (throttled) try std.fmt.allocPrint(a, "  Anthropic asked us to retry in {d}s (429)", .{remaining}) else try std.fmt.allocPrint(a, "  next fetch in {d}s", .{remaining});
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = text, .style = if (throttled) yellow else muted }}) } });
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
         }
-        if (u.needs_reauth) {
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "  ⚠ token expired — needs re-auth", .style = yellow }}) } });
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "    1. press L to run `claude login` (as {s})", .{acc.name}), .style = muted }}) } });
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = "    2. press R to capture it from the keychain", .style = muted }}) } });
-            if (u.last_error) |why| try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "    {s}", .{why}), .style = muted }}) } });
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = &.{} } });
-        } else if (u.isEmpty()) {
-            const text = if (u.last_error) |e| try std.fmt.allocPrint(a, "no data yet · last error: {s}", .{e}) else "fetching…";
-            try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = text, .style = muted }}) } });
+        // A sign-in problem is the state line's to say; the rest are
+        // the fetch's own.
+        if (wants) {} else if (u.isEmpty()) {
+            if (u.last_error) |e| try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "no data yet · last error: {s}", .{e}), .style = muted }}) } });
         } else if (u.last_error) |e| {
             try rows.append(a, .{ .gutter = g, .body = .{ .spans = try a.dupe(Span, &.{.{ .text = try std.fmt.allocPrint(a, "  last fetch error: {s}", .{e}), .style = red }}) } });
         }
