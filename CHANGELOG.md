@@ -119,6 +119,25 @@ the release ships one file), and one line per change a user can see.
   counts it as uncovered.
 - The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
 
+### Claude Code's review
+
+- A Claude Code session's proposed change (`openDiff`, and `ai.apply`'s
+  review) is drawn by the git panel's diff view: the same Hunk / Inline /
+  Split toolbar, cycled by `t` or `git.diff_toggle_view`. Until you pick
+  a view, a pane at least 80 cells wide opens in Split and a narrower one
+  in Hunk. Each hunk header says `[✓ accept]` or `[  skip  ]`. It stays
+  its own tab, so an untracked file is reviewed the same way.
+- **`Y`**, the header's **Accept all** chip, or `ai.apply_accept_all`
+  accepts every hunk and applies them in one step. Space or `a` still
+  toggles one hunk; `t` now cycles the view, as in the git diff pane.
+  The session is still answered `FILE_SAVED` or `DIFF_REJECTED`.
+- The review no longer covers the session that asked for it. It opens
+  as a tab in the split holding the file, else an editor split; with
+  only the session on screen, a split opens beside it. Accept, reject or
+  Esc puts the focus back on the session. `ai.review_placement`
+  (`.editor`, the default, `.beside` or `.tab`, the old placement) and a
+  row in Settings ▸ AI choose.
+
 ## v0.3.2
 
 mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own

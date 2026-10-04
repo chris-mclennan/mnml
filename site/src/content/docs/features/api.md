@@ -180,6 +180,15 @@ is asking.
 The proposal is the one change that does not ask first, because your
 review of it is the approval.
 
+The review opens where it leaves the session in view. It becomes a tab
+in the split that holds the file, or else in a split showing an editor.
+When the session is the only split on screen, a new split opens beside
+it. Accepting, rejecting or pressing Esc puts the focus back on the
+session. To choose a different placement, set `ai.review_placement` or
+use its row in Settings ▸ AI: `.beside` always opens a split beside the
+session, and `.tab` opens the review as a tab of the focused split, as
+earlier versions did.
+
 What it **cannot** do is run code through the link: mnml refuses that
 request.
 

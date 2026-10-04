@@ -205,6 +205,17 @@ buffer is still there. Esc, `q`, the toolbar's `×`, closing the tab, or
 Enter with nothing accepted answers `DIFF_REJECTED`. A second proposal
 for the same file replaces the first, which is answered `DIFF_REJECTED`.
 
+**Where the review opens** (`ai.review_placement`, also a row in
+Settings ▸ AI). With the default, `.editor`, the review is a tab in the
+split that holds the file, else in a split showing an editor, so the
+session stays in view. When the session's split is the only one, a
+split opens beside the session for the review, and a file the request
+had to open goes there too. `.beside` always opens that split beside
+the session. `.tab` is a tab of the focused split, which can cover the
+session. A session on another tab page gets a tab of the focused split.
+The review takes the focus. Accept, reject or Esc gives the focus back
+to the session that asked.
+
 **What mnml tells the session.** `selection_changed` (`text`,
 `filePath`, `fileUrl`, `selection` with 0-based lines and characters) when
 the selection in an editor changes, at most once per 100 ms, to one
