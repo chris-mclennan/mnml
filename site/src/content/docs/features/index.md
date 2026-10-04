@@ -42,6 +42,11 @@ there for reviewing and fixing what they wrote.
   tab one click away, and every text field takes the mouse, a
   selection and a paste.
 
+- **[Hover help](/docs/features/hover-help)**: an info panel at the
+  foot of the sidebar describes whatever the pointer rests on, with
+  the chords for your profile and links that run, configure or ask
+  about it.
+
 - **[Terminal panes on libghostty](/docs/features/terminal)**: shells,
   runners and tools in splits, emulated by the same library Ghostty is
   built on.
