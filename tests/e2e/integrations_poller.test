@@ -3,7 +3,7 @@
 # env: POLL_SCRIPT=${MNML_E2E_WORKSPACE}/poller.sh
 # The statusline poller: a manifest's chip count moves with no pane
 # open. Until this landed nothing ran a manifest's `values_sources`
-# line, so the `󰌃 N` and PR-count chips were whatever they were when a
+# line, so the `󱰙 N` and PR-count chips were whatever they were when a
 # pane was last open.
 #
 # The integration here is a shell script standing in for

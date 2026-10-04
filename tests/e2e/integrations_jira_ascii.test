@@ -36,7 +36,7 @@ wait 1500
 shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
 wait 900
 expect screen contains "J "
-expect screen lacks "󰌃"
+expect screen lacks "󱰙"
 
 # ── the pane ─────────────────────────────────────────────────────────
 command integrations.open_as_tab
@@ -50,7 +50,7 @@ expect screen contains "[? Review]"
 # And nothing on the screen is a codepoint this terminal cannot draw:
 # the chip, the filter's magnifier, the refresh chip, the eye, the two
 # PR buttons and the tree's chevrons all wear their twins.
-expect screen lacks "󰌃"
+expect screen lacks "󱰙"
 expect screen lacks "󰍉"
 expect screen lacks ""
 expect screen lacks ""

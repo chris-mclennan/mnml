@@ -58,7 +58,7 @@ expect screen contains "JIRA WORK (3)"
 # The tab says what the manifest installed, and wears the manifest's
 # own chip glyph rather than one placeholder for every integration.
 expect pane "Jira Work"
-expect screen contains "󰌃 Jira Work"
+expect screen contains "󱰙 Jira Work"
 expect screen contains "1 Assigned"
 expect screen contains "2 Recently Done"
 # The mode chips, never clipped.
@@ -90,7 +90,7 @@ expect screen contains "? keys"
 # The statusline chip: the manifest's slot, replaced live with the count
 # the pane published over the IPC channel (the host drains it on a tick).
 wait 800
-expect screen contains "󰌃 3"
+expect screen contains "󱰙 3"
 # j to the ticket, h folds it (the PRs go), l opens it again.
 key j
 key h
