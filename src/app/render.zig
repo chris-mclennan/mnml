@@ -1451,10 +1451,14 @@ fn kindIcon(ascii: bool, twin: []const u8, nerd: []const u8, color: vaxis.Color)
 /// codicon's.
 fn ptyIcon(app: *App, pane: *const pty_pane.PtyPane, ascii: bool) icons.Icon {
     const p = app.theme.palette;
-    if (@import("launch_profiles.zig").productOfPane(app, pane)) |product| return switch (product) {
-        .claude => .{ .glyph = claude_mark.glyph(app, ascii), .color = pty_pane.claude_brand },
-        .codex => kindIcon(ascii, bufferline.codex_ascii, bufferline.codex_glyph, p.cyan),
-    };
+    const launch_profiles = @import("launch_profiles.zig");
+    if (launch_profiles.productOfPane(app, pane)) |product| {
+        const m = launch_profiles.markOf(app, product);
+        return .{ .glyph = if (ascii) m.fallback else m.glyph, .color = switch (product) {
+            .claude => pty_pane.claude_brand,
+            .codex => p.cyan,
+        } };
+    }
     const term = terminal_glyph.mark(app);
     const glyph = if (ascii) term.fallback else term.glyph;
     if (pane.argv.len > 0) return .{ .glyph = glyph, .color = p.green };
