@@ -25,13 +25,18 @@
 //! session pane, the session's place among the sessions it steps
 //! through; on any other strip whose tabs overflow, the page of tabs on
 //! show, its arrows paging through the hidden ones. It is not painted
-//! when there is nothing to step — one session, tabs that all fit — and
-//! on a short strip the number, then the arrows, give way before the
-//! active tab would be cut. Beside the pager, right of it, ` ⋯ ` opens
-//! the buffer picker: every tab, by name — the one jump to a tab pages
-//! away. It is the pager's companion and nothing more: no pager, no
-//! ` ⋯ `; and on a strip short of room it gives way first, before the
-//! pager's number, and the active tab stays whole. A session strip
+//! when there is nothing to step — one session, tabs that all fit.
+//! Beside the pager, right of it, ` ⋯ ` opens the buffer picker: every
+//! tab, by name — the one jump to a tab pages away. It is the pager's
+//! companion and nothing more: no pager, no ` ⋯ `.
+//!
+//! As the strip narrows, what gives way, in order: the active tab's
+//! name, cut with an ellipsis down to `min_title` cells; the ` ⋯ `; the
+//! pager's number, then its arrows; the 󰐕; the split cluster's buttons
+//! from its left end (the AI chips first, maximize last) — the active
+//! tab then painted alone; the name below `min_title`; and last of all
+//! the active tab's close, which is never cut while a cell of anything
+//! else stands. A session strip
 //! wears the session control and neither: its arrows bring a hidden tab
 //! into view by stepping to it, and the sessions rail lists the rest.
 //!
@@ -123,7 +128,7 @@ pub const AiChip = struct {
 pub const SessionNav = stepper.Stepper;
 
 /// How much of the ` ‹ 3/7 › ` a strip has room for: the number goes
-/// first, then the arrows — the tabs keep `narrow_room` either way.
+/// first, then the arrows — the tabs keep `keepWidth` either way.
 pub const NavForm = stepper.Form;
 
 /// ` ‹ ` / ` › ` — the stepper's, under the names the strip's callers know.
@@ -370,20 +375,48 @@ pub fn terminalName(term_program: ?[]const u8, wt_session: ?[]const u8) []const 
 
 // ─── one chip ───────────────────────────────────────────────────────────
 
-/// The name as it will paint: cut to `name_cap`.
-fn chipName(ui: Ui, tab: Tab) []const u8 {
-    return ui.clipStr(tab.title, name_cap);
+/// The name as it will paint: cut to `cap` cells (`name_cap` on a chip
+/// with room), the ellipsis inside them.
+fn chipName(ui: Ui, tab: Tab, cap: u16) []const u8 {
+    return ui.clipStr(tab.title, cap);
 }
 
 /// The chip's natural width: ` glyph ` (or one cell without one), the
 /// method pill and its gap, the name and a cell, the needs-you mark and
 /// a cell, the diagnostics and a cell, the badge and a cell.
 pub fn chipWidth(ui: Ui, tab: Tab) u16 {
+    return chipWidthAt(ui, tab, name_cap);
+}
+
+/// The chip's width with its name cut to `cap` cells.
+fn chipWidthAt(ui: Ui, tab: Tab, cap: u16) u16 {
     const icon: u16 = if (tab.glyph.len == 0) 1 else 2 + ui.width(tab.glyph);
     const verb: u16 = if (tab.verb) |v| ui.width(v) + 3 else 0;
     const mark: u16 = (if (tab.needs_you) ui.width(needsYouMark(ui)) + 1 else 0) + (if (tab.linked) ui.width(linkMark(ui)) + 1 else 0);
     const diag: u16 = if (tab.diag.len == 0) 0 else ui.width(tab.diag) + 1;
-    return icon + verb + ui.width(chipName(ui, tab)) + 1 + mark + diag + 2;
+    return icon + verb + ui.width(chipName(ui, tab, cap)) + 1 + mark + diag + 2;
+}
+
+/// The fewest cells the active tab's name is cut to before the strip's
+/// furniture gives way: past it the pager goes, then the 󰐕, then the
+/// pane buttons — and only on a strip with none of them left is the name
+/// cut further, and last of all the badge.
+pub const min_title: u16 = 6;
+
+/// The active chip at its narrowest before the furniture gives way: its
+/// name cut to `min_title` (a shorter name stays whole).
+fn minChipWidth(ui: Ui, tab: Tab) u16 {
+    return chipWidthAt(ui, tab, min_title);
+}
+
+/// The name cap that fits the active chip in `avail` cells, badge and
+/// all: the name gives its cells first. Zero when even an empty name is
+/// too wide — then the badge is cut, the last thing on the strip to go.
+fn fitCap(ui: Ui, tab: Tab, avail: u16) u16 {
+    const natural = chipWidth(ui, tab);
+    if (natural <= avail) return name_cap;
+    const name_w = ui.width(chipName(ui, tab, name_cap));
+    return name_w -| (natural - avail);
 }
 
 /// The needs-you mark as this frame paints it (the `--ascii` twin when
@@ -420,7 +453,10 @@ fn badgeOf(ui: Ui, tab: Tab, hovered: bool) Badge {
 fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, focused: bool) u16 {
     if (avail == 0) return 0;
     const p = ui.theme.palette;
-    const natural = chipWidth(ui, tab);
+    // The active chip short of room cuts its name, not its badge: the
+    // ` 󰅖 ` is the last of it to go. The rest are cut at the edge.
+    const cap = if (tab.active) fitCap(ui, tab, avail) else name_cap;
+    const natural = chipWidthAt(ui, tab, cap);
     const w = @min(natural, avail);
     const rect = Rect.init(x, y, w, 1);
     const bg = if (tab.active) p.bg else p.bg_darker;
@@ -447,7 +483,7 @@ fn paintChip(ui: Ui, x: u16, y: u16, avail: u16, tab: Tab, leaf: u32, idx: u16, 
     // are in the dim role already.
     const plain: Style = .{ .fg = if (tab.active) p.fg else p.grey_fg, .bg = bg, .bold = tab.active, .italic = tab.preview };
     const name_style = if (tab.active) focus_cue.words(ui.theme, ui.focus_cue, focused, plain) else plain;
-    cx += ui.putStr(cx, y, end - cx, chipName(ui, tab), name_style);
+    cx += ui.putStr(cx, y, end - cx, chipName(ui, tab, cap), name_style);
     cx += ui.putStr(cx, y, end - cx, " ", .{ .bg = bg });
     if (tab.needs_you) {
         cx += ui.putStr(cx, y, end - cx, needsYouMark(ui), Theme.onBg(ui.theme.attention_fg, bg));
@@ -489,32 +525,50 @@ const Geometry = struct {
     n_ai: usize,
     nav_x: u16 = 0,
     nav_form: NavForm = .none,
+    /// The 󰐕's slot is carved before the pager (given way on a narrow strip).
+    plus: bool = true,
+    /// Split-cluster buttons given way from its left end: the AI chips,
+    /// then the terminal, split right, split down, maximize.
+    split_skip: usize = 0,
+    /// The strip could not hold the active tab at `min_title` beside its
+    /// furniture: it is painted alone, the other tabs elided.
+    narrow: bool = false,
 };
 
+/// What a narrow strip has given way: the 󰐕's slot, and how many of
+/// the split cluster's buttons from its left end.
+const Shed = struct { plus: bool = true, drop: usize = 0 };
+
 /// The widest session-control form that still leaves the active tab
-/// whole (and never less than `narrow_room`) next to the rest of the
-/// furniture (`fixed`: the split cluster and the mode chip; the 󰐕 is
-/// added here). The number gives way first, then the arrows — the
-/// session's own name on its tab outranks both. Nothing to step (one
-/// session) is no control at all.
+/// its `keepWidth` next to the rest of the furniture (`fixed`: the split
+/// cluster and the mode chip; the 󰐕 is added here). The active name is
+/// cut to `min_title` first, then the number gives way, then the
+/// arrows. Nothing to step (one session) is no control at all.
 fn navFormFor(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, fixed: u16) NavForm {
     const nav = opts.session_nav orelse return .none;
-    const reserved = fixed + plus_w + @max(narrow_room, activeWidth(ui, tabs));
+    const reserved = fixed + plus_w + keepWidth(ui, tabs);
     return stepper.fit(ui, nav, area.w -| reserved);
 }
 
-fn activeWidth(ui: Ui, tabs: []const Tab) u16 {
-    for (tabs) |tab| if (tab.active) return chipWidth(ui, tab);
-    return 0;
+fn activeIndex(tabs: []const Tab) ?usize {
+    for (tabs, 0..) |tab, i| if (tab.active) return i;
+    return null;
+}
+
+/// The cells the tabs keep before a pager or session control gives way:
+/// the active chip at `min_title`, and never less than `narrow_room`.
+fn keepWidth(ui: Ui, tabs: []const Tab) u16 {
+    const a = activeIndex(tabs) orelse return narrow_room;
+    return @max(narrow_room, minChipWidth(ui, tabs[a]));
 }
 
 /// The furniture with `pager_w` cells given to the pager, and the ` ⋯ `
 /// after it when `all_tabs`.
-fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, pager_form: NavForm, all_tabs: bool) Geometry {
+fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, pager_form: NavForm, all_tabs: bool, shed: Shed) Geometry {
     var n_ai: usize = if (opts.split) |s| s.ai.len else 0;
     const base: u16 = if (opts.split) |sp| (if (sp.max != null) split_buttons_w else split_buttons_w - split_button_w) else 0;
     while (n_ai > 0 and area.w < base + @as(u16, @intCast(n_ai)) * split_button_w) n_ai -= 1;
-    const split_total = base + @as(u16, @intCast(n_ai)) * split_button_w;
+    const split_total = (base + @as(u16, @intCast(n_ai)) * split_button_w) -| @as(u16, @intCast(shed.drop)) * split_button_w;
     const mode_w: u16 = if (opts.mode_chip) |m| ui.width(m.label) else 0;
     const nav_form = navFormFor(ui, area, tabs, opts, split_total + mode_w);
     const nav_w: u16 = if (opts.session_nav) |nav| stepper.width(ui, nav, nav_form) else 0;
@@ -523,7 +577,7 @@ fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, p
     const more_w: u16 = if (all_tabs) all_tabs_w else 0;
     const pager_x = @max(tabs_right0 -| (pager_w + more_w), area.x);
     return .{
-        .tabs_right = @max(pager_x -| plus_w, area.x),
+        .tabs_right = @max(pager_x -| (if (shed.plus) plus_w else 0), area.x),
         .pager_x = pager_x,
         .pager_w = pager_w,
         .pager_form = pager_form,
@@ -533,6 +587,8 @@ fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, p
         .n_ai = n_ai,
         .nav_x = @max(right -| (split_total + mode_w + nav_w), area.x),
         .nav_form = nav_form,
+        .plus = shed.plus,
+        .split_skip = shed.drop,
     };
 }
 
@@ -543,20 +599,44 @@ fn layoutWith(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts, pager_w: u16, p
 /// holds the whole ` ‹ n/m › `, the ` ⋯ ` and still the active tab
 /// (`keep`): short of room it is the first to go — before the number,
 /// then the arrows — so the strip only ever loses it as it narrows.
-fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
-    const g0 = layoutWith(ui, area, tabs, opts, 0, .none, false);
+fn pagedGeometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
+    const g0 = layoutWith(ui, area, tabs, opts, 0, .none, false, .{});
     if (opts.scroll_left == null or opts.scroll_right == null) return g0;
     if (g0.nav_form != .none) return g0;
     const room0 = g0.tabs_right -| area.x;
     if (allWidth(ui, tabs) <= room0) return g0;
-    const keep = @max(narrow_room, activeWidth(ui, tabs));
+    const keep = keepWidth(ui, tabs);
     const alone = pagerFit(ui, tabs, room0, keep);
     if (alone.form == .none) return g0;
     if (opts.all_tabs != null and alone.form == .full) {
         const with = pagerFit(ui, tabs, room0 -| all_tabs_w, keep);
-        if (with.form == .full) return layoutWith(ui, area, tabs, opts, with.w, with.form, true);
+        if (with.form == .full) return layoutWith(ui, area, tabs, opts, with.w, with.form, true, .{});
     }
-    return layoutWith(ui, area, tabs, opts, alone.w, alone.form, false);
+    return layoutWith(ui, area, tabs, opts, alone.w, alone.form, false, .{});
+}
+
+/// The strip's give-way order as it narrows: the active name is cut to
+/// `min_title` (`keepWidth`), then the ` ⋯ `, the pager's number and its
+/// arrows go (`pagedGeometry`); a strip that still cannot hold the
+/// active chip at `min_title` gives way the 󰐕, then the split cluster's
+/// buttons from its left end, one by one, and paints the active tab
+/// alone (`narrow`). Only then is the name cut further — and the badge,
+/// the tab's close, last of all (`paintChip`).
+fn geometry(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Geometry {
+    const g = pagedGeometry(ui, area, tabs, opts);
+    const a = activeIndex(tabs) orelse return g;
+    const need = minChipWidth(ui, tabs[a]);
+    if (g.tabs_right -| area.x >= need) return g;
+    const base: usize = if (opts.split) |sp| (if (sp.max != null) 4 else 3) else 0;
+    const buttons = base + g.n_ai;
+    var shed: Shed = .{ .plus = false };
+    var out = layoutWith(ui, area, tabs, opts, 0, .none, false, shed);
+    while (out.tabs_right -| area.x < need and shed.drop < buttons) {
+        shed.drop += 1;
+        out = layoutWith(ui, area, tabs, opts, 0, .none, false, shed);
+    }
+    out.narrow = true;
+    return out;
 }
 
 const PagerFit = struct { form: NavForm, w: u16 };
@@ -665,30 +745,14 @@ fn countWhole(ui: Ui, tabs: []const Tab, room: u16, first: usize) usize {
 /// The fewest cells the tabs may be left before the furniture gives way.
 const narrow_room: u16 = 12;
 
-/// A leaf too narrow for its furniture and the active tab together —
-/// the pager, the 󰐕, the split cluster leave the tabs less than the
-/// active chip (or `narrow_room`) — paints the active tab alone across
-/// the strip, cut if it must be: the name on the strip is always the
+/// A leaf too narrow for its furniture and the active tab together
+/// (`geometry`'s `narrow`) paints the active tab alone in what is left,
+/// its name cut if it must be: the name on the strip is always the
 /// pane's, and the other tabs are elided. Null when the strip is wide
-/// enough, when dropping the furniture would gain nothing, or when
-/// nothing is active.
-fn narrowActive(ui: Ui, area: Rect, tabs: []const Tab, g: Geometry) ?usize {
-    const active = for (tabs, 0..) |tab, i| {
-        if (tab.active) break i;
-    } else return null;
-    const room = g.tabs_right -| area.x;
-    if (room >= @min(chipWidth(ui, tabs[active]), narrow_room)) return null;
-    // Nothing to give way: the strip is already all the tabs have (the
-    // 󰐕's slot stays carved, as it always is).
-    if (narrowWidth(area) <= room) return null;
-    return active;
-}
-
-/// The cells the active chip takes on a narrow strip: all of it but
-/// the 󰐕's slot, which Rust carves before the tabs whether or not a 󰐕
-/// paints there.
-fn narrowWidth(area: Rect) u16 {
-    return area.w -| plus_w;
+/// enough or nothing is active.
+fn narrowActive(tabs: []const Tab, g: Geometry) ?usize {
+    if (!g.narrow) return null;
+    return activeIndex(tabs);
 }
 
 /// The offset to paint from when the active tab changed: `current` when
@@ -700,7 +764,7 @@ fn narrowWidth(area: Rect) u16 {
 pub fn fitActive(ui: Ui, area: Rect, tabs: []const Tab, current: usize, opts: Opts) usize {
     if (tabs.len == 0) return 0;
     const g = geometry(ui, area, tabs, opts);
-    if (narrowActive(ui, area, tabs, g)) |a| return a;
+    if (narrowActive(tabs, g)) |a| return a;
     const room = g.tabs_right -| area.x;
     const first = clampScroll(ui, tabs, room, current);
     var active: usize = 0;
@@ -718,8 +782,9 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     if (area.isEmpty()) return .{};
     const y = area.y;
     const g = geometry(ui, area, tabs, opts);
-    if (narrowActive(ui, area, tabs, g)) |a| {
-        _ = paintChip(ui, area.x, y, narrowWidth(area), tabs[a], opts.leaf, @intCast(a), opts.focused);
+    if (narrowActive(tabs, g)) |a| {
+        _ = paintChip(ui, area.x, y, g.tabs_right -| area.x, tabs[a], opts.leaf, @intCast(a), opts.focused);
+        drawFurniture(ui, area, g, opts);
         return .{ .first = a, .painted = 1, .hidden_left = a, .hidden_right = tabs.len - a - 1 };
     }
 
@@ -756,7 +821,7 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
     }
 
     // ` 󰐕 ` after the last chip, in its own slot before the pager.
-    if (opts.new_tab) |id| {
+    if (opts.new_tab) |id| if (g.plus) {
         const plus_x = @max(@min(x, g.pager_x -| plus_w), area.x);
         if (plus_x + plus_w <= g.pager_x) {
             const r = Rect.init(plus_x, y, plus_w, 1);
@@ -764,7 +829,16 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
             _ = ui.putStr(plus_x + 1, y, 1, if (ui.ascii) plus_ascii else plus_glyph, .{ .fg = p.green, .bg = p.bg, .bold = true });
             ui.hit(r, .{ .button = id });
         }
-    }
+    };
+    drawFurniture(ui, area, g, opts);
+
+    return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right, .page_prev = pages.prev, .page_next = pages.next };
+}
+
+/// The mode chip, the session control and the split cluster.
+fn drawFurniture(ui: Ui, area: Rect, g: Geometry, opts: Opts) void {
+    const p = ui.theme.palette;
+    const y = area.y;
     if (opts.mode_chip) |m| {
         const w = ui.width(m.label);
         if (g.mode_x + w <= area.right()) {
@@ -780,14 +854,12 @@ pub fn draw(ui: Ui, area: Rect, tabs: []const Tab, opts: Opts) Window {
 
     if (opts.session_nav) |nav| _ = stepper.draw(ui, g.nav_x, y, area.right(), nav, g.nav_form);
 
-    if (opts.split) |s| drawSplit(ui, g.split_x, y, area.right(), s, g.n_ai, opts.zoomed);
-
-    return .{ .first = first, .painted = painted, .hidden_left = first, .hidden_right = hidden_right, .page_prev = pages.prev, .page_next = pages.next };
+    if (opts.split) |s| drawSplit(ui, g.split_x, y, area.right(), s, g.n_ai, g.split_skip, opts.zoomed);
 }
 
 /// The split cluster from `x`: the AI chips, then ` term `, ` right `,
 /// ` down `, ` maximize `.
-fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoomed: bool) void {
+fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, skip: usize, zoomed: bool) void {
     const t = ui.theme;
     const p = t.palette;
     const bg = p.bg_darker;
@@ -807,7 +879,7 @@ fn drawSplit(ui: Ui, x0: u16, y: u16, right: u16, s: SplitIds, n_ai: usize, zoom
         buttons[n] = if (zoomed) .{ .glyph = restore_glyph, .ascii = restore_ascii, .fg = p.cyan, .id = max_id } else .{ .glyph = maximize_glyph, .ascii = maximize_ascii, .fg = p.comment, .id = max_id };
         n += 1;
     }
-    for (buttons[0..n]) |b| {
+    for (buttons[@min(skip, n)..n]) |b| {
         if (x + split_button_w > right) break;
         const r = Rect.init(x, y, split_button_w, 1);
         ui.fill(r, .{ .bg = bg });
@@ -1149,22 +1221,28 @@ test "the ACTIVE dirty tab shows the dot too, the pointer turns it into an orang
     try testing.expect(g.fgEql(9, 0, .{ .fg = g.theme.palette.red }));
 }
 
-test "a long name is cut to name_cap; a chip cut by the edge keeps its tab hit and loses its close" {
+test "a long name is cut to name_cap; the active chip short of room cuts its name, never its close" {
     var f = try Fixture.init(40, 1);
     defer f.deinit();
     const tabs = [_]Tab{.{ .id = 1, .title = "a_very_long_file_name_indeed.txt", .glyph = "x", .active = true }};
     _ = draw(f.ui(), f.full(), &tabs, .{});
     // Seventeen characters and the ellipsis: eighteen cells, as Rust's `clip_to_cells`.
     try f.expectRow(0, " x a_very_long_file_… " ++ close_glyph);
-    // Eight cells: the `+` slot is reserved even with no `+` to paint
-    // (Rust carves it before the tabs), so five are left for the chip.
+    // Eight cells: the `+` slot gives way, and the name is cut to two
+    // cells so the close still paints — and is still the close.
     var g = try Fixture.init(8, 1);
     defer g.deinit();
     _ = draw(g.ui(), g.full(), &tabs, .{});
-    try g.expectRow(0, " x a_");
+    try g.expectRow(0, " x a\u{2026} " ++ close_glyph);
     try testing.expect(g.hits.at(4, 0).? == .tab);
-    try testing.expect(g.hits.at(5, 0) == null);
-    for (g.hits.items.items) |h| try testing.expect(h.target != .tab_close);
+    try testing.expect(g.hits.at(6, 0).? == .tab_close);
+    try testing.expect(g.hits.at(5, 0).? == .tab);
+    // Five cells: not even an empty name fits beside the badge — the
+    // close is cut, the last thing to go, and never hits over the name.
+    var h = try Fixture.init(5, 1);
+    defer h.deinit();
+    _ = draw(h.ui(), h.full(), &tabs, .{});
+    for (h.hits.items.items) |e| try testing.expect(e.target != .tab_close);
 }
 
 test "an overflowing strip: the offset clamps to what fills it, the pager ` ‹ n/m › ` takes the chevrons' place, the + stays" {
@@ -1401,20 +1479,20 @@ test "a session pane's strip: ` ‹ 3/7 › ` before the cluster, each arrow a b
     try h.expectLacks(nav_next_glyph);
     try h.expectContains(" x claude ");
 
-    // The session's own name outranks the nav: an 18-cell name keeps
-    // its chip whole, and the nav takes only what is left over.
+    // A long session name is cut before the nav gives way, down to
+    // `min_title`: at 44 the nav is whole beside the cut name and its
+    // close; at 36 the name is at six cells and the nav still whole.
     const long = [_]Tab{.{ .id = 1, .title = "fix the failing te", .glyph = "x", .active = true }};
     var l = try Fixture.init(44, 1);
     defer l.deinit();
     _ = draw(l.ui(), l.full(), &long, opts);
-    try l.expectContains(" x fix the failing te " ++ close_glyph);
-    try l.expectLacks(nav_prev_glyph);
-    var m = try Fixture.init(45, 1);
+    try l.expectContains(" x fix the faili\u{2026} " ++ close_glyph);
+    try l.expectContains(nav_prev_glyph ++ " 3/7 " ++ nav_next_glyph);
+    var m = try Fixture.init(36, 1);
     defer m.deinit();
     _ = draw(m.ui(), m.full(), &long, opts);
-    try m.expectContains(" x fix the failing te " ++ close_glyph);
-    try m.expectContains(nav_prev_glyph ++ "  " ++ nav_next_glyph);
-    try m.expectLacks("3/7");
+    try m.expectContains(" x fix t\u{2026} " ++ close_glyph);
+    try m.expectContains("3/7");
 
     // `--ascii`: `<` and `>`.
     var a = try Fixture.init(50, 1);
@@ -1696,4 +1774,98 @@ test "the tab after the last whole one, opened, is brought into view whole — a
     at.first = first;
     _ = draw(f.ui(), f.full(), &tabs, at);
     try f.expectContains(" x t3.txt " ++ close_glyph);
+}
+
+/// The cell the `.tab_close` hit starts at, or null with none.
+fn closeX(f: *Fixture) ?u16 {
+    var x: u16 = 0;
+    while (x < f.full().w) : (x += 1) if (f.hits.at(x, 0)) |h| if (h == .tab_close) return x;
+    return null;
+}
+
+/// The active tab's close painted, and its hit on the glyph — never on
+/// the name.
+fn expectClose(f: *Fixture) !void {
+    const x = closeX(f) orelse return error.TestNoClose;
+    try testing.expectEqualStrings(close_glyph, f.cell(x, 0).char.grapheme);
+}
+
+const crop_ai = [_]AiChip{.{ .id = 40, .glyph = "\u{2733}", .fallback = "*", .fg = brand.claude }};
+const crop_split: SplitIds = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &crop_ai };
+
+test "the user's crops: a Claude Code and a Jira Fix Versions leaf keep their close at the widths that dropped it, the name ellipsised" {
+    // The crops are a three-leaf window at ~122 columns (the larger
+    // font) and ~138: the Claude Code leaf's strip is 35 cells there
+    // and 43 here, the Jira one's 34 and 42. Each wears the `+`, an AI
+    // chip and the four split buttons — 18 cells of furniture.
+    const claude = [_]Tab{.{ .id = 1, .title = "Claude Code", .glyph = "x", .active = true, .linked = true }};
+    const jira = [_]Tab{.{ .id = 2, .title = "Jira Fix Versions", .glyph = "x", .active = true }};
+    const opts: Opts = .{ .new_tab = 77, .split = crop_split, .session_nav = .{ .index = 0, .count = 1, .prev = 60, .next = 61 } };
+    const Case = struct { tabs: []const Tab, w: u16, name: []const u8 };
+    for ([_]Case{
+        .{ .tabs = &claude, .w = 35, .name = " x Claude C\u{2026} " },
+        .{ .tabs = &claude, .w = 43, .name = " x Claude Code " },
+        .{ .tabs = &jira, .w = 34, .name = " x Jira Fix \u{2026} " },
+        .{ .tabs = &jira, .w = 42, .name = " x Jira Fix Versions " },
+    }) |c| {
+        var f = try Fixture.init(c.w, 1);
+        defer f.deinit();
+        _ = draw(f.ui(), f.full(), c.tabs, opts);
+        try f.expectContains(c.name);
+        try expectClose(&f);
+        // The furniture stands: the `+` and all five buttons.
+        for ([_]u32{ 77, 40, 1, 2, 3, 4 }) |id| try testing.expect(hasButton(&f, id));
+    }
+}
+
+test "the strip gives way in order as it narrows — the name to six cells, the pager, the +, the pane buttons, the name further — and the close is last" {
+    var tabs = twelveTabs(4);
+    tabs[4].title = "Jira Fix Versions";
+    const opts: Opts = .{ .new_tab = 77, .scroll_left = 70, .scroll_right = 71, .all_tabs = 8, .split = crop_split };
+    const buttons = [_]u32{ 40, 1, 2, 3, 4 };
+    var w: u16 = 80;
+    while (w >= 6) : (w -= 1) {
+        var f = try Fixture.init(w, 1);
+        defer f.deinit();
+        var o = opts;
+        o.first = fitActive(f.ui(), f.full(), &tabs, 4, opts);
+        _ = draw(f.ui(), f.full(), &tabs, o);
+        try expectClose(&f);
+        // The active name's cells: from after ` x ` to the cell before ` 󰅖`.
+        var name_x: u16 = 0;
+        while (f.hits.at(name_x, 0) == null or f.hits.at(name_x, 0).? != .tab or f.hits.at(name_x, 0).?.tab.idx != 4) name_x += 1;
+        const name_w = closeX(&f).? - (name_x + 3) - 1;
+        const pager = hasButton(&f, 70);
+        const plus = hasButton(&f, 77);
+        var kept: usize = 0;
+        for (buttons) |id| kept += @intFromBool(hasButton(&f, id));
+        // Buttons give way from the cluster's left end, the maximize last.
+        for (buttons[0 .. buttons.len - kept]) |id| try testing.expect(!hasButton(&f, id));
+        if (pager) try testing.expect(name_w >= min_title and plus and kept == buttons.len);
+        if (!plus) try testing.expect(!pager);
+        if (kept < buttons.len) try testing.expect(!plus);
+        if (name_w < min_title) try testing.expect(!pager and !plus and kept == 0);
+    }
+    // 40: the pager stands beside the name; 30: the pager has gone, the
+    // `+` and the buttons stand, the name at six; 20: the `+`, the AI
+    // chip, the terminal and split-right have gone, the name at eight.
+    var a = try Fixture.init(40, 1);
+    defer a.deinit();
+    var o = opts;
+    o.first = fitActive(a.ui(), a.full(), &tabs, 4, opts);
+    _ = draw(a.ui(), a.full(), &tabs, o);
+    try expectClose(&a);
+    try testing.expect(hasButton(&a, 70) and hasButton(&a, 77) and hasButton(&a, 40));
+    var b = try Fixture.init(30, 1);
+    defer b.deinit();
+    o.first = fitActive(b.ui(), b.full(), &tabs, 4, opts);
+    _ = draw(b.ui(), b.full(), &tabs, o);
+    try b.expectContains(" x Jira \u{2026} " ++ close_glyph);
+    try testing.expect(!hasButton(&b, 70) and hasButton(&b, 77) and hasButton(&b, 40));
+    var c = try Fixture.init(20, 1);
+    defer c.deinit();
+    o.first = fitActive(c.ui(), c.full(), &tabs, 4, opts);
+    _ = draw(c.ui(), c.full(), &tabs, o);
+    try c.expectRow(0, " x Jira Fi\u{2026} " ++ close_glyph ++ "  " ++ split_down_glyph ++ "  " ++ maximize_glyph);
+    try testing.expect(!hasButton(&c, 77) and !hasButton(&c, 40) and !hasButton(&c, 1) and !hasButton(&c, 2));
 }
