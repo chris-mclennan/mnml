@@ -37,6 +37,12 @@ function fileFor(urlPath) {
 }
 
 const bad = [];
+// Paths the mnml.sh zone serves from a Worker, not from dist/: the browser
+// demo (demo/cloudflare). A link to one is not a missing page; it is
+// probed live with the download URLs instead.
+const workerRoutes = ["/demo", "/demo/"];
+const servedByWorker = (p) => workerRoutes.some((r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/"));
+const workerLinks = new Set();
 let checked = 0;
 const downloads = new Set();
 const dlRe = new RegExp(`https://github\\.com/${REPO.replace("/", "\\/")}/releases/(?:latest/)?download/[^\\s"'<>|)]+`, "g");
@@ -48,6 +54,7 @@ for (const [file, s] of html) {
     if (!raw || /^(https?:)?\/\//.test(raw) || /^(mailto|data|javascript):/.test(raw)) continue;
     checked++;
     const u = new URL(raw, "http://site" + pageUrl);
+    if (servedByWorker(u.pathname)) { workerLinks.add("https://mnml.sh" + u.pathname); continue; }
     const target = raw.startsWith("#") ? file : fileFor(u.pathname);
     if (!target) { bad.push(`${pageUrl}: ${raw} → no such page or file`); continue; }
     if (u.hash && target.endsWith(".html")) {
@@ -62,7 +69,7 @@ if (!downloads.size) bad.push("no release download URL found anywhere in dist/ �
 if (process.env.SKIP_DOWNLOAD_CHECKS === "1") {
   console.log(`smoke: ${downloads.size} download URLs, probes skipped (SKIP_DOWNLOAD_CHECKS=1)`);
 } else {
-  const list = [...downloads].sort();
+  const list = [...downloads, ...workerLinks].sort();
   const probe = async (u) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -79,7 +86,7 @@ if (process.env.SKIP_DOWNLOAD_CHECKS === "1") {
       const u = list[i++];
       const status = await probe(u);
       console.log(`smoke: HEAD ${status} ${u}`);
-      if (status !== 200) bad.push(`download ${u} → ${status}`);
+      if (status !== 200) bad.push(`${workerLinks.has(u) ? "worker route" : "download"} ${u} → ${status}`);
     }
   }));
 }
