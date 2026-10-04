@@ -1,8 +1,10 @@
 # Watching another Claude account from inside the app: `a` in the usage
-# pane asks for a name, then for that account's OAuth token (a hidden
-# prompt); the account joins `ai.claude_accounts` in the home config with
-# a token file of its own and is fetched at once. The palette renames it
-# (the prompt is seeded with the name) and removes it (after a confirm).
+# pane asks for a name; the account joins `ai.claude_accounts` in the home
+# config with a token file of its own and is fetched at once. No token
+# prompt opens on its own — the palette's paste-a-token command (the
+# account menu's Advanced ▸ Paste a token…) is a hidden prompt. The
+# palette renames it (the prompt is seeded with the name) and removes it
+# (after a confirm).
 # The fixture has no `accounts` file, so the config's list is the list,
 # and `client.json` is what the new account's fetch reads.
 # env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
@@ -20,6 +22,9 @@ key a
 expect screen contains "Name the Claude account to add"
 type client
 key enter
+expect screen contains "added client — Re-auth signs it in"
+expect screen lacks "Paste the Claude Code OAuth token"
+command ai.link_claude_token
 expect screen contains "Paste the Claude Code OAuth token for client"
 expect screen lacks "fake-token-for-tests"
 type fake-token-for-tests

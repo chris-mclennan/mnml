@@ -1,0 +1,54 @@
+# Each Claude account says where its sign-in stands, one line under its
+# name, and wears a Re-auth button when it wants one: signed in with the
+# next reset; no login yet (no token file); expired (the endpoint turned
+# the token down); the keychain holding another account's login. The
+# account's right-click menu leads with Re-auth; the paste-a-token prompt
+# lives behind Advanced ▸ Paste a token… and opens only from there.
+# env: MNML_CLAUDE_USAGE_FIXTURE=${MNML_E2E_WORKSPACE}/fixture
+
+write fixture/accounts *personal\nghost\nstale\nlocked
+write fixture/now 1789243232
+write fixture/tz_offset 0
+write fixture/personal.json {"five_hour":{"utilization":40.0,"resets_at":"2026-09-12T20:20:00+00:00"},"seven_day":{"utilization":22.0,"resets_at":"2026-09-19T05:00:00+00:00"}}
+write fixture/stale.error HTTP 401: token rejected
+write fixture/locked.error needs-reauth: the keychain login is other@example.com, not locked's
+write placeholder.txt x
+open placeholder.txt
+
+command ai.claude_usage
+wait 800
+expect pane "Claude Usage"
+expect screen contains "(active) personal"
+expect screen contains "signed in · resets 8:20pm"
+expect screen contains "no login yet —  Re-auth"
+expect screen contains "expired —  Re-auth"
+expect screen contains "keychain holds another account —  Re-auth"
+# The fix is the button, not prose: no steps, no raw 401.
+expect screen lacks "press L"
+expect screen lacks "token rejected"
+expect screen lacks "Paste the Claude Code OAuth token"
+
+# The button is ghost's Re-auth (this build reads no keychain under the
+# fixture, and says so).
+click 52 17
+wait 200
+expect screen contains "fixture mode: Re-auth reads no keychain"
+
+# stale's menu: Re-auth first; the token prompt is under Advanced.
+rightclick 40 20
+wait 200
+expect screen contains "Re-auth"
+expect screen contains "Rename…"
+expect screen contains "Remove…"
+expect screen contains "Advanced"
+expect screen lacks "Paste a token…"
+key down
+key down
+key down
+key right
+wait 200
+expect screen contains "Paste a token…"
+key enter
+wait 200
+expect screen contains "Paste the Claude Code OAuth token for stale"
+key esc
