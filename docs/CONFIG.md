@@ -823,7 +823,10 @@ otherwise. Copy what you need; leave the rest out.
         // to that account, never filed silently), on its own when the
         // token has expired and the keychain holds that same account's
         // login again, or by the account menu's Advanced ▸ Paste a token…
-        // (ai.link_claude_token) — `~` expands, a relative path sits under the data
+        // (ai.link_claude_token). A turned-down token renews by its own refresh
+        // token, for every account on every system, written back to that
+        // account's file; off macOS Re-auth reads the CLI's login from
+        // `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`) — `~` expands, a relative path sits under the data
         // root beside the default `ai_token`; `active` marks the one the
         // chip shows alone (the CLI's live login wins when the keychain
         // names one). No entries = one `default` account on `ai_token` — or

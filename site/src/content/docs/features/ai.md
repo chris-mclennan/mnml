@@ -244,7 +244,10 @@ once its email is that account's; then the pane closes. A login for a
 different account you watch is never filed silently: mnml says whose it
 is and offers to file it there instead. When a token has expired and the
 CLI is signed in as that same account again, mnml re-captures it on its
-own. A `!` on the chip means an account wants looking at; clicking it
+own; otherwise the token renews with its own refresh token, for every
+account on macOS, Linux and Windows, and the line reads `expired —
+refreshing…` until it does. Off macOS, Re-auth reads the login the CLI
+leaves in `~/.claude/.credentials.json`. A `!` on the chip means an account wants looking at; clicking it
 opens the pane at that account. Pasting a token by hand is still there,
 under the account's right-click menu, *Advanced ▸ Paste a token…*.
 

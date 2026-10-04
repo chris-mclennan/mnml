@@ -12,6 +12,18 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### Claude tokens renew on every system
+
+- A Claude account whose token is turned down renews it with the
+  account's own refresh token — every account, on macOS, Linux and
+  Windows — and the new token is written back to that account's file.
+  On macOS the keychain is tried first when it holds that account's
+  login. The state line reads `expired — refreshing…` meanwhile; only a
+  refused renewal shows `expired — Re-auth`.
+- Re-auth works on Linux and Windows: after `claude login` the login is
+  read from the CLI's credentials file (`~/.claude/.credentials.json`,
+  or under `CLAUDE_CONFIG_DIR`).
+
 ### SESSIONS: names, states and verbs from Claude Code's registry
 
 - EXTERNAL rows — sessions running in another terminal — read Claude
