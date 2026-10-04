@@ -607,6 +607,17 @@ pub const rows = [_]Row{
         .body = "Opens the files this session changed since its pane started, as a git status pane scoped to them: what is still uncommitted (unstaged and staged) and what it committed since. Enter diffs a file, `s` / `u` stage it, the Commit… row commits with the session's title as the message. A file another session also touched names that session.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.changes", .label = "Open it" } }, .{ .command = .{ .id = .@"sessions.refresh", .label = "Read git again" } } },
     } },
+    // ── a session another terminal runs, in Claude Code's registry ──
+    .{ .menu = "Session", .label = "Ask what it is doing", .command = .@"sessions.ask_external", .entry = .{
+        .title = "Ask the session what it is doing",
+        .body = "Sends this session one cross-session message, to the inbox socket Claude Code's registry names for it: in one line, what is it working on and is it safe to interrupt. The session reads it between tool calls, or starts a turn when idle. Its reply is read from its transcript for 60 s and shown as a toast. Not on Windows yet; offered only when the registry lists the session with an inbox (`sessions.registry`).",
+        .links = &.{.{ .command = .{ .id = .@"sessions.ask_external", .label = "Ask it" } }},
+    } },
+    .{ .menu = "Session", .label = "Take over…", .command = .@"sessions.take_over", .entry = .{
+        .title = "Take the session over",
+        .body = "Ends the session in its own terminal and resumes it in a pane here, after a confirm. Only while the registry says it is idle or waiting — a working session is refused. mnml checks the pid is still a `claude` process, sends it SIGTERM (never SIGKILL), waits up to 10 s for it to leave the registry, then resumes it with `claude --resume`. One that does not exit is left running.",
+        .links = &.{.{ .command = .{ .id = .@"sessions.take_over", .label = "Take it over" } }},
+    } },
     // ── a SESSIONS card's (or the table's) links: one `Open <words>`
     // row per address the session shows ──
     .{ .menu = "Session", .label = "Open ", .prefix = true, .kind = .open_url, .entry = .{

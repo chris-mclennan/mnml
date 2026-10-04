@@ -228,3 +228,55 @@ session's name on its tab while the link is up, and in the gutter left of
 its SESSIONS card when the ready mark and the on-screen dot are not there;
 and a toast the first time it connects:
 `Claude Code connected to mnml (pane 4)`.
+
+## Claude Code's session registry
+
+mnml reads, and does not write, a file Claude Code keeps for each of its
+running sessions: `~/.claude/sessions/<pid>.json`. It is Claude Code's own
+format — **undocumented, and liable to change in any release** — so mnml
+reads it defensively and treats it as a hint over the transcripts, never
+as the listing. `sessions.registry = false` turns it off.
+
+**What mnml reads.** Only `*.json` files, at most 64 KiB each, on the
+SESSIONS stat tick (every 500 ms while SESSIONS or the sessions table is
+on screen, every 2 s otherwise, never under `ui.dashboard_refresh =
+.manual`), and a file only when its size or mtime moved. Of each record:
+`pid`, `sessionId`, `cwd`, `name` with `nameSource`, `status` (`busy`,
+`idle`, `waiting`) and `messagingSocketPath`. A file that is not a JSON
+object, or lacks a positive `pid` or a `sessionId`, is skipped; a field
+of another type, or a status it does not know, is ignored. Every other
+file in the directory is left unopened.
+
+**What it shows.** A record is matched to a transcript by `sessionId`.
+An EXTERNAL row in SESSIONS then reads `<name>  <status>` when the user
+named the session (`nameSource: "user"` — `/rename`, `--name`), else
+`<branch>  (<short id>)  <status>`; the user's name is the session's name
+everywhere else too, under a rename made in mnml. A record no transcript
+matches is listed as well, `<name>  <status>  <cwd basename>`, when its
+cwd is in the workspace (or every workspace's, under `w`).
+
+**Ask what it is doing** (`sessions.ask_external`, on the session's row
+menu in the sessions table). mnml connects to the record's
+`messagingSocketPath` and writes one line, the documented cross-session
+message shape —
+`{"type":"user","message":{"role":"user","content":"…"}}` — asking for
+one line on what it is working on and whether it is safe to interrupt.
+No auth line is sent: it is optional on macOS and Linux. Windows
+inboxes are named pipes and are not supported yet. How a reply reaches a
+sender that is not a Claude Code session is not documented, so mnml
+binds no inbox of its own: it notes where the session's transcript ends
+and polls it every 500 ms for 60 s for the next assistant entry — a
+`SendMessage` call's text, else its plain text — and shows it as a
+toast. The session's inbound settings decide whether it reads the
+message at all; a held or refused message shows as no reply in 60 s.
+
+**Take over** (`sessions.take_over`). Ends the session in its own
+terminal and resumes it in a pane here, after a confirm. Only while the
+record's `status` is `idle` or `waiting`; a `busy` session is refused
+with a toast. On the confirm, mnml reads the registry again, checks the
+record's pid still belongs to that session and that the pid's command
+line is a `claude` process (`ps -o command=`), sends it SIGTERM, waits
+up to 10 s for its record to leave the registry, and resumes it with
+`claude --resume <id>` in the session's cwd. One that does not exit in
+time is left running, with a toast; mnml never sends SIGKILL. Not on
+Windows.

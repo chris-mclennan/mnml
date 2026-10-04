@@ -985,9 +985,13 @@ pub const RefreshCadence = struct {
 /// re-reads only on the refresh chip or command.
 pub const DashboardRefresh = enum { auto, fast, slow, manual };
 
-/// `sessions = .{ .refresh = … }`, `agents = .{ .refresh = … }`.
+/// `sessions = .{ .refresh = …, .registry = … }`.
 pub const Dashboard = struct {
     refresh: RefreshCadence = .{},
+    /// Read Claude Code's live-session registry (`~/.claude/sessions/
+    /// <pid>.json`) for each running session's name, state and inbox
+    /// socket. False keeps the transcript-only listing.
+    registry: bool = true,
 };
 
 // ─── keys ────────────────────────────────────────────────────────────────

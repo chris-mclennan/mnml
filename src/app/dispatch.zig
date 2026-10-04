@@ -1979,6 +1979,7 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
         .git => try toastOnFail(app, git_app.acceptConfirm(app, choice)),
         .ai_tool => |job| ai_app.answerConfirm(app, job, choice == 0),
         .kill_pids => |pids| if (choice == 0) try sessions.killAccept(app, pids),
+        .take_over => |t| if (choice == 0) try @import("session_takeover.zig").accept(app, t),
         .cloud_cancel => |arn| if (choice == 0) try cloud_agents.cancelAccept(app, arn),
         .remove_integration => |id| if (choice == 0) try integrations.removeAccept(app, id),
         .remove_claude_account => |name| if (choice == 0) try toastOnFail(app, usage_pane.removeAccount(app, name)),

@@ -456,6 +456,8 @@ pub const ConfirmPurpose = union(enum) {
     ai_tool: u64,
     /// SIGTERM these sessions (owned).
     kill_pids: []u32,
+    /// `sessions.take_over`: end this session and resume it here (owned).
+    take_over: @import("app/session_takeover.zig").TakeOver,
     /// Stop this cloud run's ECS task (the ARN, owned).
     cloud_cancel: []u8,
     /// `integrations.remove`: the manifest id to delete (owned).
@@ -532,6 +534,7 @@ pub const ConfirmPurpose = union(enum) {
                 gpa.free(d.paths);
             },
             .kill_pids => |p| gpa.free(p),
+            .take_over => |t| t.deinit(gpa),
             .cloud_cancel => |p| gpa.free(p),
             .move_path => |m| {
                 gpa.free(m.from);
@@ -3972,6 +3975,7 @@ test {
     _ = @import("app/session_attention.zig");
     _ = @import("app/ipc_gate.zig");
     _ = @import("app/session_ready.zig");
+    _ = @import("app/session_registry.zig");
     _ = @import("app/session_search.zig");
     _ = @import("app/welcome.zig");
     _ = @import("app/cloud_agents.zig");
