@@ -93,6 +93,12 @@ pub const Server = struct {
 
     /// N more generated OPEN pull requests on `acme/api`, so a
     /// measurement runs against a workspace the size of a real one.
+    pub fn setLinkRanges(self: *Server, on: bool) void {
+        self.state_lock.lockUncancelable(self.io);
+        defer self.state_lock.unlock(self.io);
+        self.state.link_ranges = on;
+    }
+
     pub fn setExtraPrs(self: *Server, n: u32) void {
         self.state_lock.lockUncancelable(self.io);
         defer self.state_lock.unlock(self.io);

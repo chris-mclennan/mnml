@@ -40,6 +40,7 @@ pub fn main(init: std.process.Init) !u8 {
     var rate_limit_first: u32 = 0;
     var log_file: ?[]const u8 = null;
     var extra_prs: u32 = 0;
+    var link_ranges = false;
     var delay_ms: u32 = 0;
     var gzip: @import("server.zig").Gzip = .off;
     var retry_after: ?u32 = null;
@@ -62,6 +63,8 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--url-file") and i + 1 < args.len) {
             i += 1;
             url_file = args[i];
+        } else if (std.mem.eql(u8, a, "--link-ranges")) {
+            link_ranges = true;
         } else if (std.mem.eql(u8, a, "--extra-prs") and i + 1 < args.len) {
             i += 1;
             extra_prs = std.fmt.parseInt(u32, args[i], 10) catch 0;
@@ -112,6 +115,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (retry_after) |ra| srv.retryAfter(ra);
     if (budget_limit > 0) srv.budgetHeaders(budget_limit, budget_remaining orelse budget_limit);
     if (extra_prs > 0) srv.setExtraPrs(extra_prs);
+    if (link_ranges) srv.setLinkRanges(true);
     srv.delay_ms = delay_ms;
     srv.gzipAnswers(gzip);
     // A fresh log per run: the measurement is one tab load's worth, not
@@ -161,6 +165,7 @@ const usage =
     \\  --port N              listen here (default 0: the OS picks)
     \\  --url-file PATH       write the base URL there once listening
     \\  --lifetime-secs N     exit after N seconds (default: never; --life-secs also works)
+    \\  --link-ranges         PRs and pipelines numbered in a range per repo (bare-number links)
     \\  --extra-prs N         N more generated OPEN pull requests on acme/api
     \\  --parent-pid N        exit when that process is gone (an orphan holds a port)
     \\  --rate-limit-first N  answer the first N requests with 429

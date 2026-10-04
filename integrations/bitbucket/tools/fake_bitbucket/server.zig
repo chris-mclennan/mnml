@@ -116,6 +116,11 @@ pub const State = struct {
     /// runs against a workspace the size of a real one rather than the
     /// three the fixture needs to make its points.
     extra_prs: u32 = 0,
+    /// `--link-ranges`: the pull requests and pipelines are
+    /// `range_prs` / `range_pipelines` instead — numbers in distinct
+    /// ranges per repo (api's PRs 5490–7130, web's 7120–7166, the two
+    /// sharing 7120–7130), what a bare `Pull request 5505` resolves by.
+    link_ranges: bool = false,
     /// `--gzip` / `--gzip-always`: when an answer goes out gzipped.
     gzip: Gzip = .off,
     /// Answers that went out gzipped — how a test knows the client was
@@ -823,7 +828,8 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     const w = &out.writer;
     var n: usize = 0;
     w.writeAll("{\"pagelen\":50,\"values\":[") catch return error.OutOfMemory;
-    for (&fixtures) |*f| {
+    const set: []const Fixture = if (st.link_ranges) &range_prs else &fixtures;
+    for (set) |*f| {
         if (!std.mem.eql(u8, f.repo, repo)) continue;
         var wanted = false;
         for (want_states) |ws| wanted = wanted or std.mem.eql(u8, effectiveState(f, st), ws);
@@ -860,6 +866,44 @@ fn listPrs(arena: Allocator, st: *State, repo: []const u8, query: []const u8) Al
     }
     w.print("],\"size\":{d}}}", .{n}) catch return error.OutOfMemory;
     return .{ .body = out.toOwnedSlice() catch return error.OutOfMemory };
+}
+
+/// `--link-ranges`' pull requests: open, yours or waiting on you, in a
+/// range per repo — api 5490–7130, web 7120–7166 — so 5505 is api's
+/// alone and 7125 is both.
+pub const range_prs = [_]Fixture{
+    rangePr("api", 5490, false),
+    rangePr("api", 7130, false),
+    rangePr("web", 7120, false),
+    rangePr("web", 7166, true),
+};
+
+/// `--link-ranges`' pipelines: api 10540–10554, web 3300–3321.
+pub const range_pipelines = [_]PipelineFixture{
+    .{ .repo = "api", .build_number = 10554, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "aaaa000000", .age_hours = 1 },
+    .{ .repo = "api", .build_number = 10540, .state = "COMPLETED", .result = "FAILED", .ref_name = "main", .commit = "aaaa111111", .age_hours = 9 },
+    .{ .repo = "web", .build_number = 3321, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "bbbb000000", .age_hours = 2 },
+    .{ .repo = "web", .build_number = 3300, .state = "COMPLETED", .result = "SUCCESSFUL", .ref_name = "main", .commit = "bbbb111111", .age_hours = 30 },
+};
+
+fn rangePr(comptime repo: []const u8, comptime id: u32, comptime reviewing: bool) Fixture {
+    return .{
+        .repo = repo,
+        .id = id,
+        .title = std.fmt.comptimePrint("Widget change {d}", .{id}),
+        .state = "OPEN",
+        .author_id = if (reviewing) "acct-kim" else me_account_id,
+        .author_name = if (reviewing) "Kim Okonjo" else me_display_name,
+        .source_branch = std.fmt.comptimePrint("feature/widget-{d}", .{id}),
+        .source_sha = std.fmt.comptimePrint("{x:0>12}", .{id}),
+        .description = "A pull request in its repo's number range.",
+        .age_hours = 2,
+        .reviewers = if (reviewing) &.{.{ .id = me_account_id, .name = me_display_name }} else &.{},
+        .builds = &.{},
+        .files = &.{},
+        .diff = "",
+        .activity = &.{},
+    };
 }
 
 /// The nth generated pull request. Invented people, invented branches,
@@ -1129,7 +1173,8 @@ fn listPipelines(arena: Allocator, st: *State, repo: []const u8) Allocator.Error
     const w = &out.writer;
     w.writeAll("{\"pagelen\":100,\"values\":[") catch return error.OutOfMemory;
     var n: usize = 0;
-    for (&pipelines) |*p| {
+    const runs: []const PipelineFixture = if (st.link_ranges) &range_pipelines else &pipelines;
+    for (runs) |*p| {
         if (!std.mem.eql(u8, p.repo, repo)) continue;
         if (n > 0) w.writeByte(',') catch return error.OutOfMemory;
         w.print("{{\"type\":\"pipeline\",\"uuid\":\"{{{s}-{d}}}\",\"build_number\":{d},\"state\":{{\"name\":\"{s}\"", .{ repo, p.build_number, p.build_number, p.state }) catch return error.OutOfMemory;
@@ -1592,4 +1637,22 @@ test "a retitled pull request reads its new title on the listing and on its own"
     const list = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
     try t.expect(std.mem.indexOf(u8, list.body, "Fix the login redirect, again") != null);
     try t.expectEqual(@as(u16, 404), (try handle(a, &st, .{ .method = .POST, .target = "/__retitle/77", .body = "x" })).status);
+}
+
+test "--link-ranges: each repo's pull requests and pipelines sit in their own range, api's and web's PRs sharing 7120-7130" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var st: State = .{ .link_ranges = true };
+    const api = try call(a, &st, .GET, "/2.0/repositories/acme/api/pullrequests?state=OPEN", "");
+    try t.expect(std.mem.indexOf(u8, api.body, "\"id\":5490") != null);
+    try t.expect(std.mem.indexOf(u8, api.body, "\"id\":7130") != null);
+    // The everyday fixture is out of the way, or its low would swallow the range.
+    try t.expect(std.mem.indexOf(u8, api.body, "\"id\":1234") == null);
+    // The statusline's one predicate still finds web's PR waiting on you.
+    const web = try call(a, &st, .GET, "/2.0/repositories/acme/web/pullrequests?state=OPEN&q=author.account_id%20%3D%20%22acct-max%22%20OR%20reviewers.account_id%20%3D%20%22acct-max%22", "");
+    try t.expect(std.mem.indexOf(u8, web.body, "\"id\":7166") != null);
+    const runs = try call(a, &st, .GET, "/2.0/repositories/acme/api/pipelines/?pagelen=10&sort=-created_on", "");
+    try t.expect(std.mem.indexOf(u8, runs.body, "\"build_number\":10554") != null);
+    try t.expect(std.mem.indexOf(u8, runs.body, "\"build_number\":412") == null);
 }
