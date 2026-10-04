@@ -556,6 +556,13 @@ data — a title, a body of two to four sentences, an optional aside,
   lie. A literal chord (`Enter`, `Esc`, `→ / ←`) is allowed only from
   `literal_chords`. `info_view_copy.lint` fails a key whose command no
   profile binds.
+- **The click's own chord is not an entry's to write.** The ladder adds
+  a last `Key: …` line itself (`info_view.keyLine`): the chord, through
+  `chordOf`, of the command the target's left click runs, read from
+  `src/app/primary_command.zig` — the table `dispatch.zig`'s click reads
+  too. A new chip whose click is a command goes in that table, not in a
+  `runCmd` arm, and its entry gets the line for free. The right button's
+  menu never counts.
 - **`links` are typed.** `.command` carries a `CommandId` — a wrong id is
   a compile error; `.settings` carries a row from `settingsRow("ui.x")` —
   a wrong path is a compile error; `.url` a web page through the OS

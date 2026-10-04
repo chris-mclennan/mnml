@@ -1,0 +1,67 @@
+# width: 120
+# height: 40
+# The info view's `Key:` line: a control whose left click runs one
+# command ends its hover copy with that command's chord in the active
+# profile, read off the table the click itself reads
+# (`app/primary_command.zig`), so the help and the click cannot drift.
+# A profile that binds the command to nothing prints no line.
+#
+# The box is dragged tall (its rule from row 30 to row 10) and scrolled
+# to its foot, where the line is.
+write a.txt "alpha\n"
+open a.txt
+drag 10 30 10 10
+# Vim: the mode chip's click swaps the profile — `Space t k`.
+ex set input=vim
+hover 2 38
+hover 10 20
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+expect screen contains "Key: Space t k"
+# Standard: Space types there, so the leader chord is no binding and
+# the mode chip says nothing ...
+ex set input=standard
+hover 60 20
+hover 2 38
+hover 10 20
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+expect screen contains "Mode chip"
+expect screen lacks "Key:"
+# ... while the position chip's click, Go to line, is VS Code's Ctrl+G.
+hover 60 20
+hover 72 38
+hover 10 20
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+expect screen contains "Key: Ctrl+G"

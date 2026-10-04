@@ -59,6 +59,7 @@ const App = app_mod.App;
 const Key = app_mod.Key;
 const Mouse = @import("../core/key.zig").Mouse;
 const command = @import("../core/command.zig");
+const primary_command = @import("primary_command.zig");
 const CommandId = command.CommandId;
 const hit_mod = @import("../ui/hit.zig");
 const HitTarget = hit_mod.HitTarget;
@@ -571,13 +572,25 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
         app.info_view.keys = m.keys;
-        return m.copy;
+        var c = m.copy;
+        c.key = try keyLine(app, arena, target);
+        return c;
     }
     // A menu row without an entry: the command's title and chord,
     // rather than the tooltip's `opens more rows` — marked all the same.
     if (target == .menu_item) if (try copy.menus.rowFallback(app, arena, target.menu_item.menu, target.menu_item.idx)) |f| return .{ .title = f.title, .body = f.body, .aside = no_help_aside, .aside_first = true };
     const tip = (try discovery.describe(app, arena, target)) orelse return null;
     return .{ .title = tip.title, .body = tip.detail orelse "", .aside = no_help_aside, .aside_first = true };
+}
+
+/// The `Key:` line: the chord, under the active profile, of the one
+/// command `target`'s left click runs (`app/primary_command.zig` — the
+/// table the click reads too). Null when the click runs none or the
+/// profile binds it to nothing. Shown even when a `[chord]` row names
+/// the same command: the line is where the click's own key always is.
+pub fn keyLine(app: *const App, arena: Allocator, target: HitTarget) Allocator.Error!?[]const u8 {
+    const id = primary_command.of(app, target) orelse return null;
+    return copy.chordOf(app, arena, id);
 }
 
 /// Whether `target` resolves to a curated entry, the tooltip's fallback,
@@ -1447,4 +1460,28 @@ test "the rule drags the height: rows follow the pointer, clamped; the release w
     try t.expect(app.drag == null);
     const text2 = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
     try t.expect(std.mem.indexOf(u8, text2, "hover_help_height = 8") != null);
+}
+
+test "the Key line: a curated control's click command in the active profile's chord, last; none when the profile binds nothing" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const render_mod = @import("render.zig");
+    const tree_btn: HitTarget = .{ .button = @intFromEnum(render_mod.Button.toggle_tree) };
+    // Standard: VS Code's chord.
+    try app.setInputStyle(.standard);
+    const std_copy = (try hoverCopy(&app, arena, tree_btn)).?;
+    try t.expectEqualStrings("Ctrl+B", std_copy.key.?);
+    // Vim: NvChad's.
+    try app.setInputStyle(.vim);
+    const vim_copy = (try hoverCopy(&app, arena, tree_btn)).?;
+    try t.expectEqualStrings("Ctrl+N", vim_copy.key.?);
+    // A chip whose click runs a command no chord binds: no line.
+    const lsp_seg: HitTarget = .{ .statusline_seg = @import("statusline.zig").SegId.lsp.raw() };
+    try t.expect(primary_command.of(&app, lsp_seg) != null);
+    const lsp_copy = (try hoverCopy(&app, arena, lsp_seg)).?;
+    try t.expectEqual(@as(?[]const u8, null), lsp_copy.key);
+    // A control whose click is no command: no line either.
+    const tab_close: HitTarget = .{ .tab_close = .{ .leaf = 0, .idx = 0 } };
+    try t.expectEqual(@as(?[]const u8, null), try keyLine(&app, arena, tab_close));
 }
