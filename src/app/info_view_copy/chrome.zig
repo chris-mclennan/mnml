@@ -618,8 +618,8 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
         },
         .ai_apply => .{
             .title = "AI apply",
-            .body = "The result of an AI action against the buffer it came from, as a diff to accept or reject hunk by hunk — nothing is written until you accept. Reject leaves the buffer as it was; the AI pane keeps the answer.",
-            .links = &.{.{ .command = .{ .id = .@"ai.reask", .label = "Ask again" } }},
+            .body = "A proposed change — an AI action's answer, or a Claude Code session's edit — against the buffer as it stands, in the git diff pane's Hunk / Inline / Split views (`t` cycles them). Space accepts or skips the focused hunk, Enter applies the accepted ones as one undo step, `Y` or Accept all takes every hunk; nothing is written until then. Esc rejects and leaves the buffer as it was.",
+            .links = &.{ .{ .command = .{ .id = .@"ai.apply_accept_all", .label = "Accept all and apply" } }, .{ .command = .{ .id = .@"git.diff_toggle_view", .label = "Cycle hunk / inline / split" } }, .{ .command = .{ .id = .@"ai.reask", .label = "Ask again" } } },
         },
         .flaky => .{
             .title = "flaky tests",

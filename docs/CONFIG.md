@@ -833,6 +833,13 @@ otherwise. Copy what you need; leave the rest out.
             .{ .name = "personal", .token_path = "ai_token.personal" },
             .{ .name = "work", .token_path = "~/.claude/work.json", .active = true },
         },
+        // Where a Claude Code session's openDiff review opens. .editor: a
+        // tab in the split holding the file (else an editor split), so the
+        // session stays in view — with no other split, a split beside the
+        // session. .beside: always a split beside the session. .tab: a tab
+        // of the focused split, which can cover the session. Accept, reject
+        // or Esc puts the focus back on the session that asked.
+        .review_placement = .editor, // .editor | .beside | .tab
     },
 
     // ── tools ──────────────────────────────────────────────────────────

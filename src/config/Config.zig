@@ -1058,6 +1058,12 @@ pub const Task = struct {
 
 pub const AiBackend = enum { auto, api, sub, off };
 pub const ClaudeMeterMode = enum { off, compact, ticker };
+/// Where a Claude Code session's `openDiff` review opens (`app/ide.zig`).
+/// `.editor`: a tab in the leaf holding the file (else an editor leaf),
+/// so the session stays in view; with no other leaf, a split beside the
+/// session. `.beside`: always a split beside the session. `.tab`: a tab
+/// of the focused leaf, which may cover the session.
+pub const ReviewPlacement = enum { editor, beside, tab };
 
 /// How an `Open ×N` batch of Claude sessions stands (`ai.batch_arrange`):
 /// N tabs in the active leaf, N full-height columns of equal width, or
@@ -1197,6 +1203,8 @@ pub const Ai = struct {
     batch_arrange: ?BatchArrange = null,
     /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.
     claude_accounts: []const ClaudeAccount = &.{},
+    /// Where `openDiff`'s review opens; see `ReviewPlacement`.
+    review_placement: ReviewPlacement = .editor,
     /// Every key not named above, kept verbatim for the AI subsystems
     /// and integrations that read their own settings out of `.ai`. (A
     /// field named `extra` of type `Dynamic` is the decoder's convention

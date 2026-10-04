@@ -15,8 +15,9 @@
 //! workspace folders, dirty state), open things to look at (`openFile`,
 //! `openDiff`), close a tab, and — the one write — `saveDocument`, which
 //! asks you (or matches `.api`). `openDiff` shows the proposal in the
-//! review pane (`ai_apply.zig`) and answers when you accept or reject it;
-//! an accept lands in the buffer and leaves it unsaved.
+//! review pane (`ai_apply.zig`, painted by the git diff view) and
+//! answers when you accept or reject it; an accept lands in the buffer
+//! as one undo step and is saved before the session hears FILE_SAVED.
 //!
 //! mnml tells the session about your selection (`selection_changed`, to
 //! the session pane you looked at last, at most one per 100 ms) and,
@@ -28,6 +29,8 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
+const Config = @import("../config/Config.zig");
+const layout_mod = @import("layout.zig");
 const PaneId = app_mod.PaneId;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
@@ -700,6 +703,7 @@ fn openDiff(app: *App, session: PaneId, conn: u32, id_json: []const u8, args: st
     const contents = getStr(args, "new_file_contents") orelse return replyToolError(app, conn, id_json, "openDiff needs new_file_contents");
     const tab_name = getStr(args, "tab_name") orelse std.fs.path.basename(path);
     const abs = try app.absPath(path);
+    const was_open = app.panes.findPath(abs) != null;
     // The proposal is diffed against the buffer as it stands — unsaved
     // edits included — so the file is opened when it is not.
     const target = app.panes.findPath(abs) orelse (app.openPath(abs) catch |err| switch (err) {
@@ -720,9 +724,49 @@ fn openDiff(app: *App, session: PaneId, conn: u32, id_json: []const u8, args: st
     const pa = pane.arena.allocator();
     pane.ide = .{ .session = session, .conn = conn, .id_json = try pa.dupe(u8, id_json), .tab_name = try pa.dupe(u8, tab_name) };
     const id = try app.panes.add(.{ .ai_apply = pane });
-    app.showPane(id);
+    placeReview(app, app.cfg.ai.review_placement, session, target, id, was_open);
     app.needs_render = true;
     // Answered when the review closes (`forgetPane` → `answerDiff`).
+}
+
+/// Show review `id` so the session that asked stays in view
+/// (`ai.review_placement`): `.editor` tabs it into the leaf holding the
+/// file, else a leaf showing an editor; `.beside`, or `.editor` with no
+/// such leaf, splits the session's leaf and puts the review on the
+/// right. A file this request opened over the session moves with the
+/// review. `.tab`, or a session not on this page, is the focused leaf.
+/// The review takes the focus either way; closing it gives it back to
+/// the session (`ai_apply.zig` `backTo`).
+fn placeReview(app: *App, placement: Config.ReviewPlacement, session: PaneId, file: PaneId, id: PaneId, was_open: bool) void {
+    const here = app.layouts.current();
+    const sl = here.leafOf(session) orelse return app.showPane(id);
+    if (placement == .tab) return app.showPane(id);
+    const lid = (if (placement == .editor) editorLeaf(app, sl, file) else null) orelse blk: {
+        const nl = (here.split(session, .horizontal, id) catch null) orelse return app.showPane(id);
+        app.afterSplitChange();
+        break :blk nl;
+    };
+    if (here.leafOf(id) != lid) _ = here.showIn(lid, id) catch return app.showPane(id);
+    // A split moves the session's leaf to a fresh node: looked up again.
+    const now = here.leafOf(session).?;
+    if (!was_open and here.leafOf(file) == now) {
+        _ = here.showIn(lid, file) catch {};
+        here.leaf(now).?.active = session;
+    }
+    here.leaf(lid).?.active = id;
+    app.setActive(id);
+}
+
+/// The leaf a review goes into beside session leaf `sl`: the file's
+/// own, else the leaf of the editor focused last. Null when every
+/// other leaf shows something else (a terminal, a panel) or there is none.
+fn editorLeaf(app: *App, sl: layout_mod.NodeId, file: PaneId) ?layout_mod.NodeId {
+    const here = app.layouts.current();
+    if (here.leafOf(file)) |fl| if (fl != sl) return fl;
+    for (app.pane_mru.items) |p| if (here.leafOf(p)) |l| if (l != sl and here.leaf(l).?.active == p and app.panes.editor(p) != null) return l;
+    const all = here.leaves(app.frame.allocator()) catch return null;
+    for (all) |l| if (l != sl and app.panes.editor(here.leaf(l).?.active) != null) return l;
+    return null;
 }
 
 /// The review pane is closing: tell the session what became of it.
@@ -1114,6 +1158,144 @@ test "openDiff shows the review; accept saves the file and answers FILE_SAVED wi
     _ = try ai_apply.handleKey(app, rid2, &app.panes.get(rid2).?.ai_apply, .{ .code = .esc });
     try t.expect(fx.has(900, "\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
     try t.expect(fx.audited("\"client\":\"pane:6\",\"method\":\"ide\",\"target\":\"openDiff "));
+}
+
+test "openDiff: a second proposal supersedes the first (DIFF_REJECTED); the review is the diff view, Split when wide, cycled by git.diff_toggle_view; Y accepts every hunk and answers FILE_SAVED" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    const path = try fx.file("e.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n");
+    defer t.allocator.free(path);
+    try fx.link(6, 900);
+    const fa = app.frame.allocator();
+    const proposal = "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nL\n";
+    const args = try std.fmt.allocPrint(t.allocator, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"A\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nL\\n\",\"tab_name\":\"e.txt (claude)\"}}", .{ try Fx.jsonStr(fa, path), try Fx.jsonStr(fa, path) });
+    defer t.allocator.free(args);
+
+    try fx.call(6, 900, 1, "openDiff", args);
+    try fx.call(6, 900, 2, "openDiff", args);
+    try t.expect(fx.has(900, "\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
+    const rid = app.active.?;
+    const ap = &app.panes.get(rid).?.ai_apply;
+    try t.expectEqual(@as(usize, 2), ap.hunks.len);
+    ai_apply.fitMode(ap, ai_apply.split_min_w);
+    try t.expectEqual(@import("../ui/diff_view.zig").Mode.split, ap.mode);
+    try command.run(app, .{ .static = .@"git.diff_toggle_view" });
+    try t.expectEqual(@import("../ui/diff_view.zig").Mode.hunk, ap.mode);
+    // Skip the first hunk; Y takes it back and applies the whole proposal.
+    _ = try ai_apply.handleKey(app, rid, ap, .{ .code = .{ .char = ' ' } });
+    try t.expectEqual(@as(usize, 1), ap.accepted());
+    const before = app.ide.unsent.items.len;
+    _ = try ai_apply.handleKey(app, rid, ap, .{ .code = .{ .char = 'Y' } });
+    try t.expect(app.panes.get(rid) == null);
+    try t.expect(app.ide.unsent.items.len > before);
+    try t.expect(fx.has(900, "\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"FILE_SAVED\"},{\"type\":\"text\",\"text\":\"A\\nb\\nc\\nd\\ne\\nf\\ng\\nh\\ni\\nj\\nk\\nL\\n\"}]}"));
+    const on_disk = try Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(64));
+    defer t.allocator.free(on_disk);
+    try t.expectEqualStrings(proposal, on_disk);
+    // The diff toolbar's × rejects, like Esc.
+    try fx.call(6, 900, 3, "openDiff", args);
+    const rid3 = app.active.?;
+    try ai_apply.click(app, rid3, &app.panes.get(rid3).?.ai_apply, @import("../ui/diff_view.zig").close_id, .{ .x = 0, .y = 0, .kind = .press, .button = .left });
+    try t.expect(fx.has(900, "\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
+}
+
+/// A linked session on conn 900, focused; with `open`, the file at
+/// `path` open on the left and the session split off to its right.
+fn reviewLayout(fx: *Fx, open: bool, path: []const u8) !PaneId {
+    const app = &fx.app;
+    if (open) _ = try app.openPath(path);
+    const s = try fx.pty(&.{"claude"});
+    const here = app.layouts.current();
+    // Only these panes on the page: one leaf, or the file's and the session's.
+    for (try here.allPanes(app.frame.allocator())) |p| if (p != s and (!open or p != app.panes.findPath(path).?)) {
+        _ = here.removePane(p);
+    };
+    if (open) _ = (try here.split(app.panes.findPath(path).?, .horizontal, s)).?;
+    app.showPane(s);
+    try fx.link(s, 900);
+    return s;
+}
+
+test "openDiff .editor: the review is a tab in the file's split, the session stays in view; accept gives the focus back to the session" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    const path = try fx.file("p.txt", "one\ntwo\n");
+    defer t.allocator.free(path);
+    const s = try reviewLayout(&fx, true, path);
+    const here = app.layouts.current();
+    const file = app.panes.findPath(path).?;
+    const fa = app.frame.allocator();
+    const args = try std.fmt.allocPrint(fa, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"one\\nTWO\\n\",\"tab_name\":\"p.txt (claude)\"}}", .{ try Fx.jsonStr(fa, path), try Fx.jsonStr(fa, path) });
+    try fx.call(s, 900, 1, "openDiff", args);
+    const rid = app.active.?;
+    try t.expect(app.panes.get(rid).?.* == .ai_apply);
+    try t.expectEqual(here.leafOf(file).?, here.leafOf(rid).?);
+    try t.expect(here.leafOf(s).? != here.leafOf(rid).?);
+    try t.expectEqual(s, here.leaf(here.leafOf(s).?).?.active);
+    try t.expectEqual(@as(usize, 2), (try here.leaves(fa)).len);
+    _ = try ai_apply.handleKey(app, rid, &app.panes.get(rid).?.ai_apply, .{ .code = .{ .char = 'Y' } });
+    try t.expect(fx.has(900, "FILE_SAVED"));
+    try t.expectEqual(s, app.active.?);
+}
+
+test "openDiff .editor with the session alone: a split beside it holds the review and the file it opened; Esc gives the focus back" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    const path = try fx.file("p.txt", "one\ntwo\n");
+    defer t.allocator.free(path);
+    const s = try reviewLayout(&fx, false, path);
+    const here = app.layouts.current();
+    const fa = app.frame.allocator();
+    try t.expectEqual(@as(usize, 1), (try here.leaves(fa)).len);
+    const args = try std.fmt.allocPrint(fa, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"one\\nTWO\\n\",\"tab_name\":\"p.txt (claude)\"}}", .{ try Fx.jsonStr(fa, path), try Fx.jsonStr(fa, path) });
+    try fx.call(s, 900, 1, "openDiff", args);
+    const rid = app.active.?;
+    const file = app.panes.findPath(path).?;
+    try t.expectEqual(@as(usize, 2), (try here.leaves(fa)).len);
+    try t.expect(here.leafOf(s).? != here.leafOf(rid).?);
+    try t.expectEqual(here.leafOf(rid).?, here.leafOf(file).?);
+    try t.expectEqual(s, here.leaf(here.leafOf(s).?).?.active);
+    _ = try ai_apply.handleKey(app, rid, &app.panes.get(rid).?.ai_apply, .{ .code = .esc });
+    try t.expect(fx.has(900, "DIFF_REJECTED"));
+    try t.expectEqual(s, app.active.?);
+}
+
+test "openDiff .beside splits beside the session even with the file open; .tab covers the focused session, as before" {
+    var fx: Fx = undefined;
+    try fx.init();
+    defer fx.deinit();
+    const app = &fx.app;
+    const path = try fx.file("p.txt", "one\ntwo\n");
+    defer t.allocator.free(path);
+    const s = try reviewLayout(&fx, true, path);
+    const here = app.layouts.current();
+    const file = app.panes.findPath(path).?;
+    const fa = app.frame.allocator();
+    const args = try std.fmt.allocPrint(fa, "{{\"old_file_path\":{s},\"new_file_path\":{s},\"new_file_contents\":\"one\\nTWO\\n\",\"tab_name\":\"p.txt (claude)\"}}", .{ try Fx.jsonStr(fa, path), try Fx.jsonStr(fa, path) });
+
+    app.cfg.ai.review_placement = .beside;
+    try fx.call(s, 900, 1, "openDiff", args);
+    const rid = app.active.?;
+    try t.expectEqual(@as(usize, 3), (try here.leaves(fa)).len);
+    try t.expect(here.leafOf(rid).? != here.leafOf(s).? and here.leafOf(rid).? != here.leafOf(file).?);
+    try t.expectEqual(s, here.leaf(here.leafOf(s).?).?.active);
+    _ = try ai_apply.handleKey(app, rid, &app.panes.get(rid).?.ai_apply, .{ .code = .esc });
+    try t.expectEqual(s, app.active.?);
+    try t.expectEqual(@as(usize, 2), (try here.leaves(app.frame.allocator())).len);
+
+    app.cfg.ai.review_placement = .tab;
+    try fx.call(s, 900, 2, "openDiff", args);
+    const rid2 = app.active.?;
+    try t.expectEqual(here.leafOf(s).?, here.leafOf(rid2).?);
+    _ = try ai_apply.handleKey(app, rid2, &app.panes.get(rid2).?.ai_apply, .{ .code = .esc });
+    try t.expect(fx.has(900, "\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"DIFF_REJECTED\"}]}"));
+    try t.expectEqual(s, app.active.?);
 }
 
 test "selection_changed goes only to the pointed session, at most once per 100 ms; ai.send_selection sends at_mentioned" {

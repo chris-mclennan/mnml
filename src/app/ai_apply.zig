@@ -4,7 +4,17 @@
 //! unified diff against what the editor holds now, one hunk at a time,
 //! each hunk accepted or skipped on its own. Enter applies the accepted
 //! hunks through one `EditOp.replace_range`, so undo is one step and
-//! the editor's own undo ring owns the change.
+//! the editor's own undo ring owns the change; `Y` accepts every hunk
+//! and applies in one key. The same pane is Claude Code's `openDiff`
+//! (`ide.zig`), answered when it closes.
+//!
+//! It is painted by the git diff pane's renderer (`ui/diff_view.zig`),
+//! so the Hunk / Inline / Split views, `t` and `git.diff_toggle_view`
+//! carry over from the git panel. Until one is picked, a pane
+//! `split_min_w` wide shows Split (old left, new right) and a
+//! narrower one Hunk. The Hunk view's hunks carry three lines of
+//! context; Inline and Split cut the whole file at the same hunks, so
+//! hunk `i` is the same hunk in every view.
 //!
 //! The diff is a line diff — common prefix and suffix trimmed, then an
 //! LCS over the middle; a middle too large to table falls back to one
@@ -15,9 +25,10 @@
 //!       and the original text are copied in at open time so a later
 //!       edit to the editor (or the answer streaming on) cannot move
 //!       them under the diff;
-//!   D6  the view (`ui/ai_apply_view.zig`) paints from `rows` and
-//!       registers one `.script_hit{ pane, id = row }` per row — a
-//!       click on a hunk header toggles it.
+//!   D6  the view (`ui/ai_apply_view.zig`) paints a header row and
+//!       then `diff_view` from the rows built here; every row registers
+//!       `.script_hit{ pane, id = row }` — a click on the focused
+//!       hunk's header toggles it.
 //!
 //! The range is an `Anchor`: taken when the job starts, followed along
 //! the document's edit log (`follow`, run before every trim of the log)
@@ -37,6 +48,9 @@ const Mouse = key_mod.Mouse;
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const document = @import("../editor/document.zig");
+const parse = @import("../git/parse.zig");
+const diff_view = @import("../ui/diff_view.zig");
+const ai_apply_view = @import("../ui/ai_apply_view.zig");
 
 /// A range of one editor's text, kept current across edits made after
 /// it was taken. `doc` is compared, never dereferenced: a pane that has
@@ -129,27 +143,11 @@ pub const Hunk = struct {
     }
 };
 
-/// A line of a hunk, by its line index on the side it comes from.
-pub const RowLine = struct { hunk: u32, line: u32 };
-
-/// One painted row.
-pub const Row = union(enum) {
-    header: u32,
-    /// `line` indexes `old_lines`.
-    ctx: RowLine,
-    del: RowLine,
-    /// `line` indexes `new_lines`.
-    add: RowLine,
-
-    pub fn hunkOf(r: Row) u32 {
-        return switch (r) {
-            .header => |h| h,
-            .ctx, .del, .add => |l| l.hunk,
-        };
-    }
-};
-
 pub const context_lines: u32 = 3;
+
+/// The narrowest pane the review opens in Split: forty cells a side,
+/// what the git panel's `showBeside` asks of each half of a split.
+pub const split_min_w: u16 = 2 * 40;
 
 pub const AiApplyPane = struct {
     arena: std.heap.ArenaAllocator,
@@ -168,10 +166,31 @@ pub const AiApplyPane = struct {
     new_lines: []const []const u8,
     /// Whether the proposal ended in a newline — the result keeps it.
     hunks: []Hunk,
-    rows: []const Row,
-    /// The focused hunk.
+    /// The proposal as `diff_view`'s document, all on the arena: the
+    /// Hunk view's file (each hunk with its context) and rows, and the
+    /// whole file cut at the same hunks for Inline and Split.
+    hunk_files: []parse.FileDiff,
+    hunk_rows: []diff_view.Row,
+    hunk_shown: []u32,
+    full_files: []parse.FileDiff,
+    full_rows: []diff_view.Row,
+    flat_shown: []u32,
+    split_rows: []diff_view.SplitRow,
+    split_shown: []u32,
+    mode: diff_view.Mode = .hunk,
+    /// No view picked yet: `fitMode` chooses by the pane's width.
+    mode_auto: bool = true,
+    /// The diff toolbar's Wrap.
+    wrap: bool = false,
+    /// The focused hunk: what space toggles.
     cursor: usize = 0,
-    scroll: usize = 0,
+    /// The diff view's cursor, an index into the current view's rows.
+    row: usize = 0,
+    view: diff_view.State = .{},
+    /// What the last frame measured, for a click on the change strip.
+    strip_cells: u16 = 0,
+    /// `]` / `[` typed, waiting for `c`.
+    bracket: ?u8 = null,
     /// A Claude Code session's `openDiff` (`ide.zig`): it is answered
     /// when this pane closes, and its `tab_name` is the tab's title.
     ide: ?@import("ide.zig").Diff = null,
@@ -186,10 +205,88 @@ pub const AiApplyPane = struct {
         return n;
     }
 
-    /// The row the focused hunk's header is on.
-    pub fn cursorRow(self: *const AiApplyPane) usize {
-        for (self.rows, 0..) |r, i| if (r == .header and r.header == self.cursor) return i;
-        return 0;
+    /// Each hunk's accept state, for `diff_view.Doc.review`.
+    pub fn acceptMask(self: *const AiApplyPane, arena: Allocator) Allocator.Error![]const bool {
+        const out = try arena.alloc(bool, self.hunks.len);
+        for (self.hunks, out) |h, *o| o.* = h.accepted;
+        return out;
+    }
+
+    /// The current view's rows, as `diff_view` reads them.
+    pub fn doc(self: *const AiApplyPane, focused: bool, review: []const bool) diff_view.Doc {
+        const hunk = self.mode == .hunk;
+        return .{
+            .files = if (hunk) self.hunk_files else self.full_files,
+            .rows = if (hunk) self.hunk_rows else self.full_rows,
+            .shown = if (hunk) self.hunk_shown else self.flat_shown,
+            .split_rows = self.split_rows,
+            .split_shown = self.split_shown,
+            .mode = self.mode,
+            .cursor = self.row,
+            .focused = focused,
+            .wrap = self.wrap,
+            .actions = .none,
+            .git_toolbar = false,
+            .review = review,
+        };
+    }
+
+    pub fn shownRows(self: *const AiApplyPane) []const u32 {
+        return switch (self.mode) {
+            .hunk => self.hunk_shown,
+            .flat => self.flat_shown,
+            .split => self.split_shown,
+        };
+    }
+
+    pub fn rowCount(self: *const AiApplyPane) usize {
+        return switch (self.mode) {
+            .hunk => self.hunk_rows.len,
+            .flat => self.full_rows.len,
+            .split => self.split_rows.len,
+        };
+    }
+
+    /// The hunk row `ri` of the current view belongs to (none for a spacer).
+    pub fn hunkOfRow(self: *const AiApplyPane, ri: usize) ?u32 {
+        if (ri >= self.rowCount()) return null;
+        const h = switch (self.mode) {
+            .hunk => diff_view.rowHunk(self.hunk_rows[ri]),
+            .flat => diff_view.rowHunk(self.full_rows[ri]),
+            .split => diff_view.splitRowHunk(self.split_rows[ri]),
+        } orelse return null;
+        return h.hunk;
+    }
+
+    pub fn inHunk(self: *const AiApplyPane, ri: usize, h: usize) bool {
+        const of = self.hunkOfRow(ri) orelse return false;
+        return of == h;
+    }
+
+    /// Row `ri` is a hunk's header (the Hunk and Split views have them).
+    pub fn isHeader(self: *const AiApplyPane, ri: usize) bool {
+        if (ri >= self.rowCount()) return false;
+        return switch (self.mode) {
+            .hunk => self.hunk_rows[ri] == .hunk,
+            .flat => false,
+            .split => self.split_rows[ri] == .hunk,
+        };
+    }
+
+    /// Where the cursor goes for hunk `h`: its header, or in the Inline
+    /// view (which has none) its first changed line.
+    pub fn firstRowOf(self: *const AiApplyPane, h: usize) usize {
+        const shown = self.shownRows();
+        var first: ?usize = null;
+        for (shown) |ri| {
+            if (!self.inHunk(ri, h)) continue;
+            if (self.mode != .flat) return ri;
+            if (first == null) first = ri;
+            const l = self.full_rows[ri].line;
+            const kind = self.full_files[0].hunks[l.hunk].lines[l.line].kind;
+            if (kind == .add or kind == .del) return ri;
+        }
+        return first orelse if (shown.len > 0) shown[0] else 0;
     }
 
     /// What the target range becomes: the new lines of every accepted
@@ -366,19 +463,24 @@ pub fn hunksOf(arena: Allocator, ops: []const Op, old_len: usize, new_len: usize
     return out.toOwnedSlice(arena);
 }
 
-/// The rows: per hunk its header, then its lines in script order.
-fn rowsOf(arena: Allocator, ops: []const Op, hunks: []const Hunk) Allocator.Error![]const Row {
-    var out: std.ArrayListUnmanaged(Row) = .empty;
-    // Walk the script once, emitting rows while inside a hunk's old range.
+/// The proposal as one file of `diff_view`'s document: per hunk its
+/// header and its lines in script order, numbered on both sides. With
+/// `full`, hunk `i` runs on to where hunk `i + 1` starts — the first
+/// from the top, the last to the end — so together they are the whole
+/// file, which the Inline and Split views paint.
+fn fileDiffOf(arena: Allocator, file: []const u8, ops: []const Op, old: []const []const u8, new: []const []const u8, hunks: []const Hunk, full: bool) Allocator.Error![]parse.FileDiff {
+    const out = try arena.alloc(parse.Hunk, hunks.len);
     var o: u32 = 0;
     var n: u32 = 0;
-    var hi: usize = 0;
     var op_i: usize = 0;
-    while (hi < hunks.len) : (hi += 1) {
-        const h = hunks[hi];
-        try out.append(arena, .{ .header = @intCast(hi) });
+    for (hunks, 0..) |h, hi| {
+        const last = hi + 1 == hunks.len;
+        const so: u32 = if (full and hi == 0) 0 else h.old_start;
+        const sn: u32 = if (full and hi == 0) 0 else h.new_start;
+        const eo: u32 = if (!full) h.old_start + h.old_len else if (last) @intCast(old.len) else hunks[hi + 1].old_start;
+        const en: u32 = if (!full) h.new_start + h.new_len else if (last) @intCast(new.len) else hunks[hi + 1].new_start;
         // Advance to the hunk's first line.
-        while (o < h.old_start and op_i < ops.len) : (op_i += 1) switch (ops[op_i]) {
+        while (o < so and op_i < ops.len) : (op_i += 1) switch (ops[op_i]) {
             .eq => {
                 o += 1;
                 n += 1;
@@ -386,27 +488,41 @@ fn rowsOf(arena: Allocator, ops: []const Op, hunks: []const Hunk) Allocator.Erro
             .del => o += 1,
             .add => n += 1,
         };
-        const end_o = h.old_start + h.old_len;
-        const end_n = h.new_start + h.new_len;
-        while (op_i < ops.len and (o < end_o or n < end_n)) : (op_i += 1) {
+        var lines: std.ArrayListUnmanaged(parse.DiffLine) = .empty;
+        while (op_i < ops.len and (o < eo or n < en)) : (op_i += 1) {
             switch (ops[op_i]) {
                 .eq => {
-                    try out.append(arena, .{ .ctx = .{ .hunk = @intCast(hi), .line = o } });
+                    try lines.append(arena, .{ .kind = .context, .text = shownLine(old[o]), .old_no = o + 1, .new_no = n + 1 });
                     o += 1;
                     n += 1;
                 },
                 .del => {
-                    try out.append(arena, .{ .del = .{ .hunk = @intCast(hi), .line = o } });
+                    try lines.append(arena, .{ .kind = .del, .text = shownLine(old[o]), .old_no = o + 1 });
                     o += 1;
                 },
                 .add => {
-                    try out.append(arena, .{ .add = .{ .hunk = @intCast(hi), .line = n } });
+                    try lines.append(arena, .{ .kind = .add, .text = shownLine(new[n]), .new_no = n + 1 });
                     n += 1;
                 },
             }
         }
+        out[hi] = .{
+            .header = try std.fmt.allocPrint(arena, "@@ -{d},{d} +{d},{d} @@", .{ so + 1, eo - so, sn + 1, en - sn }),
+            .old_start = so + 1,
+            .old_count = eo - so,
+            .new_start = sn + 1,
+            .new_count = en - sn,
+            .lines = lines.items,
+        };
     }
-    return out.toOwnedSlice(arena);
+    const files = try arena.alloc(parse.FileDiff, 1);
+    files[0] = .{ .new_path = file, .hunks = out };
+    return files;
+}
+
+/// The text a line paints: the missing-final-newline marker as git words it.
+fn shownLine(l: []const u8) []const u8 {
+    return if (l.ptr == no_eol_marker.ptr) "\\ No newline at end of file" else l;
 }
 
 /// Build the pane for `old` → `new`. Everything is copied onto the
@@ -421,28 +537,30 @@ pub fn build(gpa: Allocator, anchor: Anchor, source: ?PaneId, file: []const u8, 
     const new_lines = try splitLines(a, new_copy);
     const ops = try editScript(a, old_lines, new_lines);
     const hunks = try hunksOf(a, ops, old_lines.len, new_lines.len);
-    const rows = try rowsOf(a, ops, hunks);
+    const name = try a.dupe(u8, file);
+    const hunk_files = try fileDiffOf(a, name, ops, old_lines, new_lines, hunks, false);
+    const hunk_rows = try diff_view.flatten(a, hunk_files);
+    const full_files = try fileDiffOf(a, name, ops, old_lines, new_lines, hunks, true);
+    const full_rows = try diff_view.flatten(a, full_files);
+    const split_rows = try diff_view.pairs(a, full_files);
     return .{
         .arena = arena,
         .anchor = anchor,
         .old_text = old_copy,
         .source = source,
-        .file = try a.dupe(u8, file),
+        .file = name,
         .old_lines = old_lines,
         .new_lines = new_lines,
         .hunks = hunks,
-        .rows = rows,
+        .hunk_files = hunk_files,
+        .hunk_rows = hunk_rows,
+        .hunk_shown = try diff_view.filterRows(a, hunk_files, hunk_rows, "", false),
+        .full_files = full_files,
+        .full_rows = full_rows,
+        .flat_shown = try diff_view.filterRows(a, full_files, full_rows, "", true),
+        .split_rows = split_rows,
+        .split_shown = try diff_view.filterSplitRows(a, full_files, split_rows, ""),
     };
-}
-
-/// The text a row paints (the marker line paints as nothing).
-pub fn lineText(p: *const AiApplyPane, row: Row) []const u8 {
-    const l: []const u8 = switch (row) {
-        .header => "",
-        .ctx, .del => |r| p.old_lines[r.line],
-        .add => |r| p.new_lines[r.line],
-    };
-    return if (l.ptr == no_eol_marker.ptr) "\\ No newline at end of file" else l;
 }
 
 // ─── the command ────────────────────────────────────────────────────────
@@ -486,10 +604,11 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
     const total = p.hunks.len;
     const target = p.anchor.pane;
     const source = p.source;
+    const back = backTo(app, p, target);
     if (n == 0) {
         try app.forceClosePane(id);
         app.toast("nothing accepted — no change", .{});
-        app.showPane(target);
+        app.showPane(back);
         return;
     }
     // Where the reviewed text is now; refused when it is not there to
@@ -511,30 +630,64 @@ pub fn apply(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
         else => {},
     };
     try app.forceClosePane(id);
-    app.showPane(target);
+    app.showPane(back);
     if (from_session) return @import("ide.zig").acceptedToast(app, n, total);
     app.toast("applied {d} of {d} hunk{s}", .{ n, total, if (total == 1) "" else "s" });
 }
 
+/// `Y` / `ai.apply_accept_all`: every hunk accepted, then applied — the
+/// whole proposal in one key, as an editor's Accept All takes a file.
+pub fn acceptAll(app: *App, id: PaneId, p: *AiApplyPane) CommandError!void {
+    for (p.hunks) |*h| h.accepted = true;
+    return apply(app, id, p);
+}
+
+/// The review pane that has the keys, if one does.
+pub fn active(app: *App) ?struct { id: PaneId, p: *AiApplyPane } {
+    const id = app.active orelse return null;
+    const pane = app.panes.get(id) orelse return null;
+    return switch (pane.*) {
+        .ai_apply => |*ap| .{ .id = id, .p = ap },
+        else => null,
+    };
+}
+
 pub fn handleKey(app: *App, id: PaneId, p: *AiApplyPane, k: Key) Allocator.Error!bool {
     app.needs_render = true;
-    const last = p.hunks.len -| 1;
+    if (p.bracket) |b| {
+        p.bracket = null;
+        if (k.code == .char and k.mods.eql(.{}) and k.code.char == 'c') {
+            moveHunk(p, b == ']');
+            return true;
+        }
+    }
+    const page: isize = @intCast(@max(app.pane_rows, 1));
     switch (k.code) {
-        .down => p.cursor = @min(p.cursor + 1, last),
-        .up => p.cursor -|= 1,
-        .home => p.cursor = 0,
-        .end => p.cursor = last,
+        .down => step(p, 1),
+        .up => step(p, -1),
+        .page_down => step(p, page),
+        .page_up => step(p, -page),
+        .home => home(p, false),
+        .end => home(p, true),
         .enter => runToast(app, apply(app, id, p)),
         .esc => try cancel(app, id, p),
         .char => |c| {
+            if (k.mods.ctrl and (c == 'd' or c == 'u')) {
+                step(p, if (c == 'd') @divTrunc(page, 2) else -@divTrunc(page, 2));
+                return true;
+            }
             if (k.mods.ctrl or k.mods.alt or k.mods.super) return false;
             switch (c) {
-                ' ' => toggle(p, p.cursor),
-                'j', 'n' => p.cursor = @min(p.cursor + 1, last),
-                'k', 'p' => p.cursor -|= 1,
-                'g' => p.cursor = 0,
-                'G' => p.cursor = last,
-                'a', 't' => toggle(p, p.cursor),
+                ' ', 'a' => toggle(p, p.cursor),
+                'j' => step(p, 1),
+                'k' => step(p, -1),
+                'n' => moveHunk(p, true),
+                'p' => moveHunk(p, false),
+                ']', '[' => p.bracket = @intCast(c),
+                'g' => home(p, false),
+                'G' => home(p, true),
+                // The git diff pane's view key: Hunk → Inline → Split.
+                't' => cycleMode(p),
                 'A' => for (p.hunks) |*h| {
                     h.accepted = true;
                 },
@@ -542,6 +695,7 @@ pub fn handleKey(app: *App, id: PaneId, p: *AiApplyPane, k: Key) Allocator.Error
                     h.accepted = false;
                 },
                 'y' => runToast(app, apply(app, id, p)),
+                'Y' => runToast(app, acceptAll(app, id, p)),
                 'q' => try cancel(app, id, p),
                 else => return false,
             }
@@ -555,10 +709,81 @@ fn toggle(p: *AiApplyPane, hunk: usize) void {
     if (hunk < p.hunks.len) p.hunks[hunk].accepted = !p.hunks[hunk].accepted;
 }
 
+/// The cursor is on row `ri`: its hunk is the focused one.
+fn setRow(p: *AiApplyPane, ri: usize) void {
+    p.row = ri;
+    if (p.hunkOfRow(ri)) |h| p.cursor = h;
+}
+
+/// Where the cursor sits among the shown rows (the nearest before it).
+fn shownPos(p: *const AiApplyPane) usize {
+    var pos: usize = 0;
+    for (p.shownRows(), 0..) |r, i| {
+        if (r == p.row) return i;
+        if (r < p.row) pos = i;
+    }
+    return pos;
+}
+
+/// Move the cursor `delta` shown rows (the arrows, `j` / `k`, the wheel).
+pub fn step(p: *AiApplyPane, delta: isize) void {
+    const shown = p.shownRows();
+    if (shown.len == 0) return;
+    const next: isize = @as(isize, @intCast(shownPos(p))) + delta;
+    setRow(p, shown[@intCast(std.math.clamp(next, 0, @as(isize, @intCast(shown.len - 1))))]);
+}
+
+fn home(p: *AiApplyPane, end: bool) void {
+    const shown = p.shownRows();
+    if (shown.len == 0) return;
+    setRow(p, if (end) shown[shown.len - 1] else shown[0]);
+}
+
+/// The next / previous hunk: `n` / `p`, `]c` / `[c`.
+fn moveHunk(p: *AiApplyPane, forward: bool) void {
+    if (p.hunks.len == 0) return;
+    const h = if (forward) @min(p.cursor + 1, p.hunks.len - 1) else p.cursor -| 1;
+    p.cursor = h;
+    p.row = p.firstRowOf(h);
+}
+
+/// Show `mode`, the cursor on the focused hunk's first row there.
+pub fn setMode(p: *AiApplyPane, mode: diff_view.Mode) void {
+    p.mode = mode;
+    p.row = p.firstRowOf(p.cursor);
+}
+
+/// `t`, `git.diff_toggle_view`, a toolbar chip: the user's pick, which
+/// the width no longer overrides.
+pub fn pickMode(p: *AiApplyPane, mode: diff_view.Mode) void {
+    p.mode_auto = false;
+    if (p.mode != mode) setMode(p, mode);
+}
+
+pub fn cycleMode(p: *AiApplyPane) void {
+    pickMode(p, p.mode.next());
+}
+
+/// Before each paint, until a view is picked: Split in a pane
+/// `split_min_w` wide, Hunk in a narrower one.
+pub fn fitMode(p: *AiApplyPane, width: u16) void {
+    if (!p.mode_auto) return;
+    const want: diff_view.Mode = if (width >= split_min_w) .split else .hunk;
+    if (p.mode != want) setMode(p, want);
+}
+
 fn cancel(app: *App, id: PaneId, p: *AiApplyPane) Allocator.Error!void {
-    const back = p.source orelse p.anchor.pane;
+    const back = backTo(app, p, p.source orelse p.anchor.pane);
     try app.forceClosePane(id);
     if (app.panes.get(back) != null) app.showPane(back);
+}
+
+/// Where the focus goes as review `p` closes: the Claude Code session
+/// whose `openDiff` it is, while that pane lives — the review opened
+/// beside it (`ide.placeReview`) — else `fallback`.
+fn backTo(app: *App, p: *const AiApplyPane, fallback: PaneId) PaneId {
+    if (p.ide) |d| if (app.panes.get(d.session) != null) return d.session;
+    return fallback;
 }
 
 fn runToast(app: *App, result: CommandError!void) void {
@@ -569,20 +794,27 @@ fn runToast(app: *App, result: CommandError!void) void {
     };
 }
 
-/// A click on row `row`: a header toggles its hunk (and focuses it);
-/// a line focuses its hunk.
-pub fn click(app: *App, p: *AiApplyPane, row: u32, m: Mouse) void {
-    if (row >= p.rows.len) return;
+/// A press on `hit_id`: the header's Accept all, the diff toolbar's view
+/// chips, Wrap and ×, the change strip, or a row — a hunk header that
+/// is already focused toggles its hunk, any other row takes the cursor.
+pub fn click(app: *App, id: PaneId, p: *AiApplyPane, hit_id: u32, m: Mouse) Allocator.Error!void {
     if (m.kind != .press or m.button != .left) return;
-    const hunk: usize = p.rows[row].hunkOf();
-    if (p.rows[row] == .header and p.cursor == hunk) toggle(p, hunk);
-    p.cursor = hunk;
     app.needs_render = true;
-}
-
-pub fn scrollBy(p: *AiApplyPane, delta: i64) void {
-    const cur: i64 = @intCast(p.scroll);
-    p.scroll = @intCast(@max(cur + delta, 0));
+    if (hit_id == ai_apply_view.accept_all_id) return runToast(app, acceptAll(app, id, p));
+    if (diff_view.chipOf(hit_id)) |mode| return pickMode(p, mode);
+    if (hit_id == diff_view.wrap_id) {
+        p.wrap = !p.wrap;
+        return;
+    }
+    if (hit_id == diff_view.close_id) return cancel(app, id, p);
+    if (diff_view.stripCellOf(hit_id)) |cell| {
+        const shown = p.shownRows();
+        if (shown.len == 0) return;
+        return setRow(p, shown[diff_view.stripCellRow(cell, p.strip_cells, shown.len)]);
+    }
+    if (hit_id >= p.rowCount()) return;
+    if (p.isHeader(hit_id) and p.inHunk(hit_id, p.cursor)) toggle(p, p.cursor);
+    setRow(p, hit_id);
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -644,15 +876,56 @@ test "result assembles accepted hunks and leaves skipped ones as they were" {
     try t.expectEqualStrings(old, try p.result(a));
     p.hunks[0].accepted = true;
     try t.expectEqualStrings("1\n2\nX\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", try p.result(a));
-    // Rows: header, 2 context, +X, 3 context; header, 3 context, -18, 2 context.
-    try t.expectEqual(@as(usize, 14), p.rows.len);
-    try t.expect(p.rows[0] == .header);
-    try t.expect(p.rows[3] == .add);
-    try t.expectEqualStrings("X", lineText(&p, p.rows[3]));
-    try t.expect(p.rows[11] == .del);
-    try t.expectEqualStrings("18", lineText(&p, p.rows[11]));
-    p.cursor = 1;
-    try t.expectEqual(@as(usize, 7), p.cursorRow());
+    // The Hunk view: header, 2 context, +X, 3 context, spacer; header,
+    // 3 context, -18, 2 context, spacer.
+    const hl = p.hunk_files[0].hunks;
+    try t.expectEqualStrings("@@ -1,5 +1,6 @@", hl[0].header);
+    try t.expectEqual(@as(usize, 6), hl[0].lines.len);
+    try t.expectEqual(parse.LineKind.add, hl[0].lines[2].kind);
+    try t.expectEqualStrings("X", hl[0].lines[2].text);
+    try t.expectEqual(@as(?u32, 3), hl[0].lines[2].new_no);
+    try t.expectEqual(parse.LineKind.del, hl[1].lines[3].kind);
+    try t.expectEqualStrings("18", hl[1].lines[3].text);
+    try t.expectEqual(@as(usize, 16), p.hunk_rows.len);
+    // Inline / Split: the whole file, cut where the second hunk starts.
+    const fl = p.full_files[0].hunks;
+    try t.expectEqual(@as(usize, 2), fl.len);
+    try t.expectEqual(@as(usize, 20 + 1), fl[0].lines.len + fl[1].lines.len);
+    try t.expectEqual(@as(u32, 1), fl[0].old_start);
+    try t.expectEqual(hl[1].old_start, fl[1].old_start);
+    // Each view puts the cursor on the hunk's header, or its change.
+    try t.expectEqual(@as(usize, 8), p.firstRowOf(1));
+    p.mode = .flat;
+    const at = p.firstRowOf(0);
+    try t.expectEqual(parse.LineKind.add, fl[0].lines[p.full_rows[at].line.line].kind);
+    p.mode = .split;
+    try t.expect(p.isHeader(p.firstRowOf(1)) and p.inHunk(p.firstRowOf(1), 1));
+}
+
+test "the view: Split from split_min_w until one is picked, t cycles it, the cursor keeps its hunk" {
+    const old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n";
+    const new = "1\n2\nX\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n19\n20\n";
+    const no_doc: u8 = 0;
+    var p = try build(t.allocator, .{ .pane = 0, .doc = &no_doc, .seen = 0, .start = 0, .end = old.len }, null, "f.txt", old, new);
+    defer p.deinit();
+    fitMode(&p, split_min_w);
+    try t.expectEqual(diff_view.Mode.split, p.mode);
+    fitMode(&p, split_min_w - 1);
+    try t.expectEqual(diff_view.Mode.hunk, p.mode);
+    moveHunk(&p, true);
+    try t.expectEqual(@as(usize, 1), p.cursor);
+    cycleMode(&p);
+    try t.expectEqual(diff_view.Mode.flat, p.mode);
+    try t.expect(p.inHunk(p.row, 1));
+    // Picked: the width no longer moves it.
+    fitMode(&p, split_min_w);
+    try t.expectEqual(diff_view.Mode.flat, p.mode);
+    cycleMode(&p);
+    try t.expectEqual(diff_view.Mode.split, p.mode);
+    try t.expect(p.isHeader(p.row) and p.inHunk(p.row, 1));
+    // Rows move the cursor; the focused hunk follows the row.
+    home(&p, false);
+    try t.expectEqual(@as(usize, 0), p.cursor);
 }
 
 test "ai.apply opens the review pane; skipping a hunk applies the rest as one undo step" {
@@ -669,7 +942,7 @@ test "ai.apply opens the review pane; skipping a hunk applies the rest as one un
     const p = &app.panes.get(id).?.ai_apply;
     try t.expectEqual(@as(usize, 2), p.hunks.len);
     // Skip the second hunk (the deletion), keep the insertion.
-    _ = try handleKey(&app, id, p, .{ .code = .{ .char = 'j' } });
+    _ = try handleKey(&app, id, p, .{ .code = .{ .char = 'n' } });
     _ = try handleKey(&app, id, p, .{ .code = .{ .char = ' ' } });
     try t.expect(!p.hunks[1].accepted);
     try t.expectEqual(@as(usize, 1), p.accepted());
@@ -692,6 +965,15 @@ test "ai.apply opens the review pane; skipping a hunk applies the rest as one un
     _ = try handleKey(&app, id3, p3, .{ .code = .{ .char = 'R' } });
     _ = try handleKey(&app, id3, p3, .{ .code = .{ .char = 'y' } });
     try t.expect(app.panes.get(id3) == null);
+    try t.expectEqualStrings(old, e.buf.editor.bytes());
+    // `Y` takes every hunk, the skipped ones too, and applies in one step.
+    const id4 = try open(&app, ed, .take(ed, e.buf.doc, 0, old.len), null, code);
+    const p4 = &app.panes.get(id4).?.ai_apply;
+    _ = try handleKey(&app, id4, p4, .{ .code = .{ .char = 'R' } });
+    _ = try handleKey(&app, id4, p4, .{ .code = .{ .char = 'Y' } });
+    try t.expect(app.panes.get(id4) == null);
+    try t.expectEqualStrings(code, e.buf.editor.bytes());
+    _ = try app.applyOps(e, &.{.undo});
     try t.expectEqualStrings(old, e.buf.editor.bytes());
 }
 

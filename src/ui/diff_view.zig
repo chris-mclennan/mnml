@@ -34,6 +34,10 @@
 //! the anchor and the cursor that belong to the anchor's hunk — and the
 //! app's line verbs act on those lines instead of the whole hunk.
 //!
+//! The same paint is the review of a proposal — `ai.apply` and Claude
+//! Code's `openDiff` (`app/ai_apply.zig`): no git toolbar, no chips,
+//! and `Doc.review` badges each hunk accepted or skipped.
+//!
 //! The app owns the parsed files and the flattened rows (`flatten`,
 //! `pairs`); the view keeps only the scroll. Rows register
 //! `.script_hit{ pane, id = row index }`; the toolbar chips, the banner
@@ -385,16 +389,6 @@ pub fn filterSplitRows(arena: Allocator, files: []const parse.FileDiff, rows: []
 
 // ─── styles ─────────────────────────────────────────────────────────────
 
-/// A whole added / removed line in its colour — the AI apply view's
-/// unified preview (`ai_apply_view.zig`), which has no row tint.
-pub fn addStyle(t: *const Theme, base: Style) Style {
-    return Theme.withFg(base, t.syntax.string.fg);
-}
-
-pub fn delStyle(t: *const Theme, base: Style) Style {
-    return Theme.withFg(base, t.error_fg.fg);
-}
-
 /// `fg` over `bg` at `alpha / 255` — Rust's `blend_over`; `fallback`
 /// when either is not an RGB colour.
 pub fn blendOver(fg: Color, bg: Color, alpha: u16, fallback: Color) Color {
@@ -485,7 +479,32 @@ pub const Doc = struct {
     has_stash: bool = false,
     /// `ui.expand_indicator = triangle`: `▾` instead of `v` on hunk headers.
     triangle: bool = false,
+    /// The git toolbar above the diff toolbar. A proposal under review
+    /// is no repo's diff and goes without it.
+    git_toolbar: bool = true,
+    /// A proposal under review (`app/ai_apply.zig`): whether each hunk
+    /// of the one file is accepted. Hunk headers carry an `[✓ accept]` /
+    /// `[  skip  ]` badge, and a skipped hunk's lines paint untinted in
+    /// the comment colour — what applying would leave as it is.
+    review: ?[]const bool = null,
 };
+
+/// The hunk is one the review skips (`Doc.review`).
+fn skipped(doc: Doc, h: HunkRef) bool {
+    const r = doc.review orelse return false;
+    return h.file == 0 and h.hunk < r.len and !r[h.hunk];
+}
+
+/// `[✓ accept]  ` / `[  skip  ]  ` right after a hunk's `@@ … @@`
+/// under review, from `x` — ahead of the path, so a narrow pane keeps
+/// it; returns the cells it took.
+fn drawReviewBadge(ui: Ui, x: u16, y: u16, end: u16, doc: Doc, h: HunkRef, bg: Color) u16 {
+    if (doc.review == null) return 0;
+    const p = ui.theme.palette;
+    const off = skipped(doc, h);
+    const badge: []const u8 = if (off) "[  skip  ]  " else if (ui.ascii) "[x accept]  " else "[\u{2713} accept]  ";
+    return ui.putStr(x, y, end -| x, badge, .{ .fg = if (off) p.comment else p.green, .bg = bg, .bold = !off });
+}
 
 /// What `draw` measured, for the app's click handling.
 pub const Painted = struct {
@@ -522,7 +541,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, view: *State, doc: Doc) Painted {
     var painted: Painted = .{};
     if (area.isEmpty()) return painted;
     var body = area;
-    if (area.h >= 8 and area.w >= 40) {
+    if (doc.git_toolbar and area.h >= 8 and area.w >= 40) {
         const s = body.splitTop(1);
         git_toolbar.draw(ui, s.top, .{ .pane = pane, .has_stash = doc.has_stash });
         body = s.rest;
@@ -829,13 +848,14 @@ fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) 
             const lines = doc.files[l.file].hunks[l.hunk].lines;
             const line = lines[l.line];
             const gw = gutterWidth(doc.files);
-            const bg = if (!on_cursor and isSelected(doc, ri)) ui.theme.selection.bg else rowGround(p, line.kind, on_cursor);
+            const muted = skipped(doc, .{ .file = l.file, .hunk = l.hunk });
+            const bg = if (!on_cursor and isSelected(doc, ri)) ui.theme.selection.bg else rowGround(p, if (muted) .context else line.kind, on_cursor);
             ui.fill(r, .{ .bg = bg });
             const marker: []const u8 = switch (line.kind) {
                 .add, .del => if (ui.ascii) "|" else "\u{258F}",
                 .context, .meta => " ",
             };
-            const marker_fg = switch (line.kind) {
+            const marker_fg = if (muted) p.comment else switch (line.kind) {
                 .add => p.green,
                 .del => p.red,
                 .context, .meta => p.grey,
@@ -847,13 +867,13 @@ fn drawUnifiedRow(ui: Ui, pane: PaneId, area: Rect, y0: u16, ri: u32, doc: Doc) 
                 .meta => "\\",
             };
             const text = if (line.kind == .meta) "No newline at end of file" else line.text;
-            const fg = if (line.kind == .meta) p.comment else p.fg;
+            const fg = if (line.kind == .meta or muted) p.comment else p.fg;
             var x = r.x;
             x += ui.putStr(x, r.y, r.right() -| x, gutterText(ui, line.old_no, line.new_no, gw), .{ .fg = p.comment, .bg = bg });
             x += ui.putStr(x, r.y, r.right() -| x, marker, .{ .fg = marker_fg, .bg = bg });
             const text_x = x + 2;
             const body_w = r.right() -| text_x;
-            const ranges = rangesFor(ui, lines, l.line, doc);
+            const ranges = if (muted) &.{} else rangesFor(ui, lines, l.line, doc);
             // Rust: `{sign} {prefix}` dim, the changed middle bold, the
             // suffix dim — when the line has a partner.
             const dim = ranges.len > 0;
@@ -941,6 +961,7 @@ fn drawHunkHeader(ui: Ui, pane: PaneId, r: Rect, ri: u32, h: HunkRef, doc: Doc, 
     x += ui.putStr(x, r.y, end -| x, if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", .{ .fg = p.yellow, .bg = bg });
     x += ui.putStr(x, r.y, end -| x, if (doc.triangle) (if (ui.ascii) "v " else "\u{25BE} ") else "v ", .{ .fg = p.purple, .bg = bg });
     x += ui.putStr(x, r.y, end -| x, ui.fmt("{s}  ", .{hunk.header}), .{ .fg = p.cyan, .bg = bg, .bold = on_cursor });
+    x += drawReviewBadge(ui, x, r.y, end, doc, h, bg);
     x += ui.putStr(x, r.y, end -| x, doc.files[h.file].path(), .{ .fg = p.blue, .bg = bg });
     x += ui.putStr(x, r.y, end -| x, ui.fmt(" +{d} -{d}", .{ added, removed }), .{ .fg = p.comment, .bg = bg });
     ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
@@ -1033,8 +1054,11 @@ fn drawSplitRow(ui: Ui, pane: PaneId, r: Rect, ri: u32, doc: Doc) u16 {
             const hunk = doc.files[h.file].hunks[h.hunk];
             const bg = if (on_cursor) p.bg2 else p.bg_darker;
             ui.fill(r, .{ .bg = bg });
-            const text = ui.fmt("{s}{s}  {s}", .{ if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", hunk.header, doc.files[h.file].path() });
-            _ = ui.putStr(r.x, r.y, r.w, text, .{ .fg = p.cyan, .bg = bg, .bold = on_cursor });
+            const style: Style = .{ .fg = p.cyan, .bg = bg, .bold = on_cursor };
+            var x = r.x;
+            x += ui.putStr(x, r.y, r.w, ui.fmt("{s}{s}  ", .{ if (on_cursor) (if (ui.ascii) "> " else "\u{25B6} ") else "  ", hunk.header }), style);
+            x += drawReviewBadge(ui, x, r.y, r.right(), doc, h, bg);
+            _ = ui.putStr(x, r.y, r.right() -| x, doc.files[h.file].path(), style);
             ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
         },
         .pair => |pr| {
@@ -1043,17 +1067,19 @@ fn drawSplitRow(ui: Ui, pane: PaneId, r: Rect, ri: u32, doc: Doc) u16 {
             const col_w: u16 = (r.w -| 13) / 2;
             var x = r.x;
             const selected = !on_cursor and isSelected(doc, ri);
-            x = drawSide(ui, r, x, lines, pr.left, gutter_w, col_w, true, doc, on_cursor, selected);
+            const muted = skipped(doc, .{ .file = pr.file, .hunk = pr.hunk });
+            x = drawSide(ui, r, x, lines, pr.left, gutter_w, col_w, true, doc, on_cursor, selected, muted);
             x += ui.putStr(x, r.y, r.right() -| x, if (ui.ascii) " | " else " \u{2502} ", .{ .fg = p.grey, .bg = p.bg_dark });
-            _ = drawSide(ui, r, x, lines, pr.right, gutter_w, col_w, false, doc, on_cursor, selected);
+            _ = drawSide(ui, r, x, lines, pr.right, gutter_w, col_w, false, doc, on_cursor, selected, muted);
             ui.hit(r, .{ .script_hit = .{ .pane = pane, .id = ri } });
         },
     }
     return 1;
 }
 
-/// One side of a pair from `x0`; returns where it ended.
-fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, gutter_w: u16, col_w: u16, left: bool, doc: Doc, on_cursor: bool, selected: bool) u16 {
+/// One side of a pair from `x0`; returns where it ended. `muted`: the
+/// review skips this hunk, so a change paints as the text it leaves.
+fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, gutter_w: u16, col_w: u16, left: bool, doc: Doc, on_cursor: bool, selected: bool, muted: bool) u16 {
     const p = ui.theme.palette;
     const end = r.right();
     var x = x0;
@@ -1068,7 +1094,7 @@ fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, 
         return x0 + side_w;
     };
     const line = lines[li];
-    const bg = if (selected) sel_bg else rowGround(p, line.kind, on_cursor);
+    const bg = if (selected) sel_bg else rowGround(p, if (muted) .context else line.kind, on_cursor);
     ui.fill(Rect.init(x, r.y, @min(side_w, end -| x), 1), .{ .bg = bg });
     const no = if (left) line.old_no else line.new_no;
     if (no) |n| _ = ui.putStrRight(x + gutter_w - 1, r.y, gutter_w - 1, ui.fmt("{d}", .{n}), .{ .fg = p.comment, .bg = bg });
@@ -1078,15 +1104,15 @@ fn drawSide(ui: Ui, r: Rect, x0: u16, lines: []const parse.DiffLine, idx: ?u32, 
         .del => "-",
         .context, .meta => " ",
     };
-    const sign_fg = switch (line.kind) {
+    const sign_fg = if (muted) p.comment else switch (line.kind) {
         .add => p.green,
         .del => p.red,
         .context, .meta => p.fg,
     };
     x += ui.putStr(x, r.y, end -| x, sign, .{ .fg = sign_fg, .bg = bg, .bold = true });
     x += 1;
-    const ranges = rangesFor(ui, lines, li, doc);
-    const fg = if (line.kind == .meta) p.comment else p.fg;
+    const ranges = if (muted) &.{} else rangesFor(ui, lines, li, doc);
+    const fg = if (line.kind == .meta or muted) p.comment else p.fg;
     paintLine(ui, x, r.y, @min(col_w -| 1, end -| x), line.text, .{ .fg = fg, .bg = bg }, ranges, doc, ranges.len > 0);
     return x0 + side_w;
 }
