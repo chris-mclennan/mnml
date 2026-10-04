@@ -277,6 +277,10 @@ pub const RowView = struct {
     /// The session's IDE link to mnml is up (`app/ide.zig`): the link
     /// mark in that column when neither of the above has it.
     linked: bool = false,
+    /// The card's place in the list, 1 … 9 — `sessions.focus_N`'s N
+    /// (`app/session_numbers.zig`): a muted digit in the gutter column
+    /// a row under the mark, which keeps the name row's cell.
+    number: ?u8 = null,
 };
 
 /// The on-screen mark beside a card, and its `--ascii` twin.
@@ -2768,6 +2772,7 @@ pub fn cardView(app: *App, arena: Allocator, c: Card) Allocator.Error!RowView {
         .on_screen = @import("app/sessions_mode.zig").onScreen(app, c.pane),
         .ready = session_ready.unseen(app, c.pane),
         .linked = @import("app/ide.zig").linked(app, c.pane),
+        .number = @import("app/session_numbers.zig").numberOf(app, c.pane),
     };
 }
 
@@ -3353,6 +3358,11 @@ fn paintRow(ui: Ui, r: Rect, row: RowView, selected: bool) void {
         .ready => _ = ui.putStr(r.x, r.y, 1, GutterMark.ready.glyph(ui.ascii), Theme.withFg(bg, t.palette.yellow)),
         .linked => _ = ui.putStr(r.x, r.y, 1, GutterMark.linked.glyph(ui.ascii), Theme.withFg(bg, t.palette.teal)),
     }
+    // The card's number (`sessions.focus_N`), muted, in the same gutter
+    // column a row down: the mark keeps the name row's cell.
+    if (row.number) |n| if (r.h > 1) {
+        _ = ui.putStr(r.x, r.y + 1, 1, @import("app/session_numbers.zig").digit(n), Theme.withFg(bg, t.muted.fg));
+    };
     const end = r.right();
     var x = r.x + 2;
     x += ui.putStr(x, r.y, end -| x, " ", bg);
@@ -5102,6 +5112,26 @@ test "the gutter left of a card's name: the on-screen dot in green, the ready ma
     var buf: [1024]u8 = undefined;
     try testing.expect(std.mem.startsWith(u8, g.row(5, &buf), on_screen_ascii));
     try testing.expect(std.mem.startsWith(u8, g.row(10, &buf), ready_ascii));
+}
+
+test "a card's number (sessions.focus_N) sits muted in the gutter column a row under the mark; the mark keeps the name row; the name keeps its width; no number, no digit" {
+    var rows = specCards();
+    rows[0].number = 1;
+    rows[1].number = 2;
+    rows[1].ready = true;
+    var f = try UiFixture.init(30, 20);
+    defer f.deinit();
+    var st: Panel.State = .{};
+    defer st.deinit(testing.allocator);
+    _ = Panel.draw(&st, f.ui(), f.full(), cardProps(&rows));
+    try f.expectRow(5, " \u{258c} \u{F0403} write the release notes f");
+    try f.expectRow(6, "1\u{258c} exited");
+    try testing.expect(f.fgEql(0, 6, .{ .fg = f.theme.muted.fg }));
+    try f.expectRow(10, ready_glyph ++ "\u{258c} fix the failing tests in sr");
+    try testing.expect(f.fgEql(0, 10, .{ .fg = f.theme.palette.yellow }));
+    var buf: [1024]u8 = undefined;
+    try testing.expect(std.mem.startsWith(u8, f.row(11, &buf), "2\u{258c} you: "));
+    try testing.expect(std.mem.startsWith(u8, f.row(16, &buf), " \u{258c} you: "));
 }
 
 test "a card's ready flag is the pane's unseen news, and the hover says so" {

@@ -188,19 +188,22 @@ fn countItems(rows: []const Row) usize {
 }
 
 /// The columns after the name, right to left: the dirty count, the
-/// age, the cost, the tokens, the id — each dropped when the name
-/// would fall under `name_min`.
+/// age, the cost, the tokens, the id with the `#` before it — each
+/// dropped when the name would fall under `name_min`. The `#` is the
+/// session's number in SESSIONS (`sessions.focus_N`), blank for one
+/// the panel does not number; it goes with the id, last.
 const name_min: u16 = 12;
+const col_num: u16 = 3;
 const col_id: u16 = 9;
 const col_tokens: u16 = 8;
 const col_cost: u16 = 9;
 const col_age: u16 = 6;
 const col_dirty: u16 = 6;
 
-const Columns = struct { id: bool, tokens: bool, cost: bool, age: bool, dirty: bool, right_w: u16 };
+const Columns = struct { num: bool, id: bool, tokens: bool, cost: bool, age: bool, dirty: bool, right_w: u16 };
 
 fn columns(w: u16) Columns {
-    var c: Columns = .{ .id = true, .tokens = true, .cost = true, .age = true, .dirty = true, .right_w = col_id + col_tokens + col_cost + col_age + col_dirty };
+    var c: Columns = .{ .num = true, .id = true, .tokens = true, .cost = true, .age = true, .dirty = true, .right_w = col_num + col_id + col_tokens + col_cost + col_age + col_dirty };
     const left: u16 = 11;
     if (w >= left + name_min + c.right_w) return c;
     c.dirty = false;
@@ -215,6 +218,7 @@ fn columns(w: u16) Columns {
     c.age = false;
     c.right_w -= col_age;
     if (w >= left + name_min + c.right_w) return c;
+    c.num = false;
     c.id = false;
     c.right_w = 0;
     return c;
@@ -240,6 +244,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             // The captions over the numbers.
             var cx = cap_x;
             const cap_style = Theme.withFg(style, th.muted.fg);
+            if (cols.num) cx += ui.putStr(cx, r.y, col_num, ui.fmt("{s:>3}", .{"#"}), cap_style);
             if (cols.id) cx += ui.putStr(cx, r.y, col_id, ui.fmt("{s:>9}", .{"id"}), cap_style);
             if (cols.tokens) cx += ui.putStr(cx, r.y, col_tokens, ui.fmt("{s:>8}", .{"tokens"}), cap_style);
             if (cols.cost) cx += ui.putStr(cx, r.y, col_cost, ui.fmt("{s:>9}", .{"cost"}), cap_style);
@@ -290,6 +295,7 @@ fn paintRow(ui: Ui, r: Rect, row: Row, selected: bool) void {
             }
             var cx = num_x;
             const num_style = Theme.withFg(style, th.muted.fg);
+            if (cols.num) cx += ui.putStr(cx, r.y, col_num, if (v.number) |n| ui.fmt("{d:>3}", .{n}) else "   ", num_style);
             if (cols.id) cx += ui.putStr(cx, r.y, col_id, ui.fmt("{s:>9}", .{it.session_id[0..@min(8, it.session_id.len)]}), num_style);
             if (cols.tokens) {
                 var tb: [16]u8 = undefined;
@@ -443,15 +449,15 @@ const testing = std.testing;
 const Fixture = @import("test_fixture.zig");
 const sessions = @import("../sessions.zig");
 
-test "columns: every number at a wide row; the dirty, cost, tokens, age and id columns go one by one as the row narrows, the name keeping 12 cells" {
+test "columns: every number at a wide row; the dirty, cost, tokens, age and id (with the #) columns go one by one as the row narrows, the name keeping 12 cells" {
     const wide = columns(100);
-    try testing.expect(wide.id and wide.tokens and wide.cost and wide.age and wide.dirty);
-    const mid = columns(11 + 12 + col_id + col_tokens + col_age);
+    try testing.expect(wide.num and wide.id and wide.tokens and wide.cost and wide.age and wide.dirty);
+    const mid = columns(11 + 12 + col_num + col_id + col_tokens + col_age);
     try testing.expect(mid.id and mid.tokens and mid.age and !mid.cost and !mid.dirty);
-    const narrow = columns(40);
-    try testing.expect(narrow.id and narrow.age and !narrow.tokens and !narrow.cost and !narrow.dirty);
+    const narrow = columns(11 + 12 + col_num + col_id + col_age);
+    try testing.expect(narrow.num and narrow.id and narrow.age and !narrow.tokens and !narrow.cost and !narrow.dirty);
     const bare = columns(30);
-    try testing.expect(!bare.id and bare.right_w == 0);
+    try testing.expect(!bare.num and !bare.id and bare.right_w == 0);
 }
 
 test "a group row carries the captions over the numbers; a session row is the badge, the name and the numbers — never the message" {

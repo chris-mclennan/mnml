@@ -80,7 +80,7 @@ pub fn chip(panel: PanelId, kind: hit.ChipKind) Entry {
 pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry {
     // The SESSIONS card and the git palette row have rich tips of
     // their own; those are the entry's body.
-    if (r.panel == .sessions) if (try sessions.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A session's card: a click selects it, a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Its Move rows reorder it under the Manual sort.", &.{ .{ .command = .@"sessions.open", .label = "Open the pane" }, .{ .command = .@"sessions.open_transcript", .label = "The transcript" }, .{ .command = .@"sessions.kill", .label = "Kill" } }, &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask });
+    if (r.panel == .sessions) if (try sessions.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A session's card: a click selects it, a second click or Enter opens its pane; the kebab has rename, pin, the colour, kill, the transcript, the worktree rows. Its Move rows reorder it under the Manual sort. The muted digit in the column left of the first nine cards, under the mark, is the card's number: its chord focuses the session from anywhere, bringing up its tab page.", try sessionKeys(arena, r.idx), &.{ .{ .command = .{ .id = .@"sessions.open_transcript", .label = "Read the transcript" } }, ask });
     if (r.panel == .git) if (try git_palette.hoverTip(app, arena, r.idx)) |tip| return fromTip(arena, tip, "A git palette row: Enter acts on it — checkout a branch, open a commit, apply a stash; right-click is its menu with the rest.", &.{}, &.{ .{ .command = .{ .id = .@"git.status_pane", .label = "The status pane" } }, .{ .command = .{ .id = .@"git.checkout", .label = "Checkout" } }, ask });
     return switch (r.panel) {
         .jobs => try jobsRow(app, arena, r.idx),
@@ -206,6 +206,20 @@ fn jobsRow(app: *App, arena: Allocator, idx: u32) Allocator.Error!?Entry {
         },
     };
 }
+
+/// A card's keys: open, the transcript, kill — and, on the first nine,
+/// the card's own `sessions.focus_N` (`app/session_numbers.zig`).
+fn sessionKeys(arena: Allocator, idx: usize) Allocator.Error![]const copy.Key {
+    if (idx >= session_card_keys_ids.len) return &session_card_keys;
+    const base = session_card_keys;
+    const keys = try arena.alloc(copy.Key, base.len + 1);
+    @memcpy(keys[0..base.len], &base);
+    keys[base.len] = .{ .command = session_card_keys_ids[idx], .label = try std.fmt.allocPrint(arena, "Focus session {d} from anywhere", .{idx + 1}) };
+    return keys;
+}
+
+const session_card_keys = [_]copy.Key{ .{ .command = .@"sessions.open", .label = "Open the pane" }, .{ .command = .@"sessions.open_transcript", .label = "The transcript" }, .{ .command = .@"sessions.kill", .label = "Kill" } };
+const session_card_keys_ids = [_]@import("../../core/command.zig").CommandId{ .@"sessions.focus_1", .@"sessions.focus_2", .@"sessions.focus_3", .@"sessions.focus_4", .@"sessions.focus_5", .@"sessions.focus_6", .@"sessions.focus_7", .@"sessions.focus_8", .@"sessions.focus_9" };
 
 fn fromTip(arena: Allocator, tip: anytype, verbs: []const u8, keys: []const copy.Key, links: []const copy.Link) Allocator.Error!?Entry {
     var body: std.ArrayListUnmanaged(u8) = .empty;

@@ -105,6 +105,9 @@ pub const ItemView = struct {
     /// // changed (sessions-worktree): the session worktree's name — a
     /// muted `⑂ <name>` after the label.
     worktree: ?[]const u8 = null,
+    /// Its number in SESSIONS, 1 … 9 (`app/session_numbers.zig`) — the
+    /// `#` column; null for a session with no card there.
+    number: ?u8 = null,
 };
 
 /// What `ListPanel` paints: a group header or a session.
@@ -818,6 +821,9 @@ pub fn drawPane(app: *App, ui: Ui, id: PaneId, tp: *TablePane, rect: Rect) Alloc
     if (!tp.built) try refilter(app, tp);
     const st = &app.sessions;
     if (!st.scanned_once and !st.scanning) sessions.refresh(app) catch {};
+    // The `#` column reads the SESSIONS listing, current whether or not
+    // the panel is on screen.
+    try sessions.refilter(app);
     const rows = try ui.arena.alloc(Row, tp.visible.items.len);
     for (tp.visible.items, 0..) |e, i| rows[i] = switch (e) {
         .group => |g| .{ .group = .{
@@ -865,6 +871,7 @@ fn itemView(app: *App, it: Item) Allocator.Error!ItemView {
         .pinned = app.sessions.isPinned(it.session_id),
         .color = sessions.colorNameOf(app, it.session_id),
         .worktree = if (sessions.worktreeOf(app, it)) |e| e.name else null,
+        .number = if (sessions.ptyPaneOf(app, it.session_id)) |pid| @import("session_numbers.zig").numberOf(app, pid) else null,
     };
 }
 
