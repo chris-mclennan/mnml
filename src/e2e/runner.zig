@@ -305,6 +305,10 @@ const Run = struct {
     name: []u8,
     workspace: []u8 = "",
     driver: ?Driver = null,
+    /// What the file's App was made with, for a `restart` step to make
+    /// the next one; its allocator is the file's leak-checked one.
+    make_gpa: ?Allocator = null,
+    make_cfg: ?driver_mod.Config = null,
     /// How much of the workspace's `command` file has been read. The
     /// file is a mounted integration's Tier-2 line channel
     /// (`statusline-set-segment`, `set-activity-badge`, …); the host
@@ -497,8 +501,13 @@ const Run = struct {
                 .env = &file_env,
             }) catch |e| break :blk self.fail("App::new: {s}", .{@errorName(e)});
             self.driver = d;
+            self.make_gpa = dbg.allocator();
+            self.make_cfg = .{ .workspace = self.workspace, .data_root = data_root, .cols = self.size.cols, .rows = self.size.rows, .cfg = cfg, .env = &file_env };
+            defer self.make_cfg = null;
             var result = self.runScript(&script);
-            d.deinit();
+            // A `restart` step swapped the App: the one alive now goes.
+            if (self.driver) |live| live.deinit();
+            self.driver = null;
             self.stopServers();
             if (result.passed) if (self.gitGuardViolation()) |msg| {
                 result = .{ .name = self.name, .passed = false, .message = msg };
@@ -675,6 +684,26 @@ const Run = struct {
 
     // ── steps ──
 
+    /// The `restart` step: the App goes, and the next one reads its
+    /// config from the files on the same workspace and data root, as a
+    /// launch does — the breadcrumb off on top, the one thing every
+    /// `.test` expects of its start.
+    fn restart(self: *Run) ?[]u8 {
+        const gpa = self.gpa;
+        var mk = self.make_cfg orelse return gpa.dupe(u8, "restart: no App to restart") catch null;
+        if (self.driver) |old| old.deinit();
+        self.driver = null;
+        // The file's environment — its `MNML_DATA_ROOT` is the run's
+        // own — outlives the App, which keeps a pointer to it.
+        const loaded = @import("../config/load.zig").load(self.make_gpa.?, self.io, .{ .workspace = mk.workspace, .data_root = mk.data_root, .env = .{ .vars = mk.env.? } }) catch |e| return self.errMsg("restart: {s}", e);
+        mk.cfg = loaded.config;
+        mk.cfg.editor.breadcrumb = false;
+        mk.loaded = loaded;
+        const d = self.factory.make(self.make_gpa.?, self.io, mk) catch |e| return self.errMsg("restart: {s}", e);
+        self.driver = d;
+        return self.renderCycle();
+    }
+
     fn runStep(self: *Run, step: parser.Step) ?[]u8 {
         const gpa = self.gpa;
         const io = self.io;
@@ -726,6 +755,7 @@ const Run = struct {
             },
             .snippet => |s| d.snippet(s.scope, s.trigger, s.expansion) catch |e| return self.errMsg("snippet: {s}", e),
             .shot => |name| d.shot(name) catch |e| return self.errMsg("shot: {s}", e),
+            .restart => return self.restart(),
             .shell => |cmd| return self.runShell(cmd),
             .serve => |sv| return self.serve(sv),
             .ghost => |text| d.ghost(text) catch |e| switch (e) {
