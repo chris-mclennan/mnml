@@ -166,6 +166,10 @@ class Window:
             "LANG": os.environ.get("LANG", "en_US.UTF-8"),
             "TMPDIR": self.tmp,
         }
+        # The window opens behind the app that has the keyboard unless
+        # MNML_LOOK_FRONT=1 asks for it in front (tools/drive `launch`).
+        if os.environ.get("MNML_LOOK_FRONT") == "1":
+            drive_env["MNML_LOOK_FRONT"] = "1"
         cmd = [DRIVE, "launch", "--workspace", self.ws, "--data-root", self.data_root,
                "--ipc-dir", self.ipc,
                "--cols", str(self.cols), "--rows", str(self.rows), "--exe", wrapper,
