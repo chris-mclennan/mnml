@@ -160,6 +160,20 @@ always did.
 Links a language server reports for the file (`textDocument/documentLink`)
 take precedence and are underlined in the accent colour at rest.
 
+## What a link names
+
+A ticket key that an integration has lately polled says what it is.
+Rest the pointer on `ACME-123` — on a card, in a terminal, wherever it
+links — and a small box shows `ACME-123 · Fix the login redirect · In
+Review`; right-click it and the menu's first row says the same. The
+title comes from the shared recent-items cache, which the Jira
+integration fills as a side effect of the polls it already makes (its
+statusline figures and its pane's tabs), so it costs no request. When
+the integration has not polled for a while, or its last poll failed,
+the title stays and adds how old it is — `as of 3h ago`. A key the
+cache has not seen links as before, with no title. Set
+`recent_items.enabled = false` in the config to turn it off.
+
 ## Which link a menu is for
 
 When you right-click a link in a terminal, on a session card or in the
