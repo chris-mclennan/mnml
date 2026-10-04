@@ -3,6 +3,7 @@ title: Release Notes
 description: Every published version of mnml and its release notes.
 ---
 
+- [0.3.2](/docs/install/release-notes/0-3-2) — a sessions mode, an API, and links everywhere
 - [0.3.1](/docs/install/release-notes/0-3-1) — the Jira and Bitbucket fix release
 - [0.3.0](/docs/install/release-notes/0-3-0) — Released on September 30, 2026
 
