@@ -3387,6 +3387,12 @@ pub const App = struct {
         self.overlay.deinit(self.gpa);
         const back: FocusId = if (self.focus == .overlay) (if (self.active) |a| .{ .pane = a } else .tree) else self.focus;
         self.overlay = .{ .menu = .{ .title = owned_title, .items = items, .x = x, .y = y, .return_focus = back } };
+        // The cursor starts on the first row that does something, past
+        // a heading that only says something.
+        for (items, 0..) |it, i| if (!it.isInfo()) {
+            self.overlay.menu.cursor = i;
+            break;
+        };
         self.focus = .overlay;
         self.needs_render = true;
     }

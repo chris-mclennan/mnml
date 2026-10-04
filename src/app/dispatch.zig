@@ -1309,8 +1309,18 @@ fn menuMove(m: *app_mod.MenuState, delta: i32) void {
         m.highlight = true;
         return;
     }
-    const want = @as(i64, @intCast(m.cursor)) + delta;
-    m.cursor = @intCast(@max(0, @min(want, last)));
+    const want = @max(0, @min(@as(i64, @intCast(m.cursor)) + delta, last));
+    // A row that only says something is stepped over, in the direction
+    // travelled — or back, when it is the last row that way.
+    const dir: i64 = if (delta < 0) -1 else 1;
+    var c: i64 = want;
+    while (c >= 0 and c <= last and m.items[@intCast(c)].isInfo()) c += dir;
+    if (c < 0 or c > last) {
+        c = want;
+        while (c >= 0 and c <= last and m.items[@intCast(c)].isInfo()) c -= dir;
+    }
+    if (c < 0 or c > last) return;
+    m.cursor = @intCast(c);
 }
 
 /// `menuMove` for the open child, except that its first arrow moves as

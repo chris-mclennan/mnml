@@ -46,6 +46,9 @@ the release ships one file), and one line per change a user can see.
   opening *Run*. Unbound Alt letters still open their menus; standard keeps
   every letter for the menus, as VS Code does.
 - A Claude Code or Codex session on the launcher dock wears its tab's look — the product's mark (Claude's per *Icon ▸*) in the session's own colour — instead of the grey terminal ghost.
+- The sidebar divider's right-click menu opens with the column's width
+  now, in cells and as a share of the window (`Width: 42 cells · 21%`);
+  the keyboard cursor starts on the first row below it.
 
 ## v0.3.2
 
