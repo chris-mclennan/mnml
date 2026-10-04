@@ -1568,8 +1568,10 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     const arena = arena_state.allocator();
     try publishSegment(&ipc, arena, &chip_issues, null, .{});
     const line = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
+    // The text starts with the chip's glyph — `segment_glyph` is the
+    // manifest's, so a chip change never leaves this line behind.
     try testing.expectEqualStrings(
-        "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
+        "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"" ++ segment_glyph ++ " 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
             "\"tooltip\":\"Jira · 3 open items assigned to me — 2 In Progress · 1 To Do\"," ++
             // Each row carries `focus-row`'s deep link, so a press from
             // the hover of a chip the PANE published lands on that
