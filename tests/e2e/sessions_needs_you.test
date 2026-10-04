@@ -27,7 +27,7 @@ command view.activity_sessions
 # The tab (named by the child's title): the raised hand after its name.
 # Polled rather than waited for: the second fake asks a second and a
 # half after it starts, and on a loaded machine that start is late.
-expect within 20000 screen contains "deploy the fix 󰹇 "
+expect within 20000 screen contains "deploy t… 󰹇 "
 expect screen lacks "write the docs 󰹇"
 # The card: the same mark before the name; the quiet one has none.
 expect screen contains "▌ 󰹇 deploy the fix"

@@ -22,7 +22,7 @@ expect screen lacks "󱸀 and the changelog"
 # The second session titles its window: the title wins, spinner off.
 command ai.claude_code_new
 wait 800
-expect screen contains "󱸀 fix the failing t…"
+expect screen contains "󱸀 fix the fa…"
 expect screen lacks "✳ fix"
 # The user's rename outranks the title, on the tab and the card alike.
 ex rename release train
