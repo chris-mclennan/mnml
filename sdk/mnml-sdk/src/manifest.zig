@@ -176,10 +176,31 @@ pub const ValuesSource = struct {
 /// What a template expands to must start `http://` or `https://`;
 /// anything else is never opened. The matched text is percent-encoded
 /// where a URL needs it; a `{<key>}` value goes in as written.
+///
+/// `resolve = .range` is for a number that names no repo — `Pull
+/// request 5505`, `pipeline 10554`. The integration publishes, over its
+/// IPC channel, which numbers each repo is currently using
+/// (`Ipc.linkRanges`: `{repo, kind, low, high}` rows); mnml reads group
+/// 1 of the match as the number, finds the rows of kind `ranges` that
+/// hold it, and fills `{repo}` in the template with that row's repo.
+/// One repo: a link. Several: a link to the first (the workspace's own
+/// repo first), its menu listing each. None: no link.
 pub const Link = struct {
     pattern: []const u8,
     url: []const u8,
+    resolve: Resolve = .literal,
+    /// `resolve = .range`: the kind of row the number is looked up in
+    /// (`"pr"`, `"pipeline"`) — a kind the integration publishes.
+    ranges: []const u8 = "",
 };
+
+/// How a link's address is found: `.literal`, the template alone;
+/// `.range`, the template with `{repo}` from the published range table.
+pub const Resolve = enum { literal, range };
+
+/// The template variable a `.range` link's repo goes into — filled per
+/// match, never bound at install or load.
+pub const range_repo_var = "repo";
 
 /// `template` with every `{key}` replaced by `value`, on `arena` — the
 /// step an integration's `--install` takes for a value only it knows
@@ -198,7 +219,10 @@ pub fn bindLinkVar(arena: Allocator, template: []const u8, key: []const u8, valu
 pub fn bindLinks(arena: Allocator, m: Manifest, key: []const u8, value: []const u8) Allocator.Error!Manifest {
     if (m.links.len == 0) return m;
     const out = try arena.alloc(Link, m.links.len);
-    for (m.links, out) |l, *o| o.* = .{ .pattern = l.pattern, .url = try bindLinkVar(arena, l.url, key, value) };
+    for (m.links, out) |l, *o| {
+        o.* = l;
+        o.url = try bindLinkVar(arena, l.url, key, value);
+    }
     var copy = m;
     copy.links = out;
     return copy;
@@ -207,6 +231,12 @@ pub fn bindLinks(arena: Allocator, m: Manifest, key: []const u8, value: []const 
 /// The first `{name}` in `template` that is not `{0}`–`{9}` or
 /// `{match}` — a value still to be bound — or null when none is left.
 pub fn unboundLinkVar(template: []const u8) ?[]const u8 {
+    return unboundLinkVarExcept(template, "");
+}
+
+/// `unboundLinkVar`, passing over `{except}` too — a `.range` link's
+/// `{repo}`, which only a match can fill.
+pub fn unboundLinkVarExcept(template: []const u8, except: []const u8) ?[]const u8 {
     var from: usize = 0;
     while (std.mem.indexOfScalarPos(u8, template, from, '{')) |open| {
         const close = std.mem.indexOfScalarPos(u8, template, open + 1, '}') orelse return null;
@@ -215,6 +245,7 @@ pub fn unboundLinkVar(template: []const u8) ?[]const u8 {
         if (name.len == 1 and std.ascii.isDigit(name[0])) continue;
         if (std.mem.eql(u8, name, "match")) continue;
         if (name.len == 0) continue;
+        if (except.len > 0 and std.mem.eql(u8, name, except)) continue;
         return name;
     }
     return null;
@@ -597,4 +628,32 @@ test "links: the field parses and renders back; bindLinkVar fills a configured v
     try testing.expect(std.mem.indexOf(u8, out, "https://tracker.example.com/browse/{0}") != null);
     const plain = try render(a, .{ .id = "p", .label = "p", .binary = "b" });
     try testing.expect(std.mem.indexOf(u8, plain, ".links") == null);
+}
+
+test "links: a range link parses, keeps its resolve and kind through bindLinks and a render, and leaves {repo} for the match" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text =
+        \\.{ .id = "forge", .label = "Forge", .binary = "mnml-forge",
+        \\   .links = .{ .{ .pattern = "(?i)\\bpipeline #?(\\d+)", .url = "{site}/{repo}/pipelines/results/{1}", .resolve = .range, .ranges = "pipeline" } } }
+    ;
+    var diag: std.zon.parse.Diagnostics = .{};
+    defer diag.deinit(a);
+    const m = try std.zon.parse.fromSliceAlloc(Manifest, a, text, &diag, .{ .free_on_error = false });
+    try testing.expectEqual(Resolve.range, m.links[0].resolve);
+    try testing.expectEqualStrings("pipeline", m.links[0].ranges);
+    // `{repo}` is the match's: only `{site}` is left to bind.
+    try testing.expectEqualStrings("site", unboundLinkVarExcept(m.links[0].url, range_repo_var).?);
+    const bound = try bindLinks(a, m, "site", "https://forge.example");
+    try testing.expect(unboundLinkVarExcept(bound.links[0].url, range_repo_var) == null);
+    try testing.expectEqualStrings("repo", unboundLinkVar(bound.links[0].url).?);
+    try testing.expectEqual(Resolve.range, bound.links[0].resolve);
+    try testing.expectEqualStrings("pipeline", bound.links[0].ranges);
+    const out = try render(a, bound);
+    try testing.expect(std.mem.indexOf(u8, out, ".resolve = .range") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".ranges = \"pipeline\"") != null);
+    // A literal link renders as it always did.
+    const lit = try render(a, .{ .id = "p", .label = "p", .binary = "b", .links = &.{.{ .pattern = "X", .url = "https://x/{0}" }} });
+    try testing.expect(std.mem.indexOf(u8, lit, ".resolve") == null);
 }
