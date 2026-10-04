@@ -12,6 +12,29 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### Claude accounts: one Re-auth per account
+
+- Each account in the Claude usage pane has a state line under its
+  name: `signed in · resets 3:20am`, or `expired`, `keychain holds
+  another account`, `no login yet` — each with a Re-auth button. Re-auth
+  (also the account's right-click menu, the Claude chip's menu and
+  `ai.claude_reauth`) opens `claude login` in a pane, watches the login
+  land in the macOS keychain, and files it under the account when its
+  email is the account's; the pane closes and the figures come back.
+  The separate `R` capture step is no longer needed.
+- A login for another account on file is never filed under the one
+  being re-authed: a box says whose it is and offers *File under* that
+  account, or *Cancel*.
+- An account whose token has expired is re-captured on its own when the
+  keychain holds that same account's login again (the CLI renews its
+  own login as it is used), with one toast.
+- The paste-a-token prompt is behind the account menu's *Advanced ▸
+  Paste a token…*; adding an account no longer opens it.
+- The compact meter's warning account shows its letter and percent in
+  yellow or red on the chip's coral, then a `!` — no dark block. The
+  hover names the account and why; a click on a chip with a `!` opens
+  the usage pane at that account.
+
 ### A bare pull-request or pipeline number links
 
 - `Pull request 5505`, `PR #5505` and `pipeline 10554` link to the

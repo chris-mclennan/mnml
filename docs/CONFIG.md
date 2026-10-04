@@ -814,8 +814,13 @@ otherwise. Copy what you need; leave the rest out.
         .batch_arrange = null, // .tabs | .columns | .grid
         // The Claude Code logins the quota chip and the usage pane
         // (ai.claude_usage) poll. `token_path` is the OAuth token file the
-        // CLI's keychain item was copied into (`ai.link_claude_token`, or R
-        // in the pane on macOS) — `~` expands, a relative path sits under the data
+        // CLI's keychain login is filed into — by the account's Re-auth
+        // (ai.claude_reauth: `claude login` in a pane, the login filed once
+        // its email is the account's; another account's login is offered
+        // to that account, never filed silently), on its own when the
+        // token has expired and the keychain holds that same account's
+        // login again, or by the account menu's Advanced ▸ Paste a token…
+        // (ai.link_claude_token) — `~` expands, a relative path sits under the data
         // root beside the default `ai_token`; `active` marks the one the
         // chip shows alone (the CLI's live login wins when the keychain
         // names one). No entries = one `default` account on `ai_token` — or
