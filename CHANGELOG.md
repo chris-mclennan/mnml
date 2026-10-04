@@ -66,6 +66,14 @@ the release ships one file), and one line per change a user can see.
   segment, ticked while shown. A row hides or shows its chip at once and
   writes `.statusline.hidden` to the home config. RESTRICTED and the
   sandbox chip never hide.
+- Every segment that can move ends its right-click menu on *Move left* /
+  *Move right* — the built-ins and the integrations' segments alike — and
+  the row's own menu has *Reset order*. The order is written to
+  `.ui.statusline_segment_order` in the home config: the names it lists
+  lead their side of the row, in its order, and the rest follow in the
+  built-in order (`docs/CONFIG.md`, "Statusline segment order"). A chip
+  whose click runs one command and had no menu of its own (jobs, macro,
+  zoom, the session ring) gets one: that command, then the moves.
 - A theme can colour the segments: `statusline_lsp`, `statusline_wrap`,
   `statusline_language` and eleven more `base_30` keys, each falling back to
   the colour the segment wore before.
@@ -96,6 +104,10 @@ the release ships one file), and one line per change a user can see.
 
 ### Hover help
 
+- A menu row that only says something — the sidebar divider's
+  `Width: 42 cells · 21%` — is its own help: hovering it shows the
+  label, not *no help written yet*, and the hover audit no longer
+  counts it as uncovered.
 - The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
 
 ## v0.3.2
