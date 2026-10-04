@@ -182,15 +182,28 @@ Then MCP, one JSON-RPC message per WebSocket message: `initialize`
 | `saveDocument` | saves a buffer | **yes**: class `write`, the same toast as a command; *Allow for the session* or `.api.clients` `pane:<id>` with `.allow = .{.write}` lets it through |
 | `executeCode` | — | refused: not supported |
 
-**`openDiff`.** The proposed file opens in the review pane beside the
-buffer, titled with the session's `tab_name`, diffed against the buffer
-as it stands (unsaved edits included). Accept hunks and press Enter: the
-accepted text goes into the buffer as one undo step, **the file is saved**
-(the session's next read or test run must see what it was told was
-saved), a toast says so, and the session is answered `FILE_SAVED` with
-the file's text; undo in the buffer is still there. Esc, `q`, closing the tab, or Enter with nothing
-accepted answers `DIFF_REJECTED`. A second proposal for the same file
-replaces the first, which is answered `DIFF_REJECTED`.
+**`openDiff`.** The proposed file opens in the review pane — its own tab
+beside the buffer, not the git panel, so an untracked file or one outside
+any repo is reviewed the same way — titled with the session's `tab_name`,
+diffed against the buffer as it stands (unsaved edits included). The
+pane is drawn by the git diff pane's own view: the same Hunk / Inline /
+Split toolbar, cycled by `t` or `git.diff_toggle_view` as in the git
+panel. Until you pick one, a pane at least 80 cells wide opens in
+**Split** (the buffer on the left, the proposal on the right) and a
+narrower one in **Hunk**. Each hunk's header carries `[✓ accept]` or
+`[  skip  ]`, and a skipped hunk paints untinted.
+
+Space (or `a`, or a click on the focused hunk's header) accepts or skips
+the focused hunk; `n` / `p` and `]c` / `[c` step hunks, `A` / `R` mark
+them all. Enter (or `y`) applies the accepted hunks; **`Y`**, the header's
+**Accept all** chip, or the `ai.apply_accept_all` command accepts every
+hunk and applies them in one key. Either way the text goes into the
+buffer as one undo step, **the file is saved** (the session's next read
+or test run must see what it was told was saved), a toast says so, and
+the session is answered `FILE_SAVED` with the file's text; undo in the
+buffer is still there. Esc, `q`, the toolbar's `×`, closing the tab, or
+Enter with nothing accepted answers `DIFF_REJECTED`. A second proposal
+for the same file replaces the first, which is answered `DIFF_REJECTED`.
 
 **What mnml tells the session.** `selection_changed` (`text`,
 `filePath`, `fileUrl`, `selection` with 0-based lines and characters) when
