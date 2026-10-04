@@ -580,12 +580,16 @@ pub fn items(app: *App, arena: Allocator) Allocator.Error![]Item {
     while (pid < app.panes.capacity()) : (pid += 1) {
         const p = app.panes.get(pid) orelse continue;
         if (p.* != .pty) continue;
+        // A Claude Code / Codex session is a pty underneath, but it
+        // wears its tab's look: the product's mark in the session's
+        // colour (`pty_pane.accentOf` — the tab's and the card's).
+        const ai = sessionLook(app, &p.pty);
         try out.append(arena, .{
             .kind = .terminal,
             .id = "term",
-            .glyph = term.glyph,
-            .fallback = term.fallback,
-            .color = terminal_color,
+            .glyph = if (ai) |l| l.mark.glyph else term.glyph,
+            .fallback = if (ai) |l| l.mark.fallback else term.fallback,
+            .color = if (ai) |l| .{ .fixed = l.color } else terminal_color,
             .label = p.title(),
             // The dot says what runs: an exited child's pane is open,
             // not running.
@@ -817,6 +821,20 @@ fn integrationOpen(app: *App, id: []const u8) bool {
         }
     }
     return false;
+}
+
+/// How an AI session's entry looks: its product's mark and the
+/// session's colour — the name it wears, else the product's brand.
+/// Null for a shell and every other command, which keep the terminal
+/// mark in the cluster chip's white.
+const SessionLook = struct { mark: bufferline.Mark, color: Theme.Color };
+
+fn sessionLook(app: *const App, p: *const pty_pane.PtyPane) ?SessionLook {
+    const product = launch_profiles.productOfPane(app, p) orelse return null;
+    return .{
+        .mark = launch_profiles.markOf(app, product),
+        .color = pty_pane.accentOf(app, p, &app.theme) orelse return null,
+    };
 }
 
 /// Whether the Claude Code / Codex item's product has a live session:
@@ -2629,6 +2647,48 @@ test "the running mark follows real state: a session whose child exited loses it
     app.panes.pty(app.active.?).?.exit = .{ .code = 0 };
     list = try items(&app, app.frame.allocator());
     try t.expect(!Probe.item(list, "claude_code").running);
+}
+
+test "an AI session's entry wears its tab's look: the Claude mark (per ui.claude_mark) in the session's colour; a plain pty keeps the terminal mark in white" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var app = try testApp(&tmp, &buf);
+    defer app.deinit();
+    const path = try std.fmt.allocPrint(t.allocator, "{s}/ai:{s}", .{ @import("build_options").shims_dir, app.env.get("PATH") orelse "/usr/bin:/bin" });
+    defer t.allocator.free(path);
+    try app.env.put("PATH", path);
+    app.cfg.ui.claude_mark = .spark;
+    try command.run(&app, .{ .static = .@"ai.claude_code_new" });
+    const first = app.active.?;
+    try command.run(&app, .{ .static = .@"ai.claude_code_new" });
+    const second = app.active.?;
+    try @import("pane_accent.zig").setName(&app, second, "green");
+    const shell = try pty_pane.open(&app, .{ .argv = &.{"/bin/sh"}, .label = "sh", .kind = .command, .placement = .tab });
+    const th = &app.theme;
+    const list = try items(&app, app.frame.allocator());
+    var seen: usize = 0;
+    for (list) |it| {
+        if (it.kind != .terminal) continue;
+        const pid = it.action.pane;
+        const color = resolveColor(th, it.color);
+        if (pid == first or pid == second) {
+            seen += 1;
+            try t.expectEqualStrings(bufferline.spark_glyph, it.glyph);
+            try t.expectEqualStrings(bufferline.spark_ascii, it.fallback);
+            // The tab's colour, exactly (`render.tabsOf` paints the
+            // glyph in `accentOf`).
+            try t.expect(Theme.Color.eql(pty_pane.accentOf(&app, app.panes.pty(pid).?, th).?, color));
+            if (pid == second) try t.expect(Theme.Color.eql(th.palette.green, color));
+        } else {
+            try t.expectEqual(shell, pid);
+            seen += 1;
+            try t.expectEqualStrings(terminal_glyph.mark(&app).glyph, it.glyph);
+            try t.expect(Theme.Color.eql(bufferline.terminal_chip_fg, color));
+        }
+    }
+    try t.expectEqual(@as(usize, 3), seen);
 }
 
 // ─── `.shared`: the strip on the `:` line's row ─────────────────────────

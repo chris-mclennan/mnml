@@ -45,6 +45,7 @@ the release ships one file), and one line per change a user can see.
   instead of opening *Help*, and `Alt+R` toggles regex search instead of
   opening *Run*. Unbound Alt letters still open their menus; standard keeps
   every letter for the menus, as VS Code does.
+- A Claude Code or Codex session on the launcher dock wears its tab's look — the product's mark (Claude's per *Icon ▸*) in the session's own colour — instead of the grey terminal ghost.
 
 ## v0.3.2
 

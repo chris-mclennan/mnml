@@ -32,6 +32,7 @@ const context_menus = @import("context_menus.zig");
 const CommandError = command.CommandError;
 const settings = @import("settings.zig");
 const pty_pane = @import("pty_pane.zig");
+const bufferline = @import("../ui/bufferline.zig");
 const cli = @import("../ai/cli.zig");
 const session_worktree = @import("session_worktree.zig");
 
@@ -260,6 +261,17 @@ fn isShell(argv0: []const u8) bool {
 pub fn productOfPane(app: *const App, p: *const pty_pane.PtyPane) ?Product {
     if (productOfArgv(app, p.argv)) |prod| return prod;
     return productOfTitle(p.childTitle() orelse return null);
+}
+
+/// The mark a session of `product` wears wherever the chrome shows it —
+/// its tab, the launcher dock's entry: Claude's per `ui.claude_mark`
+/// (`claude_mark.mark`), Codex's one. The colour is the session's,
+/// not the mark's (`pty_pane.accentOf`).
+pub fn markOf(app: *const App, product: Product) bufferline.Mark {
+    return switch (product) {
+        .claude => @import("claude_mark.zig").mark(app),
+        .codex => .{ .glyph = bufferline.codex_glyph, .fallback = bufferline.codex_ascii },
+    };
 }
 
 pub fn productOfTitle(title: []const u8) ?Product {
