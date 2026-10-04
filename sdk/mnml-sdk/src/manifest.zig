@@ -52,6 +52,56 @@ pub const Chip = struct {
     }
 };
 
+/// What a statusline segment's resting `text` writes for the chip's own
+/// mark: `.text = "{chip} …"`. One mark, one literal — the chip's
+/// `glyph`; the segment never spells it a second time. `withChipMark`
+/// fills it in when the binary is built (what `--install` writes holds
+/// the glyph), and the host fills in any it still meets.
+pub const chip_mark_token = "{chip}";
+
+/// `text` with every `chip_mark_token` replaced by `glyph`; `text`
+/// itself when it holds none.
+pub fn expandChipMark(arena: Allocator, text: []const u8, glyph: []const u8) Allocator.Error![]const u8 {
+    if (std.mem.indexOf(u8, text, chip_mark_token) == null) return text;
+    return std.mem.replaceOwned(u8, arena, text, chip_mark_token, glyph);
+}
+
+/// `m` with `chip_mark_token` in every statusline segment's resting
+/// text replaced by the chip's `glyph`, at compile time:
+/// `pub const spec = sdk.manifest.withChipMark(@import("manifest.zon"));`.
+pub fn withChipMark(comptime m: Manifest) Manifest {
+    comptime {
+        const glyph = (m.chip orelse @compileError("withChipMark: the manifest declares no chip")).glyph;
+        if (glyph.len == 0) @compileError("withChipMark: the chip names its mark by `glyph`");
+        var segs: [m.statusline.len]StatuslineSegment = undefined;
+        for (m.statusline, 0..) |seg, i| {
+            segs[i] = seg;
+            var text: []const u8 = seg.text;
+            while (std.mem.indexOf(u8, text, chip_mark_token)) |at| {
+                text = text[0..at] ++ glyph ++ text[at + chip_mark_token.len ..];
+            }
+            segs[i].text = text;
+        }
+        const frozen = segs;
+        var out = m;
+        out.statusline = &frozen;
+        return out;
+    }
+}
+
+test "withChipMark fills the chip's mark into a segment's resting text; expandChipMark does it at run time" {
+    const m = comptime withChipMark(.{ .id = "x", .label = "X", .chip = .{ .glyph = "\u{f1c15}" }, .statusline = &.{
+        .{ .id = "a", .text = "{chip} …" },
+        .{ .id = "b", .text = "" },
+    } });
+    try testing.expectEqualStrings("\u{f1c15} …", m.statusline[0].text);
+    try testing.expectEqualStrings("", m.statusline[1].text);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    try testing.expectEqualStrings("\u{f1c19} 3", try expandChipMark(arena_state.allocator(), "{chip} 3", "\u{f1c19}"));
+    try testing.expectEqualStrings("plain", try expandChipMark(arena_state.allocator(), "plain", "\u{f1c19}"));
+}
+
 /// `F1D00` / `U+F1D00` / `0xF1D00` as a codepoint; null when it is not one.
 pub fn parseCodepoint(hex_in: []const u8) ?u21 {
     var hex = std.mem.trim(u8, hex_in, " \t");

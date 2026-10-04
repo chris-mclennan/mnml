@@ -17,7 +17,7 @@
         .{ .id = "jira_work.refresh", .title = "Jira Work: republish the statusline count", .ex = "term mnml-jira --values --only work --workspace {{workspace}}" },
     },
     .statusline = .{
-        .{ .id = "assigned", .text = "\u{f1c19}", .color = "#1B5DCF", .click_command = "jira_work.open", .priority = 60, .tooltip = "Jira: open items assigned to me. Hover after a poll for the breakdown by status." },
+        .{ .id = "assigned", .text = "{chip}", .color = "#1B5DCF", .click_command = "jira_work.open", .priority = 60, .tooltip = "Jira: open items assigned to me. Hover after a poll for the breakdown by status." },
         // The second figure: the tab configured as QA Actionable Now.
         // It rests blank — `--values` publishes it only when such a tab
         // exists, so a user without one never sees a zero that means

@@ -722,6 +722,13 @@ pub const MenuAction = union(enum) {
     /// by its `statusline.hidden` name (`app/statusline.zig`). The menu
     /// or a static owns the bytes.
     toggle_statusline_segment: []const u8,
+    /// A chip's *Move left* / *Move right*: one segment a place along
+    /// its side of the row, written to `ui.statusline_segment_order`.
+    /// The menu's `mem` arena or a static owns `key`.
+    move_statusline_segment: struct { key: []const u8, left: bool },
+    /// The statusline menu's *Reset order*: `ui.statusline_segment_order`
+    /// back to empty, the built-in order.
+    reset_statusline_order,
     /// The rail menu's *Show on dock instead*: hidden here, its
     /// command pinned on the launcher dock.
     rail_to_dock: @import("../ui/activity_bar.zig").Section,

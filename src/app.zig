@@ -1477,6 +1477,10 @@ pub const App = struct {
     /// `statusline.hidden`, owned: the segments the row leaves out
     /// (`app/statusline.zig`'s *Segments* submenu writes it back).
     statusline_hidden: std.ArrayListUnmanaged([]u8) = .empty,
+    /// `ui.statusline_segment_order`, owned: the names the row lays out
+    /// first, in this order (`app/statusline.zig`'s *Move left* /
+    /// *Move right* rows write it back).
+    statusline_order: std.ArrayListUnmanaged([]u8) = .empty,
     /// The command a curation submenu was opened on (`menu.pin_row`…).
     menu_ctx: ?command.CommandId = null,
     /// How images reach the terminal (`image.detect`, set by the loop;
@@ -2111,6 +2115,8 @@ pub const App = struct {
         self.plus_hidden.deinit(gpa);
         for (self.statusline_hidden.items) |p| gpa.free(p);
         self.statusline_hidden.deinit(gpa);
+        for (self.statusline_order.items) |p| gpa.free(p);
+        self.statusline_order.deinit(gpa);
         self.messages.deinit(gpa);
         self.jobs.deinit(gpa);
         self.harpoon.deinit(gpa);
@@ -2538,6 +2544,9 @@ pub const App = struct {
         for (self.statusline_hidden.items) |p| self.gpa.free(p);
         self.statusline_hidden.clearRetainingCapacity();
         for (self.cfg.statusline.hidden) |id| try self.statusline_hidden.append(self.gpa, try self.gpa.dupe(u8, id));
+        for (self.statusline_order.items) |p| self.gpa.free(p);
+        self.statusline_order.clearRetainingCapacity();
+        for (self.cfg.ui.statusline_segment_order) |id| try self.statusline_order.append(self.gpa, try self.gpa.dupe(u8, id));
     }
 
     // ─── the Undo chip ───

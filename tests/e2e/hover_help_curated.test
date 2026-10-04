@@ -29,12 +29,13 @@ hover 40 10
 expect screen contains "The line-number"
 expect screen lacks "no help written yet"
 key esc
-# A curated menu row: the Keymap chip's menu opens above the statusline
-# (rows 33..38 at this size); its last row is `Open the cheatsheet`.
-rightclick 1 38
-expect screen contains "Open the cheatsheet"
-hover 4 37
-expect screen contains "The cheatsheet"
+# A curated menu row: the Cursor chip's menu opens above the statusline
+# (clear of the info view in the sidebar, which the Keymap chip's
+# taller menu now covers); `Go to line…` is its first row.
+rightclick 72 38
+expect screen contains "Go to line…"
+hover 76 33
+expect screen contains "Asks for a line"
 key esc
 # Phase two: every context-menu row is curated — the position chip's
 # `Copy position (1:1)` row, which carries the cursor's own text, is
@@ -43,7 +44,7 @@ key esc
 # more menus).
 rightclick 72 38
 expect screen contains "Copy position"
-hover 76 37
+hover 76 34
 expect screen contains "Copy the cursor"
 expect screen contains "Copies the"
 expect screen lacks "Cursor: Copy position"

@@ -46,6 +46,7 @@ const bufferline_view = @import("../ui/bufferline.zig");
 const pty_view = @import("../ui/pty_view.zig");
 const font_scan = @import("font_scan.zig");
 const ghostty_config = @import("ghostty_config.zig");
+const manifest_mod = @import("../bridge/manifest.zig");
 
 pub const table = .{
     .@"integrations.audit_glyphs" = &auditCmd,
@@ -214,6 +215,56 @@ fn writeCheck(w: *std.Io.Writer, c: Check) std.Io.Writer.Error!void {
         for (c.verdicts) |v| try w.print("{s: <20} U+{X:0>5}  {s}  ({s})  → {s}\n", .{ v.id, v.cp, v.label, v.source, v.why });
         try w.print("\n{d} of {d} icon refs will render as ?\n", .{ c.verdicts.len, c.refs });
     }
+}
+
+// ─── one mark per chip ──────────────────────────────────────────────────
+//
+// A chip, its statusline segment and its pane wear one glyph. A
+// manifest spells it once, as `chip.glyph`, and a segment's resting text
+// writes `{chip}` for it (`sdk.manifest.chip_mark_token`). A resting
+// text that starts on a private-use glyph other than the chip's is the
+// drift this names, at install.
+
+/// U+E000–U+F8FF and the two supplementary private-use planes — where
+/// Nerd Font and mnml's own marks live.
+fn isPrivateUse(cp: u21) bool {
+    return (cp >= 0xE000 and cp <= 0xF8FF) or cp >= 0xF0000;
+}
+
+pub const MarkDrift = struct { segment: []const u8, chip: []const u8, rests_on: []const u8 };
+
+/// The first segment of `m` whose resting text starts on a private-use
+/// glyph that is not its chip's; null when every one agrees, or the
+/// manifest has no chip mark to agree with. `{chip}` agrees by
+/// construction.
+pub fn segmentMarkDrift(m: manifest_mod.Manifest, buf: *[4]u8) ?MarkDrift {
+    const c = m.chip orelse return null;
+    const chip = c.glyphText(buf);
+    if (chip.len == 0) return null;
+    for (m.statusline) |seg| {
+        if (seg.text.len == 0) continue;
+        const n = std.unicode.utf8ByteSequenceLength(seg.text[0]) catch continue;
+        if (n > seg.text.len) continue;
+        const cp = std.unicode.utf8Decode(seg.text[0..n]) catch continue;
+        if (!isPrivateUse(cp)) continue;
+        if (std.mem.eql(u8, seg.text[0..n], chip)) continue;
+        return .{ .segment = seg.id, .chip = chip, .rests_on = seg.text[0..n] };
+    }
+    return null;
+}
+
+/// A warning toast for every installed manifest a segment of which
+/// rests on another glyph than its chip — the integration, the segment
+/// and the two glyphs. Returns how many.
+pub fn auditSegmentMarks(app: *App) Allocator.Error!usize {
+    var n: usize = 0;
+    for (app.integrations.list) |*inst| {
+        var buf: [4]u8 = undefined;
+        const d = segmentMarkDrift(inst.manifest, &buf) orelse continue;
+        n += 1;
+        try app.toastLevel(.warn, "{s}: the {s} segment rests on {s} but the chip wears {s} — a chip and its segment wear one mark (write `{{chip}}` in the segment's text)", .{ inst.id(), d.segment, d.rests_on, d.chip });
+    }
+    return n;
 }
 
 /// The startup toast: the count and the command, or nothing.
@@ -459,4 +510,33 @@ test "the startup check: a MnmlSymbols face missing the config's marks toasts th
     try t.expect(!c2.mnml_present);
     try t.expectEqual(@as(usize, 1), c2.verdicts.len);
     try t.expectEqualStrings("browser", c2.verdicts[0].id);
+}
+
+test "one mark: a segment resting on another private-use glyph than its chip is named; the chip's own, {chip}, plain text and no chip pass" {
+    var buf: [4]u8 = undefined;
+    const drift: manifest_mod.Manifest = .{ .id = "x", .label = "X", .chip = .{ .glyph = "\u{f1c15}" }, .statusline = &.{
+        .{ .id = "ok", .text = "\u{f1c15} 2" },
+        .{ .id = "plain", .text = "PR 2" },
+        .{ .id = "token", .text = "{chip} …" },
+        .{ .id = "other", .text = "\u{f0e5} 2" },
+    } };
+    const d = segmentMarkDrift(drift, &buf).?;
+    try t.expectEqualStrings("other", d.segment);
+    try t.expectEqualStrings("\u{f1c15}", d.chip);
+    try t.expectEqualStrings("\u{f0e5}", d.rests_on);
+    // A chip named by codepoint is the same mark.
+    const by_cp: manifest_mod.Manifest = .{ .id = "x", .label = "X", .chip = .{ .glyph_codepoint = "F1C19" }, .statusline = &.{.{ .id = "a", .text = "\u{f1c19} 1" }} };
+    try t.expect(segmentMarkDrift(by_cp, &buf) == null);
+    try t.expect(segmentMarkDrift(.{ .id = "x", .label = "X", .statusline = &.{.{ .id = "a", .text = "\u{f0e5}" }} }, &buf) == null);
+
+    // At install: the toast names the integration and both glyphs.
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const was = app.integrations.list;
+    var one = [_]@import("integrations.zig").Installed{.{ .manifest = drift, .path = "", .source = .home, .binary_found = false, .slots = &.{} }};
+    app.integrations.list = &one;
+    defer app.integrations.list = was;
+    try t.expectEqual(@as(usize, 1), try auditSegmentMarks(&app));
+    const toast = app.lastToast().?;
+    try t.expect(std.mem.indexOf(u8, toast, "x: the other segment rests on \u{f0e5} but the chip wears \u{f1c15}") != null);
 }

@@ -673,7 +673,9 @@ pub fn refresh(app: *App) Allocator.Error!void {
 /// place on the top bar (`settleTopBar`) — the in-app installs and a
 /// `<binary> --install` from a shell alike.
 pub fn refreshAfterInstall(app: *App) Allocator.Error!void {
-    return refresh(app);
+    try refresh(app);
+    // One mark per chip: a segment resting on another glyph is named.
+    _ = try @import("glyph_audit.zig").auditSegmentMarks(app);
 }
 
 // ─── the top bar's record ───────────────────────────────────────────────
@@ -1050,7 +1052,9 @@ fn setSegments(app: *App) Allocator.Error!void {
                     .left => .left,
                     .right => .right,
                 },
-                .text = seg.text,
+                // `{chip}` — the chip's mark, spelled once in the
+                // manifest — for one the binary did not fill in.
+                .text = try manifest_mod.manifest.expandChipMark(app.frame.allocator(), seg.text, (try chipGlyphEnv(app.frame.allocator(), inst.manifest)) orelse ""),
                 .color = seg.color,
                 .click_command = seg.click_command,
                 .priority = seg.priority,

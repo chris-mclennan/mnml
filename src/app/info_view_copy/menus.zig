@@ -380,6 +380,24 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
         .title = "Statusline segments",
         .body = "Every segment the statusline can show, ticked while it is shown — the built-in chips first, then the ones integrations and scripts publish, by id. A row shows or hides its segment at once and writes `statusline.hidden` to the home config, so the row stays the same in every workspace. RESTRICTED and the sandbox chip are not listed: they never hide.",
     };
+    // A chip with no menu of its own gets one on the right button
+    // (`statusline.addMoveRows`), titled by the chip's label: its left
+    // click's command first, then the moves.
+    if (item.action == .command) for (@import("../statusline.zig").named) |n| if (std.mem.eql(u8, n.label, menu)) return .{
+        .title = try std.fmt.allocPrint(arena, "{s}: {s}", .{ menu, label }),
+        .body = try std.fmt.allocPrint(arena, "Runs `{s}` — what a left click on the {s} chip does, offered here beside the chip's *Move left* / *Move right*.", .{ command.name(item.action.command), n.label }),
+    };
+    if (item.action == .move_statusline_segment) {
+        const mv = item.action.move_statusline_segment;
+        return .{
+            .title = try std.fmt.allocPrint(arena, "Move the {s} segment {s}", .{ mv.key, if (mv.left) "left" else "right" }),
+            .body = try std.fmt.allocPrint(arena, "Steps the `{s}` segment one chip {s} along its side of the statusline and writes the whole order to `ui.statusline_segment_order` in the home config, so the row reads the same in every workspace. A hidden segment keeps its place in the order; the row is offered only while there is a chip to step past.", .{ mv.key, if (mv.left) "left" else "right" }),
+        };
+    }
+    if (item.action == .reset_statusline_order) return .{
+        .title = "Reset the statusline order",
+        .body = "Empties `ui.statusline_segment_order` in the home config: every segment goes back to its built-in place. Which segments are hidden does not change.",
+    };
     if (item.action == .toggle_statusline_segment) return .{
         .title = try std.fmt.allocPrint(arena, "{s} {s} on the statusline", .{ if (item.checked) "Hide" else "Show", label }),
         .body = try std.fmt.allocPrint(arena, "{s} the `{s}` segment and writes `statusline.hidden` to the home config. A hidden segment only leaves the row: what it counts goes on counting, and its command still runs from the palette.", .{ if (item.checked) "Takes off the row" else "Puts back on the row", item.action.toggle_statusline_segment }),
@@ -423,6 +441,19 @@ pub fn resolve(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u
 /// the command's title and its chord under the active profile, rather
 /// than the tooltip's `opens more rows`. Still a gap — the ladder
 /// marks it — but a useful one.
+/// The open menu's row a `.menu_item` target names, if it is one that
+/// only says something (`MenuItem.isInfo`): no action, nothing it opens.
+/// Its label is its own help — a width, a count — and changes too
+/// often for a curated entry to match it.
+pub fn infoRowLabel(app: *const App, menu: u32, idx: u16) ?[]const u8 {
+    if (app.overlay != .menu) return null;
+    const m = &app.overlay.menu;
+    const sub = menu == 1 or menu == 3;
+    const list = if (sub) (if (m.sub) |s| s.items else return null) else m.items;
+    if (idx >= list.len or !list[idx].isInfo()) return null;
+    return list[idx].label;
+}
+
 pub fn rowFallback(app: *App, arena: Allocator, menu: u32, idx: u16) Allocator.Error!?struct { title: []const u8, body: []const u8 } {
     if (app.overlay != .menu) return null;
     const m = &app.overlay.menu;

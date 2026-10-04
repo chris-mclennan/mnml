@@ -38,10 +38,11 @@ expect screen contains "Opens the theme picker"
 expect screen lacks "no help written yet"
 key esc
 # chips.zig — the Ln/Col chip (column 76 of the statusline, row 38)
-# opens the Cursor menu above itself; `Go to line…` is its first row.
+# opens the Cursor menu above itself; `Go to line…` is its first row,
+# five above the menu's foot (the chip's two moves are its last).
 rightclick 76 38
 expect screen contains "Go to line…"
-hover 80 36
+hover 80 33
 expect screen contains "Asks for a line"
 expect screen lacks "Cursor: Go to line"
 expect screen lacks "no help written yet"

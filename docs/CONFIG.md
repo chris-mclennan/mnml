@@ -231,7 +231,7 @@ otherwise. Copy what you need; leave the rest out.
         .todos_sort = .newest, // .newest | .oldest | .name | .name_desc
         .notes_sort = .newest,
         .findings_sort = .newest,
-        .statusline_segment_order = .{}, // .{} = the built-in order
+        .statusline_segment_order = .{}, // segment names, e.g. `.{ "clock", "bell" }`, laid out first on their side of the row, in this order; .{} = the built-in order. A chip's right-click → Move left / Move right writes it; the row's own right-click → Reset order empties it ("Statusline segment order" below)
         .highlight_word_under_cursor = false,
         .auto_md_preview = false,
         .color_column = 0, // 0 = off
@@ -2124,6 +2124,32 @@ A theme that leaves one out gets the colour that segment always wore
 (`purple`, `yellow`, `cyan`, `teal`, `blue`, `green`; `sun` for the
 pager). Which segments show at all is
 `.statusline.hidden`, not the theme.
+
+### Statusline segment order
+
+`.ui.statusline_segment_order` holds segment names — the words
+`.statusline.hidden` uses: a built-in's (`mode`, `branch`, `clock`,
+`bell`, `language`, …) or a host segment's own id. The rule, on each
+side of the row:
+
+1. The segments the list names come first, in the list's order.
+2. The segments it leaves out follow, in their built-in order — so a
+   new integration's segment lands after the ones you placed.
+3. A name no segment answers to (an integration since removed) is
+   skipped. A move keeps it in the list, where it waits for its
+   segment to come back.
+4. A segment never crosses sides: the list orders the left side's
+   segments among themselves and the right side's among themselves.
+5. RESTRICTED, the sandbox chip and a script's segment text do not
+   move; the movable segments flow around the places they hold.
+6. A hidden segment keeps its place in the order: showing it again
+   puts it back where it was.
+
+A chip's right-click ends on *Move left* / *Move right*, each offered
+while there is a chip on the row to step past (a hidden or absent one
+between does not use up a click). A move writes the whole order — both
+sides, every segment — to the home config. The row's own right-click
+(between the chips) has *Reset order*, which empties the list.
 
 ### First launch
 

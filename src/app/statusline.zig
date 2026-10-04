@@ -623,8 +623,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
     }
     // The session ring goes here, after the AI meters, once the rest of
-    // the row is known and its width can pick the chip's form.
-    const sessions_at = right.items.len;
+    // the row is known and its width can pick the chip's form. Until
+    // then an empty stand-in holds its place, so the order can move it.
+    try push(&right, arena, Seg.init("", p.fg, p.bg2).withHit(SegId.sessions.raw()));
     // Ghost text, beside the two AI meters: nothing while it is idle
     // or while a suggestion is on screen, and a chip for every moment
     // in between — the ones that used to look identical to "off".
@@ -759,11 +760,16 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.seg.language).strong().withHit(sl.seg_language));
     }
 
-    // `statusline.hidden`: the chips the user took off the row go
+    // `ui.statusline_segment_order` lays each side out; then
+    // `statusline.hidden` takes the chips the user took off the row,
     // before the session ring measures what is left.
-    const kept_left = try visible(app, arena, left.items);
-    const kept_before = try visible(app, arena, right.items[0..sessions_at]);
-    const kept_after = try visible(app, arena, right.items[sessions_at..]);
+    const left_seq = try ordered(app, arena, left.items);
+    const right_seq = try ordered(app, arena, right.items);
+    var sessions_at: usize = 0;
+    while (right_seq[sessions_at].hit != SegId.sessions.raw()) sessions_at += 1;
+    const kept_left = try visible(app, arena, left_seq);
+    const kept_before = try visible(app, arena, right_seq[0..sessions_at]);
+    const kept_after = try visible(app, arena, right_seq[sessions_at + 1 ..]);
     var kept_right: Lane = .empty;
     try kept_right.appendSlice(arena, kept_before);
     try kept_right.appendSlice(arena, kept_after);
@@ -874,9 +880,230 @@ pub fn toggleHidden(app: *App, key: []const u8) Allocator.Error!void {
     app.needs_render = true;
 }
 
+// ─── ordering segments ───────────────────────────────────────────────────
+//
+// `ui.statusline_segment_order` is a list of the names
+// `statusline.hidden` uses. On each side of the row the segments it
+// names come first, in its order; the ones it leaves out follow in
+// their built-in order. A name no segment answers to is skipped, and a
+// segment that cannot move (RESTRICTED, the sandbox chip, a script's
+// text) keeps its own place while the movable ones flow around it.
+
+/// The built-in names on the row's left side; the rest of `named` is
+/// the right side's.
+const left_named = 10;
+
+/// Where `key` sorts on its side: its place in the list, or after
+/// every listed name, by `default` — its place in the built-in order.
+fn rank(app: *const App, key: []const u8, default: usize) usize {
+    const order = app.statusline_order.items;
+    for (order, 0..) |o, i| if (std.mem.eql(u8, o, key)) return i;
+    return order.len + default;
+}
+
+/// One side of the row in `ui.statusline_segment_order`: the movable
+/// chips sorted into the places movable chips held, the rest where
+/// they were. A chip of several cells (now playing) moves as one.
+fn ordered(app: *const App, arena: Allocator, segs: []const Seg) Allocator.Error![]const Seg {
+    if (app.statusline_order.items.len == 0) return segs;
+    const Item = struct { seg: Seg, rank: usize };
+    var movable: std.ArrayListUnmanaged(Item) = .empty;
+    for (segs, 0..) |sg, i| if (sg.hit) |h| if (keyOfHit(app, h)) |k| {
+        try movable.append(arena, .{ .seg = sg, .rank = rank(app, k, i) });
+    };
+    if (movable.items.len < 2) return segs;
+    // Insertion sort is stable: a chip's cells keep their order.
+    std.sort.insertion(Item, movable.items, {}, struct {
+        fn lt(_: void, a: Item, b: Item) bool {
+            return a.rank < b.rank;
+        }
+    }.lt);
+    const out = try arena.dupe(Seg, segs);
+    var next: usize = 0;
+    for (out) |*sg| if (sg.hit) |h| if (keyOfHit(app, h) != null) {
+        sg.* = movable.items[next].seg;
+        next += 1;
+    };
+    return out;
+}
+
+/// Every name on `left`'s side of the row in the built-in order — the
+/// built-ins and the host segments that side carries — then sorted by
+/// the list. The order a move steps through.
+fn sideKeys(app: *const App, arena: Allocator, left: bool) Allocator.Error![]const []const u8 {
+    var keys: std.ArrayListUnmanaged([]const u8) = .empty;
+    const want: ipc.effects.Side = if (left) .left else .right;
+    const builtins = if (left) named[0..left_named] else named[left_named..];
+    // The left side's host segments come after the profile; the
+    // right side's lead it.
+    const host_at: usize = if (left) 3 else 0;
+    for (builtins, 0..) |n, i| {
+        if (i == host_at) for (app.ipc_fx.segments.items) |sg| if (sg.side == want) try keys.append(arena, sg.id);
+        try keys.append(arena, n.key);
+    }
+    const Item = struct { key: []const u8, rank: usize };
+    const items_ = try arena.alloc(Item, keys.items.len);
+    for (keys.items, 0..) |k, i| items_[i] = .{ .key = k, .rank = rank(app, k, i) };
+    std.sort.insertion(Item, items_, {}, struct {
+        fn lt(_: void, a: Item, b: Item) bool {
+            return a.rank < b.rank;
+        }
+    }.lt);
+    for (items_, 0..) |it, i| keys.items[i] = it.key;
+    return keys.items;
+}
+
+/// Whether `key` painted on the last frame's row. With no row painted
+/// at all (a menu opened from a test) every name counts.
+fn onRow(app: *const App, key: []const u8) bool {
+    var any = false;
+    for (app.hits.items.items) |e| if (e.target == .statusline_seg) {
+        any = true;
+        if (keyOfHit(app, e.target.statusline_seg)) |k| if (std.mem.eql(u8, k, key)) return true;
+    };
+    return !any;
+}
+
+/// The side `key` sits on, and where in `sideKeys`; null for a name no
+/// segment answers to.
+fn locate(app: *const App, arena: Allocator, key: []const u8) Allocator.Error!?struct { keys: []const []const u8, at: usize, left: bool } {
+    for ([_]bool{ true, false }) |left| {
+        const keys = try sideKeys(app, arena, left);
+        for (keys, 0..) |k, i| if (std.mem.eql(u8, k, key)) return .{ .keys = keys, .at = i, .left = left };
+    }
+    return null;
+}
+
+/// The place `key` would step to: just past the nearest chip on the
+/// row in that direction — a hidden or absent one between does not use
+/// up a click. Null at that end of its side.
+fn stepTarget(app: *const App, keys: []const []const u8, at: usize, left: bool) ?usize {
+    if (left) {
+        var i = at;
+        while (i > 0) {
+            i -= 1;
+            if (!isHidden(app, keys[i]) and onRow(app, keys[i])) return i;
+        }
+    } else {
+        var i = at + 1;
+        while (i < keys.len) : (i += 1) if (!isHidden(app, keys[i]) and onRow(app, keys[i])) return i;
+    }
+    return null;
+}
+
+/// Whether *Move left* (`left`) or *Move right* has somewhere to go.
+pub fn canMove(app: *App, key: []const u8, left: bool) Allocator.Error!bool {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    defer mem.deinit();
+    const loc = (try locate(app, mem.allocator(), key)) orelse return false;
+    return stepTarget(app, loc.keys, loc.at, left) != null;
+}
+
+/// Move `key` one chip along its side and write the whole order home:
+/// both sides, then any name the list held that no segment answers to
+/// now (an integration switched off keeps its place for its return).
+/// False — and a toast — at the end of a side.
+pub fn moveSegment(app: *App, key: []const u8, left: bool) Allocator.Error!bool {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    defer mem.deinit();
+    const a = mem.allocator();
+    const loc = (try locate(app, a, key)) orelse {
+        app.toast("statusline: no segment {s}", .{key});
+        return false;
+    };
+    const to = stepTarget(app, loc.keys, loc.at, left) orelse {
+        app.toast("statusline: {s} is already the {s} on its side", .{ key, if (left) "first" else "last" });
+        return false;
+    };
+    var side_keys: std.ArrayListUnmanaged([]const u8) = .empty;
+    try side_keys.appendSlice(a, loc.keys);
+    const moved = side_keys.orderedRemove(loc.at);
+    try side_keys.insert(a, to, moved);
+    const other = try sideKeys(app, a, !loc.left);
+    var all: std.ArrayListUnmanaged([]const u8) = .empty;
+    try all.appendSlice(a, if (loc.left) side_keys.items else other);
+    try all.appendSlice(a, if (loc.left) other else side_keys.items);
+    for (app.statusline_order.items) |o| {
+        var known = false;
+        for (all.items) |k| known = known or std.mem.eql(u8, k, o);
+        if (!known) try all.append(a, o);
+    }
+    try setOrder(app, all.items);
+    app.toast("statusline: {s} moved {s} (ui.statusline_segment_order)", .{ key, if (left) "left" else "right" });
+    return true;
+}
+
+/// Back to the built-in order: `ui.statusline_segment_order` emptied.
+pub fn resetOrder(app: *App) Allocator.Error!void {
+    try setOrder(app, &.{});
+    app.toast("statusline: the built-in order (ui.statusline_segment_order)", .{});
+}
+
+fn setOrder(app: *App, names: []const []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    var fresh: std.ArrayListUnmanaged([]u8) = .empty;
+    errdefer {
+        for (fresh.items) |n| gpa.free(n);
+        fresh.deinit(gpa);
+    }
+    for (names) |n| try fresh.append(gpa, try gpa.dupe(u8, n));
+    for (app.statusline_order.items) |n| gpa.free(n);
+    app.statusline_order.deinit(gpa);
+    app.statusline_order = fresh;
+    const settings = @import("settings.zig");
+    _ = try settings.persist(app, .home, &.{ "ui", "statusline_segment_order" }, @as([]const []const u8, app.statusline_order.items));
+    app.needs_render = true;
+}
+
+/// A chip's right-click, after its own menu (if it has one) is open:
+/// *Move left* / *Move right* for a chip that moves, each only while it
+/// has somewhere to go. A chip with no menu of its own gets one — its
+/// left click's command first, when it has one.
+pub fn addMoveRows(app: *App, seg: u32, x: u16, y: u16) Allocator.Error!void {
+    const key = keyOfHit(app, seg) orelse return;
+    const can_left = try canMove(app, key, true);
+    const can_right = try canMove(app, key, false);
+    if (app.overlay != .menu) {
+        if (!can_left and !can_right) return;
+        var mem = std.heap.ArenaAllocator.init(app.gpa);
+        errdefer mem.deinit();
+        const rows = try app.gpa.alloc(command.MenuItem, 0);
+        errdefer app.gpa.free(rows);
+        var label: []const u8 = key;
+        for (named) |n| if (std.mem.eql(u8, n.key, key)) {
+            label = n.label;
+        };
+        try context_menus.openOwned(app, try mem.allocator().dupe(u8, label), rows, x, y, mem);
+        if (@import("primary_command.zig").statusSeg(app, seg)) |c| try appendRows(app, &.{.{ .label = command.title(c), .action = .{ .command = c } }});
+    }
+    if (app.overlay.menu.mem == null) app.overlay.menu.mem = std.heap.ArenaAllocator.init(app.gpa);
+    const owned = try app.overlay.menu.mem.?.allocator().dupe(u8, key);
+    var extra: [2]command.MenuItem = undefined;
+    var n: usize = 0;
+    const sep = app.overlay.menu.items.len > 0;
+    if (can_left) {
+        extra[n] = .{ .label = "Move left", .action = .{ .move_statusline_segment = .{ .key = owned, .left = true } }, .separator_before = sep };
+        n += 1;
+    }
+    if (can_right) {
+        extra[n] = .{ .label = "Move right", .action = .{ .move_statusline_segment = .{ .key = owned, .left = false } }, .separator_before = sep and n == 0 };
+        n += 1;
+    }
+    try appendRows(app, extra[0..n]);
+}
+
+fn appendRows(app: *App, extra: []const command.MenuItem) Allocator.Error!void {
+    if (extra.len == 0) return;
+    const m = &app.overlay.menu;
+    const grown = try std.mem.concat(app.gpa, command.MenuItem, &.{ m.items, extra });
+    app.gpa.free(m.items);
+    m.items = grown;
+    if (m.items.len == extra.len) m.cursor = 0;
+}
+
 /// The statusline's own menu — the right button on the row between
 /// chips: *Segments ▸*, every segment with a tick on the ones shown,
-/// built-ins first and then the host segments by id.
+/// built-ins first and then the host segments by id; *Reset order*.
 pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
@@ -898,9 +1125,10 @@ pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
             try kids.append(a, .{ .label = id, .action = .{ .toggle_statusline_segment = id }, .checkable = true });
         }
     }
-    const rows = try app.gpa.alloc(command.MenuItem, 1);
+    const rows = try app.gpa.alloc(command.MenuItem, 2);
     errdefer app.gpa.free(rows);
     rows[0] = .{ .label = "Segments", .action = .none, .submenu = kids.items };
+    rows[1] = .{ .label = "Reset order", .action = .reset_statusline_order, .separator_before = true };
     try context_menus.openOwned(app, "Statusline", rows, x, y, mem);
 }
 
@@ -1752,13 +1980,15 @@ test "the LSP chip: ` LSP 1 ` on blue between the cluster and WRAP while a serve
     // under the workspace, so it reads as it is.
     try b.click(38, SegId.lsp.raw(), .left);
     try testing.expectEqualStrings("LSP: typescript (/tmp)", b.app.lastToast().?);
-    // Right: the LSP menu, Rust's nine rows, every id a real command.
+    // Right: the LSP menu, Rust's nine rows, every id a real command —
+    // then the chip's *Move left* / *Move right*.
     try b.click(38, SegId.lsp.raw(), .right);
     try testing.expect(b.app.overlay == .menu);
     try testing.expectEqualStrings("LSP", b.app.overlay.menu.title);
-    try testing.expectEqual(@as(usize, 9), b.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 11), b.app.overlay.menu.items.len);
     try testing.expectEqualStrings("Status", b.app.overlay.menu.items[0].label);
-    for (b.app.overlay.menu.items) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    for (b.app.overlay.menu.items[0..9]) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    for (b.app.overlay.menu.items[9..]) |item| try testing.expect(item.action == .move_statusline_segment);
     try b.key(Key.named(.esc));
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -1807,7 +2037,9 @@ test "the LSP chip with a missing default server: ` LSP? ` muted with none runni
     try b.click(38, SegId.lsp.raw(), .right);
     try testing.expect(b.app.overlay == .menu);
     const items = b.app.overlay.menu.items;
-    try testing.expectEqual(@as(usize, 11), items.len);
+    // The LSP menu's eleven rows, then the chip's two moves.
+    try testing.expectEqual(@as(usize, 13), items.len);
+    try testing.expect(items[12].action == .move_statusline_segment);
     try testing.expectEqualStrings("Status", items[0].label);
     try testing.expectEqualStrings("✗ vscode-json-language-server — npm i -g vscode-langservers-extracted", items[1].label);
     try testing.expect(items[1].action == .copy_text);
@@ -2245,4 +2477,93 @@ test "statusline.hidden: the bar's Segments menu ticks what is shown; a toggle t
     _ = try b.row(y);
     try testing.expect(b.colOf(y, SegId.clock.raw()) != null);
     try testing.expect(!isHidden(&b.app, "clock"));
+}
+
+test "segment order: Move left / Move right step a chip past its shown neighbour; each end has no row and no move" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const y: u16 = 38;
+    _ = try b.row(y);
+    const bell_x = b.colOf(y, SegId.bell.raw()).?;
+    try testing.expect(b.colOf(y, SegId.clock.raw()).? > bell_x);
+
+    // The right side's last chip and the left side's first go no further.
+    try testing.expect(!try canMove(&b.app, "language", false));
+    try testing.expect(!try moveSegment(&b.app, "language", false));
+    try testing.expect(!try canMove(&b.app, "mode", true));
+    try testing.expect(!try moveSegment(&b.app, "mode", true));
+    try testing.expectEqual(@as(usize, 0), b.app.statusline_order.items.len);
+
+    // The chip's own menu ends on the moves; the last chip's has only one.
+    try b.click(y, SegId.bell.raw(), .right);
+    var labels: [2][]const u8 = undefined;
+    const items_ = b.app.overlay.menu.items;
+    labels[0] = items_[items_.len - 2].label;
+    labels[1] = items_[items_.len - 1].label;
+    try testing.expectEqualStrings("Move left", labels[0]);
+    try testing.expectEqualStrings("Move right", labels[1]);
+    try b.app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try b.click(y, sl.seg_language, .right);
+    const lang_items = b.app.overlay.menu.items;
+    try testing.expectEqualStrings("Move left", lang_items[lang_items.len - 1].label);
+    for (lang_items) |it| try testing.expect(!std.mem.eql(u8, it.label, "Move right"));
+    try b.app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    // A chip with no menu of its own gets one: its command, then the moves.
+    try b.click(y, SegId.clock.raw(), .right);
+    try testing.expect(b.app.overlay == .menu);
+    try b.app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    try testing.expect(try moveSegment(&b.app, "clock", true));
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.clock.raw()).? < b.colOf(y, SegId.bell.raw()).?);
+    // And back.
+    try testing.expect(try moveSegment(&b.app, "clock", false));
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.clock.raw()).? > b.colOf(y, SegId.bell.raw()).?);
+}
+
+test "segment order: a move writes ui.statusline_segment_order home and a fresh App lays the row out by it" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const y: u16 = 38;
+    _ = try b.row(y);
+    try testing.expect(try moveSegment(&b.app, "language", true));
+    const cfg_text = try std.Io.Dir.cwd().readFileAlloc(testing.io, try std.fs.path.join(b.app.frame.allocator(), &.{ b.root, "config.zon" }), testing.allocator, .unlimited);
+    defer testing.allocator.free(cfg_text);
+    try testing.expect(std.mem.indexOf(u8, cfg_text, ".statusline_segment_order") != null);
+
+    var vars = std.process.Environ.Map.init(testing.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", b.root);
+    var loaded = try @import("../config/load.zig").load(testing.allocator, testing.io, .{ .workspace = b.ws, .env = .{ .vars = &vars } });
+    var again = try App.initWith(testing.allocator, testing.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = b.ws, .data_root = b.root, .cols = 120, .rows = 40 });
+    loaded = undefined; // the app owns it now
+    defer again.deinit();
+    try testing.expectEqualSlices(u8, "language", again.statusline_order.items[again.statusline_order.items.len - 2]);
+    try testing.expectEqualSlices(u8, "workspace", again.statusline_order.items[again.statusline_order.items.len - 1]);
+
+    // Reset order empties the list and the row is the built-in one.
+    try resetOrder(&b.app);
+    try testing.expectEqual(@as(usize, 0), b.app.statusline_order.items.len);
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, sl.seg_language).? > b.colOf(y, SegId.workspace.raw()).?);
+}
+
+test "segment order: a name no segment answers to is skipped on the row and kept by a move" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const y: u16 = 38;
+    try setOrder(&b.app, &.{ "gone_integration.count", "clock", "bell" });
+    _ = try b.row(y);
+    // The listed names lead their side, in the list's order.
+    try testing.expect(b.colOf(y, SegId.clock.raw()).? < b.colOf(y, SegId.bell.raw()).?);
+    try testing.expect(b.colOf(y, SegId.bell.raw()).? < b.colOf(y, SegId.wrap.raw()).?);
+    try testing.expect(!try moveSegment(&b.app, "gone_integration.count", true));
+    try testing.expect(try moveSegment(&b.app, "bell", true));
+    var kept = false;
+    for (b.app.statusline_order.items) |o| kept = kept or std.mem.eql(u8, o, "gone_integration.count");
+    try testing.expect(kept);
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.bell.raw()).? < b.colOf(y, SegId.clock.raw()).?);
 }

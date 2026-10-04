@@ -1,0 +1,21 @@
+# A chip's right-click ends on *Move left* / *Move right*: the position
+# chip steps left past the file size, the order goes home to
+# `ui.statusline_segment_order`, and the next launch lays the row out
+# the same way. At 120x40 with a.txt open the position chip spans
+# about columns 70-86 of row 38.
+write a.txt "hello\n"
+open a.txt
+expect screen contains "6B  Ln 1/1 Col 1"
+rightclick 78 38
+expect screen contains "Move left"
+expect screen contains "Move right"
+# The last two rows: Move left, then Move right.
+key end
+key up
+key enter
+expect screen contains "Ln 1/1 Col 1  6B"
+expect screen lacks "6B  Ln 1/1 Col 1"
+restart
+open a.txt
+expect screen contains "Ln 1/1 Col 1  6B"
+expect screen lacks "6B  Ln 1/1 Col 1"

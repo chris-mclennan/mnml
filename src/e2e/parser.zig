@@ -41,6 +41,10 @@
 //! doubleclick <x> <y>            # double-click (row activation)
 //! scroll <x> <y> <up|down>       # mouse wheel at (x,y)
 //! drag <fx> <fy> <tx> <ty>       # left-button drag, one event per cell
+//! restart                        # the App goes; a fresh one starts on the same workspace and
+//!                                #   data root with its config READ FROM THE FILES there (the
+//!                                #   file starts on `e2e_defaults`, which no file says) — a
+//!                                #   setting a menu wrote home, on the next launch
 //! expect screen contains <text>  # the rendered screen contains the substring
 //! expect screen lacks <text>     # …does not
 //! expect status contains <text>  # `status.json` contains the substring —
@@ -140,6 +144,10 @@ pub const Step = union(enum) {
     /// directory. A hunter's script can ask for one at the moment it
     /// cares about without knowing which driver it is running under.
     shot: []const u8,
+    /// `restart`: the App goes and a fresh one starts on the same
+    /// workspace and data root, its config read from the files there —
+    /// what a setting a menu wrote home looks like on the next launch.
+    restart,
 };
 
 /// What `expect color` compares against: an rgb triple, or a palette
@@ -398,6 +406,10 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                 }
                 break :blk .{ .step = .{ .shot = try a.dupe(u8, name) } };
             },
+            .restart => blk: {
+                if (trim(rest).len > 0) return diag.set("line {d}: `restart` takes no argument", .{ln});
+                break :blk .{ .step = .restart };
+            },
             .expect => blk: {
                 const first, const after = split1(rest);
                 if (!std.mem.eql(u8, first, "within")) break :blk try parseExpect(a, diag, ln, rest);
@@ -413,7 +425,7 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
     return .{ .arena = arena, .header = header, .lines = try lines.toOwnedSlice(a) };
 }
 
-const Keyword = enum { write, open, key, type, command, @"command!", ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, shot, expect };
+const Keyword = enum { write, open, key, type, command, @"command!", ex, wait, snippet, shell, serve, ghost, click, rightclick, doubleclick, hover, scroll, drag, shot, restart, expect };
 
 fn parseExpect(a: Allocator, diag: *Diagnostic, ln: usize, rest: []const u8) Error!Stmt {
     const what, const arg = split1(rest);
@@ -928,4 +940,11 @@ test "click takes modifiers: a terminal pane's Ctrl/Cmd+click on a link" {
     const msg = try parseErr("click 4 2 hyper\n");
     defer t.allocator.free(msg);
     try t.expect(std.mem.indexOf(u8, msg, "unknown modifier `hyper`") != null);
+}
+
+test "restart is a bare step" {
+    var s = try parseOk("open a.txt\nrestart\n");
+    defer s.deinit();
+    try t.expect(s.lines[1].stmt.step == .restart);
+    try expectErr("restart now\n", "line 1: `restart` takes no argument");
 }
