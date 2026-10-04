@@ -70,8 +70,8 @@ pub const Copy = struct {
     shortcuts: []const Shortcut = &.{},
     try_it: []const Link = &.{},
     /// The chord of the command the control's left click runs, under
-    /// the active profile (`Ctrl+Shift+P`, `Space f f`) — the last
-    /// line, `Key: …`. Null when the click is no command or the
+    /// the active profile (`Ctrl+Shift+P`, `Space f f`) — the first
+    /// line under the title, `Key: …`. Null when the click is no command or the
     /// profile binds none.
     key: ?[]const u8 = null,
 };
@@ -240,8 +240,8 @@ pub fn draw(ui: Ui, area: Rect, p: Props) Layout {
     return out;
 }
 
-/// The body's lines at `content_w`: a blank, the body and the aside
-/// wrapped, then every shortcut and every link after a spacer each.
+/// The body's lines at `content_w`: the `Key:` line when there is
+/// one, a blank, the body and the aside wrapped, then every shortcut and every link after a spacer each.
 /// Nothing is dropped for want of rows — the box scrolls, so a link
 /// under a long body is a notch or two of the wheel away rather than
 /// gone (Rust cut the rows that did not fit on screen, and at the
@@ -260,6 +260,14 @@ fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
     var link_style = Theme.onBg(Theme.withFg(t.fg, pal.green), body_bg);
     link_style.bold = true;
     link_style.ul_style = .single;
+    // The `Key:` line sits right under the title, so the chord is in
+    // view however long the body runs.
+    if (p.copy.key) |k| {
+        const segs = arena.alloc(vaxis.Segment, 2) catch return null;
+        segs[0] = .{ .text = "Key: ", .style = fg };
+        segs[1] = .{ .text = k, .style = chord_style };
+        lines.append(arena, .{ .segs = segs }) catch return null;
+    }
     lines.append(arena, .{ .segs = &.{} }) catch return null;
     if (p.copy.aside_first) if (p.copy.aside) |a| for (wrapWords(arena, a, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, aside_style) catch return null }) catch return null;
     for (wrapWords(arena, p.copy.body, content_w) catch return null) |l| lines.append(arena, .{ .segs = seg1(arena, l, fg) catch return null }) catch return null;
@@ -278,13 +286,6 @@ fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
         for (p.copy.try_it, 0..) |l, i| {
             lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i), .row = p.copy.shortcuts.len + i }) catch return null;
         }
-    }
-    if (p.copy.key) |k| {
-        lines.append(arena, .{ .segs = &.{} }) catch return null;
-        const segs = arena.alloc(vaxis.Segment, 2) catch return null;
-        segs[0] = .{ .text = "Key: ", .style = fg };
-        segs[1] = .{ .text = k, .style = chord_style };
-        lines.append(arena, .{ .segs = segs }) catch return null;
     }
     return lines;
 }
@@ -435,7 +436,7 @@ test "shortcuts and links get their rows after a spacer; a link row is a hit by 
     try testing.expect(g.style(2, 9).ul_style == .single);
 }
 
-test "the Key line paints last, after a spacer under the links: `Key:` in the body's colour, the chord bold cyan, no hit of its own" {
+test "the Key line sits right under the title, before the spacer and the body: `Key:` in the body's colour, the chord bold cyan, no hit of its own" {
     var f = try Fixture.init(30, 14);
     defer f.deinit();
     const copy: Copy = .{
@@ -446,13 +447,22 @@ test "the Key line paints last, after a spacer under the links: `Key:` in the bo
         .key = "Ctrl+B",
     };
     _ = draw(f.ui(), f.full(), .{ .copy = copy });
-    try f.expectRow(7, " → Run it");
-    try f.expectRow(8, "");
-    try f.expectRow(9, " Key: Ctrl+B");
-    try testing.expect(vaxis.Color.eql(f.style(6, 9).fg, f.theme.palette.cyan));
-    try testing.expect(f.style(6, 9).bold);
-    try testing.expect(!f.style(1, 9).bold);
-    try testing.expect(f.hits.at(6, 9).?.info_view == .body);
+    try f.expectRow(2, " Key: Ctrl+B");
+    try f.expectRow(3, "");
+    try f.expectRow(4, " Body.");
+    try f.expectRow(8, " → Run it");
+    try f.expectRow(9, "");
+    try testing.expect(vaxis.Color.eql(f.style(6, 2).fg, f.theme.palette.cyan));
+    try testing.expect(f.style(6, 2).bold);
+    try testing.expect(!f.style(1, 2).bold);
+    try testing.expect(f.hits.at(6, 2).?.info_view == .body);
+    // A body too long for the box scrolls; the chord is still in view
+    // before the first notch of the wheel.
+    var s = try Fixture.init(30, 6);
+    defer s.deinit();
+    const sl = draw(s.ui(), s.full(), .{ .copy = .{ .title = "T", .body = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen", .key = "Ctrl+B" } });
+    try testing.expect(sl.max_scroll > 0);
+    try s.expectRow(2, " Key: Ctrl+B                 ┃");
     // Without a key, no line.
     var g = try Fixture.init(30, 14);
     defer g.deinit();

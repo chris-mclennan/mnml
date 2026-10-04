@@ -55,6 +55,7 @@ const ai_apply = @import("ai_apply.zig");
 const launch_profiles = @import("launch_profiles.zig");
 const session_worktree = @import("session_worktree.zig");
 const ai_grid = @import("ai_grid.zig");
+const layout_mod = @import("layout.zig");
 const activity_bar = @import("activity_bar.zig");
 const side = @import("side.zig");
 
@@ -1605,23 +1606,45 @@ fn openBatchAs(app: *App, n: usize, arrange: Config.BatchArrange) CommandError!v
 
 /// `n` sessions side by side, each the page's full height: the first
 /// goes to the right edge of the whole tree (an empty page it fills),
-/// each next one splits the last to its right, and the row is shared
-/// out evenly (`equalizeAxis`) whatever `integrations.arrange` says —
-/// equal columns are the point of the pick. Whatever stood on the page
-/// keeps its place as the row's first column.
+/// each next one splits the last to its right, and the sessions are
+/// shared out evenly whatever `integrations.arrange` says — equal
+/// columns are the point of the pick. Whatever stood on the page keeps
+/// the width the first session's split left it, as the row's first
+/// column; the sessions share only the rest. On an empty page the
+/// sessions are the whole row.
 fn openColumns(app: *App, n: usize) CommandError!void {
     var last: ?PaneId = null;
     var spawned: usize = 0;
+    // The split `moveToEdge` makes between what was on the page and
+    // the sessions, and the ratio it was made at.
+    var edge: ?struct { split: layout_mod.NodeId, ratio: u16 } = null;
     while (spawned < n) : (spawned += 1) {
         if (last) |l| app.setActive(l);
         const id = (try openSession(app, .claude, .right)) orelse break;
         const layout = app.layouts.current();
-        if (last == null) try layout.moveToEdge(id, .right);
+        if (last == null) {
+            try layout.moveToEdge(id, .right);
+            if (layout.root) |r| switch (layout.nodes.items[r]) {
+                .split => |s| if (layout.leafOf(id) == s.second) {
+                    edge = .{ .split = r, .ratio = s.ratio };
+                },
+                else => {},
+            };
+        }
         last = id;
     }
     const l = last orelse return;
     const layout = app.layouts.current();
-    if (layout.leafOf(l)) |leaf| if (layout.parentOf(leaf)) |p| layout.equalizeAxis(p);
+    const kept: ?layout_mod.NodeId = if (edge) |e| if (layout.root == e.split) switch (layout.nodes.items[e.split]) {
+        .split => |*s| blk: {
+            s.ratio = e.ratio;
+            break :blk s.second;
+        },
+        else => null,
+    } else null else null;
+    if (kept) |sessions| {
+        layout.equalizeAxisBelow(sessions);
+    } else if (layout.leafOf(l)) |leaf| if (layout.parentOf(leaf)) |p| layout.equalizeAxis(p);
     app.setActive(l);
     app.needs_render = true;
     if (spawned > 1) app.toast("opened {d} Claude sessions side by side", .{spawned});

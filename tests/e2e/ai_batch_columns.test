@@ -26,3 +26,18 @@ expect screen contains "✓ Columns │"
 expect screen contains " Grid    │"
 key esc
 key esc
+# With a file open first (`view.only` gathers the page into its one
+# leaf), the editor keeps the width the first session's split leaves
+# it and the three new sessions share only the rest — the editor is
+# not made a fourth equal column.
+write a.txt "alpha\n"
+open a.txt
+command view.only
+rightclick 6 4
+hover 15 9
+click 56 11
+wait 600
+expect screen contains "opened 3 Claude sessions side by side"
+# The editor's column is half the row; the sessions a third of the
+# other half each.
+expect screen contains "│▌  1 alpha                                  │▌             │▌             │▌             "

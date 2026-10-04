@@ -49,11 +49,11 @@ An entry has up to six parts. Every part except the title is optional:
 | Part | Looks like | What it is |
 | ---- | ---------- | ---------- |
 | Title | **Refresh tree** | The topic, bold on the title row. |
+| `Key:` | `Key: Ctrl+K Ctrl+T` | The chord of the control's own click, on the row right under the title. |
 | Body | Plain text | Two to four sentences about this control in its current state. |
 | Aside | *Italic, muted* | One caveat, after the body. |
 | Shortcuts | `[Ctrl+G] Go to line` | Chords that act on the thing, each a row: the chord in bold cyan, then what it does. |
 | Links | `→ Run it` | Up to three rows, green and underlined, that do something when clicked. |
-| `Key:` | `Key: Ctrl+K Ctrl+T` | The chord of the control's own click, last. |
 
 Bodies describe state. A git chip's entry names the branch and its dirty
 counts, a diagnostics chip's counts the errors, and a Settings row's
@@ -105,13 +105,15 @@ as written.
 
 ### The `Key:` line
 
-When a control's left click runs one command, its entry ends with a
-`Key:` line naming that command's chord in your profile. This covers a
+When a control's left click runs one command, its entry has a `Key:`
+line right under the title, naming that command's chord in your
+profile. It comes before the body, so it is in view without scrolling
+however long the entry runs. This covers a
 chrome button, a statusline chip, a rail icon, a section or tree header
 chip, a launcher dock entry, and a menu or palette row. The theme pill
 is an example:
 
-| Profile | Last line |
+| Profile | Line under the title |
 | ------- | --------- |
 | standard | `Key: Ctrl+K Ctrl+T` |
 | vim | `Key: Space t t` |
