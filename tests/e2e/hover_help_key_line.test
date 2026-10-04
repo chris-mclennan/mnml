@@ -4,7 +4,8 @@
 # command ends its hover copy with that command's chord in the active
 # profile, read off the table the click itself reads
 # (`app/primary_command.zig`), so the help and the click cannot drift.
-# A profile that binds the command to nothing prints no line.
+# A profile that binds the command to nothing prints no line, and
+# neither does an entry whose own `[chord]` rows already name it.
 #
 # The box is dragged tall (its rule from row 30 to row 10) and scrolled
 # to its foot, where the line is.
@@ -28,11 +29,9 @@ scroll 10 20 down
 scroll 10 20 down
 scroll 10 20 down
 expect screen contains "Key: Space t k"
-# Standard: Space types there, so the leader chord is no binding and
-# the mode chip says nothing ...
-ex set input=standard
+# The tree's new-file chip: vim binds `file.new` to no chord.
 hover 60 20
-hover 2 38
+hover 21 1
 hover 10 20
 scroll 10 20 down
 scroll 10 20 down
@@ -46,9 +45,28 @@ scroll 10 20 down
 scroll 10 20 down
 scroll 10 20 down
 scroll 10 20 down
-expect screen contains "Mode chip"
+expect screen contains "Creates an empty file"
 expect screen lacks "Key:"
-# ... while the position chip's click, Go to line, is VS Code's Ctrl+G.
+# Standard: the same chip is VS Code's Ctrl+N ...
+ex set input=standard
+hover 60 20
+hover 21 1
+hover 10 20
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+scroll 10 20 down
+expect screen contains "Key: Ctrl+N"
+# ... and the position chip's entry already prints `[Ctrl+G] Go to
+# line`, so there is no line to repeat it.
 hover 60 20
 hover 72 38
 hover 10 20
@@ -64,4 +82,5 @@ scroll 10 20 down
 scroll 10 20 down
 scroll 10 20 down
 scroll 10 20 down
-expect screen contains "Key: Ctrl+G"
+expect screen contains "[Ctrl+G]"
+expect screen lacks "Key:"

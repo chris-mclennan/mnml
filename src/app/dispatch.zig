@@ -2297,7 +2297,12 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .search => try search_section.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline, .jobs => {},
         },
-        .chip => |c| switch (c.panel) {
+        // A chip whose left click is one command runs it from the table
+        // the info view's `Key:` line reads (`app/primary_command.zig`);
+        // the right button's menus and the panels' own clicks stay below.
+        .chip => |c| if (m.kind == .press and m.button == .left and primary_command.chip(app, c.panel, c.kind) != null)
+            try runCmd(app, primary_command.chip(app, c.panel, c.kind).?)
+        else switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
@@ -3000,7 +3005,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // current first so the rows act there.
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 // Git mode's `+` brings a closed repo back (Rust `git.reopen_repo`).
-                if (m.button == .left and app.git_palette.active) return runCmd(app, .@"git.reopen_repo");
+                if (m.button == .left) if (primary_command.button(app, id)) |c| return runCmd(app, c);
                 const layout = app.layouts.current();
                 if (try layout.leafAt(app.frame.allocator(), leaf_idx)) |lid| {
                     if (layout.leaf(lid)) |leaf| app.setActive(leaf.active);

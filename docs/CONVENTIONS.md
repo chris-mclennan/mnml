@@ -562,7 +562,8 @@ data — a title, a body of two to four sentences, an optional aside,
   `src/app/primary_command.zig` — the table `dispatch.zig`'s click reads
   too. A new chip whose click is a command goes in that table, not in a
   `runCmd` arm, and its entry gets the line for free. The right button's
-  menu never counts.
+  menu never counts, and an entry whose `keys` already name the command
+  gets no line — it would only repeat the row.
 - **`links` are typed.** `.command` carries a `CommandId` — a wrong id is
   a compile error; `.settings` carries a row from `settingsRow("ui.x")` —
   a wrong path is a compile error; `.url` a web page through the OS

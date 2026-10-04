@@ -69,7 +69,7 @@ the release ships one file), and one line per change a user can see.
 
 ### Hover help
 
-- The hover help names the keyboard shortcut: a chip, button, rail icon or menu row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+B` in standard, `Key: Ctrl+N` in vim for the tree toggle), and says nothing when the profile binds none.
+- The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
 
 ## v0.3.2
 
