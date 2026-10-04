@@ -113,6 +113,8 @@ const accent_color = @import("ui/accent_color.zig");
 const session_worktree = @import("app/session_worktree.zig");
 const session_attention = @import("app/session_attention.zig");
 const session_ready = @import("app/session_ready.zig");
+const session_registry = @import("app/session_registry.zig");
+const session_takeover = @import("app/session_takeover.zig");
 const mount_pane_mod = @import("app/mount_pane.zig");
 const session_changes = @import("app/session_changes.zig");
 const chip_mod = @import("ui/chip.zig");
@@ -365,6 +367,8 @@ pub const table = .{
     .@"sessions.copy_cwd" = &copyCwdCmd,
     .@"sessions.export" = &exportCmd,
     .@"sessions.kill" = &killCmd,
+    .@"sessions.ask_external" = &session_takeover.askCmd,
+    .@"sessions.take_over" = &session_takeover.takeOverCmd,
     .@"sessions.new_menu" = &newMenuCmd,
     .@"sessions.open_worktree_in_tree" = &openWorktreeInTreeCmd,
     .@"sessions.merge_worktree" = &mergeWorktreeCmd,
@@ -568,6 +572,20 @@ pub const State = struct {
     prio_evals: u64 = 0,
     /// The transcripts' totals so far, for the scan worker only.
     totals: agents.TotalsCache = .{},
+    /// Claude Code's live-session registry, read on the stat tick
+    /// (`app/session_takeover.zig`): the EXTERNAL rows' names and states.
+    registry: session_registry.Cache = .{},
+    registry_ms: i64 = 0,
+    /// The registry's records no scan row and no pane claims, this
+    /// workspace's (`refilter`); borrowed from `registry`.
+    registry_only: std.ArrayListUnmanaged(session_registry.Record) = .empty,
+    /// `sessions.ask_external` in flight; `sessions.take_over` waiting.
+    ask: ?session_takeover.PendingAsk = null,
+    take_over: ?session_takeover.PendingTakeOver = null,
+    /// What a take-over signals with, and resumes with (`resumeItem`
+    /// when null); tests hand in fakes.
+    signaler: session_registry.Signaler = .{},
+    resumer: ?*const fn (app: *App, it: Item) CommandError!void = null,
 
     pub fn init(gpa: Allocator, sort: SessionsSort) State {
         return .{ .snapshot = alloc.SnapshotArena.init(gpa), .sort = sort, .keys = std.heap.ArenaAllocator.init(gpa), .local = .init(gpa), .cloud_runs = .init(gpa) };
@@ -607,6 +625,10 @@ pub const State = struct {
         self.filtered.deinit(gpa);
         self.list.deinit(gpa);
         self.snapshot.deinit();
+        self.registry.deinit(gpa);
+        self.registry_only.deinit(gpa);
+        if (self.ask) |*a| a.deinit(gpa);
+        if (self.take_over) |*t| t.deinit(gpa);
     }
 
     /// The card under the cursor.
@@ -712,6 +734,7 @@ pub const State = struct {
 /// command, the first pass). No home (the `.test` runner's apps) is an
 /// empty list, not an error.
 pub fn refresh(app: *App) CommandError!void {
+    session_takeover.readRegistry(app);
     return startScan(app, .{});
 }
 
@@ -1266,6 +1289,20 @@ pub fn refilter(app: *App) Allocator.Error!void {
             if (within or st.show_ended) try st.ended.append(gpa, .{ .item = @intCast(i) }) else st.hidden_ended += 1;
         } else try st.external.append(gpa, @intCast(i));
     }
+    // The registry's live sessions with no transcript row and no pane.
+    st.registry_only.clearRetainingCapacity();
+    if (session_takeover.enabled(app)) for (st.registry.map.values()) |e| if (e.rec) |r| {
+        if (st.itemOf(r.session_id) != null) continue;
+        var mine = false;
+        for (owned.items) |id| if (std.mem.eql(u8, id, r.session_id)) {
+            mine = true;
+            break;
+        };
+        if (mine) continue;
+        if (!st.all_workspaces and !(if (r.cwd) |c| pathWithin(c, app.workspace) else false)) continue;
+        if (q.len > 0 and std.ascii.indexOfIgnoreCase(r.title(), q) == null) continue;
+        try st.registry_only.append(gpa, r);
+    };
     // The cards through the filters.
     for (st.cards.items, 0..) |c, i| {
         if (st.state_filter) |sf| if (cardState(app, c) != sf) continue;
@@ -1349,7 +1386,7 @@ pub fn cardWorktree(app: *App, c: Card) ?*const session_worktree.Entry {
 }
 
 /// Where a session's name came from — the order `nameOf` looks.
-pub const NameSource = enum { rename, title, prompt, cli, id };
+pub const NameSource = enum { rename, registry, title, prompt, cli, id };
 
 pub const SessionName = struct {
     /// Borrowed from storage that outlives the frame: the alias (gpa),
@@ -1389,6 +1426,9 @@ pub fn nameOf(app: *App, key: []const u8, pane: ?*const pty_pane.PtyPane, sessio
 /// parsed itself). The one chain either way.
 pub fn nameWith(app: *App, key: []const u8, pane: ?*const pty_pane.PtyPane, session_id: ?[]const u8, row: ?Item) SessionName {
     if (app.sessions.alias(key)) |a| return .{ .text = a, .from = .rename };
+    // The name the user gave the session in its own terminal (`/rename`,
+    // `--name`), from Claude Code's registry.
+    if (session_id) |sid| if (session_takeover.recordOf(app, sid)) |r| if (r.user_named) if (r.name) |n| return .{ .text = n, .from = .registry };
     const live: ?*const pty_pane.PtyPane = pane orelse if (session_id) |sid|
         (if (ptyPaneOf(app, sid)) |pid| app.panes.pty(pid) else null)
     else
@@ -1548,6 +1588,7 @@ fn hasTranscripts(app: *App) bool {
 pub fn tick(app: *App, now: i64) void {
     const st = &app.sessions;
     trackNeedsYou(app) catch {};
+    session_takeover.tick(app, now);
     if (st.scanning) return;
     if (!st.prefetched) {
         st.prefetched = true;
@@ -1590,6 +1631,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     // Before the first tick: it decides the prefetch; no wake.
     if (!st.prefetched) return pane_due;
     var next: ?i64 = pane_due;
+    if (session_takeover.nextDeadlineMs(app)) |at| next = @min(at, next orelse at);
     const p = phases(app);
     const dues = [_]?i64{
         refresh_cadence.dueAt(app.cfg.sessions.refresh, p.live, st.live_ms),
@@ -2395,6 +2437,11 @@ pub fn openRowMenuFor(app: *App, host: MenuHost, x: u16, y: u16) Allocator.Error
         try items.append(app.gpa, .{ .label = "Cancel run…", .action = .{ .command = .@"sessions.cloud_cancel" }, .separator_before = true });
     } else {
         try items.append(app.gpa, .{ .label = if (card != null) "Focus session" else "Resume in a terminal", .action = .{ .command = .@"sessions.open" }, .separator_before = true });
+        // A session another terminal runs, in Claude Code's registry.
+        if (card == null) if (it) |i| if (i.source == .claude) if (session_takeover.recordOf(app, i.session_id)) |r| {
+            if (r.socket != null) try items.append(app.gpa, .{ .label = "Ask what it is doing", .action = .{ .command = .@"sessions.ask_external" } });
+            try items.append(app.gpa, .{ .label = "Take over…", .action = .{ .command = .@"sessions.take_over" } });
+        };
         // sessiondiff: the review step, for a card whose session has a base.
         if (card) |c| if (session_changes.recordOf(app, c.pane) != null) try items.append(app.gpa, .{ .label = "What did this session change", .action = .{ .command = .@"sessions.changes" } });
         // The links the session shows — a URL, a key an integration
@@ -2518,7 +2565,7 @@ pub const history_ascii = "H";
 /// Room under the cards for EXTERNAL / ENDED: what they need, at most
 /// a third of the panel (a full page of cards keeps the rest).
 fn reserveRows(st: *const State, h: u16) u16 {
-    const ext_n: u16 = @intCast(@min(st.external.items.len, external_max));
+    const ext_n: u16 = @intCast(@min(st.external.items.len + st.registry_only.items.len, external_max));
     const ended_n: u16 = @intCast(@min(st.ended.items.len, 64));
     var needed: u16 = 0;
     if (ext_n > 0) needed += 1 + ext_n + 1;
@@ -2609,16 +2656,27 @@ fn drawFooter(app: *App, ui: Ui, area: Rect, y0: u16) Allocator.Error!void {
     const grey = Theme.withFg(bg, t.palette.grey);
     const bottom = area.bottom();
     var y = y0;
-    if (st.external.items.len > 0 and y + 2 < bottom) {
+    if (st.external.items.len + st.registry_only.items.len > 0 and y + 2 < bottom) {
         _ = ui.putStr(area.x + 1, y, area.w -| 1, "EXTERNAL", dim);
         y += 1;
-        for (st.external.items[0..@min(st.external.items.len, external_max)]) |idx| {
-            if (y >= bottom) break;
+        var shown: usize = 0;
+        for (st.external.items) |idx| {
+            if (y >= bottom or shown >= external_max) break;
             const it = st.items[idx];
-            const branch = if (it.git_branch) |b| (if (b.len > 0) b else "—") else "—";
-            const label = ui.fmt("  {s}  ({s})", .{ branch, it.session_id[0..@min(8, it.session_id.len)] });
+            _ = ui.putStr(area.x, y, area.w, ui.clipStr(externalLabel(app, ui, it), area.w), dim);
+            y += 1;
+            shown += 1;
+        }
+        for (st.registry_only.items) |r| {
+            if (y >= bottom or shown >= external_max) break;
+            const base = if (r.cwd) |c| std.fs.path.basename(c) else "";
+            const label = if (base.len == 0 or std.mem.eql(u8, base, r.title()))
+                ui.fmt("  {s}  {s}", .{ r.title(), r.status.label() })
+            else
+                ui.fmt("  {s}  {s}  {s}", .{ r.title(), r.status.label(), base });
             _ = ui.putStr(area.x, y, area.w, ui.clipStr(label, area.w), dim);
             y += 1;
+            shown += 1;
         }
         y += 1;
     }
@@ -2643,6 +2701,16 @@ fn drawFooter(app: *App, ui: Ui, area: Rect, y0: u16) Allocator.Error!void {
             y += 1;
         }
     }
+}
+
+/// An EXTERNAL row: `<branch>  (<short id>)` from the transcript; with
+/// a registry record, the user's name (else that) and the exact state.
+pub fn externalLabel(app: *App, ui: Ui, it: Item) []const u8 {
+    const branch = if (it.git_branch) |b| (if (b.len > 0) b else "—") else "—";
+    const short = it.session_id[0..@min(8, it.session_id.len)];
+    const r = session_takeover.recordOf(app, it.session_id) orelse return ui.fmt("  {s}  ({s})", .{ branch, short });
+    if (r.user_named) if (r.name) |n| return ui.fmt("  {s}  {s}", .{ n, r.status.label() });
+    return ui.fmt("  {s}  ({s})  {s}", .{ branch, short, r.status.label() });
 }
 
 /// The card's view of its pane, on the frame arena. The summary rows
@@ -5526,4 +5594,226 @@ test "a card's links: its menu lists one Open row per address it shows, after Fo
     const text = try Io.Dir.cwd().readFileAlloc(testing.io, log, testing.allocator, .limited(4096));
     defer testing.allocator.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "https://tracker.example.com/browse/ENG-123") != null);
+}
+
+// ─── Claude Code's session registry (`app/session_takeover.zig`) ───────
+
+/// Write `<root>/home/.claude/sessions/<name>` and point the scan's home there.
+fn writeRecord(f: *Fixture, name: []const u8, json: []const u8) !void {
+    try f.tmp.dir.createDirPath(testing.io, "home/.claude/sessions");
+    const sub = try std.fs.path.join(testing.allocator, &.{ "home/.claude/sessions", name });
+    defer testing.allocator.free(sub);
+    try f.tmp.dir.writeFile(testing.io, .{ .sub_path = sub, .data = json });
+    if (f.app.sessions.home == null) f.app.sessions.home = try std.fs.path.join(testing.allocator, &.{ f.root, "home" });
+}
+
+/// The sessions table focused with its cursor on `sid`'s row.
+fn selectInTable(f: *Fixture, sid: []const u8) !void {
+    const app = &f.app;
+    if (sessions_table.find(app) == null) try command.run(app, .{ .static = .@"sessions.table" });
+    const tp = sessions_table.get(app, sessions_table.find(app).?).?;
+    try sessions_table.onSnapshot(app);
+    for (tp.visible.items, 0..) |e, vi| if (e == .item and std.mem.eql(u8, app.sessions.items[e.item].session_id, sid)) {
+        tp.list.cursor = vi;
+    };
+    try testing.expectEqualStrings(sid, current(app).?.session_id);
+}
+
+fn menuHas(app: *App, label: []const u8) bool {
+    for (app.overlay.menu.items) |mi| if (std.mem.eql(u8, mi.label, label)) return true;
+    return false;
+}
+
+test "registry: an EXTERNAL row shows the user's name and exact state; a record with no transcript still lists; garbage is skipped; the row menu offers Ask and Take over; off reads nothing" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    const app = &f.app;
+    app.tree.visible = false;
+    const rec1 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"name\":\"payments\",\"nameSource\":\"user\",\"status\":\"idle\",\"messagingSocketPath\":\"/nowhere.sock\"}}", .{f.root});
+    defer testing.allocator.free(rec1);
+    const rec2 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":102,\"sessionId\":\"solo-9\",\"cwd\":\"{s}/sub\",\"name\":\"nightly\",\"nameSource\":\"auto\",\"status\":\"busy\"}}", .{f.root});
+    defer testing.allocator.free(rec2);
+    try writeRecord(&f, "101.json", rec1);
+    try writeRecord(&f, "102.json", rec2);
+    try writeRecord(&f, "103.json", "{\"pid\":");
+    var ext = item("ext-1", .streaming, 30, std.fs.path.basename(f.root), "fix the ledger");
+    ext.pid = 101;
+    ext.cwd = f.root;
+    ext.git_branch = "main";
+    try f.adopt(&.{ext});
+    session_takeover.readRegistry(app);
+    try refilter(app);
+    try testing.expectEqual(@as(usize, 1), app.sessions.external.items.len);
+    try testing.expectEqual(@as(usize, 1), app.sessions.registry_only.items.len);
+    try testing.expectEqualStrings("payments", itemName(app, ext));
+    try command.run(app, .{ .static = .@"view.activity_sessions" });
+    const txt = try f.screen();
+    defer testing.allocator.free(txt);
+    try testing.expect(std.mem.indexOf(u8, txt, "payments  idle") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "nightly  busy  sub") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "main  (ext-1)") == null);
+    // The table's row menu: the two verbs.
+    try selectInTable(&f, "ext-1");
+    try openRowMenuFor(app, .table, 0, 0);
+    try testing.expect(menuHas(app, "Ask what it is doing"));
+    try testing.expect(menuHas(app, "Take over…"));
+    try app.handle(.{ .key = Key.named(.esc) });
+    // Off: the registry is dropped, the transcript row is as before.
+    app.cfg.sessions.registry = false;
+    session_takeover.readRegistry(app);
+    try testing.expectEqual(@as(usize, 0), app.sessions.registry.map.count());
+    try testing.expect(!std.mem.eql(u8, itemName(app, ext), "payments"));
+    try openRowMenuFor(app, .table, 0, 0);
+    try testing.expect(!menuHas(app, "Take over…"));
+    try app.handle(.{ .key = Key.named(.esc) });
+}
+
+const FakeSig = struct {
+    cmd: []const u8,
+    terms: u32 = 0,
+    fn cmdline(ctx: ?*anyopaque, _: Io, _: Allocator, _: Allocator, _: u32) ?[]const u8 {
+        const s: *FakeSig = @ptrCast(@alignCast(ctx.?));
+        return s.cmd;
+    }
+    fn term(ctx: ?*anyopaque, _: Io, _: Allocator, _: u32) bool {
+        const s: *FakeSig = @ptrCast(@alignCast(ctx.?));
+        s.terms += 1;
+        return true;
+    }
+    fn signaler(s: *FakeSig) session_registry.Signaler {
+        return .{ .ctx = s, .cmdline = cmdline, .term = term };
+    }
+};
+
+fn lastToast(app: *App) []const u8 {
+    const ts = app.toasts.items;
+    return if (ts.len > 0) ts[ts.len - 1].text else "";
+}
+
+test "take over: busy is refused; a non-claude pid is refused; idle signals once, waits for the record to go, then resumes here; a session that stays is left running" {
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    const app = &f.app;
+    app.tree.visible = false;
+    var fake: FakeSig = .{ .cmd = "/usr/local/bin/claude --resume ext-1" };
+    app.sessions.signaler = fake.signaler();
+    const busy = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"status\":\"busy\"}}", .{f.root});
+    defer testing.allocator.free(busy);
+    try writeRecord(&f, "101.json", busy);
+    var ext = item("ext-1", .streaming, 30, std.fs.path.basename(f.root), "fix the ledger");
+    ext.pid = 101;
+    ext.cwd = f.root;
+    try f.adopt(&.{ext});
+    session_takeover.readRegistry(app);
+    try selectInTable(&f, "ext-1");
+    // Busy: a toast, no confirm.
+    try command.run(app, .{ .static = .@"sessions.take_over" });
+    try testing.expect(app.overlay != .confirm);
+    try testing.expect(std.mem.indexOf(u8, lastToast(app), "try when it is idle") != null);
+    // Idle; but the pid is someone else's program now.
+    const idle = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"status\":\"idle\",\"x\":0}}", .{f.root});
+    defer testing.allocator.free(idle);
+    try writeRecord(&f, "101.json", idle);
+    session_takeover.readRegistry(app);
+    try command.run(app, .{ .static = .@"sessions.take_over" });
+    try testing.expect(app.overlay == .confirm);
+    try testing.expect(std.mem.indexOf(u8, app.overlay.confirm.message, "End the session in its own terminal and resume it here?") != null);
+    fake.cmd = "vim notes.md";
+    try app.handle(.{ .key = Key.char('t') });
+    try testing.expectEqual(@as(u32, 0), fake.terms);
+    try testing.expect(std.mem.indexOf(u8, lastToast(app), "not a claude process") != null);
+    try testing.expect(app.sessions.take_over == null);
+    // A claude pid: one SIGTERM, then the wait.
+    fake.cmd = "claude";
+    try command.run(app, .{ .static = .@"sessions.take_over" });
+    try app.handle(.{ .key = Key.char('t') });
+    try testing.expectEqual(@as(u32, 1), fake.terms);
+    try testing.expect(app.sessions.take_over != null);
+    // It stays past the window: left running, nothing resumed.
+    const panes_before = app.panes.slots.items.len;
+    session_takeover.tick(app, app.now_ms + session_takeover.take_over_window_ms + 1);
+    try testing.expect(app.sessions.take_over == null);
+    try testing.expect(std.mem.indexOf(u8, lastToast(app), "left running") != null);
+    try testing.expectEqual(panes_before, app.panes.slots.items.len);
+    // Again, and this time it exits: its record goes, the resume runs.
+    app.sessions.resumer = Resumed.record;
+    Resumed.sid = null;
+    try command.run(app, .{ .static = .@"sessions.take_over" });
+    try app.handle(.{ .key = Key.char('t') });
+    try testing.expectEqual(@as(u32, 2), fake.terms);
+    try f.tmp.dir.deleteFile(testing.io, "home/.claude/sessions/101.json");
+    session_takeover.tick(app, app.now_ms + session_takeover.poll_ms + 1);
+    try testing.expect(app.sessions.take_over == null);
+    try testing.expectEqualStrings("ext-1", Resumed.sid.?);
+    try testing.expectEqualStrings(f.root, Resumed.cwd.?);
+}
+
+/// The take-over's resume, recorded instead of spawning a CLI.
+const Resumed = struct {
+    var buf: [64]u8 = undefined;
+    var cbuf: [std.fs.max_path_bytes]u8 = undefined;
+    var sid: ?[]const u8 = null;
+    var cwd: ?[]const u8 = null;
+    fn record(_: *App, it: Item) CommandError!void {
+        @memcpy(buf[0..it.session_id.len], it.session_id);
+        sid = buf[0..it.session_id.len];
+        const c = it.cwd orelse "";
+        @memcpy(cbuf[0..c.len], c);
+        cwd = cbuf[0..c.len];
+    }
+};
+
+test "ask: one documented line reaches the session's inbox (a fake peer); the reply it then writes to its transcript toasts; none in 60 s says so" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init(120, 30);
+    defer f.deinit();
+    const app = &f.app;
+    app.tree.visible = false;
+    // The fake peer: a listening socket (short relative path — sockaddr_un).
+    const sock = try std.fmt.allocPrint(testing.allocator, ".zig-cache/tmp/{s}/in.sock", .{f.tmp.sub_path});
+    defer testing.allocator.free(sock);
+    const addr = try Io.net.UnixAddress.init(sock);
+    var listener = try addr.listen(testing.io, .{});
+    defer listener.deinit(testing.io);
+    const tpath = try std.fs.path.join(testing.allocator, &.{ f.root, "t.jsonl" });
+    defer testing.allocator.free(tpath);
+    try f.tmp.dir.writeFile(testing.io, .{ .sub_path = "t.jsonl", .data = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"an old reply\"}]}}\n" });
+    const rec = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"name\":\"payments\",\"nameSource\":\"user\",\"status\":\"busy\",\"messagingSocketPath\":\"{s}\"}}", .{sock});
+    defer testing.allocator.free(rec);
+    try writeRecord(&f, "101.json", rec);
+    var ext = item("ext-1", .streaming, 30, std.fs.path.basename(f.root), "fix the ledger");
+    ext.pid = 101;
+    ext.cwd = f.root;
+    ext.transcript_path = tpath;
+    try f.adopt(&.{ext});
+    session_takeover.readRegistry(app);
+    try selectInTable(&f, "ext-1");
+    try command.run(app, .{ .static = .@"sessions.ask_external" });
+    try testing.expect(app.sessions.ask != null);
+    // The peer reads exactly one line, the documented shape.
+    const conn = try listener.accept(testing.io);
+    defer conn.close(testing.io);
+    var rbuf: [4096]u8 = undefined;
+    var r = conn.reader(testing.io, &rbuf);
+    const line = try r.interface.takeDelimiterExclusive('\n');
+    const want = try session_registry.userLine(app.frame.allocator(), session_registry.ask_text);
+    try testing.expectEqualStrings(want[0 .. want.len - 1], line);
+    // Nothing new yet: the old reply is not the answer.
+    session_takeover.tick(app, app.now_ms + 1);
+    try testing.expect(app.sessions.ask != null);
+    // The peer answers (as Claude Code writes it to its transcript).
+    var tf = try f.tmp.dir.openFile(testing.io, "t.jsonl", .{ .mode = .read_write });
+    const end = try tf.length(testing.io);
+    try tf.writePositionalAll(testing.io, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"SendMessage\",\"input\":{\"message\":\"migrating the ledger; safe to interrupt\"}}]}}\n", end);
+    tf.close(testing.io);
+    session_takeover.tick(app, app.now_ms + 2 * session_takeover.poll_ms);
+    try testing.expect(app.sessions.ask == null);
+    try testing.expectEqualStrings("payments: migrating the ledger; safe to interrupt", lastToast(app));
+    // Asked again with no answer: the window closes with a toast.
+    try command.run(app, .{ .static = .@"sessions.ask_external" });
+    const c2 = try listener.accept(testing.io);
+    c2.close(testing.io);
+    session_takeover.tick(app, app.now_ms + session_takeover.ask_window_ms + 1);
+    try testing.expect(app.sessions.ask == null);
+    try testing.expect(std.mem.indexOf(u8, lastToast(app), "did not reply within 60 s") != null);
 }
