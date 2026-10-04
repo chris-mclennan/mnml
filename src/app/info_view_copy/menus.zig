@@ -193,16 +193,16 @@ const phase_one = [_]Row{
     .{ .label = "Open usage pane", .entry = .{
         .title = "The usage pane",
         .body = "The full figures behind the chip: for Claude the five-hour and weekly windows of every linked account with their reset times; for Codex the tokens and sessions today. Refresh asks the account's endpoint again. The pane is where an account is linked or renamed.",
-        .links = &.{ .{ .command = .{ .id = .@"ai.claude_usage", .label = "Claude usage" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link an account" } } },
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_usage", .label = "Claude usage" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } } },
     } },
     .{ .label = "Refresh usage now", .entry = .{
         .title = "Refresh the usage",
-        .body = "Asks the account's usage endpoint again instead of waiting for the next poll — the thing to do when a chip reads stale after a reset. A chip stuck at 0% on a linked account is a token that needs re-linking, which a refresh does not fix.",
-        .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Re-link the token" } } },
+        .body = "Asks the account's usage endpoint again instead of waiting for the next poll — the thing to do when a chip reads stale after a reset. An account whose state line says `expired` wants a Re-auth, which a refresh does not do.",
+        .links = &.{ .{ .command = .{ .id = .@"ai.refresh_usage", .label = "Refresh now" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } } },
     } },
     .{ .label = "Add Claude account…", .command = .@"ai.claude_add_account", .entry = .{
         .title = "Add a Claude account",
-        .body = "Asks for a name, then for that account's Claude Code OAuth token, and adds it to `ai.claude_accounts` in the home config with a token file of its own under the data root. It is fetched at once and from then on with the others; the usage pane lists it and the chip counts it. Esc on the token prompt keeps the account unlinked — in the usage pane, L runs `claude login` as it and R captures that login into its file.",
+        .body = "Asks for a name and adds the account to `ai.claude_accounts` in the home config with a token file of its own under the data root. The usage pane lists it as `no login yet` with a Re-auth button: that runs `claude login` and files the login under it. From then on it is fetched with the others and the chip counts it.",
         .keys = &.{.{ .chord = "a", .label = "Add (in the usage pane)" }},
         .links = &.{ .{ .command = .{ .id = .@"ai.claude_add_account", .label = "Add one" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
     } },
@@ -265,6 +265,18 @@ const phase_one = [_]Row{
         .links = &.{ .{ .command = .{ .id = .@"term.restart", .label = "Restart it" } }, .{ .command = .{ .id = .@"term.clear", .label = "Just clear the screen" } } },
     } },
     // ── submenu parents ──
+    .{ .label = "Advanced", .entry = .{
+        .title = "Advanced ▸ — paste a token",
+        .body = "Opens *Paste a token…*: a hidden prompt for a Claude Code OAuth token, written to this account's token file. Re-auth is the everyday way to sign an account in; this is for a token from somewhere the keychain cannot reach — another machine, a system without the macOS keychain.",
+        .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
+        .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Paste a token" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth instead" } } },
+    } },
+    .{ .label = "Re-auth an account", .entry = .{
+        .title = "Re-auth an account ▸",
+        .body = "One row per watched Claude account. Picking one opens a pane running `claude login` and files the login under that account once it lands in the keychain and its email is the account's; a login for another account on file is offered to that one instead, never filed silently.",
+        .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
+        .links = &.{ .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+    } },
     .{ .label = "Icon", .entry = .{
         .title = "Icon ▸ — the mark this chip wears",
         .body = "Opens the three marks to choose from: for the Claude chip and Claude session tabs the Claude Code figure, the Anthropic spark, or a custom SVG baked into the MnmlSymbols font (`ui.claude_mark`); for the terminal chip and every terminal tab the ghost, the plain terminal codicon, or a custom SVG baked into the MnmlSymbols font (`ui.terminal_glyph`). The tick marks the one in use; picking writes the home config, so the mark is the same in every workspace.",
@@ -409,10 +421,15 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
 /// or the palette's chooser when several are configured.
 fn claudeAccountRow(arena: Allocator, a: command.ClaudeAccountAct) Allocator.Error!Entry {
     return switch (a.act) {
+        .reauth => .{
+            .title = try std.fmt.allocPrint(arena, "Re-auth {s}", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Opens a pane running `claude login` and watches the Claude Code login it leaves in the macOS keychain. When the login that lands is `{s}`'s — its email is the one the account is known by, or it has none yet — it is written to `{s}`'s token file and the pane closes; nothing else to press. A login for another account on file is not filed: a box says whose it is and offers to file it there instead.", .{ a.name, a.name }),
+            .links = &.{ .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+        },
         .link => .{
-            .title = try std.fmt.allocPrint(arena, "Link a token to {s}", .{a.name}),
-            .body = try std.fmt.allocPrint(arena, "Opens a hidden prompt for the Claude Code OAuth token of `{s}` and writes it to that account's own token file (mode 0600), then fetches its usage. The token is the `accessToken` in the CLI's login — or paste the whole login blob, whose refresh token lets an expired token renew itself.", .{a.name}),
-            .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Link a token" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
+            .title = try std.fmt.allocPrint(arena, "Paste a token for {s}", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Advanced: opens a hidden prompt for the Claude Code OAuth token of `{s}` and writes it to that account's own token file (mode 0600), then fetches its usage. The token is the `accessToken` in the CLI's login, or the whole login blob. Re-auth does the same without copying anything — this is for a machine without the keychain, or a token from elsewhere.", .{a.name}),
+            .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Paste a token" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth instead" } } },
         },
         .rename => .{
             .title = try std.fmt.allocPrint(arena, "Rename {s}", .{a.name}),

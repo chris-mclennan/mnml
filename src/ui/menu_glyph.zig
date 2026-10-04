@@ -239,6 +239,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .claude_account => |c| switch (c.act) {
             .rename => if (ascii) "e" else "\u{F040}", // fa-pencil, the header's own
             .link => if (ascii) "k" else "\u{f084}", // fa-key
+            .reauth => if (ascii) "s" else "\u{f090}", // fa-sign_in
             .remove => if (ascii) "d" else "\u{f1f8}", // fa-trash, as the command rows that remove
         },
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",

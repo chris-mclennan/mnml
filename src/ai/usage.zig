@@ -175,6 +175,8 @@ pub const Usage = struct {
     /// The keychain's login is another account's, so the token could
     /// not be repaired: the pane shows the guided re-auth.
     needs_reauth: bool = false,
+    /// Why the last fetch could not sign in, when that was the failure.
+    auth: Auth = .ok,
     /// The endpoint's own grade of the session and the weekly window
     /// (`limits[].severity`), when it gave one.
     severity: ?Severity = null,
@@ -207,13 +209,45 @@ pub const Codex = struct {
     last_error: ?[]const u8 = null,
 };
 
+/// Why a fetch could not sign in: no token file (or nothing in it), a
+/// token the endpoint turned down, or a token turned down while the
+/// keychain holds another account's login.
+pub const Auth = enum { ok, missing, rejected, other_login };
+
 /// A fetch that did not produce numbers.
 pub const FetchErr = struct {
     message: []const u8,
     /// A 429's numeric `Retry-After`, in seconds.
     retry_after: ?u64 = null,
     needs_reauth: bool = false,
+    auth: Auth = .ok,
 };
+
+/// One account's sign-in as the pane's state line says it: read and
+/// fine, not read yet, or one of the three that Re-auth fixes.
+pub const AccountState = enum {
+    checking,
+    signed_in,
+    expired,
+    other_login,
+    no_login,
+
+    pub fn wantsReauth(s: AccountState) bool {
+        return switch (s) {
+            .expired, .other_login, .no_login => true,
+            .checking, .signed_in => false,
+        };
+    }
+};
+
+pub fn accountState(u: *const Usage) AccountState {
+    return switch (u.auth) {
+        .missing => .no_login,
+        .other_login => .other_login,
+        .rejected => .expired,
+        .ok => if (u.needs_reauth) .other_login else if (u.fetched_at == 0) .checking else .signed_in,
+    };
+}
 
 /// What a successful Claude fetch carries: the usage and the identity
 /// the profile endpoint named, plus a warning the handler toasts (two
@@ -223,6 +257,9 @@ pub const Fetched = struct {
     email: ?[]const u8 = null,
     org: ?[]const u8 = null,
     warning: ?[]const u8 = null,
+    /// The token file was rejected and refilled from the keychain's
+    /// login of this same account: the handler says so, once.
+    recaptured: bool = false,
 };
 
 pub const ClaudeOutcome = union(enum) { ok: Fetched, err: FetchErr };
@@ -230,15 +267,21 @@ pub const CodexOutcome = union(enum) { ok: Codex, err: []const u8 };
 
 /// The keychain worker's answer: the CLI's current login. `refresh_token`
 /// tells the active account apart (the access token rotates hourly);
-/// `blob` and `email` come along for a capture (`R`).
+/// `blob` and `email` come along for a capture.
 pub const Keychain = struct {
     refresh_token: ?[]const u8 = null,
     blob: ?[]const u8 = null,
     email: ?[]const u8 = null,
     err: ?[]const u8 = null,
-    /// The user asked for a capture: the handler files the blob.
-    capture: bool = false,
+    mode: KeychainMode = .poll,
+    /// `.file_under`: the account the login is to be filed under.
+    target: ?[]const u8 = null,
 };
+
+/// What a keychain read is for: the poll (which account is active), `R`
+/// (file the login where it belongs), a Re-auth's watch, the silent
+/// re-capture of an expired account, the mismatch guard's *File under*.
+pub const KeychainMode = enum { poll, capture, reauth, recapture, file_under };
 
 /// A worker's finished job. Every slice lives on `arena`.
 pub const Result = struct {
@@ -667,6 +710,7 @@ pub fn applyFetchError(u: *Usage, e: FetchErr, now: u64) void {
     u.retry_after_at = now +| backoff;
     u.last_error = e.message;
     u.needs_reauth = e.needs_reauth;
+    u.auth = e.auth;
 }
 
 fn backoffFor(failures: u32) u64 {
@@ -689,7 +733,7 @@ pub fn fetchFixture(arena: Allocator, io: Io, dir: []const u8, name: []const u8,
     const body_path = try std.fs.path.join(arena, &.{ dir, try std.fmt.allocPrint(arena, "{s}.json", .{name}) });
     const err_path = try std.fs.path.join(arena, &.{ dir, try std.fmt.allocPrint(arena, "{s}.error", .{name}) });
     if (readSmall(arena, io, err_path)) |text| return .{ .err = parseFixtureError(text) };
-    const body = readSmall(arena, io, body_path) orelse return .{ .err = .{ .message = "not linked" } };
+    const body = readSmall(arena, io, body_path) orelse return .{ .err = .{ .message = "not linked", .auth = .missing } };
     const usage = parseUsage(arena, body, now) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.BadJson => return .{ .err = .{ .message = "parse json: not the usage shape" } },
@@ -706,7 +750,9 @@ pub fn fetchFixture(arena: Allocator, io: Io, dir: []const u8, name: []const u8,
 /// `HTTP 429 retry-after=120`, `needs-reauth: <why>`, or a message.
 fn parseFixtureError(text: []const u8) FetchErr {
     const line = std.mem.trim(u8, text, " \t\r\n");
-    if (std.mem.startsWith(u8, line, "needs-reauth:")) return .{ .message = std.mem.trim(u8, line["needs-reauth:".len..], " \t"), .needs_reauth = true };
+    if (std.mem.startsWith(u8, line, "needs-reauth:")) return .{ .message = std.mem.trim(u8, line["needs-reauth:".len..], " \t"), .needs_reauth = true, .auth = .other_login };
+    if (std.mem.startsWith(u8, line, "HTTP 401") or std.mem.startsWith(u8, line, "HTTP 403")) return .{ .message = line, .auth = .rejected };
+    if (std.mem.eql(u8, line, "not linked")) return .{ .message = line, .auth = .missing };
     var retry: ?u64 = null;
     if (std.mem.indexOf(u8, line, "retry-after=")) |i| {
         const tail = line[i + "retry-after=".len ..];
@@ -810,9 +856,9 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
     const raw = Io.Dir.cwd().readFileAlloc(io, token_path, arena, .limited(64 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
-        else => return .{ .err = .{ .message = try std.fmt.allocPrint(arena, "read token {s}: {s}", .{ token_path, @errorName(err) }) } },
+        else => return .{ .err = .{ .message = try std.fmt.allocPrint(arena, "read token {s}: {s}", .{ token_path, @errorName(err) }), .auth = if (err == error.FileNotFound) .missing else .ok } },
     };
-    var token = accessTokenOf(arena, raw) orelse return .{ .err = .{ .message = "not linked" } };
+    var token = accessTokenOf(arena, raw) orelse return .{ .err = .{ .message = "not linked", .auth = .missing } };
     var reply = try httpGet(gpa, io, arena, live.usage_url, token);
     if (reply.status == 401 or reply.status == 403) {
         if (refreshTokenOf(arena, raw)) |rt| if (try refreshToken(gpa, io, arena, live.token_url, rt, token_path)) |fresh| {
@@ -820,6 +866,7 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
             reply = try httpGet(gpa, io, arena, live.usage_url, token);
         };
     }
+    var recaptured = false;
     if ((reply.status == 401 or reply.status == 403) and live.keychain) {
         if (readKeychain(gpa, io, arena)) |blob| if (!std.mem.eql(u8, std.mem.trim(u8, blob, " \t\r\n"), std.mem.trim(u8, raw, " \t\r\n"))) {
             const candidate = accessTokenOf(arena, blob) orelse blob;
@@ -838,31 +885,34 @@ pub fn fetchLive(gpa: Allocator, io: Io, arena: Allocator, live: Live, name: []c
                         return .{ .err = .{
                             .message = try std.fmt.allocPrint(arena, "the keychain login is {s}, not {s}'s", .{ email orelse "unknown", name }),
                             .needs_reauth = true,
+                            .auth = .other_login,
                         } };
                     }
                 }
                 writeSecret(io, token_path, blob) catch {};
                 token = candidate;
                 reply = again;
+                recaptured = true;
             }
         };
     }
     try writeLastResponse(arena, io, live.data_root, reply, now);
     if (reply.status < 200 or reply.status >= 300) {
         const msg = if (reply.status == 401 or reply.status == 403)
-            "token rejected — re-link via :ai.link_claude_token"
+            "token rejected"
         else
             truncate(redactBearer(arena, reply.body) catch reply.body, 80);
         return .{ .err = .{
             .message = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ reply.status, msg }),
             .retry_after = if (reply.status == 429) reply.retry_after else null,
+            .auth = if (reply.status == 401 or reply.status == 403) .rejected else .ok,
         } };
     }
     const usage = parseUsage(arena, reply.body, now) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.BadJson => return .{ .err = .{ .message = "parse json: not the usage shape" } },
     };
-    var out: Fetched = .{ .usage = usage };
+    var out: Fetched = .{ .usage = usage, .recaptured = recaptured };
     if (try profileOf(gpa, io, arena, live.profile_url, token)) |p| {
         out.email = p.email;
         out.org = p.org;
@@ -1857,7 +1907,7 @@ test "fetchLive against a loopback server: the bearer, the numbers, the profile,
     try t.expect(std.mem.startsWith(u8, last, "// HTTP 200\n// fetched_at: 77\n"));
     // A wrong token, no refresh token, no keychain: rejected.
     const bad = try fetchLive(t.allocator, io, a, live, "default", try std.fs.path.join(a, &.{ root, "ai_token.bad" }), 78);
-    try t.expectEqualStrings("HTTP 401: token rejected — re-link via :ai.link_claude_token", bad.err.message);
+    try t.expectEqualStrings("HTTP 401: token rejected", bad.err.message);
     try t.expect(bad.err.retry_after == null);
     // A 429 carries the server's hint.
     FakeServer.mode = .throttle;

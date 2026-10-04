@@ -110,6 +110,7 @@ pub const table = .{
     .@"ai.claude_usage" = &claudeUsage,
     .@"ai.claude_rename_account" = &claudeRenameAccount,
     .@"ai.claude_add_account" = &claudeAddAccount,
+    .@"ai.claude_reauth" = &claudeReauth,
     .@"ai.claude_remove_account" = &claudeRemoveAccount,
     .@"ai.codex_usage" = &codexUsage,
     .@"ai.show_last_response" = &showLastResponse,
@@ -422,6 +423,7 @@ pub fn nextDeadlineMs(app: *const App) ?i64 {
     }
     if (spend.anyLoading(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 120);
     if (usage_pane.tickerActive(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + 1000);
+    if (usage_pane.watching(app)) next = @min(next orelse std.math.maxInt(i64), app.now_ms + usage_pane.reauth_poll_ms);
     return next;
 }
 
@@ -2119,6 +2121,12 @@ pub fn branchNameAccept(app: *App, text: []const u8) CommandError!void {
 /// that account's own file, the one the reader reads.
 fn linkClaudeToken(app: *App) CommandError!void {
     return usage_pane.chooseAccount(app, .link);
+}
+
+/// `ai.claude_reauth`: `claude login` in a pane, watched, the login
+/// filed under the account — the one configured, or the one picked.
+fn claudeReauth(app: *App) CommandError!void {
+    return usage_pane.chooseAccount(app, .reauth);
 }
 
 fn claudeAddAccount(app: *App) CommandError!void {
