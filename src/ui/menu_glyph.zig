@@ -160,6 +160,12 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         .command => |id| forCommand(id, ascii),
         .set_panel_sort, .script_sort => if (ascii) "~" else "\u{f0dc}", // fa-sort
         .ai_profile => if (ascii) "!" else "\u{f0e7}", // fa-flash: a launch profile
+        // An `Open ×N ▸` child: the picture of the arrangement it picks.
+        .open_batch => |b| switch (b.arrange) {
+            .tabs => if (ascii) "t" else "\u{f2d0}", // fa-window_maximize: one leaf, its tabs
+            .columns => if (ascii) "|" else "\u{f0db}", // fa-columns
+            .grid => if (ascii) "#" else "\u{f00a}", // fa-th
+        },
         .dock_set => if (ascii) "%" else "\u{f013}", // fa-gear: a dock setting
         .toggle_auto_refresh => if (ascii) "@" else "\u{f021}", // fa-refresh
         .set_coverage_mode => if (ascii) "%" else "\u{f0e4}", // fa-dashboard

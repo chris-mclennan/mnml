@@ -1,0 +1,27 @@
+# env: PATH=${MNML_SHIMS}/ai:${PATH}
+# width: 120
+# A batch's arrangement is a per-launch pick: each `Open ×N` row of the
+# `+ New session` menu opens Tabs / Columns (and Grid from four up) to
+# its right. ×3 ▸ Columns puts three sessions side by side, each the
+# page's full height, and the pick is remembered — the next menu ticks
+# Columns under ×4 too, the plain click's arrangement (`ai.batch_arrange`).
+# `tools/shims/ai/claude` stands in for the CLI (it sleeps).
+command view.activity_sessions
+wait 300
+rightclick 6 4
+expect screen contains "Open ×3"
+hover 15 9
+expect screen contains " Tabs    │"
+expect screen contains "✓ Columns │"
+expect screen lacks "Grid"
+click 56 11
+wait 600
+expect screen contains "opened 3 Claude sessions side by side"
+expect screen contains "│ 󱸀 claude 󰅖                  │ 󱸀 claude 󰅖                  │ 󱸀 claude 󰅖"
+expect screen lacks "New local session"
+rightclick 6 4
+hover 15 10
+expect screen contains "✓ Columns │"
+expect screen contains " Grid    │"
+key esc
+key esc

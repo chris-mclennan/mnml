@@ -460,6 +460,72 @@ test "the grid: tabs mode stacks every session on one strip; the batch spills to
     try t.expectEqual(@as(usize, 0), try g.empties());
 }
 
+test "batch arrange: the ×N rows open Tabs / Columns, and Grid from four up; the tick follows the layout toggle until a pick is remembered" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    try @import("../sessions.zig").openNewMenu(app, 2, 2);
+    const items = app.overlay.menu.items;
+    const want = [_]struct { row: usize, n: u8, len: usize }{
+        .{ .row = 2, .n = 2, .len = 2 }, .{ .row = 3, .n = 3, .len = 2 },
+        .{ .row = 4, .n = 4, .len = 3 }, .{ .row = 5, .n = 6, .len = 3 },
+        .{ .row = 6, .n = 8, .len = 3 },
+    };
+    for (want) |w| {
+        const sub = items[w.row].submenu;
+        try t.expectEqual(w.len, sub.len);
+        try t.expectEqualStrings("Tabs", sub[0].label);
+        try t.expectEqualStrings("Columns", sub[1].label);
+        if (w.len == 3) try t.expectEqualStrings("Grid", sub[2].label);
+        for (sub) |r| try t.expectEqual(w.n, r.action.open_batch.n);
+        // Never picked, grid mode: the grid — the columns for 2 and 3.
+        try t.expect(sub[if (w.len == 3) 2 else 1].checked);
+        try t.expect(!sub[0].checked);
+        // The parent keeps its command: a plain click opens the batch.
+        try t.expect(items[w.row].action == .command);
+    }
+    app.cfg.ui.ai_layout_mode = .tabs;
+    try t.expectEqual(app_mod.Config.BatchArrange.tabs, @import("ai.zig").batchArrange(app, 4));
+    app.cfg.ai.batch_arrange = .grid;
+    try t.expectEqual(app_mod.Config.BatchArrange.grid, @import("ai.zig").batchArrange(app, 4));
+    try t.expectEqual(app_mod.Config.BatchArrange.columns, @import("ai.zig").batchArrange(app, 3));
+}
+
+test "batch arrange: ×3 ▸ Columns is three full-height panes of equal width, the pick is written home, and a plain ×3 repeats it" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    try dispatch.runMenuActionForTest(app, .{ .open_batch = .{ .n = 3, .arrange = .columns } });
+    try t.expectEqual(@as(usize, 3), countOnPage(app));
+    const r = try f.rects();
+    try t.expectEqual(@as(usize, 3), r.panes.len);
+    var xs: [3]u16 = undefined;
+    for (r.panes, 0..) |pr, i| {
+        // Full height: every column spans the page.
+        try t.expectEqual(@as(u16, 58), pr.rect.h);
+        try t.expect(@max(pr.rect.w, r.panes[0].rect.w) - @min(pr.rect.w, r.panes[0].rect.w) <= 1);
+        xs[i] = pr.rect.x;
+    }
+    try t.expect(xs[0] < xs[1] and xs[1] < xs[2]);
+    try t.expectEqual(app_mod.Config.BatchArrange.columns, app.cfg.ai.batch_arrange.?);
+    const path = try std.fs.path.join(t.allocator, &.{ f.root, @import("../config/data_root.zig").config_file });
+    defer t.allocator.free(path);
+    const body = try std.Io.Dir.cwd().readFileAlloc(t.io, path, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(body);
+    try t.expect(std.mem.indexOf(u8, body, ".batch_arrange = .columns") != null);
+    // A plain ×3 on a fresh page: columns again, not the grid.
+    var g = try Fixture.init();
+    defer g.deinit();
+    g.app.cfg.ai.batch_arrange = .columns;
+    try command.run(&g.app, .{ .static = .@"ai.claude_code_new_x3" });
+    const gr = try g.rects();
+    try t.expectEqual(@as(usize, 3), gr.panes.len);
+    for (gr.panes) |pr| try t.expectEqual(@as(u16, 58), pr.rect.h);
+    try t.expectEqual(@as(usize, 0), try g.empties());
+}
+
 test "the grid: the open slot paints the Add Claude Code card over the whole quadrant, and a press on it opens the fourth session there" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init();

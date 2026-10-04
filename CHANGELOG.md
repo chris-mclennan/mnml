@@ -137,6 +137,11 @@ to the issue or pull request they name.
 
 - The `+ New session` menu opens a batch of 3 or 6 Claude Code sessions
   as well as 2, 4 or 8 (`ai.claude_code_new_x3`, `_x6`).
+- Each `Open ×N` row of that menu opens its arrangements to the right:
+  *Tabs*, *Columns* — N full-height sessions side by side, equal widths —
+  and, from four up, *Grid*. The pick is remembered (`ai.batch_arrange`)
+  as what a plain click on `Open ×N` does; until one is made the AI
+  layout toggle decides, as before.
 - The Sessions row of the activity bar enters the sessions mode: the editor
   layout is put aside and every Claude Code and Codex session stands in
   columns side by side (`ai.session_columns`, 1 to 4, default 2; the AI

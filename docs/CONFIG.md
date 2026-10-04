@@ -805,6 +805,13 @@ otherwise. Copy what you need; leave the rest out.
         // maximised. 1..4, clamped on load; the AI chips' right-click
         // *Show side by side* sets it (sessions.columns_1 … _4).
         .session_columns = 2,
+        // The arrangement last picked from an `Open ×N ▸` row of the
+        // `+ New session` menu — Tabs, Columns (N full-height sessions side
+        // by side, equal widths) or Grid (from four up; two or three in a
+        // grid are the columns) — which a plain click on `Open ×N` and
+        // ai.claude_code_new_x2 … _x8 repeat. Written home by the pick.
+        // Unset: the AI layout toggle decides (tabs mode → tabs, else the grid).
+        .batch_arrange = null, // .tabs | .columns | .grid
         // The Claude Code logins the quota chip and the usage pane
         // (ai.claude_usage) poll. `token_path` is the OAuth token file the
         // CLI's keychain item was copied into (`ai.link_claude_token`, or R

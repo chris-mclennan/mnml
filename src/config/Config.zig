@@ -1059,6 +1059,12 @@ pub const Task = struct {
 pub const AiBackend = enum { auto, api, sub, off };
 pub const ClaudeMeterMode = enum { off, compact, ticker };
 
+/// How an `Open ×N` batch of Claude sessions stands (`ai.batch_arrange`):
+/// N tabs in the active leaf, N full-height columns of equal width, or
+/// the grid (2×2 for four, 3×2 for six…; for two and three the grid is
+/// the columns).
+pub const BatchArrange = enum { tabs, columns, grid };
+
 pub const AiRoute = struct { backend: ?AiBackend = null };
 
 pub const AiRouting = struct {
@@ -1184,6 +1190,11 @@ pub const Ai = struct {
     /// / Codex sessions stand side by side, each column a stack of the
     /// rest. 1 is one session maximised; clamped to 1..4 on load.
     session_columns: u8 = 2,
+    /// The last arrangement picked from an `Open ×N ▸` row, which a plain
+    /// click on `Open ×N` (and `ai.claude_code_new_xN`) repeats. Never
+    /// picked: the AI layout toggle decides — tabs in tabs mode, else
+    /// the grid.
+    batch_arrange: ?BatchArrange = null,
     /// The Claude logins the usage chip and pane read; see `ClaudeAccount`.
     claude_accounts: []const ClaudeAccount = &.{},
     /// Every key not named above, kept verbatim for the AI subsystems
