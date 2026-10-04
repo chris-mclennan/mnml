@@ -44,6 +44,8 @@ pub const Col = struct {
     rest: bool = false,
     /// Dropped in this order when the width runs out (0 = never).
     drop: u8 = 0,
+    /// A number, a hash or a date: never wider than `w`.
+    fixed: bool = false,
 };
 
 /// The reference's column tables. `drop` ranks: 1 goes first.
@@ -52,38 +54,38 @@ pub const pr_tree_cols = [_]Col{
     .{ .name = "STATE", .w = 10, .drop = 4 },
     .{ .name = "AUTHOR", .w = 18, .drop = 2 },
     .{ .name = "BRANCH", .w = 22, .drop = 1 },
-    .{ .name = "UPDATED", .w = 12, .drop = 3 },
+    .{ .name = "UPDATED", .w = 12, .drop = 3, .fixed = true },
     .{ .name = "TITLE", .w = 20, .rest = true },
 };
 pub const pipelines_tree_cols = [_]Col{
     .{ .name = "REPO / BRANCH", .w = 38 },
     .{ .name = "STATE", .w = 14, .drop = 3 },
-    .{ .name = "BUILD", .w = 8, .drop = 2 },
+    .{ .name = "BUILD", .w = 8, .drop = 2, .fixed = true },
     .{ .name = "RESULT", .w = 13 },
-    .{ .name = "DATE", .w = 12, .drop = 1 },
+    .{ .name = "DATE", .w = 12, .drop = 1, .fixed = true },
 };
 pub const pr_flat_cols = [_]Col{
     .{ .name = "REPO", .w = 24, .drop = 4 },
-    .{ .name = "PR", .w = 8 },
+    .{ .name = "PR", .w = 8, .fixed = true },
     .{ .name = "STATE", .w = 10, .drop = 5 },
     .{ .name = "AUTHOR", .w = 16, .drop = 2 },
     .{ .name = "BRANCH → DEST", .w = 28, .drop = 1 },
-    .{ .name = "UPDATED", .w = 12, .drop = 3 },
+    .{ .name = "UPDATED", .w = 12, .drop = 3, .fixed = true },
     .{ .name = "TITLE", .w = 20, .rest = true },
 };
 pub const pipelines_flat_cols = [_]Col{
-    .{ .name = "#", .w = 8 },
+    .{ .name = "#", .w = 8, .fixed = true },
     .{ .name = "STATE", .w = 12 },
     .{ .name = "BRANCH", .w = 24, .rest = true },
-    .{ .name = "COMMIT", .w = 10, .drop = 4 },
+    .{ .name = "COMMIT", .w = 10, .drop = 4, .fixed = true },
     .{ .name = "TRIGGER", .w = 12, .drop = 3 },
-    .{ .name = "DURATION", .w = 10, .drop = 2 },
-    .{ .name = "CREATED", .w = 12, .drop = 1 },
+    .{ .name = "DURATION", .w = 10, .drop = 2, .fixed = true },
+    .{ .name = "CREATED", .w = 12, .drop = 1, .fixed = true },
 };
 pub const branches_flat_cols = [_]Col{
     .{ .name = "BRANCH", .w = 32 },
-    .{ .name = "COMMIT", .w = 10, .drop = 3 },
-    .{ .name = "LATEST", .w = 12, .drop = 2 },
+    .{ .name = "COMMIT", .w = 10, .drop = 3, .fixed = true },
+    .{ .name = "LATEST", .w = 12, .drop = 2, .fixed = true },
     .{ .name = "AUTHOR", .w = 20, .drop = 1 },
     .{ .name = "MESSAGE", .w = 20, .rest = true },
 };
@@ -101,15 +103,22 @@ pub fn colsOf(table: Table) []const Col {
 /// One cell of air between columns, as the reference's table.
 pub const gap: u16 = 1;
 
-/// The columns that fit `width`, with the `rest` column widened to the
-/// remainder. Dropped whole, highest `drop` rank last — the toolkit's
+/// The columns that fit `width`: a wide pane first widens a column
+/// whose cells are cut (`need`, from `needs`; null = unmeasured) to
+/// what it needs, then the `rest` column takes the remainder. Dropped whole, highest `drop` rank last — the toolkit's
 /// one rule for a narrow table (`sdk.pane.columns`), so this pane and
 /// the tracker pane beside it give way the same way.
-pub fn fit(a: Allocator, table: Table, width: u16) Allocator.Error![]Col {
+pub fn fit(a: Allocator, table: Table, width: u16, need: ?[]const u16) Allocator.Error![]Col {
     const all = colsOf(table);
     var specs: [16]sdk.pane.columns.Spec = undefined;
     var widths: [16]u16 = undefined;
-    for (all, specs[0..all.len]) |c, *sp| sp.* = .{ .w = c.w, .drop = c.drop, .rest = c.rest };
+    for (all, specs[0..all.len], 0..) |c, *sp, i| sp.* = .{
+        .w = c.w,
+        .drop = c.drop,
+        .rest = c.rest,
+        .fixed = c.fixed,
+        .need = if (need) |nd| (if (i < nd.len) nd[i] else 0) else 0,
+    };
     sdk.pane.columns.fit(widths[0..all.len], specs[0..all.len], width, gap);
     var out: std.ArrayList(Col) = .empty;
     for (all, widths[0..all.len]) |c, w| if (w > 0 or c.rest) {
@@ -145,11 +154,56 @@ fn cellStyle(c: RowCtx, base: Style) Style {
 
 /// The spans of one row, column by column.
 pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
-    var out: std.ArrayList(Span) = .empty;
-    const ts = c.ts;
-    const th = c.th;
+    switch (c.row) {
+        // A build line is not a table row: it is one line under the
+        // pull request it belongs to, in the toolkit's own words.
+        .build => return buildSpans(a, c),
+        .build_note => return buildNoteSpans(a, c),
+        else => {},
+    }
     var cells: [8][]const u8 = undefined;
     var styles: [8]Style = undefined;
+    const n = try rowCells(a, c, &cells, &styles);
+    var out: std.ArrayList(Span) = .empty;
+    const base = cellStyle(c, c.th.text());
+    // Lay the cells into the columns that fit: the table's own order
+    // is the cells' order, so a dropped column skips its cell.
+    const all = colsOf(tableOf(c.ts.data));
+    var ci: usize = 0;
+    var first = true;
+    for (all, 0..) |col, i| {
+        if (i >= n) break;
+        if (ci < c.cols.len and std.mem.eql(u8, c.cols[ci].name, col.name)) {
+            if (!first) try out.append(a, .{ .text = " ", .style = base, .w = gap });
+            first = false;
+            try out.append(a, .{ .text = cells[i], .style = styles[i], .w = c.cols[ci].w });
+            ci += 1;
+        }
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// The cells each of the table's columns wants on these rows — the
+/// longest cell, or the column's name — for `fit` to hand a cut column
+/// the room it needs on a wide pane.
+pub fn needs(a: Allocator, app: *App, ts: *const app_mod.TabState, rows: []const tabs.VisibleRow, th: Theme, ascii: bool, out: []u16) Allocator.Error!void {
+    const all = colsOf(tableOf(ts.data));
+    for (all, out[0..all.len]) |col, *o| o.* = @intCast(sdk.pane.width(col.name));
+    for (rows) |row| {
+        var cells: [8][]const u8 = undefined;
+        var styles: [8]Style = undefined;
+        const n = try rowCells(a, .{ .app = app, .ts = ts, .cols = &.{}, .th = th, .row = row, .selected = false, .ascii = ascii }, &cells, &styles);
+        for (cells[0..@min(n, all.len)], out[0..@min(n, all.len)]) |cell, *o| {
+            o.* = @max(o.*, @as(u16, @intCast(@min(sdk.pane.width(cell), 200))));
+        }
+    }
+}
+
+/// A table row's cells in the table's own column order, and their
+/// styles; the count laid. A build line has none.
+fn rowCells(a: Allocator, c: RowCtx, cells: *[8][]const u8, styles: *[8]Style) Allocator.Error!usize {
+    const ts = c.ts;
+    const th = c.th;
     var n: usize = 0;
     const base = cellStyle(c, th.text());
     const dim = cellStyle(c, th.mutedText());
@@ -222,10 +276,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             styles[5] = base;
             n = 6;
         },
-        // A build line is not a table row: it is one line under the
-        // pull request it belongs to, in the toolkit's own words.
-        .build => return buildSpans(a, c),
-        .build_note => return buildNoteSpans(a, c),
+        .build, .build_note => return 0,
         .branch => |b| {
             const br = ts.data.repo_tree[b.repo].branches[b.idx];
             cells[0] = try std.fmt.allocPrint(a, "    {s}", .{br.name});
@@ -310,21 +361,7 @@ pub fn rowSpans(a: Allocator, c: RowCtx) Allocator.Error![]Span {
             else => {},
         },
     }
-    // Lay the cells into the columns that fit: the table's own order
-    // is the cells' order, so a dropped column skips its cell.
-    const all = colsOf(tableOf(ts.data));
-    var ci: usize = 0;
-    var first = true;
-    for (all, 0..) |col, i| {
-        if (i >= n) break;
-        if (ci < c.cols.len and std.mem.eql(u8, c.cols[ci].name, col.name)) {
-            if (!first) try out.append(a, .{ .text = " ", .style = base, .w = gap });
-            first = false;
-            try out.append(a, .{ .text = cells[i], .style = styles[i], .w = c.cols[ci].w });
-            ci += 1;
-        }
-    }
-    return out.toOwnedSlice(a);
+    return n;
 }
 
 /// Where the last kept column starts, given the x the spans start at.
@@ -518,24 +555,41 @@ test "the reference's columns fit at 120 and drop the branch, then the author, a
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const wide = try fit(a, .pr_tree, 120);
+    const wide = try fit(a, .pr_tree, 120, null);
     try t.expectEqual(@as(usize, 6), wide.len);
     try t.expectEqualStrings("TITLE", wide[5].name);
     try t.expect(wide[5].w > 20);
-    const narrow = try fit(a, .pr_tree, 80);
+    const narrow = try fit(a, .pr_tree, 80, null);
     // 28+10+18+22+12+20 + 5 gaps = 115 > 80 → drop BRANCH (92), then
     // AUTHOR (73 ≤ 80): the title keeps its room, unlike the reference's
     // four-character columns at this width.
     try t.expectEqual(@as(usize, 4), narrow.len);
     for (narrow) |c| try t.expect(!std.mem.eql(u8, c.name, "BRANCH") and !std.mem.eql(u8, c.name, "AUTHOR"));
-    const tiny = try fit(a, .pr_tree, 50);
+    const tiny = try fit(a, .pr_tree, 50, null);
     try t.expectEqual(@as(usize, 2), tiny.len);
     try t.expectEqualStrings("REPO / #PR", tiny[0].name);
     try t.expectEqualStrings("TITLE", tiny[1].name);
-    const pipes = try fit(a, .pipelines_tree, 80);
+    const pipes = try fit(a, .pipelines_tree, 80, null);
     // 38+14+8+13+12 + 4 = 89 > 80 → drop DATE.
     try t.expectEqual(@as(usize, 4), pipes.len);
     try t.expectEqualStrings("RESULT", pipes[3].name);
+}
+
+test "measured: a wide pane widens a cut branch and author to their need, the date stays put, a narrow one is unchanged" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // REPO / #PR, STATE, AUTHOR, BRANCH, UPDATED, TITLE.
+    const need = [_]u16{ 20, 6, 26, 40, 30, 50 };
+    const wide = try fit(a, .pr_tree, 200, &need);
+    try t.expectEqual(@as(u16, 28), wide[0].w);
+    try t.expectEqual(@as(u16, 26), wide[2].w);
+    try t.expectEqual(@as(u16, 40), wide[3].w);
+    try t.expectEqual(@as(u16, 12), wide[4].w);
+    const narrow = try fit(a, .pr_tree, 80, &need);
+    const plain = try fit(a, .pr_tree, 80, null);
+    try t.expectEqual(plain.len, narrow.len);
+    for (plain, narrow) |p, n| try t.expectEqual(p.w, n.w);
 }
 
 test "wrapping breaks on a space when it can and never loses a character" {

@@ -368,13 +368,17 @@ fn paintList(arena: Allocator, p: *Painter, box: Box) Allocator.Error!void {
         return;
     }
     const inner_w = box.w -| 2; // the marker column and a cell of air
-    const cols = try view.fit(arena, view.tableOf(ts.data), inner_w -| 1);
+    const v = try app.visible(arena);
+    // What each column's longest row wants, so a wide pane widens a cut
+    // column before it leaves cells empty.
+    var need: [16]u16 = @splat(0);
+    try view.needs(arena, app, ts, v.rows, th, !p.nerd, &need);
+    const cols = try view.fit(arena, view.tableOf(ts.data), inner_w -| 1, &need);
     // The toolkit's column header — the one every table in the family
     // wears, so this pane's and a private pane's cannot drift apart.
     _ = p.c.columnHeader(box.x + 2, box.y, inner_w -| 1, cols, view.gap);
     if (box.h < 2) return;
     const list: Box = .{ .x = box.x, .y = box.y + 1, .w = box.w, .h = box.h - 1 };
-    const v = try app.visible(arena);
     if (v.rows.len == 0) {
         const msg: []const u8 = if (ts.loading) "loading…" else if (!ts.fetched) "not fetched yet — r" else if (app.filter.items.len > 0) "No matches — esc clears" else emptyMessage(ts.spec.kind);
         _ = p.text(list.x + 2, list.y, list.w -| 2, msg, th.mutedText());
@@ -1819,7 +1823,7 @@ test "the column header is the toolkit's, cell for cell what this pane painted b
     defer arena.deinit();
     for ([_]view.Table{ .pr_tree, .pipelines_tree, .pr_flat, .pipelines_flat, .branches_flat }) |table| {
         for ([_]u16{ 20, 43, 60, 80, 120, 200 }) |w| {
-            const cols = try view.fit(arena.allocator(), table, w -| 3);
+            const cols = try view.fit(arena.allocator(), table, w -| 3, null);
             var a = try sdk.Frame.init(t.allocator, w, 1);
             defer a.deinit();
             var b = try sdk.Frame.init(t.allocator, w, 1);
