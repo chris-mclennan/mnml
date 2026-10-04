@@ -524,7 +524,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // ── branch, PR ──
     if (try branchSeg(app, ui)) |s| try push(&left, arena, s);
     if (currentPr(app)) |pr| {
-        try push(&left, arena, Seg.init(ui.fmt("  {s}{d} ", .{ hostTag(app.git.provider), pr.number }), p.purple, p.bg2).withHit(SegId.pr.raw()));
+        try push(&left, arena, Seg.init(ui.fmt("  {s}{d} ", .{ hostTag(app.git.provider), pr.number }), p.seg.pr, p.bg2).withHit(SegId.pr.raw()));
     }
 
     // ── file: glyph in its colour, name, dirty dot; then what the file says ──
@@ -560,14 +560,14 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
                     pick = sym.name;
                 };
             };
-            if (pick) |sym_name| try push(&left, arena, Seg.init(ui.fmt(" › {s} ", .{ui.clipStr(sym_name, 40)}), p.purple, p.statusline).withHit(SegId.symbol.raw()));
+            if (pick) |sym_name| try push(&left, arena, Seg.init(ui.fmt(" › {s} ", .{ui.clipStr(sym_name, 40)}), p.seg.symbol, p.statusline).withHit(SegId.symbol.raw()));
         }
         if (e.buf.recording) |r| try push(&left, arena, Seg.init(ui.fmt(" ● rec @{c} ", .{r.reg}), p.bg_darker, p.red).withHit(SegId.macro.raw()));
         if (e.find.matches.items.len > 0) {
             const q = e.find.query.items;
             const shown = ui.clipStr(q, 24);
             const cur = if (e.find.current) |i| i + 1 else 0;
-            try push(&left, arena, Seg.init(ui.fmt(" /{s} {d}/{d} ", .{ shown, cur, e.find.matches.items.len }), p.bg_darker, p.yellow).withHit(SegId.find.raw()));
+            try push(&left, arena, Seg.init(ui.fmt(" /{s} {d}/{d} ", .{ shown, cur, e.find.matches.items.len }), p.bg_darker, p.seg.find).withHit(SegId.find.raw()));
         }
         if (try e.buf.input.pendingDisplay(arena)) |pend| if (pend.len > 0 and pend[0] != ':') {
             middle = pend;
@@ -588,7 +588,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // states a worker used to finish in without a word (`app/jobs.zig`).
     if (try jobs.chipFor(app, arena, ui.ascii)) |c| {
         const fg = switch (c.tone) {
-            .busy => p.cyan,
+            .busy => p.seg.jobs,
             .failed, .idle => p.comment,
         };
         var seg = Seg.init(c.text, fg, p.bg2).withHit(SegId.jobs.raw());
@@ -619,7 +619,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     if (enabledIcon(app, "codex")) |_| {
         const glyph = if (ui.ascii) sl.codex_ascii else sl.codex_glyph;
         const chip = try usage_pane.codexChip(app, arena, glyph);
-        const seg = Seg.init(chip.text, if (chip.has_data) p.bg_darker else p.comment, p.cyan);
+        const seg = Seg.init(chip.text, if (chip.has_data) p.bg_darker else p.comment, p.seg.codex);
         try push(&right, arena, seg.withHit(SegId.ai_codex.raw()));
     }
     // The session ring goes here, after the AI meters, once the rest of
@@ -633,7 +633,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     }
     if (coverage.shown(app)) |shown| {
         const glyph = if (ui.ascii) sl.coverage_ascii else if (enabledIcon(app, "acmeco_coverage")) |ic| (if (ic.glyph.len > 0) ic.glyph else sl.coverage_glyph) else sl.coverage_glyph;
-        var seg = Seg.init("", p.bg_darker, p.teal).withHit(SegId.coverage.raw());
+        var seg = Seg.init("", p.bg_darker, p.seg.coverage).withHit(SegId.coverage.raw());
         var head: std.ArrayListUnmanaged(u8) = .empty;
         try head.print(arena, " {s} ", .{glyph});
         var tail: std.ArrayListUnmanaged(u8) = .empty;
@@ -663,7 +663,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, seg);
     }
     try pushNowPlaying(app, ui, &right);
-    if (try transfers.chip(app, arena, ui.ascii)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.cyan).withHit(SegId.transfer.raw()));
+    if (try transfers.chip(app, arena, ui.ascii)) |text| try push(&right, arena, Seg.init(ui.fmt(" {s} ", .{text}), p.bg_darker, p.seg.transfer).withHit(SegId.transfer.raw()));
     var servers: u32 = 0;
     for (app.lsp.servers.items) |s| if (!s.transport.isDead()) {
         servers += 1;
@@ -677,7 +677,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // the file is dirty, and ` · 2 missing ` none at all.
     const missing = lsp.missingServers(app).len > 0;
     if (servers > 0) {
-        var seg = Seg.init(ui.fmt(" LSP {d}", .{servers}), p.bg_darker, p.blue).withHit(SegId.lsp.raw());
+        var seg = Seg.init(ui.fmt(" LSP {d}", .{servers}), p.bg_darker, p.seg.lsp).withHit(SegId.lsp.raw());
         if (missing) seg.accent = .{ .text = "?", .fg = p.bg2 };
         seg.tail = " ";
         try push(&right, arena, seg);
@@ -702,9 +702,9 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
     // WRAP: the active editor's own setting when it has one (a click
     // flips that), else the config's.
     const wrap_on = if (editor) |e| (e.wrap orelse app.cfg.ui.wrap) else app.cfg.ui.wrap;
-    if (wrap_on) try push(&right, arena, Seg.init(" WRAP ", p.bg_darker, p.purple).withHit(SegId.wrap.raw()));
+    if (wrap_on) try push(&right, arena, Seg.init(" WRAP ", p.bg_darker, p.seg.wrap).withHit(SegId.wrap.raw()));
     if (app.cfg.editor.autosave_secs > 0) {
-        try push(&right, arena, Seg.init(ui.fmt(" {s} {d}s ", .{ if (nerd) sl.autosave_glyph else sl.autosave_ascii, app.cfg.editor.autosave_secs }), p.bg_darker, p.green).withHit(SegId.autosave.raw()));
+        try push(&right, arena, Seg.init(ui.fmt(" {s} {d}s ", .{ if (nerd) sl.autosave_glyph else sl.autosave_ascii, app.cfg.editor.autosave_secs }), p.bg_darker, p.seg.autosave).withHit(SegId.autosave.raw()));
     }
     // The size ceiling is opt-in and never silent: while a buffer it
     // skipped (or one switched off by hand) is up, the row says so, and
@@ -719,7 +719,7 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt(" Ln {d}/{d} Col {d} ", .{ pos.row + 1, e.buf.editor.lineCount(), pos.col + 1 }), p.fg, p.bg2).withHit(sl.seg_position));
         if (e.buf.selectedSpan()) |sel| if (sel[1] > sel[0]) {
             const n = std.unicode.utf8CountCodepoints(e.buf.editor.bytes()[sel[0]..sel[1]]) catch sel[1] - sel[0];
-            try push(&right, arena, Seg.init(ui.fmt(" Sel {d} ", .{n}), p.bg_darker, p.yellow).withHit(SegId.sel.raw()));
+            try push(&right, arena, Seg.init(ui.fmt(" Sel {d} ", .{n}), p.bg_darker, p.seg.sel).withHit(SegId.sel.raw()));
         };
     }
     if (try stress.segment(app, arena, ui.ascii)) |text| {
@@ -752,11 +752,11 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         const ws_name = std.fs.path.basename(app.workspace);
         const label = if (app.git.repos.items.len > 1) (if (app.git.activeRepo()) |r| r.name else ws_name) else ws_name;
         const text = if (nerd) ui.fmt("{s} {s} ", .{ sl.folder_glyph, label }) else ui.fmt(" {s} ", .{label});
-        try push(&right, arena, Seg.init(text, p.blue, p.bg3).strong().withHit(SegId.workspace.raw()));
+        try push(&right, arena, Seg.init(text, p.seg.workspace, p.bg3).strong().withHit(SegId.workspace.raw()));
     }
     {
         const lang: []const u8 = if (editor) |e| (e.buf.doc.language orelse "—") else "—";
-        try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.blue).strong().withHit(sl.seg_language));
+        try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.seg.language).strong().withHit(sl.seg_language));
     }
 
     // `statusline.hidden`: the chips the user took off the row go

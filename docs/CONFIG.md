@@ -2105,6 +2105,17 @@ chains 0.2.x used (`one_bg2 → one_bg → black`, `light_grey → grey_fg2
 → grey_fg → grey → white`, `cyan → blue`, …); a missing `base_16` slot
 takes onedark's. A malformed theme fails the build, not the launch.
 
+The statusline's segments take their colours from `base_30` keys of
+mnml's own, which no NvChad palette sets: `statusline_pr`,
+`statusline_symbol`, `statusline_jobs` and `statusline_workspace` are
+a chip's text; `statusline_find`, `statusline_codex`,
+`statusline_coverage`, `statusline_transfer`, `statusline_lsp`,
+`statusline_wrap`, `statusline_autosave`, `statusline_sel` and
+`statusline_language` a chip's ground. A theme that leaves one out gets
+the colour that segment always wore (`purple`, `yellow`, `cyan`,
+`teal`, `blue`, `green`). Which segments show at all is
+`.statusline.hidden`, not the theme.
+
 ### First launch
 
 `.ui.first_launch_complete` gates the setup wizard: while it is false

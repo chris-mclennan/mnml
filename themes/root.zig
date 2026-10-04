@@ -48,6 +48,22 @@ pub const Base30 = struct {
     lightbg: ?u24 = null,
     pmenu_bg: ?u24 = null,
     folder_bg: ?u24 = null,
+    /// mnml's own: one colour per statusline segment, each falling back
+    /// to the palette colour the segment wore before it had a key
+    /// (`src/ui/theme.zig`, `Palette.seg`). No NvChad palette sets them.
+    statusline_pr: ?u24 = null,
+    statusline_symbol: ?u24 = null,
+    statusline_find: ?u24 = null,
+    statusline_jobs: ?u24 = null,
+    statusline_codex: ?u24 = null,
+    statusline_coverage: ?u24 = null,
+    statusline_transfer: ?u24 = null,
+    statusline_lsp: ?u24 = null,
+    statusline_wrap: ?u24 = null,
+    statusline_autosave: ?u24 = null,
+    statusline_sel: ?u24 = null,
+    statusline_workspace: ?u24 = null,
+    statusline_language: ?u24 = null,
 };
 
 /// The syntax palette, `base00`..`base0F`. A missing slot falls back
