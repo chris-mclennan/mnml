@@ -5629,9 +5629,12 @@ test "registry: an EXTERNAL row shows the user's name and exact state; a record 
     defer f.deinit();
     const app = &f.app;
     app.tree.visible = false;
-    const rec1 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"name\":\"payments\",\"nameSource\":\"user\",\"status\":\"idle\",\"messagingSocketPath\":\"/nowhere.sock\"}}", .{f.root});
+    const rec1 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":{f},\"name\":\"payments\",\"nameSource\":\"user\",\"status\":\"idle\",\"messagingSocketPath\":\"/nowhere.sock\"}}", .{std.json.fmt(f.root, .{})});
     defer testing.allocator.free(rec1);
-    const rec2 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":102,\"sessionId\":\"solo-9\",\"cwd\":\"{s}/sub\",\"name\":\"nightly\",\"nameSource\":\"auto\",\"status\":\"busy\"}}", .{f.root});
+    // Paths go in as JSON strings: a Windows path's backslashes are escapes.
+    const sub_dir = try std.fs.path.join(testing.allocator, &.{ f.root, "sub" });
+    defer testing.allocator.free(sub_dir);
+    const rec2 = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":102,\"sessionId\":\"solo-9\",\"cwd\":{f},\"name\":\"nightly\",\"nameSource\":\"auto\",\"status\":\"busy\"}}", .{std.json.fmt(sub_dir, .{})});
     defer testing.allocator.free(rec2);
     try writeRecord(&f, "101.json", rec1);
     try writeRecord(&f, "102.json", rec2);
@@ -5691,13 +5694,15 @@ fn lastToast(app: *App) []const u8 {
 }
 
 test "take over: busy is refused; a non-claude pid is refused; idle signals once, waits for the record to go, then resumes here; a session that stays is left running" {
+    // Taking over is not on Windows yet (no SIGTERM): the command says so.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var f = try Fixture.init(120, 30);
     defer f.deinit();
     const app = &f.app;
     app.tree.visible = false;
     var fake: FakeSig = .{ .cmd = "/usr/local/bin/claude --resume ext-1" };
     app.sessions.signaler = fake.signaler();
-    const busy = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"status\":\"busy\"}}", .{f.root});
+    const busy = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":{f},\"status\":\"busy\"}}", .{std.json.fmt(f.root, .{})});
     defer testing.allocator.free(busy);
     try writeRecord(&f, "101.json", busy);
     var ext = item("ext-1", .streaming, 30, std.fs.path.basename(f.root), "fix the ledger");
@@ -5711,7 +5716,7 @@ test "take over: busy is refused; a non-claude pid is refused; idle signals once
     try testing.expect(app.overlay != .confirm);
     try testing.expect(std.mem.indexOf(u8, lastToast(app), "try when it is idle") != null);
     // Idle; but the pid is someone else's program now.
-    const idle = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":\"{s}\",\"status\":\"idle\",\"x\":0}}", .{f.root});
+    const idle = try std.fmt.allocPrint(testing.allocator, "{{\"pid\":101,\"sessionId\":\"ext-1\",\"cwd\":{f},\"status\":\"idle\",\"x\":0}}", .{std.json.fmt(f.root, .{})});
     defer testing.allocator.free(idle);
     try writeRecord(&f, "101.json", idle);
     session_takeover.readRegistry(app);
