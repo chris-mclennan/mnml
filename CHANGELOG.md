@@ -29,6 +29,16 @@ the release ships one file), and one line per change a user can see.
   its own terminal and resumes it in a pane here, after a confirm. A
   working session is refused; the pid must still be a `claude` process;
   SIGTERM only, and one that does not exit in 10 s is left running.
+### Sessions by number
+
+- `sessions.focus_1` … `focus_9` focus the Nth session as the SESSIONS
+  panel lists it — `Space a 1` … `Space a 9` under vim, `Ctrl+Alt+1` …
+  `Ctrl+Alt+9` under standard. A session on another tab page brings
+  that page up; in the sessions mode it is swapped into the focused
+  column; past the last card it says so.
+- Each of the first nine cards wears its number, a muted digit in the
+  column left of the card, under the on-screen / ready mark; the sessions table has a `#` column with the
+  same numbers. The card's hover lists its chord.
 
 ### Claude accounts: one Re-auth per account
 

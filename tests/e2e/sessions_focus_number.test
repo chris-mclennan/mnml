@@ -1,0 +1,44 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Sessions by number (`app/session_numbers.zig`): three stand-in
+# sessions, numbered through the window title; the SESSIONS cards wear
+# their numbers in the column left of the card, a row under the mark, and `Space a 2` under vim
+# focuses the second as the panel lists it, from an editor. Standard's
+# `Ctrl+Alt+3` takes the third; a number past the last card toasts.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600\n
+shell chmod +x bin/claude
+write b.txt "bravo bravo"
+open b.txt
+command sessions.sort_manual
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command view.activity_sessions
+open b.txt
+expect pane b.txt
+expect within 5000 screen contains "fake claude 3"
+# The cards wear their numbers, muted, in the gutter under the mark.
+expect screen contains "│1▌ fake claude 1"
+expect screen contains "│2▌ fake claude 2"
+expect screen contains "│3▌ fake claude 3"
+# vim: `Space a 2` from the editor focuses the second.
+command editor.use_vim
+key space
+key a
+key 2
+wait 300
+expect pane claude 2
+# standard: `Ctrl+Alt+3` the third; nine past the three toasts.
+command editor.use_standard
+open b.txt
+expect pane b.txt
+key ctrl+alt+3
+wait 300
+expect pane claude 3
+key ctrl+alt+9
+wait 300
+expect screen contains "no session 9 — 3 listed"
+expect pane claude 3
