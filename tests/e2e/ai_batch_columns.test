@@ -36,8 +36,9 @@ command view.only
 rightclick 6 4
 hover 15 9
 click 56 11
-wait 600
-expect screen contains "opened 3 Claude sessions side by side"
+# Under load the three sessions start late: wait for their toast and
+# for the row to settle into four columns rather than reading it once.
+expect within 20000 screen contains "opened 3 Claude sessions side by side"
 # The editor's column is half the row; the sessions a third of the
 # other half each.
-expect screen contains "│▌  1 alpha                                  │▌             │▌             │▌             "
+expect within 20000 screen contains "│▌  1 alpha                                  │▌             │▌             │▌             "
