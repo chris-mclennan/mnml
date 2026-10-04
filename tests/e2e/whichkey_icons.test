@@ -21,7 +21,7 @@ expect screen contains "󰘵 b → new buffer"
 expect screen lacks "+buffer"
 expect screen contains " L → +lang/run (20)"
 expect screen contains "󰓂 P → +pr (2)"
-expect screen contains "󰚩 a → +ai/term (16)"
+expect screen contains "󰚩 a → +ai/term (25)"
 # A root leaf has no group of its own: the neutral mark.
 expect screen contains "󰘵 q → close buffer"
 expect screen contains "󰘵 p → command palette"

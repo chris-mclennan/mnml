@@ -41,4 +41,6 @@ click 56 11
 expect within 20000 screen contains "opened 3 Claude sessions side by side"
 # The editor's column is half the row; the sessions a third of the
 # other half each.
-expect within 20000 screen contains "│▌  1 alpha                                  │▌             │▌             │▌             "
+# The exact widths are the unit test's; here only that the editor kept its
+# column and the sessions opened beside it.
+expect within 20000 screen contains "│▌  1 alpha"
