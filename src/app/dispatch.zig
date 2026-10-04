@@ -2687,7 +2687,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 } else if (sh.id >= decor.lens_hit_base) {
                     if (m.button == .left) try decor.scriptHit(app, sh.pane, sh.id);
                 } else try http_app.editorVarClick(app, sh.pane, e, sh.id, m),
-                .ai_apply => |*ap| ai_apply.click(app, ap, sh.id, m),
+                .ai_apply => |*ap| try ai_apply.click(app, sh.pane, ap, sh.id, m),
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .requests => |*rp| requests_pane.click(app, rp, sh.id, m),
@@ -3711,7 +3711,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         // mount's rows carry the wheel through `.script_hit`.
         .mount => {},
         .integrations => |*ip| integrations.scrollBy(app, ip, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
-        .ai_apply => |*ap| ai_apply.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .ai_apply => |*ap| ai_apply.step(ap, signed(down, @intCast(n * gain))),
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .requests => |*rp| requests_pane.scrollBy(rp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),

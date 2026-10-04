@@ -240,6 +240,8 @@ fn diffOrig(app: *App) CommandError!void {
 
 /// Hunk → Inline → Split → Hunk on the active diff pane.
 fn diffToggleView(app: *App) CommandError!void {
+    // A proposal under review is painted by the same view and cycles the same way.
+    if (@import("ai_apply.zig").active(app)) |r| return @import("ai_apply.zig").cycleMode(r.p);
     const dp = git.activeDiff(app) orelse return app.diag.fail(arena(app), "no diff pane is active", .{});
     try git.setDiffMode(app, dp, dp.mode.next());
 }

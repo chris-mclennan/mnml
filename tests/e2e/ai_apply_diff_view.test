@@ -1,0 +1,44 @@
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# width: 220
+# The review of a proposal — `ai.apply`'s, and Claude Code's `openDiff`,
+# which is the same pane — is painted by the git diff pane's view. A pane
+# `split_min_w` wide opens in Split (old left, new right); `t` and
+# `git.diff_toggle_view` cycle Hunk → Inline → Split as in the git panel;
+# each hunk is badged; Space skips one and `Y` takes every hunk anyway
+# and applies them as one edit.
+write bin/claude #!/bin/sh\ncat >/dev/null\nprintf 'Here:\\n\\n```\\nONE\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\nTWENTY\\n```\\n'
+shell chmod +x bin/claude
+write c.txt "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n"
+open c.txt
+command ai.fix
+wait 1200
+expect screen contains "TWENTY"
+key a
+expect screen contains "2 of 2 hunks accepted"
+expect screen contains "Accept all"
+expect screen contains " Hunk   Inline   Split "
+# Split: the old line on the left, the new on the right.
+expect screen contains "1 - 1"
+expect screen contains "1 + ONE"
+expect screen contains "[✓ accept]"
+expect screen lacks "Push"
+# t: Hunk — the git panel's hunk headers, one line column.
+key t
+expect screen contains "v @@ -1,4 +1,4 @@"
+expect screen lacks "1 + ONE"
+# t: Inline — the whole file, no hunk headers.
+key t
+expect screen lacks "@@ -1,"
+expect screen contains "TWENTY"
+# The command the git panel's view key runs: back to Split.
+command git.diff_toggle_view
+expect screen contains "1 + ONE"
+# Skip the first hunk, then Y takes it back and applies everything.
+key space
+expect screen contains "1 of 2 hunks accepted"
+expect screen contains "[  skip  ]"
+key Y
+expect screen lacks "hunks accepted"
+command file.save
+expect file c.txt contains "ONE\n2\n"
+expect file c.txt contains "19\nTWENTY\n"

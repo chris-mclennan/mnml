@@ -1982,25 +1982,20 @@ fn drawAi(app: *App, ui: Ui, id: PaneId, a: *ai_app.AiPane, rect: Rect) void {
     if (a.scroll > over) a.scroll = over;
 }
 
-/// The `ai.apply` review: hunks with their accept / skip badges.
+/// The `ai.apply` / `openDiff` review: the git diff view, each hunk
+/// badged accepted or skipped. The view is fitted to the pane first.
 fn drawAiApply(app: *App, ui: Ui, id: PaneId, p: *ai_apply.AiApplyPane, rect: Rect) void {
-    if (app.active == id) app.pane_rows = @max(rect.h, 1);
-    const Text = struct {
-        var pane: *ai_apply.AiApplyPane = undefined;
-        fn line(row: ai_apply.Row) []const u8 {
-            return ai_apply.lineText(pane, row);
-        }
-    };
-    Text.pane = p;
-    ai_apply_view.draw(ui, id, rect, &p.scroll, .{
+    if (app.active == id) app.pane_rows = @max(rect.h -| 2, 1);
+    ai_apply.fitMode(p, rect.w);
+    const review = p.acceptMask(ui.arena) catch &.{};
+    const painted = ai_apply_view.draw(ui, id, rect, &p.view, .{
+        .source = if (p.ide != null) "Claude Code" else "ai.apply",
         .file = p.file,
-        .hunks = p.hunks,
-        .rows = p.rows,
-        .cursor = p.cursor,
-        .focused = paneFocused(app, id),
-        .cursor_row = p.cursorRow(),
-        .lineText = &Text.line,
+        .accepted = p.accepted(),
+        .total = p.hunks.len,
+        .doc = p.doc(paneFocused(app, id), review),
     });
+    p.strip_cells = painted.strip_cells;
 }
 
 /// The Playwright results: the history's wobbly marks come from the app.
