@@ -805,6 +805,13 @@ otherwise. Copy what you need; leave the rest out.
         // maximised. 1..4, clamped on load; the AI chips' right-click
         // *Show side by side* sets it (sessions.columns_1 … _4).
         .session_columns = 2,
+        // The arrangement last picked from an `Open ×N ▸` row of the
+        // `+ New session` menu — Tabs, Columns (N full-height sessions side
+        // by side, equal widths) or Grid (from four up; two or three in a
+        // grid are the columns) — which a plain click on `Open ×N` and
+        // ai.claude_code_new_x2 … _x8 repeat. Written home by the pick.
+        // Unset: the AI layout toggle decides (tabs mode → tabs, else the grid).
+        .batch_arrange = null, // .tabs | .columns | .grid
         // The Claude Code logins the quota chip and the usage pane
         // (ai.claude_usage) poll. `token_path` is the OAuth token file the
         // CLI's keychain item was copied into (`ai.link_claude_token`, or R
@@ -2111,9 +2118,11 @@ mnml's own, which no NvChad palette sets: `statusline_pr`,
 a chip's text; `statusline_find`, `statusline_codex`,
 `statusline_coverage`, `statusline_transfer`, `statusline_lsp`,
 `statusline_wrap`, `statusline_autosave`, `statusline_sel` and
-`statusline_language` a chip's ground. A theme that leaves one out gets
-the colour that segment always wore (`purple`, `yellow`, `cyan`,
-`teal`, `blue`, `green`). Which segments show at all is
+`statusline_language` a chip's ground, and `statusline_pager` the
+session pager's (` ‹ ▣ 3/7 › `, its arrows and count in the dark ink).
+A theme that leaves one out gets the colour that segment always wore
+(`purple`, `yellow`, `cyan`, `teal`, `blue`, `green`; `sun` for the
+pager). Which segments show at all is
 `.statusline.hidden`, not the theme.
 
 ### First launch

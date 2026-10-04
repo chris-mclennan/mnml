@@ -50,8 +50,11 @@ the release ships one file), and one line per change a user can see.
   writes `.statusline.hidden` to the home config. RESTRICTED and the
   sandbox chip never hide.
 - A theme can colour the segments: `statusline_lsp`, `statusline_wrap`,
-  `statusline_language` and ten more `base_30` keys, each falling back to
+  `statusline_language` and eleven more `base_30` keys, each falling back to
   the colour the segment wore before.
+- The session pager, ` ‹ ▣ 1/1 › `, has a ground of its own instead of the
+  bar's dark grey: `sun` (a theme sets `statusline_pager`), its arrows and
+  count in the dark ink the other coloured chips use.
 - The bell's right-click marks the unread warnings read and copies the
   last message or the whole log; the mode chip's offers *Toggle keymap*.
 - The spinner — the jobs chip's, the panels', an integration pane's — is
@@ -137,6 +140,11 @@ to the issue or pull request they name.
 
 - The `+ New session` menu opens a batch of 3 or 6 Claude Code sessions
   as well as 2, 4 or 8 (`ai.claude_code_new_x3`, `_x6`).
+- Each `Open ×N` row of that menu opens its arrangements to the right:
+  *Tabs*, *Columns* — N full-height sessions side by side, equal widths —
+  and, from four up, *Grid*. The pick is remembered (`ai.batch_arrange`)
+  as what a plain click on `Open ×N` does; until one is made the AI
+  layout toggle decides, as before.
 - The Sessions row of the activity bar enters the sessions mode: the editor
   layout is put aside and every Claude Code and Codex session stands in
   columns side by side (`ai.session_columns`, 1 to 4, default 2; the AI

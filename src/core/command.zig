@@ -697,6 +697,10 @@ pub const MenuAction = union(enum) {
     /// `.custom` is not a row here, exactly as below — baking an SVG is
     /// its own prompt (`view.claude_mark_custom`).
     set_claude_mark: @import("../config/Config.zig").ClaudeMark,
+    /// An `Open ×N ▸` child row: `n` Claude sessions arranged so, and
+    /// the arrangement remembered for the parent row's plain click
+    /// (`ai.batch_arrange`).
+    open_batch: struct { n: u8, arrange: @import("../config/Config.zig").BatchArrange },
     /// The terminal chip's `Icon ▸` rows — the ghost or the codicon
     /// (`app/terminal_glyph.zig`, `ui.terminal_glyph`). `.custom` is
     /// not a row here: baking an SVG is its own prompt.

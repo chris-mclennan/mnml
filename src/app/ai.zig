@@ -1566,15 +1566,79 @@ fn newSessionWorktree(app: *App) CommandError!void {
     try @import("session_worktree.zig").openNamePrompt(app, .claude, launch_profiles.defaultName(app, .claude));
 }
 
-/// N Claude sessions: N tabs in tabs mode, else the grid — with a new
-/// page every eight (`ai_grid.openBatch`).
+/// What a plain `Open ×N` does: the arrangement last picked from its
+/// `▸` rows (`ai.batch_arrange`), else the AI layout toggle — tabs in
+/// tabs mode, the grid otherwise. Two or three in a grid are columns.
+pub fn batchArrange(app: *App, n: usize) Config.BatchArrange {
+    const a: Config.BatchArrange = app.cfg.ai.batch_arrange orelse if (tabsMode(app)) .tabs else .grid;
+    return if (a == .grid and n <= 3) .columns else a;
+}
+
+/// N Claude sessions, arranged as `batchArrange` says (`ai_grid.openBatch`
+/// for the grid — a new page every eight).
 fn openBatch(app: *App, n: usize) CommandError!void {
+    return openBatchAs(app, n, batchArrange(app, n));
+}
+
+fn openBatchAs(app: *App, n: usize, arrange: Config.BatchArrange) CommandError!void {
     if (route(app, .claude) == .off) return app.diag.fail(app.frame.allocator(), "claude is routed off in .ai.routing", .{});
     showSessionsSection(app);
-    if (!tabsMode(app)) return ai_grid.openBatch(app, n);
+    switch (arrange) {
+        .grid => return ai_grid.openBatch(app, n),
+        .columns => return openColumns(app, n),
+        .tabs => {},
+    }
     var i: usize = 0;
     while (i < n) : (i += 1) _ = (try openSession(app, .claude, .tab)) orelse break;
     app.toast("opened {d} Claude session{s}", .{ n, if (n == 1) "" else "s" });
+}
+
+/// `n` sessions side by side, each the page's full height: the first
+/// goes to the right edge of the whole tree (an empty page it fills),
+/// each next one splits the last to its right, and the row is shared
+/// out evenly (`equalizeAxis`) whatever `integrations.arrange` says —
+/// equal columns are the point of the pick. Whatever stood on the page
+/// keeps its place as the row's first column.
+fn openColumns(app: *App, n: usize) CommandError!void {
+    var last: ?PaneId = null;
+    var spawned: usize = 0;
+    while (spawned < n) : (spawned += 1) {
+        if (last) |l| app.setActive(l);
+        const id = (try openSession(app, .claude, .right)) orelse break;
+        const layout = app.layouts.current();
+        if (last == null) try layout.moveToEdge(id, .right);
+        last = id;
+    }
+    const l = last orelse return;
+    const layout = app.layouts.current();
+    if (layout.leafOf(l)) |leaf| if (layout.parentOf(leaf)) |p| layout.equalizeAxis(p);
+    app.setActive(l);
+    app.needs_render = true;
+    if (spawned > 1) app.toast("opened {d} Claude sessions side by side", .{spawned});
+}
+
+/// An `Open ×N ▸` child row: remember the pick (home config) for the
+/// parent's plain click, then open the batch so.
+pub fn pickBatch(app: *App, n: usize, arrange: Config.BatchArrange) CommandError!void {
+    app.cfg.ai.batch_arrange = arrange;
+    if ((try settings.configPath(app, .home)) != null) _ = try settings.persist(app, .home, &.{ "ai", "batch_arrange" }, arrange);
+    return openBatchAs(app, n, arrange);
+}
+
+/// The `▸` rows under `Open ×N`: Tabs and Columns, and Grid from four
+/// up (two or three in a grid are the columns). The arrangement a plain
+/// click would use wears the tick.
+pub fn batchMenuRows(app: *App, arena: std.mem.Allocator, n: u8) std.mem.Allocator.Error![]const command.MenuItem {
+    const cur = batchArrange(app, n);
+    const all = [_]struct { a: Config.BatchArrange, label: []const u8 }{
+        .{ .a = .tabs, .label = "Tabs" },
+        .{ .a = .columns, .label = "Columns" },
+        .{ .a = .grid, .label = "Grid" },
+    };
+    const len: usize = if (n <= 3) 2 else 3;
+    const rows = try arena.alloc(command.MenuItem, len);
+    for (rows, all[0..len]) |*r, e| r.* = .{ .label = e.label, .action = .{ .open_batch = .{ .n = n, .arrange = e.a } }, .checked = cur == e.a, .checkable = true };
+    return rows;
 }
 
 fn claudeCodeNewX2(app: *App) CommandError!void {

@@ -1339,11 +1339,13 @@ fn subMove(sub: *app_mod.MenuState.SubMenu, delta: i32) void {
     sub.cursor = @intCast(@max(0, @min(want, last)));
 }
 
-/// Enter on a menu row: a parent opens its child, a leaf runs.
+/// Enter on a menu row: a parent opens its child, a leaf runs. A parent
+/// that carries an action of its own (`Open ×N`, whose child picks the
+/// arrangement) runs it — hover and → still open the child.
 fn menuEnter(app: *App, idx: usize) Allocator.Error!void {
     const m = &app.overlay.menu;
     if (idx >= m.items.len) return;
-    if (m.items[idx].submenu.len > 0) return context_menus.openSubmenu(app, idx);
+    if (m.items[idx].submenu.len > 0 and m.items[idx].action == .none) return context_menus.openSubmenu(app, idx);
     try runMenuAction(app, m.items[idx].action);
 }
 
@@ -1444,6 +1446,13 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .toggle_auto_refresh => |p| try auto_refresh.toggle(app, p),
         .set_coverage_mode => |m| try coverage.setMode(app, m),
         .set_claude_mark => |m| try @import("claude_mark.zig").set(app, m),
+        .open_batch => |b| ai_app.pickBatch(app, b.n, b.arrange) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                if (app.diag.msg) |m| app.toast("{s}", .{m});
+                app.diag.clear();
+            },
+        },
         .set_terminal_mark => |m| @import("terminal_glyph.zig").setMark(app, m) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},

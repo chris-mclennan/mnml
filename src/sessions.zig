@@ -2452,22 +2452,28 @@ pub fn menuLinks(app: *App, arena: Allocator, card: ?Card, it: ?Item) Allocator.
 /// The `+ New session` menu: a local session, a batch (×2 / ×3 / ×4 /
 /// ×6 / ×8), and — the cloud wizards' new home — a cloud run by ticket or
 /// through the wizard. The cloud rows say when the API is not
-/// configured rather than hide.
+/// configured rather than hide. A batch row opens its arrangements to
+/// the right (Tabs / Columns / Grid, `ai.batchMenuRows`); a plain click
+/// on it repeats the last one picked.
 pub fn openNewMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const cloud_ok = cloud_agents.configured(&app.cfg.cloud_agents, &app.env);
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const arena = mem.allocator();
+    const ai_app = @import("app/ai.zig");
     const items = try app.gpa.dupe(command.MenuItem, &.{
         .{ .label = "New local session", .action = .{ .command = .@"ai.claude_code_new" } },
         .{ .label = "New session in a worktree…", .action = .{ .command = .@"ai.new_session_worktree" } },
-        .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" } },
-        .{ .label = "Open ×3", .action = .{ .command = .@"ai.claude_code_new_x3" } },
-        .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" } },
-        .{ .label = "Open ×6", .action = .{ .command = .@"ai.claude_code_new_x6" } },
-        .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" } },
+        .{ .label = "Open ×2", .action = .{ .command = .@"ai.claude_code_new_x2" }, .submenu = try ai_app.batchMenuRows(app, arena, 2) },
+        .{ .label = "Open ×3", .action = .{ .command = .@"ai.claude_code_new_x3" }, .submenu = try ai_app.batchMenuRows(app, arena, 3) },
+        .{ .label = "Open ×4", .action = .{ .command = .@"ai.claude_code_new_x4" }, .submenu = try ai_app.batchMenuRows(app, arena, 4) },
+        .{ .label = "Open ×6", .action = .{ .command = .@"ai.claude_code_new_x6" }, .submenu = try ai_app.batchMenuRows(app, arena, 6) },
+        .{ .label = "Open ×8", .action = .{ .command = .@"ai.claude_code_new_x8" }, .submenu = try ai_app.batchMenuRows(app, arena, 8) },
         .{ .label = if (cloud_ok) "New cloud run…" else "New cloud run… (not configured)", .action = .{ .command = .@"cloud_agents.new_run" }, .separator_before = true },
         .{ .label = if (cloud_ok) "New cloud run (wizard)…" else "New cloud run (wizard)… (not configured)", .action = .{ .command = .@"cloud_agents.new_run_wizard" } },
     });
     errdefer app.gpa.free(items);
-    try app.openMenu("New session", items, x, y);
+    try context_menus.openOwned(app, "New session", items, x, y, mem);
 }
 
 /// The history chip's right-click: show / hide the ended sessions, or

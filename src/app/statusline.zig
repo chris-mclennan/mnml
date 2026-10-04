@@ -918,11 +918,14 @@ fn insertSessions(app: *App, ui: Ui, width: u16, left: []const Seg, right: *Lane
     const glyph = if (ui.ascii) meta.fallback else meta.glyph;
     const idx: ?usize = if (app.active) |a| std.mem.indexOfScalar(app_mod.PaneId, ring, a) else null;
     const num = if (idx) |i| ui.fmt("{d}/{d}", .{ i + 1, ring.len }) else ui.fmt("{d}", .{ring.len});
-    const bg = p.bg2;
-    const prev = Seg.init(if (ui.ascii) " <" else " \u{2039}", p.fg, bg).strong().withHit(SegId.session_prev.raw());
-    const next = Seg.init(if (ui.ascii) "> " else "\u{203A} ", p.fg, bg).strong().withHit(SegId.session_next.raw());
-    const full = Seg.init(ui.fmt(" {s} {s} ", .{ glyph, num }), p.purple, bg).withHit(SegId.sessions.raw());
-    const bare = Seg.init(ui.fmt(" {s} ", .{glyph}), p.purple, bg).withHit(SegId.sessions.raw());
+    // Its own ground (`statusline_pager`, else `sun`), the arrows and
+    // the count in the dark ink every coloured chip wears.
+    const bg = p.seg.pager;
+    const ink = p.bg_darker;
+    const prev = Seg.init(if (ui.ascii) " <" else " \u{2039}", ink, bg).strong().withHit(SegId.session_prev.raw());
+    const next = Seg.init(if (ui.ascii) "> " else "\u{203A} ", ink, bg).strong().withHit(SegId.session_next.raw());
+    const full = Seg.init(ui.fmt(" {s} {s} ", .{ glyph, num }), ink, bg).withHit(SegId.sessions.raw());
+    const bare = Seg.init(ui.fmt(" {s} ", .{glyph}), ink, bg).withHit(SegId.sessions.raw());
     const forms = [_][]const Seg{ &.{ prev, full, next }, &.{ prev, bare, next }, &.{bare} };
     const ground = ui.theme.statusline.bg;
     for (forms, 0..) |form, i| {

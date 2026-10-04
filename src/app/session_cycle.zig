@@ -437,6 +437,28 @@ test "the statusline's sessions chip: ` ‹ ▣ 2/2 › ` while sessions are ope
     try t.expect(@import("side.zig").isShown(app, .sessions));
 }
 
+test "the statusline's sessions chip wears its own ground — `statusline_pager`, else `sun` — with the arrows and the count in the dark ink, not the bar's grey" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var f = try Fx.init(160, 40);
+    defer f.deinit();
+    const app = &f.app;
+    const statusline = @import("statusline.zig");
+    _ = try f.run(.@"ai.claude_code_new_right");
+    const p = &app.theme.palette;
+    try t.expect(!std.meta.eql(p.seg.pager, p.bg2));
+    try t.expect(std.meta.eql(p.seg.pager, p.sun));
+    for ([_]statusline.SegId{ .session_prev, .sessions, .session_next }) |id| {
+        const at = (try f.hitOn(.{ .statusline_seg = id.raw() })).?;
+        // The cell the hit starts on is the chip's padding; the next
+        // one carries the arrow (or the glyph) itself.
+        for ([_]u16{ at[0], at[0] + 1 }) |x| {
+            const cell = app.screen.readCell(x, at[1]).?;
+            try t.expectEqual(p.seg.pager, cell.style.bg);
+            try t.expectEqual(p.bg_darker, cell.style.fg);
+        }
+    }
+}
+
 test "a session in the bottom dock stays in the ring: its strip and the statusline read 2/2, the steps reach it there and leave it docked" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var f = try Fx.init(120, 40);
