@@ -12,6 +12,24 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### SESSIONS: names, states and verbs from Claude Code's registry
+
+- EXTERNAL rows — sessions running in another terminal — read Claude
+  Code's live-session registry (`~/.claude/sessions/<pid>.json`): a
+  session the user named shows that name and its exact state (`busy`,
+  `idle`, `waiting`) instead of `main (47c3b85c)`, and a running session
+  with no transcript yet is listed too. The registry is undocumented and
+  may change; an unreadable file is skipped and the transcripts stay the
+  listing. `sessions.registry = false` turns it off (docs/API.md).
+- *Ask what it is doing* (`sessions.ask_external`) sends the session one
+  cross-session message asking what it is working on and whether it is
+  safe to interrupt; its reply, read from its transcript, shows as a
+  toast within 60 s. Not on Windows yet.
+- *Take over…* (`sessions.take_over`) ends an idle or waiting session in
+  its own terminal and resumes it in a pane here, after a confirm. A
+  working session is refused; the pid must still be a `claude` process;
+  SIGTERM only, and one that does not exit in 10 s is left running.
+
 ### Claude accounts: one Re-auth per account
 
 - Each account in the Claude usage pane has a state line under its
