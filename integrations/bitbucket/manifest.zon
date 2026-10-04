@@ -56,7 +56,18 @@
     // config's `repos` when it lists any and adds `<workspace>/<repo>#n`;
     // else mnml binds it from $BITBUCKET_WORKSPACE (the workspace field's
     // fallback above).
+    //
+    // A bare number names no repo — `Pull request 5505`, `PR #5505`,
+    // `pipeline 10554` — so these three are `.resolve = .range`: each
+    // `--values` poll publishes which numbers each repo is using (its
+    // lowest and highest pull request and pipeline seen, kept in
+    // cache/link-ranges.json), and mnml fills `{repo}` with the repo
+    // whose range holds the number. Several repos: the link opens the
+    // workspace's own first and its menu lists each. None: no link.
     .links = .{
         .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}" },
+        .{ .pattern = "(?i)\\bpull request #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
+        .{ .pattern = "(?i)\\bPR #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
+        .{ .pattern = "(?i)\\bpipeline #?(\\d+)", .url = "https://bitbucket.org/{repo}/pipelines/results/{1}", .resolve = .range, .ranges = "pipeline" },
     },
 }

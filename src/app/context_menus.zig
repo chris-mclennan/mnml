@@ -1346,10 +1346,7 @@ pub fn openPtyPaneMenu(app: *App, pane: PaneId, x: u16, y: u16) Allocator.Error!
     const link: ?[]const u8 = if (app.panes.pty(pane)) |pt| try pty_pane.linkUnder(app, mem.allocator(), pt, x, y) else null;
     const link_cells: ?Rect = if (link == null) null else if (app.panes.pty(pane)) |pt| try pty_pane.linkCellsUnder(app, pt, x, y) else null;
     var all: std.ArrayList(MenuItem) = .empty;
-    if (link) |url| try all.appendSlice(mem.allocator(), &.{
-        .{ .label = "Copy link", .action = .{ .copy_link = url } },
-        .{ .label = "Open link", .action = .{ .open_url = url } },
-    });
+    if (link) |url| try appendLinkRows(app, mem.allocator(), &all, url);
     try all.appendSlice(mem.allocator(), &.{
         .{ .label = "Copy", .action = .{ .command = .@"term.copy" }, .separator_before = link != null },
         .{ .label = "Paste", .action = .{ .command = .@"term.paste" } },
@@ -1418,6 +1415,19 @@ pub fn openWelcomeRecentMenu(app: *App, path: []const u8, x: u16, y: u16) Alloca
     try openOwned(app, std.fs.path.basename(copy), rows, x, y, mem);
 }
 
+/// A link's rows: Copy link, then Open link — or, for a bare number
+/// several repos could mean (`link_rules`' `.range` links), one
+/// `Open in <repo>` per candidate, the one a click opens first.
+fn appendLinkRows(app: *App, arena: Allocator, all: *std.ArrayList(MenuItem), url: []const u8) Allocator.Error!void {
+    try all.append(arena, .{ .label = "Copy link", .action = .{ .copy_link = url } });
+    const cs = app.link_rules.candidates(url);
+    if (cs.len < 2) return all.append(arena, .{ .label = "Open link", .action = .{ .open_url = url } });
+    for (cs) |c| try all.append(arena, .{
+        .label = try std.fmt.allocPrint(arena, "Open in {s}", .{c.repo}),
+        .action = .{ .open_url = try arena.dupe(u8, c.url) },
+    });
+}
+
 /// A link (a preview's, a detail pane's — Rust `integration_detail_links`
 /// copies the URL): open it, copy it.
 pub fn openLinkMenu(app: *App, url: []const u8, cells: ?Rect, x: u16, y: u16) Allocator.Error!void {
@@ -1426,10 +1436,9 @@ pub fn openLinkMenu(app: *App, url: []const u8, cells: ?Rect, x: u16, y: u16) Al
     const arena = mem.allocator();
     const copy = try arena.dupe(u8, url);
     // The rows a terminal pane's right-click on a link has, in its order.
-    const rows = try items(app, &.{
-        .{ .label = "Copy link", .action = .{ .copy_link = copy } },
-        .{ .label = "Open link", .action = .{ .open_url = copy } },
-    });
+    var all: std.ArrayList(MenuItem) = .empty;
+    try appendLinkRows(app, arena, &all, copy);
+    const rows = try items(app, all.items);
     errdefer app.gpa.free(rows);
     try openOwned(app, "Link", rows, x, y, mem);
     app.overlay.menu.link = cells;

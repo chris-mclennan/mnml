@@ -12,6 +12,22 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### A bare pull-request or pipeline number links
+
+- `Pull request 5505`, `PR #5505` and `pipeline 10554` link to the
+  repository whose numbers hold them. The Bitbucket integration's
+  `--values` poll publishes, per repo, the lowest and highest pull
+  request and pipeline it has seen (pipelines asked for once an hour),
+  keeps them in `cache/link-ranges.json`, and mnml allows 50 above the
+  highest. Several repositories: the link opens the workspace's own
+  first and its menu lists `Open in <repo>` for each; none: no link.
+  Reinstall the integration (`mnml-bitbucket --install`) to pick up the
+  new links.
+- SDK: a `links[]` entry may say `.resolve = .range, .ranges = "<kind>"`
+  and put `{repo}` in its url; `Ipc.linkRanges(id, rows)` publishes the
+  `{repo, kind, low, high}` table it reads (`docs/SDK.md`, *Links*).
+- `.test` scripts: `click X Y ctrl` (or `super`, `alt`, `shift`).
+
 ### Tables use the width they have
 
 - A table no longer cuts a name with `…` while the right of the pane is

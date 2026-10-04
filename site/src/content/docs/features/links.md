@@ -64,6 +64,17 @@ the rule:
 - It adds the long form, `<workspace>/<repo>#<number>`, beside the short
   one.
 
+A bare number links too — `Pull request 5505`, `PR #5505`,
+`pipeline 10554` — when only one repository could mean it. Each repo is
+at its own height (one in the 5000s, another in the 7000s), so the
+integration's statusline poll publishes the lowest and highest pull
+request and pipeline number it has seen in each, and mnml looks the
+number up there, allowing 50 above the highest for one opened since the
+poll. One repository: the number links to it. Several: it links to the
+first — your workspace's own repository first — and its right-click
+menu lists `Open in <repo>` for each. None, or before the first poll: it
+stays plain text. In a terminal, Ctrl/Cmd+click opens it.
+
 Some references never link:
 
 - **A bare `#42`.** It names no repository, so there is nothing to open.

@@ -28,6 +28,7 @@ const tabs = @import("tabs.zig");
 const filters = @import("filters.zig");
 const dates = @import("dates.zig");
 const review_cache = @import("review_cache.zig");
+const link_ranges = @import("link_ranges.zig");
 const sdk = @import("mnml_sdk");
 const merge = sdk.pane.merge;
 const j = @import("json.zig");
@@ -282,6 +283,10 @@ pub const Worker = struct {
     /// comments request per pull request on every refresh, only the
     /// statusline run does. The caller owns it.
     review_cache: ?*review_cache.Cache = null,
+    /// The `--values` poll's link range table: every pull request the
+    /// listing returns widens it, and each repo's pipelines are asked
+    /// for when `link_ranges.pipeline_probe_secs` has passed.
+    link_ranges: ?*link_ranges.Table = null,
     scope_gen: ?u32 = null,
     scope_arena: ?std.heap.ArenaAllocator = null,
     scope_repos: []const []const u8 = &.{},
@@ -905,6 +910,27 @@ pub const Worker = struct {
 
     // ─── the statusline values ───────────────────────────────────────
 
+    /// Each repo's newest pipelines, for the link range table — only a
+    /// repo whose numbers are older than `pipeline_probe_secs`, so the
+    /// poll pays one request per repo an hour, not one per poll. A
+    /// failed answer is left for the next poll.
+    fn probePipelines(w: *Worker, a: Allocator, lr: *link_ranges.Table, workspace: []const u8, repos: []const []const u8, now_secs: i64) Allocator.Error!void {
+        for (repos) |slug| {
+            const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ workspace, slug });
+            if (!lr.due(full, "pipeline", now_secs, link_ranges.pipeline_probe_secs)) continue;
+            var reply = try w.client.listPipelines(w.gpa, workspace, slug, 10);
+            defer reply.deinit(w.gpa);
+            switch (reply) {
+                .ok => |body| {
+                    const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                    for (try model.parsePipelines(a, v)) |p| try lr.observe(full, "pipeline", @intCast(@max(p.build_number, 0)));
+                    try lr.probed(full, "pipeline", now_secs);
+                },
+                .failed => {},
+            }
+        }
+    }
+
     /// The reference's `--values`: OPEN PRs the account authored, updated
     /// in the last `stale_after_days`, not on an excluded branch, across
     /// `repos` (or every repo of the workspace); how many, and how many
@@ -967,6 +993,7 @@ pub const Worker = struct {
                 .ok => |body| {
                     const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
                     for (try model.parsePullRequests(a, v)) |pr| {
+                        if (w.link_ranges) |lr| try lr.observe(try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug }), "pr", @intCast(@max(pr.id, 0)));
                         var excluded = false;
                         for (patterns) |p| if (model.branchMatches(p, pr.source_branch)) {
                             excluded = true;
@@ -997,6 +1024,7 @@ pub const Worker = struct {
             }
         }
         if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
+        if (w.link_ranges) |lr| try w.probePipelines(a, lr, scope.workspace, repos, now_secs);
         var out: ValuesResult = .{
             .open_mine = open,
             .unapproved_mine = open - approved,

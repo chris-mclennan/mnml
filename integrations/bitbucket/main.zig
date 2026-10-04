@@ -38,6 +38,7 @@ const api = @import("src/api.zig");
 const ratelimit = @import("src/ratelimit.zig");
 const cache_mod = @import("src/cache.zig");
 const review_cache = @import("src/review_cache.zig");
+const link_ranges = @import("src/link_ranges.zig");
 const fetch = @import("src/fetch.zig");
 const app_mod = @import("src/app.zig");
 const screen = @import("src/screen.zig");
@@ -363,7 +364,16 @@ pub fn linkSpec(arena: Allocator, m: sdk.Manifest, workspace: []const u8, repos:
     };
     var ws_re: std.ArrayListUnmanaged(u8) = .empty;
     try appendEscaped(arena, &ws_re, ws);
-    const links = try arena.alloc(sdk.manifest.Link, 2);
+    // The `.range` links (a bare `Pull request 5505`) name no workspace
+    // and no repo; they ride along unchanged.
+    var ranged: usize = 0;
+    for (m.links) |l| ranged += @intFromBool(l.resolve == .range);
+    const links = try arena.alloc(sdk.manifest.Link, 2 + ranged);
+    var k: usize = 2;
+    for (m.links) |l| if (l.resolve == .range) {
+        links[k] = l;
+        k += 1;
+    };
     links[0] = .{
         .pattern = try std.fmt.allocPrint(arena, "(?<![/\\w.-])({s})/({s})#(\\d+)", .{ ws_re.items, slug }),
         .url = "https://bitbucket.org/{1}/{2}/pull-requests/{3}",
@@ -590,10 +600,11 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
 /// `review_cache` non-null asks for the second figure: the unresolved
 /// review threads, one comments request per pull request that has
 /// moved since the last run.
-fn computeValues(gpa: Allocator, io: Io, s: *Session, rc: ?*review_cache.Cache) !fetch.Result {
+fn computeValues(gpa: Allocator, io: Io, s: *Session, rc: ?*review_cache.Cache, lr: ?*link_ranges.Table) !fetch.Result {
     var progress: fetch.Progress = .{};
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
     worker.review_cache = rc;
+    worker.link_ranges = lr;
     defer worker.deinit();
     const c = s.loaded.config;
     var job = try fetch.makeJob(gpa, nowSecs(io), .{ .values = .{
@@ -642,7 +653,9 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     // one request per pull request that actually moved.
     var rc = try review_cache.Cache.open(gpa, io, s.loaded.path);
     defer rc.deinit();
-    var res = try computeValues(gpa, io, &s, &rc);
+    var lr = try link_ranges.Table.open(gpa, io, s.loaded.path);
+    defer lr.deinit();
+    var res = try computeValues(gpa, io, &s, &rc, &lr);
     defer res.deinit();
     const v = res.payload.values;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -651,6 +664,7 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
     if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), Mark.fromEnv(env)) catch {};
+    publishRanges(io, &lr, if (ipc) |*x| x else null, arena_state.allocator());
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --values: {s}\n", .{v.error_text});
         return 1;
@@ -659,6 +673,14 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     if (v.unresolved_comments) |n| try out.print("{d}", .{n}) else try out.writeAll("null");
     try out.writeAll("}\n");
     return 0;
+}
+
+/// After a poll: keep the table for the next run, and hand it to mnml
+/// for the `.range` links (`Pull request 5505`) — whole, every poll,
+/// so a repo that stopped appearing still resolves by its watermark.
+fn publishRanges(io: Io, lr: *link_ranges.Table, ipc: ?*const sdk.Ipc, arena: Allocator) void {
+    lr.save(io);
+    if (ipc) |x| lr.publish(x, arena, spec.id) catch {};
 }
 
 /// What the PRs figure wears: the chip's mark — the host's, through
@@ -875,7 +897,9 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     s.client.log = &s.log;
     var rc = try review_cache.Cache.open(gpa, io, s.loaded.path);
     defer rc.deinit();
-    var res = try computeValues(gpa, io, &s, &rc);
+    var lr = try link_ranges.Table.open(gpa, io, s.loaded.path);
+    defer lr.deinit();
+    var res = try computeValues(gpa, io, &s, &rc, &lr);
     defer res.deinit();
     const v = res.payload.values;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -884,6 +908,7 @@ fn refreshCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: 
     defer if (ipc) |*x| x.deinit();
     var bucket_name: [64]u8 = undefined;
     if (ipc) |*x| publishSegments(x, arena_state.allocator(), v, bucketOf(gpa, io, &s.limiter, &bucket_name), Mark.fromEnv(env)) catch {};
+    publishRanges(io, &lr, if (ipc) |*x| x else null, arena_state.allocator());
     if (v.error_text.len > 0) {
         try err.print("mnml-bitbucket --refresh: {s}\n", .{v.error_text});
         return 1;
@@ -1759,6 +1784,7 @@ const t = std.testing;
 test {
     _ = @import("src/dates.zig");
     _ = @import("src/json.zig");
+    _ = @import("src/link_ranges.zig");
     _ = @import("src/os.zig");
     _ = @import("src/ratelimit.zig");
     _ = @import("src/config.zig");
@@ -1816,9 +1842,17 @@ test "both manifests name the reference's ids, chips and commands, and validate"
     // The fourth is mnml's alone: the pull-request links' workspace.
     try t.expectEqualStrings("workspace", spec.auth[3].key);
     try t.expectEqualStrings("BITBUCKET_WORKSPACE", spec.auth[3].env_fallback.?);
-    // `<repo>#<n>` links to the pull request in that workspace; the
-    // Pipelines chip declares none (the same workspace).
-    try t.expectEqual(@as(usize, 1), spec.links.len);
+    // `<repo>#<n>` links to the pull request in that workspace, and a
+    // bare PR / pipeline number by the published ranges; the Pipelines
+    // chip declares none (the same workspace).
+    try t.expectEqual(@as(usize, 4), spec.links.len);
+    for (spec.links[1..], [_][]const u8{ "pr", "pr", "pipeline" }) |l, kind| {
+        try t.expectEqual(sdk.manifest.Resolve.range, l.resolve);
+        try t.expectEqualStrings(kind, l.ranges);
+        try t.expect(sdk.manifest.unboundLinkVarExcept(l.url, sdk.manifest.range_repo_var) == null);
+    }
+    try t.expectEqualStrings("(?i)\\bpull request #?(\\d+)", spec.links[1].pattern);
+    try t.expectEqualStrings("https://bitbucket.org/{repo}/pipelines/results/{1}", spec.links[3].url);
     try t.expectEqualStrings("(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", spec.links[0].pattern);
     try t.expectEqualStrings("https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", spec.links[0].url);
     try t.expectEqual(@as(usize, 0), spec_pipelines.links.len);
@@ -1845,7 +1879,11 @@ test "--install writes the config's workspace into the PR links, narrows the rep
     try t.expectEqualStrings("https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", bare.links[0].url);
     // A workspace, any repo.
     const any = try linkSpec(arena, spec, "acme", &.{});
-    try t.expectEqual(@as(usize, 2), any.links.len);
+    // The two forge forms, then the three range links as declared.
+    try t.expectEqual(@as(usize, 5), any.links.len);
+    try t.expectEqual(sdk.manifest.Resolve.range, any.links[2].resolve);
+    try t.expectEqualStrings("https://bitbucket.org/{repo}/pull-requests/{1}", any.links[2].url);
+    try t.expectEqualStrings("pipeline", any.links[4].ranges);
     try t.expectEqualStrings("(?<![/\\w.-])(acme)/([A-Za-z0-9_.-]+)#(\\d+)", any.links[0].pattern);
     try t.expectEqualStrings("https://bitbucket.org/{1}/{2}/pull-requests/{3}", any.links[0].url);
     try t.expectEqualStrings("(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", any.links[1].pattern);
@@ -1859,7 +1897,7 @@ test "--install writes the config's workspace into the PR links, narrows the rep
     try t.expectEqualStrings("(?<![/\\w.-])(widget|web\\.site)#(\\d+)", narrow.links[1].pattern);
     try t.expectEqualStrings("(?<![/\\w.-])(acme)/(widget|web\\.site)#(\\d+)", narrow.links[0].pattern);
     // The declared spec is untouched.
-    try t.expectEqual(@as(usize, 1), spec.links.len);
+    try t.expectEqual(@as(usize, 4), spec.links.len);
 }
 
 test "the pane's brand is its OWN family's chip colour, not the host's accent" {
@@ -2242,4 +2280,36 @@ test "the PRs figure wears the chip's glyph — the manifest's, or the host's" {
     try env.put(sdk.pane.chrome.chip_glyph_env, "\u{f1c19}");
     try t.expectEqualStrings("\u{f1c19}", Mark.fromEnv(&env).glyph);
     try t.expectEqualStrings(app_mod.App.chip_ascii, (Mark{ .ascii = true }).chip());
+}
+
+test "after a poll the range table is saved and published as the one link-ranges line mnml reads, under the PRs manifest's id" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var ipc = try sdk.Ipc.init(t.allocator, t.io, dir);
+    defer ipc.deinit();
+    const config_path = try std.fs.path.join(t.allocator, &.{ dir, "config.zon" });
+    defer t.allocator.free(config_path);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    {
+        var lr = try link_ranges.Table.open(t.allocator, t.io, config_path);
+        defer lr.deinit();
+        try lr.observe("acme/api", "pr", 5512);
+        try lr.observe("acme/api", "pr", 5490);
+        try lr.observe("acme/api", "pipeline", 10554);
+        publishRanges(t.io, &lr, &ipc, arena_state.allocator());
+    }
+    const got = try tmp.dir.readFileAlloc(t.io, "command", t.allocator, .unlimited);
+    defer t.allocator.free(got);
+    try t.expectEqualStrings(
+        "{\"cmd\":\"link-ranges\",\"id\":\"bitbucket_prs\",\"ranges\":[{\"repo\":\"acme/api\",\"kind\":\"pr\",\"low\":5490,\"high\":5512},{\"repo\":\"acme/api\",\"kind\":\"pipeline\",\"low\":10554,\"high\":10554}]}\n",
+        got,
+    );
+    // Saved: the next run starts from these watermarks.
+    var again = try link_ranges.Table.open(t.allocator, t.io, config_path);
+    defer again.deinit();
+    try t.expectEqual(@as(usize, 2), again.rows.items.len);
+    try t.expectEqual(@as(u64, 5490), again.rows.items[0].low);
 }

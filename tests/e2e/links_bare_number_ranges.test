@@ -1,0 +1,55 @@
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# A bare `Pull request 5505` names no repo; it links because the
+# Bitbucket integration publishes which numbers each repo is using. The
+# fake server's `--link-ranges` numbers api's PRs 5490-7130 and web's
+# 7120-7166 (7120-7130 shared), api's pipelines 10540-10554 and web's
+# 3300-3321. The integration's own `--install` writes the manifest that
+# declares the range links; its `--values` poll publishes the table.
+shell mkdir -p .mnml/ipc-zig
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 180 --link-ranges >/dev/null 2>&1 &
+wait 500
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }"
+shell "$MNML_BITBUCKET_INTEGRATION" --install > install.log
+command integrations.refresh
+# Before any poll there is no table: the number is plain words.
+command view.toggle_tree
+ex term sh -c 'printf "Pull request 5505 announcement\nPR 7125 is shared\nsee pipeline #3310 fail\nPR 9000 is unknown\n"; sleep 60'
+expect within 5000 screen contains "Pull request 5505 announcement"
+wait 300
+# The pane's text starts at column 1: `Pull request 5505` is 1..17.
+hover 14 2
+expect color 1 2 fg not #61afef
+# The poll publishes the table; the line links once it is re-found.
+shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" > values.json
+expect file .mnml/ipc-zig/command contains "\"cmd\":\"link-ranges\""
+wait 800
+hover 20 4
+hover 14 2
+expect color 1 2 fg #61afef
+expect color 17 2 fg #61afef
+expect color 18 2 fg not #61afef
+# Ctrl+click opens api's pull request — the one repo whose range holds it.
+click 14 2 ctrl
+expect file opened-urls.log contains "https://bitbucket.org/acme/api/pull-requests/5505"
+# 7125 is both repos': the menu lists each, the first opens api's.
+rightclick 2 3
+expect screen contains "Copy link"
+expect screen contains "Open in acme/api"
+expect screen contains "Open in acme/web"
+expect screen lacks "Open link"
+key down
+key down
+key enter
+expect file opened-urls.log contains "https://bitbucket.org/acme/web/pull-requests/7125"
+# A pipeline number is looked up among pipelines: web's.
+click 9 4 ctrl
+expect file opened-urls.log contains "https://bitbucket.org/acme/web/pipelines/results/3310"
+# A number no repo holds stays plain.
+hover 3 5
+expect color 1 5 fg not #61afef
+# The watermarks outlive the run.
+shell test -s cache/link-ranges.json && echo ok > kept.txt
+expect file kept.txt contains "ok"

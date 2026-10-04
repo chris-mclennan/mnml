@@ -292,6 +292,10 @@ const Loop = struct {
                 d.ipcCommand(cmd) catch {};
                 return ev(arena, &.{ .{ "event", "open_pty" }, .{ "exe", p.command[0] } });
             },
+            .link_ranges => |r| {
+                d.ipcCommand(cmd) catch {};
+                return ev(arena, &.{ .{ "event", "link_ranges" }, .{ "id", r.id }, .{ "rows", try num(arena, r.ranges.len) } });
+            },
             .set_activity_badge => |b| {
                 d.ipcCommand(cmd) catch {};
                 return ev(arena, &.{ .{ "event", "set_activity_badge" }, .{ "section", b.section }, .{ "count", try num(arena, b.count) } });

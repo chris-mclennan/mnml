@@ -44,6 +44,19 @@ pub const Item = struct {
     args: []const []const u8 = &.{},
 };
 
+/// One row of a link range table (`Ipc.linkRanges`): the numbers a
+/// repo is currently using for one kind of thing. `repo` is what goes
+/// into a `.range` link's `{repo}` (`acme/widget`); `kind` is what a
+/// link's `ranges` names (`pr`, `pipeline`); `low`..`high` is every
+/// number the integration has seen there. mnml adds its own slack above
+/// `high`, so a number created since the last poll still resolves.
+pub const LinkRange = struct {
+    repo: []const u8,
+    kind: []const u8,
+    low: u64,
+    high: u64,
+};
+
 pub const Error = error{ NoChannel, WriteFailed } || Allocator.Error;
 
 /// How a pane names the session it wants focused.
@@ -148,6 +161,13 @@ pub const Ipc = struct {
         });
     }
 
+    /// Replace this integration's link range table — every row, each
+    /// poll; `id` is the manifest id whose `.range` links read it. An
+    /// empty table clears it.
+    pub fn linkRanges(self: *const Ipc, id: []const u8, rows: []const LinkRange) Error!void {
+        return self.line(.{ .cmd = "link-ranges", .id = id, .ranges = rows });
+    }
+
     pub fn statuslineClearSegment(self: *const Ipc, id: []const u8) Error!void {
         return self.line(.{ .cmd = "statusline-clear-segment", .id = id });
     }
@@ -192,6 +212,7 @@ test "lines append to <dir>/command in mnml's shape" {
     try ipc.progressUpdate("p", null, 40);
     try ipc.statuslineSetSegment(.{ .id = "s", .text = "T" });
     try ipc.setActivityBadge("integrations", 3);
+    try ipc.linkRanges("forge", &.{.{ .repo = "acme/widget", .kind = "pr", .low = 5490, .high = 5512 }});
     const got = try tmp.dir.readFileAlloc(testing.io, "command", testing.allocator, .unlimited);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings(
@@ -199,7 +220,8 @@ test "lines append to <dir>/command in mnml's shape" {
             "{\"cmd\":\"register-command\",\"id\":\"hello.pick\",\"title\":\"Hello: pick\",\"group\":\"integrations\",\"keys\":[\"ctrl+k h\"]}\n" ++
             "{\"cmd\":\"progress-update\",\"id\":\"p\",\"count\":40}\n" ++
             "{\"cmd\":\"statusline-set-segment\",\"id\":\"s\",\"side\":\"right\",\"text\":\"T\",\"priority\":100,\"min_width\":4,\"max_width\":30}\n" ++
-            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":3}\n",
+            "{\"cmd\":\"set-activity-badge\",\"section\":\"integrations\",\"count\":3}\n" ++
+            "{\"cmd\":\"link-ranges\",\"id\":\"forge\",\"ranges\":[{\"repo\":\"acme/widget\",\"kind\":\"pr\",\"low\":5490,\"high\":5512}]}\n",
         got,
     );
     var env = std.process.Environ.Map.init(testing.allocator);

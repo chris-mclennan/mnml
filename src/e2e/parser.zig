@@ -33,7 +33,9 @@
 //!                                #   name them anywhere in the file, `# env:` lines
 //!                                #   included — a fixed port collides with another run
 //! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
-//! click <x> <y>                  # left-click at screen cell (x,y) — 0-based
+//! click <x> <y> [mods]           # left-click at screen cell (x,y) — 0-based; `mods`
+//!                                #   is `ctrl`, `super`, `alt`, `shift`, joined by `+`
+//!                                #   (`click 4 2 ctrl` — a terminal pane's link)
 //! rightclick <x> <y>             # right-click (context menus)
 //! hover <x> <y>                  # move the pointer to a cell, no button (menu rows, hover-switch)
 //! doubleclick <x> <y>            # double-click (row activation)
@@ -129,7 +131,7 @@ pub const Step = union(enum) {
     shell: []const u8,
     serve: struct { port: u16, status: u16, delay_ms: u32, text: []const u8 },
     ghost: []const u8,
-    mouse: struct { x: u16, y: u16, action: MouseAction },
+    mouse: struct { x: u16, y: u16, action: MouseAction, mods: key.Mods = .{} },
     drag: struct { from_x: u16, from_y: u16, to_x: u16, to_y: u16 },
     /// `shot <name>`: leave a picture of the screen for whoever reads
     /// the run afterwards. Every driver understands it and none of them
@@ -371,7 +373,14 @@ pub fn parse(gpa: Allocator, text: []const u8, diag: *Diagnostic) Error!Script {
                     else
                         return diag.set("line {d}: `scroll X Y <up|down>`", .{ln}),
                 };
-                break :blk .{ .step = .{ .mouse = .{ .x = xy.x, .y = xy.y, .action = action } } };
+                var mods: key.Mods = .{};
+                if (kw == .click) {
+                    var toks = std.mem.tokenizeAny(u8, trim(xy.rest), "+ ");
+                    while (toks.next()) |m| {
+                        if (std.mem.eql(u8, m, "ctrl")) mods.ctrl = true else if (std.mem.eql(u8, m, "super") or std.mem.eql(u8, m, "cmd")) mods.super = true else if (std.mem.eql(u8, m, "alt")) mods.alt = true else if (std.mem.eql(u8, m, "shift")) mods.shift = true else return diag.set("line {d}: `click X Y [ctrl+super+alt+shift]`: unknown modifier `{s}`", .{ ln, m });
+                    }
+                }
+                break :blk .{ .step = .{ .mouse = .{ .x = xy.x, .y = xy.y, .action = action, .mods = mods } } };
             },
             .drag => blk: {
                 const from = try parseXy(diag, ln, "drag", rest);
@@ -903,4 +912,20 @@ test "expect within <ms>: the check parses as it would bare and carries its own 
     const msg = try parseErr("expect within soon screen contains y\n");
     defer t.allocator.free(msg);
     try t.expectEqualStrings("line 1: expect within <ms> <expectation> — `soon` is not a millisecond count", msg);
+}
+
+test "click takes modifiers: a terminal pane's Ctrl/Cmd+click on a link" {
+    var s = try parseOk(
+        \\click 4 2 ctrl
+        \\click 4 2 super+shift
+        \\click 4 2
+    );
+    defer s.deinit();
+    try t.expect(s.lines[0].stmt.step.mouse.mods.ctrl);
+    try t.expect(!s.lines[0].stmt.step.mouse.mods.super);
+    try t.expect(s.lines[1].stmt.step.mouse.mods.super and s.lines[1].stmt.step.mouse.mods.shift);
+    try t.expect(!s.lines[2].stmt.step.mouse.mods.ctrl);
+    const msg = try parseErr("click 4 2 hyper\n");
+    defer t.allocator.free(msg);
+    try t.expect(std.mem.indexOf(u8, msg, "unknown modifier `hyper`") != null);
 }

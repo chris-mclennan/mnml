@@ -67,9 +67,28 @@ pub const Raw = struct {
     /// hover to list. A row with no `text` is skipped rather than
     /// failing the line — one malformed item must not cost the chip.
     items: []const RawItem = &.{},
+    /// `link-ranges`: an integration's range table, every row.
+    ranges: []const RawRange = &.{},
     /// `notify`.
     sound: ?bool = null,
     source: ?[]const u8 = null,
+};
+
+/// One row of a `link-ranges` table, as it arrives.
+pub const RawRange = struct {
+    repo: ?[]const u8 = null,
+    kind: ?[]const u8 = null,
+    low: ?Num(u64) = null,
+    high: ?Num(u64) = null,
+};
+
+/// One row of a link range table, kept: the numbers `repo` is using for
+/// `kind` (`app/link_rules.zig` resolves a bare number against them).
+pub const LinkRange = struct {
+    repo: []const u8,
+    kind: []const u8,
+    low: u64,
+    high: u64,
 };
 
 /// One row of a segment's hover list, as it arrives.
@@ -186,6 +205,9 @@ pub const Command = union(enum) {
     },
     open_pty: struct { cwd: ?[]const u8, command: []const []const u8 },
     set_activity_badge: struct { section: []const u8, count: u32 },
+    /// `link-ranges`: the integration `id`'s whole range table — which
+    /// numbers each of its repos is using — replacing the last one.
+    link_ranges: struct { id: []const u8, ranges: []const LinkRange },
     /// `focus-session`: bring a session mnml is running to the front.
     /// A pane that dispatched one names it by the host's id when it was
     /// given one, else by the directory it runs in and the first line
@@ -248,6 +270,7 @@ fn fromRaw(arena: Allocator, raw: Raw) Allocator.Error!?Command {
         notify,
         @"open-pty",
         @"set-activity-badge",
+        @"link-ranges",
         @"focus-session",
         @"dump-rects",
         ghost,
@@ -326,6 +349,10 @@ fn fromRaw(arena: Allocator, raw: Raw) Allocator.Error!?Command {
             .source = raw.source,
         } },
         .@"open-pty" => if (raw.command.len == 0) null else .{ .open_pty = .{ .cwd = raw.cwd, .command = raw.command } },
+        .@"link-ranges" => .{ .link_ranges = .{
+            .id = raw.id orelse return null,
+            .ranges = try linkRanges(arena, raw.ranges),
+        } },
         .@"set-activity-badge" => .{ .set_activity_badge = .{
             .section = raw.section orelse return null,
             .count = val(u32, raw.count) orelse return null,
@@ -384,6 +411,30 @@ fn segmentItems(arena: Allocator, raw: []const RawItem) Allocator.Error![]const 
             .command = it.command,
             .args = it.args,
         });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// More rows than any integration's repos × kinds; past it the tail is
+/// dropped rather than letting one line grow the table without bound.
+pub const max_link_ranges: usize = 512;
+
+/// The rows a `link-ranges` carried. A row missing a field, naming a
+/// repo with a byte a URL path would need to escape, or with `low`
+/// above `high`, is dropped — one bad row must not cost the table.
+fn linkRanges(arena: Allocator, raw: []const RawRange) Allocator.Error![]const LinkRange {
+    var out: std.ArrayListUnmanaged(LinkRange) = .empty;
+    for (raw) |r| {
+        if (out.items.len == max_link_ranges) break;
+        const repo = r.repo orelse continue;
+        const kind = r.kind orelse continue;
+        const low = (r.low orelse continue).v;
+        const high = (r.high orelse continue).v;
+        if (repo.len == 0 or kind.len == 0 or low > high) continue;
+        var ok = true;
+        for (repo) |c| ok = ok and (std.ascii.isAlphanumeric(c) or c == '_' or c == '.' or c == '-' or c == '/');
+        if (!ok or repo[0] == '/' or std.mem.indexOf(u8, repo, "..") != null) continue;
+        try out.append(arena, .{ .repo = repo, .kind = kind, .low = low, .high = high });
     }
     return out.toOwnedSlice(arena);
 }
@@ -624,4 +675,27 @@ test "a segment's items: kept in order, a row with no text skipped, the wire cap
     // A malformed `items` (not an array of objects) fails the line the
     // way any wrong-typed field does — `.unknown`, never a crash.
     try t.expect((try parseT(a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"s\",\"text\":\"T\",\"items\":\"nope\"}")) == .unknown);
+}
+
+test "link-ranges: the integration's rows, a bad row dropped and the rest kept; no id is no command" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const line = "{\"cmd\":\"link-ranges\",\"id\":\"forge\",\"ranges\":[" ++
+        "{\"repo\":\"acme/widget\",\"kind\":\"pr\",\"low\":5490,\"high\":7130}," ++
+        "{\"repo\":\"acme/gadget\",\"kind\":\"pr\",\"low\":9,\"high\":3}," ++
+        "{\"repo\":\"acme/a b\",\"kind\":\"pr\",\"low\":1,\"high\":3}," ++
+        "{\"repo\":\"../up\",\"kind\":\"pr\",\"low\":1,\"high\":3}," ++
+        "{\"repo\":\"acme/web\",\"low\":1,\"high\":3}," ++
+        "{\"repo\":\"acme/web\",\"kind\":\"pipeline\",\"low\":3300,\"high\":3321}]}";
+    const got = (try parseT(a, line)).link_ranges;
+    try t.expectEqualStrings("forge", got.id);
+    try t.expectEqual(@as(usize, 2), got.ranges.len);
+    try t.expectEqualStrings("acme/widget", got.ranges[0].repo);
+    try t.expectEqual(@as(u64, 7130), got.ranges[0].high);
+    try t.expectEqualStrings("pipeline", got.ranges[1].kind);
+    try t.expectEqual(@as(u64, 3300), got.ranges[1].low);
+    // An empty table is a table: it clears the last one.
+    try t.expectEqual(@as(usize, 0), (try parseT(a, "{\"cmd\":\"link-ranges\",\"id\":\"forge\"}")).link_ranges.ranges.len);
+    try t.expect((try parseT(a, "{\"cmd\":\"link-ranges\",\"ranges\":[]}")) == .unknown);
 }

@@ -770,6 +770,48 @@ its config's workspace in — and, when the config lists `repos`, narrows
 `<workspace>/<repo>#<number>` — else mnml takes it from the `workspace`
 auth field's `$BITBUCKET_WORKSPACE`.
 
+### A bare number — the range table
+
+`Pull request 5505`, `PR #5505` and `pipeline 10554` name no repo, and
+every repo numbers its pull requests and pipelines from 1. What tells
+them apart is that each repo is at its own height: one is in the 5000s,
+another in the 7000s. A link may say so with `resolve = .range`:
+
+```zig
+.links = &.{
+    .{ .pattern = "(?i)\\bpull request #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
+    .{ .pattern = "(?i)\\bpipeline #?(\\d+)", .url = "https://bitbucket.org/{repo}/pipelines/results/{1}", .resolve = .range, .ranges = "pipeline" },
+},
+```
+
+* **The integration publishes the table.** Over the same IPC channel as
+  its statusline (`sdk.Ipc`), after each poll:
+  `ipc.linkRanges(manifest_id, rows)`, one row per repo and kind —
+  `{ .repo = "acme/widget", .kind = "pr", .low = 5490, .high = 7130 }`.
+  It is the whole table every time; the last one replaces the one before
+  (an empty table clears it). The wire line is
+  `{"cmd":"link-ranges","id":"<manifest id>","ranges":[{"repo","kind","low","high"}…]}`;
+  a row with a field missing, `low` above `high`, or a repo with a byte
+  other than letters, digits, `_ . - /` is dropped.
+* **mnml resolves each match.** Group 1 is the number (the whole match
+  when there is no group). The rows of the manifest's own table whose
+  `kind` is the link's `ranges` and whose `low`..`high` hold the number
+  are the candidates; failing any, the rows the number is at most 50
+  past the `high` of (a pull request opened since the poll). `{repo}` is
+  filled with the candidate's `repo` as written; every other `{<key>}`
+  is bound the usual way.
+* **When a link shows.** One candidate: a link to that repo. Several: a
+  link to the first — the repo the workspace's git remote names, if it is
+  one of them, then the table's order — and its right-click menu lists
+  `Open in <repo>` for each, in place of *Open link*. None, or no table
+  published yet: the words stay plain. `repo#123` is explicit and never
+  goes through the table.
+* **Where the numbers come from is the integration's call.** Bitbucket's
+  `--values` poll widens each repo's `pr` row with every pull request its
+  listing returns and asks for each repo's newest pipelines once an hour;
+  it keeps the low and high watermarks in `<config dir>/cache/link-ranges.json`,
+  so a restart does not forget a low the open listing no longer shows.
+
 The in-repo integrations: Jira's Work chip declares the issue key
 above, Bitbucket's PRs chip the pull request. The sample's
 `manifest.zon` declares one, live: `SAMPLE-12` links to
