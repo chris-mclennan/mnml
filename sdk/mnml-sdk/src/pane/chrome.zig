@@ -145,7 +145,9 @@ pub const placeholder_focused_ascii = "type to filter...";
 /// `spinner_step_ms`), so a pane that is fetching turns the SAME glyph
 /// at the SAME cadence as the host's own panels — one ring, wherever
 /// the reader looks. `--ascii` gets the four-stroke wheel.
-pub const spinner_frames = [_][]const u8{ "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}" };
+/// Eight-dot braille, so every frame spans the cell's four dot rows and
+/// sits on the text's centre.
+pub const spinner_frames = [_][]const u8{ "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{28bf}", "\u{287f}", "\u{28df}", "\u{28ef}", "\u{28f7}" };
 pub const spinner_ascii = [_][]const u8{ "|", "/", "-", "\\" };
 /// One turn of the frame ring, in ms.
 pub const spinner_step_ms: i64 = 80;
@@ -1669,12 +1671,12 @@ test "the fetch line names every state a listing can be in, and the spinner is t
     try testing.expect(Fetch.busy(.{ .queued = 2 }));
     try testing.expect(!Fetch.busy(.{ .failed = "x" }));
     try testing.expect(!Fetch.busy(.idle));
-    // The ring: ten braille frames, 80 ms a step, wrapping.
-    try testing.expectEqual(@as(usize, 10), spinner_frames.len);
+    // The ring: eight braille frames, 80 ms a step, wrapping.
+    try testing.expectEqual(@as(usize, 8), spinner_frames.len);
     try testing.expectEqual(@as(i64, 80), spinner_step_ms);
     try testing.expectEqualStrings(spinner_frames[0], spinnerFrame(0, false));
     try testing.expectEqualStrings(spinner_frames[1], spinnerFrame(80, false));
-    try testing.expectEqualStrings(spinner_frames[0], spinnerFrame(800, false));
+    try testing.expectEqualStrings(spinner_frames[0], spinnerFrame(640, false));
     try testing.expectEqualStrings("/", spinnerFrame(80, true));
 
     // Through the painter: the refresh chip becomes the spinner while
@@ -1683,8 +1685,8 @@ test "the fetch line names every state a listing can be in, and the spinner is t
     defer r.deinit();
     var p = r.painter(Theme.fromHello(null), .{ .nerd = true });
     try testing.expectEqualStrings(" " ++ refresh_nerd ++ " ", p.refreshOrBusyChipText(false, 160));
-    try testing.expectEqualStrings(" \u{2839} ", p.refreshOrBusyChipText(true, 160));
-    try testing.expectEqualStrings("  \u{2839} fetching\u{2026}", p.fetchSub(.{ .fetching = .{} }, 160));
+    try testing.expectEqualStrings(" \u{28fb} ", p.refreshOrBusyChipText(true, 160));
+    try testing.expectEqualStrings("  \u{28fb} fetching\u{2026}", p.fetchSub(.{ .fetching = .{} }, 160));
     try testing.expectEqualStrings("  fetch failed: no", p.fetchSub(.{ .failed = "no" }, 160));
     try testing.expectEqualStrings("", p.fetchSub(.idle, 160));
 }

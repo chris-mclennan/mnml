@@ -4,7 +4,7 @@
 //! than like a transplanted table:
 //!
 //!   row 0   the caps header — `BITBUCKET PRS  (4 repos · 64 PRs)`, what
-//!           the fetch is doing while one is out (`⠋ fetching… 2/13 repos`,
+//!           the fetch is doing while one is out (`⣾ fetching… 2/13 repos`,
 //!           `queued behind 3 requests`, `fetch failed: …`) and,
 //!           right-anchored, the chips: the pipelines pages (the pipelines
 //!           family), the refresh glyph — the spinner while busy — and `?`
@@ -178,7 +178,7 @@ fn paintHeader(arena: Allocator, p: *Painter, y: u16) Allocator.Error!void {
     var sub: []const u8 = "";
     if (!ts.fetched and busy) {
         // Nothing to count yet: the line is the fetch alone —
-        // `⠋ fetching… 2/13 repos`.
+        // `⣾ fetching… 2/13 repos`.
         sub = p.c.fetchSub(fetch, app.now_ms);
     } else {
         if (ts.fetched and app.filter_shown == 0 and app.filter_total > 0 and app.narrowed()) {
@@ -1476,10 +1476,10 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     app.wait_notice.setPhase(.sending, 0);
     scr = try s.draw();
     // The count, then the fetch, then the age the toolkit lays after
-    // the subtitle: `(2 repos · 3 PRs)  ⠹ fetching…  as of 0s ago`.
-    try t.expect(has(scr, "(2 repos · 3 PRs)  \u{2839} fetching\u{2026}"));
+    // the subtitle: `(2 repos · 3 PRs)  ⣻ fetching…  as of 0s ago`.
+    try t.expect(has(scr, "(2 repos · 3 PRs)  \u{28fb} fetching\u{2026}"));
     try t.expect(has(scr, "as of"));
-    try t.expectEqualStrings("\u{2839}", chipGlyph(s));
+    try t.expectEqualStrings("\u{28fb}", chipGlyph(s));
     try t.expect(!has(scr, chrome.refresh_nerd));
     try t.expect(has(scr, "#1234"));
     // Queued behind the broker: the number the reader was missing —
@@ -1487,8 +1487,8 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     app.wait_notice.setPhase(.queued, 3);
     app.now_ms = 240;
     scr = try s.draw();
-    try t.expect(has(scr, "\u{2838} queued behind 3 requests"));
-    try t.expectEqualStrings("\u{2838}", chipGlyph(s));
+    try t.expect(has(scr, "\u{28bf} queued behind 3 requests"));
+    try t.expectEqualStrings("\u{28bf}", chipGlyph(s));
     try t.expect(!has(scr, "fetching"));
     // Held on the file bucket, with no broker to say how many.
     app.wait_notice.setPhase(.waiting, 0);
@@ -1500,7 +1500,7 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     app.tabs[0].fetched = false;
     app.now_ms = 160;
     scr = try s.draw();
-    try t.expect(has(scr, "BITBUCKET PRS  \u{2839} fetching\u{2026}"));
+    try t.expect(has(scr, "BITBUCKET PRS  \u{28fb} fetching\u{2026}"));
     try t.expect(!has(scr, "(2 repos"));
     app.tabs[0].fetched = true;
     // Landed: the line is gone and the glyph is back.
@@ -1513,7 +1513,7 @@ test "the header says what a fetch is doing: queued behind N, waiting, fetching,
     try app_mod.TabState.setText(app.gpa, &app.tabs[0].error_text, "401 auth failed");
     scr = try s.draw();
     try t.expect(has(scr, "fetch failed: 401 auth failed"));
-    try t.expect(!has(scr, "\u{2839}"));
+    try t.expect(!has(scr, "\u{28fb}"));
     // …over the rows it had, which stay: the failure is the header's,
     // not a panel painted where the list was.
     try t.expect(has(scr, "#1234"));

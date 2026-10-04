@@ -86,7 +86,7 @@ pub const SegId = enum(u32) {
     test_run,
     ai_claude,
     ai_codex,
-    /// The ghost-text chip (` ⠋ 1.8s ` under its mark) — what AI
+    /// The ghost-text chip (` ⣾ 1.8s ` under its mark) — what AI
     /// inline suggestion is doing when there is no ghost to look at
     /// (`app/ghost_chip.zig`, `sl.ghost_glyph`).
     ghost,
@@ -98,7 +98,7 @@ pub const SegId = enum(u32) {
     np_next,
     np_track,
     transfer,
-    /// ` ⠋ 2 jobs ` while background jobs run, ` ✗ lint: exit 2 ` for
+    /// ` ⣾ 2 jobs ` while background jobs run, ` ✗ lint: exit 2 ` for
     /// ten seconds after one fails (`app/jobs.zig`, `ui.jobs_chip`).
     jobs,
     /// ` LSP 2 ` — running language servers.

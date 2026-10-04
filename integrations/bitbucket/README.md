@@ -323,10 +323,10 @@ and the refresh chip turns the host's own spinner ring:
 
 | | |
 |---|---|
-| `⠋ fetching… 2/13 repos` | the first load, counting repos as they land |
-| `(2 repos · 3 PRs)  ⠋ fetching…` | a refetch: the rows and their count stay on screen |
-| `⠋ queued behind 3 requests` | held in the local broker's queue, that many ahead |
-| `⠋ waiting for the API budget` | held on the shared file bucket (no broker) |
+| `⣾ fetching… 2/13 repos` | the first load, counting repos as they land |
+| `(2 repos · 3 PRs)  ⣾ fetching…` | a refetch: the rows and their count stay on screen |
+| `⣾ queued behind 3 requests` | held in the local broker's queue, that many ahead |
+| `⣾ waiting for the API budget` | held on the shared file bucket (no broker) |
 | `(2 repos · 3 PRs)  fetch failed: <why>` | the last fetch failed, and this is why — for every repo (`network error`), one (`web: HTTP 500`) or some (`2 of 5 repos: …`) |
 | `(2 repos · 3 PRs)  as of 4m ago` | done; the age the family already says |
 | `no pull requests match` | the chips or the `/` query hid every row |

@@ -391,7 +391,7 @@ test "chipText: a chip in the phases that have one, nothing in the two that do n
     try t.expectEqualStrings(" \u{f0626} ! ", (try chipText(a, .err, 0, 0, false)).?);
     // In flight: the app's own spinner frame, then the elapsed.
     const flight = (try chipText(a, .inflight, 1832, 0, false)).?;
-    try t.expectEqualStrings(" \u{f0626} ⠋ 1.8s ", flight);
+    try t.expectEqualStrings(" \u{f0626} ⣾ 1.8s ", flight);
     // The frame turns with the clock — the chip is alive, not a still.
     try t.expect(!std.mem.eql(u8, flight, (try chipText(a, .inflight, 1832, 240, false)).?));
     // `--ascii` has no Nerd Font to fall back on.
