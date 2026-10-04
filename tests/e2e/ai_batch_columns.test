@@ -17,7 +17,8 @@ expect screen lacks "Grid"
 click 56 11
 wait 600
 expect screen contains "opened 3 Claude sessions side by side"
-expect screen contains "│ 󱸀 claude 󰅖                  │ 󱸀 claude 󰅖                  │ 󱸀 claude 󰅖"
+# Each column's strip keeps its pane buttons beside the whole name.
+expect screen contains "│ 󱸀 claude 󰅖    󱸀  󲀀       │ 󱸀 claude 󰅖    󱸀  󲀀       │ 󱸀 claude 󰅖"
 expect screen lacks "New local session"
 rightclick 6 4
 hover 15 10

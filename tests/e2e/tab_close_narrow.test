@@ -1,19 +1,21 @@
 # width: 28
 # height: 16
 # env: PATH=
-# A narrow leaf keeps its active tab's close: the long name is cut
-# with an ellipsis first, and the furniture beside it (the pager, the
-# 󰐕, the pane buttons) gives way before the close would. The close
+# A narrow leaf keeps its active tab's close: the furniture beside it
+# (the pager, the 󰐕) gives way first, then the long name is cut with
+# an ellipsis, then the pane buttons — the close goes last. The close
 # button closes the tab.
 write jira_fix_versions_report.txt "x\n"
 open jira_fix_versions_report.txt
 # 28 columns: the leaf's strip is the top row. The chip at its full
-# 24 cells does not fit beside the 󰐕 and the pane buttons; the name
-# is cut to fit and the close stands after it.
-expect screen contains " jira_f… 󰅖  󰐕"
+# 24 cells does not fit beside the 󰐕 and the pane buttons: the 󰐕
+# gives way first, then the name is cut to fit, and the close stands
+# after it.
+expect screen contains " jira_fix_… 󰅖  "
+expect screen lacks "󰐕"
 expect screen lacks "jira_fix_ve"
 # The close is the close: clicking it closes the tab, and the empty
 # leaf's start page lists the file under its recent files.
-click 11 0
-expect screen lacks "jira_f… 󰅖"
+click 14 0
+expect screen lacks "jira_fix_… 󰅖"
 expect screen contains "RECENT FILES"
