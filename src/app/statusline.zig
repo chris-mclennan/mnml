@@ -1980,13 +1980,15 @@ test "the LSP chip: ` LSP 1 ` on blue between the cluster and WRAP while a serve
     // under the workspace, so it reads as it is.
     try b.click(38, SegId.lsp.raw(), .left);
     try testing.expectEqualStrings("LSP: typescript (/tmp)", b.app.lastToast().?);
-    // Right: the LSP menu, Rust's nine rows, every id a real command.
+    // Right: the LSP menu, Rust's nine rows, every id a real command —
+    // then the chip's *Move left* / *Move right*.
     try b.click(38, SegId.lsp.raw(), .right);
     try testing.expect(b.app.overlay == .menu);
     try testing.expectEqualStrings("LSP", b.app.overlay.menu.title);
-    try testing.expectEqual(@as(usize, 9), b.app.overlay.menu.items.len);
+    try testing.expectEqual(@as(usize, 11), b.app.overlay.menu.items.len);
     try testing.expectEqualStrings("Status", b.app.overlay.menu.items[0].label);
-    for (b.app.overlay.menu.items) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    for (b.app.overlay.menu.items[0..9]) |item| try testing.expect(command.by_name.get(command.name(item.action.command)) != null);
+    for (b.app.overlay.menu.items[9..]) |item| try testing.expect(item.action == .move_statusline_segment);
     try b.key(Key.named(.esc));
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -2035,7 +2037,9 @@ test "the LSP chip with a missing default server: ` LSP? ` muted with none runni
     try b.click(38, SegId.lsp.raw(), .right);
     try testing.expect(b.app.overlay == .menu);
     const items = b.app.overlay.menu.items;
-    try testing.expectEqual(@as(usize, 11), items.len);
+    // The LSP menu's eleven rows, then the chip's two moves.
+    try testing.expectEqual(@as(usize, 13), items.len);
+    try testing.expect(items[12].action == .move_statusline_segment);
     try testing.expectEqualStrings("Status", items[0].label);
     try testing.expectEqualStrings("✗ vscode-json-language-server — npm i -g vscode-langservers-extracted", items[1].label);
     try testing.expect(items[1].action == .copy_text);
