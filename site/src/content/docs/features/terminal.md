@@ -39,7 +39,9 @@ Everything below is handled by the pane today:
   (`xterm-256color` otherwise).
 - **The mouse.** Programs that ask for mouse reporting get it, in the
   normal and SGR encodings. Hold `Shift` to select text yourself instead.
-- **The Kitty keyboard protocol**, for programs that turn it on.
+- **The Kitty keyboard protocol**, for programs that turn it on. A
+  program that turns on both it and application cursor keys gets the
+  arrows, `Home` and `End` as `CSI` sequences, as Ghostty sends them.
 - **Bracketed paste**, with the pasted text cleaned so it cannot close
   the bracket early.
 - **Hyperlinks** (OSC 8), window titles (OSC 0/2), and the clipboard:
@@ -91,6 +93,15 @@ Scrollback keeps `terminal.scrollback_lines` lines (10,000 by default).
 `Shift+PageUp` / `PageDown` / `Home` / `End` move through it, and the
 mouse wheel scrolls it when the program has not asked for the wheel.
 
+The scrollback has a scrollbar over the pane's rightmost column. It
+shows while you are scrolled back from the bottom, or while the pointer
+is on that column (unless the program has taken the mouse). Drag the
+thumb through the history, or click the track above or below it to
+page a screenful. The bar is painted over the program's last column
+rather than beside it, so the program's size never changes when the bar
+comes or goes. A full-screen program — an editor, `htop` — runs on the
+alternate screen, which keeps no history, so it never shows the bar.
+
 `term.search` searches the scrollback — plain text with smart case, or
 a regular expression. In the standard profile, `ctrl+f` in a terminal
 pane opens it; `n` and `N` step through matches.
@@ -98,14 +109,60 @@ pane opens it; `n` and `N` step through matches.
 ## Selecting and copying
 
 Drag to select. Double-click selects a word and triple-click a line.
-Releasing the button copies the selection to the clipboard.
+When the program has taken the mouse, hold `Shift` for any of these.
+
+With **copy on select** on — the default — releasing the button copies
+the selection to the clipboard, and so does a double- or triple-click.
+Turn it off with the *Terminal copy on select* row in the settings
+overlay, or in `config.zon`:
+
+```zig
+.{ .ui = .{ .copy_on_select = false } }
+```
+
+Off, a drag only selects, and you copy with `ctrl+c`.
+
+The copy keys, in both profiles:
+
+| Key | With a selection | With none |
+| --- | ---------------- | --------- |
+| `ctrl+c` | Clears the selection — copying it first when copy on select is off. The program hears nothing. | Goes to the program, as its interrupt. |
+| `ctrl+shift+c` | Copies the selection, whatever the setting, and clears it. | — |
+
+`ctrl+d`, `ctrl+z` and `ctrl+l` always go to the program.
 
 In the vim profile, `ctrl+\ ctrl+n` puts the pane in terminal-normal
 mode, where the keys go to mnml instead of the program: `/` searches,
-`y` yanks the selection, the `ctrl+w` window keys work, and `i` or `a`
-hands the keyboard back.
+`y` yanks the selection, the `ctrl+w` window keys work, `]a` / `[a`
+step to the next or previous AI session, and `i` or `a` hands the
+keyboard back.
 
-`ctrl+c`, `ctrl+d`, `ctrl+z` and `ctrl+l` always go to the program.
+## Pasting
+
+`ctrl+shift+v` and `shift+insert` paste the clipboard into the pane, in
+both profiles. Plain `ctrl+v` stays the program's — Claude Code uses it
+to paste an image. A paste goes in as bracketed paste when the program
+has asked for it.
+
+## Links
+
+URLs in a pane's output are links — a plain `https://…` as well as a
+hyperlink the program printed (OSC 8) — and so are ticket keys and
+pull-request references, by the patterns your installed integrations
+declare (a manifest's `links[]`, in the [SDK](/docs/integrations/sdk)
+reference). With no integration declaring one, only URLs link. A link
+wears a dotted underline and lights under the pointer.
+
+- `ctrl+click` or `cmd+click` opens it in the browser. A plain press
+  still starts a selection.
+- A right-click on it opens a menu with *Copy link* and *Open link*
+  above *Copy*. While that menu is open the link stays lit in the
+  accent with a solid underline, so you can see which link the rows
+  are for.
+
+A line is matched once it has held still for a frame, so a flood of
+output costs nothing extra; a URL soft-wrapped over two rows links
+whole on both.
 
 ## Links
 
@@ -126,4 +183,15 @@ keeps the honest list.
 ## Configuration
 
 The `terminal` keys — scrollback, shell integration, clipboard writes
-and the rest — are in the [configuration reference](/docs/config/reference).
+and the rest — and `ui.copy_on_select` are in the
+[configuration reference](/docs/config/reference).
+
+## Next
+
+- [Menus, Tabs and Fields](/docs/features/menus) — the right-click
+  menus, tab strips and scrollbars a terminal pane shares with the rest
+  of mnml.
+- [AI sessions](/docs/features/ai) — Claude Code and Codex in terminal
+  panes.
+- [The API](/docs/features/api) — what a program in a pane may ask mnml
+  to do.

@@ -40,6 +40,7 @@
       "children": [
         { "type": "link", "path": "/", "title": "Overview" },
         { "type": "link", "path": "/editor", "title": "Editor" },
+        { "type": "link", "path": "/menus", "title": "Menus, Tabs and Fields" },
         { "type": "link", "path": "/git", "title": "Git" },
         { "type": "link", "path": "/terminal", "title": "Terminal" },
         { "type": "link", "path": "/http", "title": "HTTP" },
