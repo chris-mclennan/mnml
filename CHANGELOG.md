@@ -67,6 +67,10 @@ the release ships one file), and one line per change a user can see.
   now, in cells and as a share of the window (`Width: 42 cells · 21%`);
   the keyboard cursor starts on the first row below it.
 
+### Hover help
+
+- The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
+
 ## v0.3.2
 
 mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own

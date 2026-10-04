@@ -69,6 +69,11 @@ pub const Copy = struct {
     aside_first: bool = false,
     shortcuts: []const Shortcut = &.{},
     try_it: []const Link = &.{},
+    /// The chord of the command the control's left click runs, under
+    /// the active profile (`Ctrl+Shift+P`, `Space f f`) — the last
+    /// line, `Key: …`. Null when the click is no command or the
+    /// profile binds none.
+    key: ?[]const u8 = null,
 };
 
 /// Rust's `to_flat_pair`: the body, the aside and the first two
@@ -274,6 +279,13 @@ fn buildLines(ui: Ui, p: Props, content_w: u16) ?std.ArrayListUnmanaged(Line) {
             lines.append(arena, .{ .segs = seg1(arena, ui.fmt("{s} {s}", .{ l.kind.glyph(ui.ascii), l.label }), link_style) catch return null, .link = @intCast(i), .row = p.copy.shortcuts.len + i }) catch return null;
         }
     }
+    if (p.copy.key) |k| {
+        lines.append(arena, .{ .segs = &.{} }) catch return null;
+        const segs = arena.alloc(vaxis.Segment, 2) catch return null;
+        segs[0] = .{ .text = "Key: ", .style = fg };
+        segs[1] = .{ .text = k, .style = chord_style };
+        lines.append(arena, .{ .segs = segs }) catch return null;
+    }
     return lines;
 }
 
@@ -421,6 +433,31 @@ test "shortcuts and links get their rows after a spacer; a link row is a hit by 
     try testing.expectEqual(@as(u8, 0), g.hits.at(3, 9).?.info_view.try_it);
     try testing.expect(g.hits.at(3, 8).?.info_view == .body);
     try testing.expect(g.style(2, 9).ul_style == .single);
+}
+
+test "the Key line paints last, after a spacer under the links: `Key:` in the body's colour, the chord bold cyan, no hit of its own" {
+    var f = try Fixture.init(30, 14);
+    defer f.deinit();
+    const copy: Copy = .{
+        .title = "Toggle tree",
+        .body = "Body.",
+        .shortcuts = &.{.{ .chord = "Enter", .label = "Open" }},
+        .try_it = &.{.{ .label = "Run it" }},
+        .key = "Ctrl+B",
+    };
+    _ = draw(f.ui(), f.full(), .{ .copy = copy });
+    try f.expectRow(7, " → Run it");
+    try f.expectRow(8, "");
+    try f.expectRow(9, " Key: Ctrl+B");
+    try testing.expect(vaxis.Color.eql(f.style(6, 9).fg, f.theme.palette.cyan));
+    try testing.expect(f.style(6, 9).bold);
+    try testing.expect(!f.style(1, 9).bold);
+    try testing.expect(f.hits.at(6, 9).?.info_view == .body);
+    // Without a key, no line.
+    var g = try Fixture.init(30, 14);
+    defer g.deinit();
+    _ = draw(g.ui(), g.full(), .{ .copy = .{ .title = "Toggle tree", .body = "Body." } });
+    try g.expectLacks("Key:");
 }
 
 test "overflow: a scrollbar in the last column, the scroll clamped to what still fills the rows" {

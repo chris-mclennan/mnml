@@ -441,7 +441,7 @@ pub fn commandIds(app: *App, arena: Allocator) Allocator.Error![]const []const u
 }
 
 /// The command a palette row (unfiltered index) names.
-fn commandAt(app: *App, i: usize) ?command.CommandRef {
+pub fn commandAt(app: *const App, i: usize) ?command.CommandRef {
     if (i < command.count) return .{ .static = @enumFromInt(i) };
     var slot: usize = 0;
     var seen: usize = command.count;

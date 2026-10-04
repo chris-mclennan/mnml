@@ -55,6 +55,15 @@ and `.keys.vim` / `.keys.standard` add to or override their own.
    standard, as VS Code's do; in vim a chord the keymap binds wins
    (`Alt+H` is NvChad's scratch terminal, `Alt+R` regex search) and
    only unbound letters open their menus (`menu_bar.interceptKey`).
+9. **The hover help ends on the click's chord.** A control whose left
+   click runs one command — a chrome button, a statusline chip, a rail
+   icon, a panel or tree header chip, a launcher dock entry, a menu or
+   palette row — closes its info-view entry with `Key: …`, that
+   command's chord under the same rule as a menu row (`Key: Ctrl+K
+   Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill); no
+   line when the profile binds it to nothing, or when the entry's own
+   `[chord]` rows already print it. The click and the line read one
+   table, `src/app/primary_command.zig`.
 
 ## Chords that differ between the profiles
 

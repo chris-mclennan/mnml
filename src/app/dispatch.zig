@@ -113,6 +113,7 @@ const info_view_app = @import("info_view.zig");
 const Rect = @import("../ui/rect.zig");
 const pty_pane = @import("pty_pane.zig");
 const sessions_mode = @import("sessions_mode.zig");
+const primary_command = @import("primary_command.zig");
 const pty_search = @import("pty_search.zig");
 const request_pane = @import("request_pane.zig");
 const http_app = @import("http.zig");
@@ -2296,7 +2297,12 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             .search => try search_section.kebabMouse(app, pr.idx, m),
             .diagnostics, .outline, .jobs => {},
         },
-        .chip => |c| switch (c.panel) {
+        // A chip whose left click is one command runs it from the table
+        // the info view's `Key:` line reads (`app/primary_command.zig`);
+        // the right button's menus and the panels' own clicks stay below.
+        .chip => |c| if (m.kind == .press and m.button == .left and primary_command.chip(app, c.panel, c.kind) != null)
+            try runCmd(app, primary_command.chip(app, c.panel, c.kind).?)
+        else switch (c.panel) {
             .todos => try todos.chipMouse(app, c.kind, m),
             .notes => try notes.chipMouse(app, c.kind, m),
             .findings => try findings.chipMouse(app, c.kind, m),
@@ -2761,11 +2767,16 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             if (m.kind != .press) return;
             if (app.overlay != .none) closeOverlay(app);
             const right = m.button == .right;
+            // A chip whose left click is one command — the table the
+            // info view's `Key:` line reads too
+            // (`app/primary_command.zig`). The arms below are the right
+            // button's menus and the clicks that are not a command.
+            if (!right) if (primary_command.statusSeg(app, seg)) |c| return runCmd(app, c);
             switch (seg) {
-                statusline.seg_mode => if (right) try context_menus.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"editor.toggle_keymap"),
+                statusline.seg_mode => if (right) try context_menus.openModeMenu(app, m.x, m.y),
                 // right-click: every chip Rust gives a menu has one here
                 // (`context_menus.zig`, "the statusline chips").
-                statusline.seg_position => if (right) try context_menus.openPositionMenu(app, m.x, m.y) else try runCmd(app, .@"editor.goto_line"),
+                statusline.seg_position => if (right) try context_menus.openPositionMenu(app, m.x, m.y),
                 // The file chip is words on hover and a menu on the right
                 // button; a left click does nothing, as in Rust.
                 statusline.seg_file => if (right) try context_menus.openFileChipMenu(app, m.x, m.y),
@@ -2777,29 +2788,29 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     const via: []const u8 = if (app.activeEditor()) |e| (highlight.detect.Detected{ .key = lang, .how = e.buf.doc.language_how }).viaLabel() else "file extension";
                     app.toast("language: {s} (via {s})", .{ lang, via });
                 },
-                statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
+                statusline.seg_restricted => try runCmd(app, primary_command.statusSeg(app, seg).?),
                 // Between the chips: the row's own menu.
                 statusline.seg_bar => if (right) try statusline_app.openBarMenu(app, m.x, m.y),
                 else => if (statusline_app.SegId.of(seg)) |id| switch (id) {
-                    .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
+                    .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y),
                     .pr => if (right) try context_menus.openPrMenu(app, m.x, m.y) else if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),
-                    .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.diagnostics"),
-                    .symbol => if (right) try context_menus.openSymbolMenu(app, m.x, m.y) else try runCmd(app, .@"outline.show"),
-                    .macro => try runCmd(app, .@"vim.macro_toggle"),
-                    .find => if (right) try context_menus.openFindMenu(app, m.x, m.y) else try runCmd(app, .@"find.find"),
+                    .diagnostics => if (right) try context_menus.openDiagnosticsMenu(app, m.x, m.y),
+                    .symbol => if (right) try context_menus.openSymbolMenu(app, m.x, m.y),
+                    .macro => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    .find => if (right) try context_menus.openFindMenu(app, m.x, m.y),
                     .test_run => if (right) try context_menus.openTestMenu(app, m.x, m.y) else if (tests_pane.find(app)) |id_pane| {
                         app.setActive(id_pane);
                         app.focus = .{ .pane = id_pane };
                     },
-                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y) else try runCmd(app, if (id == .ai_codex) .@"ai.codex_usage" else .@"ai.claude_usage"),
+                    .ai_claude, .ai_codex => if (right) try context_menus.openAiChipMenu(app, id == .ai_codex, m.x, m.y),
                     // Ghost text: the picker on a click — the chip is
                     // there because something is wrong, and the backend
                     // is the first thing to check.
-                    .ghost => if (right) try ghost_chip.openMenu(app, m.x, m.y) else try runCmd(app, .@"ai.setup_suggestions"),
-                    .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y) else try runCmd(app, .@"coverage.toast"),
+                    .ghost => if (right) try ghost_chip.openMenu(app, m.x, m.y),
+                    .coverage => if (right) try coverage.openModeMenu(app, m.x, m.y),
                     // Background jobs: either button opens the list —
                     // the chip is a count, the list is what it counts.
-                    .jobs => try runCmd(app, .@"jobs.show"),
+                    .jobs => try runCmd(app, primary_command.statusSeg(app, seg).?),
                     // The now-playing cluster: the right button is the player
                     // menu on every chip; the left drives the player.
                     .np_brand, .np_track => if (right) try now_playing.openMenu(app, m.x, m.y) else try now_playing.click(app, .label),
@@ -2808,25 +2819,25 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .transfer => if (right) try context_menus.openTransferMenu(app, m.x, m.y),
                     // The LSP chip, as Rust: the servers on the left button
                     // (`:LspStatus`), the LSP menu on the right.
-                    .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y) else try runCmd(app, .@"lsp.status"),
-                    .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y) else try runCmd(app, .@"view.toggle_wrap"),
+                    .lsp => if (right) try statusline_app.openLspChipMenu(app, m.x, m.y),
+                    .wrap => if (right) try context_menus.openWrapMenu(app, m.x, m.y),
                     .autosave => app.toast("autosave: {d}s (`.editor.autosave_secs` to change)", .{app.cfg.editor.autosave_secs}),
                     // The one-click override for the file at hand.
-                    .highlight => try runCmd(app, .@"editor.highlight_toggle_file"),
+                    .highlight => try runCmd(app, primary_command.statusSeg(app, seg).?),
                     .filesize => if (right) try context_menus.openSizeMenu(app, m.x, m.y) else if (app.activeEditor()) |e| {
                         const n = e.buf.editor.bytes().len;
                         app.toast("{s}: {d} byte{s} · {d} line{s}", .{ if (e.buf.doc.path) |pth| std.fs.path.basename(pth) else "[scratch]", n, if (n == 1) "" else "s", e.buf.editor.lineCount(), if (e.buf.editor.lineCount() == 1) "" else "s" });
                     },
                     .sel => if (right) try context_menus.openSelMenu(app, m.x, m.y),
-                    .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y) else try runCmd(app, .@"perf.toast_stress"),
-                    .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y) else try runCmd(app, .@"messages.show"),
-                    .clock => if (right) try clock_mod.openMenu(app, m.x, m.y) else try runCmd(app, if (app.clock.mode == .utc) .@"clock.local" else .@"clock.utc"),
-                    .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y) else try runCmd(app, if (app.git.repos.items.len > 1) .@"git.switch_repo" else .@"view.switch_workspace"),
-                    .zoom => try runCmd(app, .@"view.toggle_zoom"),
+                    .stress => if (right) try context_menus.openStressMenu(app, m.x, m.y),
+                    .bell => if (right) try context_menus.openBellMenu(app, m.x, m.y),
+                    .clock => if (right) try clock_mod.openMenu(app, m.x, m.y),
+                    .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y),
+                    .zoom => try runCmd(app, primary_command.statusSeg(app, seg).?),
                     // The session ring's chip and its arrows.
-                    .sessions => try runCmd(app, .@"view.activity_sessions"),
-                    .session_prev => try runCmd(app, .@"ai.focus_prev_session"),
-                    .session_next => try runCmd(app, .@"ai.focus_next_session"),
+                    .sessions => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    .session_prev => try runCmd(app, primary_command.statusSeg(app, seg).?),
+                    .session_next => try runCmd(app, primary_command.statusSeg(app, seg).?),
                     .dev_profile => app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     .sandbox => if (app.sandboxState() == .unsafe)
                         app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
@@ -2866,12 +2877,9 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 return;
             }
             if (m.kind != .press) return;
-            // The strip's markdown chip (`render.drawMdChip`).
-            if (id == md_preview.button_edit) return runCmd(app, .@"markdown.edit_raw");
-            if (id == md_preview.button_preview) return runCmd(app, .@"markdown.preview");
-            // The strip's ZON chips (`render.modeChip`).
-            if (id == zon_pane.button_view) return runCmd(app, .@"zon.view");
-            if (id == zon_pane.button_source) return runCmd(app, .@"zon.source");
+            // The strip's markdown and ZON chips (`render.drawMdChip`,
+            // `render.modeChip`).
+            if (primary_command.stripChip(id)) |c| return runCmd(app, c);
             if (id == toast_mod.undo_button) {
                 // The Undo chip: left commits the undo, right drops the offer.
                 if (m.button == .right) app.dropUndo() else try app.takeUndo();
@@ -2940,7 +2948,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     return;
                 },
                 // The `⟳ … running…` indicator: stop what it reports.
-                .cmdline_inflight => return runCmd(app, .@"http.abort"),
+                .cmdline_inflight => return runCmd(app, primary_command.button(app, id).?),
                 // The echoed toast's `[name]`: the pane it names. Read
                 // off the live toast rather than a rect captured last
                 // frame — the toast may have aged out since.
@@ -2997,7 +3005,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
             // current first so the rows act there.
             if (render.Button.newTabLeaf(id)) |leaf_idx| {
                 // Git mode's `+` brings a closed repo back (Rust `git.reopen_repo`).
-                if (m.button == .left and app.git_palette.active) return runCmd(app, .@"git.reopen_repo");
+                if (m.button == .left) if (primary_command.button(app, id)) |c| return runCmd(app, c);
                 const layout = app.layouts.current();
                 if (try layout.leafAt(app.frame.allocator(), leaf_idx)) |lid| {
                     if (layout.leaf(lid)) |leaf| app.setActive(leaf.active);
@@ -3012,34 +3020,25 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 cmd_tab.switchTab(app, page);
                 return runCmd(app, .@"tab.close");
             }
+            // The top-right `+`: the `Create…` menu on the right button
+            // (Rust `right_click.rs`, 2026-09-03); a tab page on the left.
+            if (@as(render.Button, @enumFromInt(id)) == .new_tab_page and m.button == .right) {
+                const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
+                return context_menus.openNewTabMenu(app, r.x, r.y + 1);
+            }
+            // Every chip whose click is one command — the table the info
+            // view's `Key:` line reads too (`app/primary_command.zig`).
+            // The strip's cluster acts on the leaf it sits on.
+            if (primary_command.button(app, id)) |c| {
+                if (primary_command.onLeaf(id)) focusLeafAt(app, m.x, m.y);
+                return runCmd(app, c);
+            }
             switch (@as(render.Button, @enumFromInt(id))) {
-                .palette => try runCmd(app, .palette),
-                .toggle_tree => try runCmd(app, .@"view.toggle_tree"),
-                .toggle_right_panel => try runCmd(app, .@"view.toggle_right_panel"),
-                .right_close => try runCmd(app, .@"view.right_panel_close_tab"),
-                .right_tab => try runCmd(app, .@"view.focus_right_panel"),
                 .right_new => try context_menus.openAddPanelMenu(app, m.x, m.y),
-                // // changed (bottom-dock): the dock's `×`.
-                .bottom_close => try runCmd(app, .@"view.toggle_bottom_panel"),
-                // // changed (sidebar-autohide): the revealed column's
-                // own cells. The pin chip docks it; the ground swallows
-                // the press so it cannot fall through onto the editor
-                // the panel is floating over, and a right press on it
-                // offers the three modes.
-                .sidebar_pin => try runCmd(app, .@"view.sidebar_pin"),
-                // // changed (menu-bar-pin): the chip past the words.
-                // Its right press is the bar's own menu
-                // (`openButtonMenu`), which ran before this switch.
-                .menu_bar_pin => try runCmd(app, .@"view.menu_bar_pin"),
                 // // changed (edge-grip): the `⋯` / `⋮` handle at the
-                // middle of a hidden slide-in's edge. A left click
-                // reveals AND pins — the grip brings the surface out
-                // and keeps it, the chip at its other end lets it go —
-                // through the pin command each surface already has, so
-                // there is no new command id. The right press is that
-                // surface's own menu (`openButtonMenu`, which ran
-                // before this switch).
-                .edge_grip_menu_bar => try runCmd(app, .@"view.menu_bar_pin"),
+                // middle of a hidden sidebar's edge reveals AND pins it;
+                // the right press is that surface's own menu
+                // (`openButtonMenu`, which ran before this switch).
                 .edge_grip_sidebar_left, .edge_grip_sidebar_right => {
                     const grip_side: Config.ColumnSide = if (@as(render.Button, @enumFromInt(id)) == .edge_grip_sidebar_left) .left else .right;
                     sidebar_auto.gripPin(app, grip_side) catch |err| switch (err) {
@@ -3047,64 +3046,14 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                         else => {},
                     };
                 },
-                .edge_grip_dock => try runCmd(app, .@"view.dock_pin"),
                 // // changed (hunt5): the revealed panel's edge rule is its
                 // divider, so a right-click there is the divider's menu
                 // (width, auto-hide, side) — the rest of the panel keeps
-                // the mode menu.
+                // the mode menu. The ground swallows a left press so it
+                // cannot fall through onto the editor under it.
                 .sidebar_overlay => if (m.button == .right) {
                     if (overlayEdgeSide(app, m.x, m.y)) |s| return context_menus.openColumnDividerMenu(app, s, m.x, m.y);
                     try context_menus.openSidebarModeMenu(app, m.x, m.y);
-                },
-                .back => try runCmd(app, .@"buffer.prev"),
-                .forward => try runCmd(app, .@"buffer.next"),
-                .dropdown => try runCmd(app, .@"picker.recent"),
-                // The top-right `+`: a tab page on the left button (what its
-                // place promises), the `Create…` menu on the right (Rust
-                // `right_click.rs`, 2026-09-03).
-                .new_tab_page => if (m.button == .right) {
-                    const r = hitRect(app, m.x, m.y) orelse Rect.init(m.x, m.y, 1, 1);
-                    try context_menus.openNewTabMenu(app, r.x, r.y + 1);
-                } else try runCmd(app, .@"tab.new"),
-                .tabs_label => try runCmd(app, .@"tab.picker"),
-                // The pill swaps to the configured alternate; without one
-                // it opens the picker so the click never dead-ends.
-                .theme_toggle => try runCmd(app, if (app.cfg.ui.theme_toggle != null) .@"theme.toggle" else .@"theme.pick"),
-                .window_close => try runCmd(app, .@"app.quit"),
-                // The strip's cluster acts on the leaf it sits on.
-                .split_term => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"term.shell");
-                },
-                .split_right => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"view.split_right");
-                },
-                .split_down => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, .@"view.split_down");
-                },
-                // What the button does on a left click is
-                // `ui.maximize_click`'s to say; while something is
-                // already maximized it is the way back whatever the
-                // mode (`app/zen.zig`).
-                .split_max => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, zen.clickCommand(app));
-                },
-                // Full screen's corner mark: the click leaves.
-                .fullscreen_exit => try runCmd(app, .@"view.fullscreen"),
-                .all_tabs => try runCmd(app, .@"picker.buffers"),
-                // A session's ` ‹ 3/7 › `: the ring steps from the
-                // session this strip shows, whatever had the keys.
-                // In the sessions mode the arrows step this column's stack.
-                .session_prev => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_prev" else .@"ai.focus_prev_session");
-                },
-                .session_next => {
-                    focusLeafAt(app, m.x, m.y);
-                    try runCmd(app, if (sessions_mode.showing(app)) .@"sessions.column_next" else .@"ai.focus_next_session");
                 },
                 // The chips are the way to the SESSIONS panel; a click
                 // starts a session only when none of that product is

@@ -59,6 +59,7 @@ const App = app_mod.App;
 const Key = app_mod.Key;
 const Mouse = @import("../core/key.zig").Mouse;
 const command = @import("../core/command.zig");
+const primary_command = @import("primary_command.zig");
 const CommandId = command.CommandId;
 const hit_mod = @import("../ui/hit.zig");
 const HitTarget = hit_mod.HitTarget;
@@ -571,13 +572,26 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
         app.info_view.keys = m.keys;
-        return m.copy;
+        var c = m.copy;
+        c.key = try keyLine(app, arena, target, m.keys);
+        return c;
     }
     // A menu row without an entry: the command's title and chord,
     // rather than the tooltip's `opens more rows` — marked all the same.
     if (target == .menu_item) if (try copy.menus.rowFallback(app, arena, target.menu_item.menu, target.menu_item.idx)) |f| return .{ .title = f.title, .body = f.body, .aside = no_help_aside, .aside_first = true };
     const tip = (try discovery.describe(app, arena, target)) orelse return null;
     return .{ .title = tip.title, .body = tip.detail orelse "", .aside = no_help_aside, .aside_first = true };
+}
+
+/// The `Key:` line: the chord, under the active profile, of the one
+/// command `target`'s left click runs (`app/primary_command.zig` — the
+/// table the click reads too). Null when the click runs none, the
+/// profile binds it to nothing, or one of the entry's `[chord]` rows
+/// (`rows`, the materialized shortcuts' commands) already names it.
+pub fn keyLine(app: *App, arena: Allocator, target: HitTarget, rows: [copy.max_keys]?command.CommandId) Allocator.Error!?[]const u8 {
+    const id = (try primary_command.of(app, arena, target)) orelse return null;
+    for (rows) |r| if (r == id) return null;
+    return copy.chordOf(app, arena, id);
 }
 
 /// Whether `target` resolves to a curated entry, the tooltip's fallback,
@@ -1447,4 +1461,33 @@ test "the rule drags the height: rows follow the pointer, clamped; the release w
     try t.expect(app.drag == null);
     const text2 = try std.Io.Dir.cwd().readFile(t.io, path, &buf);
     try t.expect(std.mem.indexOf(u8, text2, "hover_help_height = 8") != null);
+}
+
+test "the Key line: a control's click command in the active profile's chord, last; none when the profile binds nothing or a row already names it" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    const render_mod = @import("render.zig");
+    // The theme pill: its entry lists no chord of its own.
+    const pill: HitTarget = .{ .button = @intFromEnum(render_mod.Button.theme_toggle) };
+    try app.setInputStyle(.standard);
+    try t.expectEqualStrings("Ctrl+K Ctrl+T", (try hoverCopy(&app, arena, pill)).?.key.?);
+    try app.setInputStyle(.vim);
+    try t.expectEqualStrings("Space t t", (try hoverCopy(&app, arena, pill)).?.key.?);
+    // The tree's new-file chip: VS Code's Ctrl+N under standard; vim
+    // binds the command to no chord, so no line.
+    const new_file: HitTarget = .{ .tree_chip = .new_file };
+    try t.expectEqual(command.CommandId.@"file.new", (try primary_command.of(&app, arena, new_file)).?);
+    try t.expectEqual(@as(?[]const u8, null), (try hoverCopy(&app, arena, new_file)).?.key);
+    try app.setInputStyle(.standard);
+    try t.expectEqualStrings("Ctrl+N", (try hoverCopy(&app, arena, new_file)).?.key.?);
+    // The position chip's entry already prints `[Ctrl+G] Go to line`:
+    // the line would only repeat it.
+    const pos: HitTarget = .{ .statusline_seg = @import("../ui/statusline.zig").seg_position };
+    const pos_copy = (try hoverCopy(&app, arena, pos)).?;
+    try t.expectEqualStrings("Ctrl+G", pos_copy.shortcuts[0].chord);
+    try t.expectEqual(@as(?[]const u8, null), pos_copy.key);
+    // A control whose click is no command: no line either.
+    const tab_close: HitTarget = .{ .tab_close = .{ .leaf = 0, .idx = 0 } };
+    try t.expectEqual(@as(?[]const u8, null), try keyLine(&app, arena, tab_close, @splat(null)));
 }
