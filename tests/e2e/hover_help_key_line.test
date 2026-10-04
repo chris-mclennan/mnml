@@ -1,86 +1,55 @@
 # width: 120
 # height: 40
 # The info view's `Key:` line: a control whose left click runs one
-# command ends its hover copy with that command's chord in the active
-# profile, read off the table the click itself reads
+# command shows that command's chord in the active profile on the line
+# right under the box's title, read off the table the click itself reads
 # (`app/primary_command.zig`), so the help and the click cannot drift.
 # A profile that binds the command to nothing prints no line, and
 # neither does an entry whose own `[chord]` rows already name it.
 #
-# The box is dragged tall (its rule from row 30 to row 10) and scrolled
-# to its foot, where the line is.
+# The box keeps its default height and is never scrolled: the line is
+# in view the moment the copy is, however long the body under it runs.
 write a.txt "alpha\n"
 open a.txt
-drag 10 30 10 10
 # Vim: the mode chip's click swaps the profile — `Space t k`.
 ex set input=vim
 hover 2 38
-hover 10 20
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-expect screen contains "Key: Space t k"
+hover 10 34
+# The first row under the title, the box unscrolled (the bar's thumb
+# at its top) — a long body runs on below it.
+expect screen contains "│ Key: Space t k          ┃│"
 # The tree's new-file chip: vim binds `file.new` to no chord.
 hover 60 20
 hover 21 1
-hover 10 20
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
+hover 10 34
 expect screen contains "Creates an empty file"
 expect screen lacks "Key:"
 # Standard: the same chip is VS Code's Ctrl+N ...
 ex set input=standard
 hover 60 20
 hover 21 1
-hover 10 20
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
+hover 10 34
 expect screen contains "Key: Ctrl+N"
 # ... and the position chip's entry already prints `[Ctrl+G] Go to
-# line`, so there is no line to repeat it.
+# line` (a few notches down), so there is no line to repeat it.
 hover 60 20
 hover 72 38
-hover 10 20
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
-scroll 10 20 down
+hover 10 34
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
+scroll 10 34 down
 expect screen contains "[Ctrl+G]"
 expect screen lacks "Key:"

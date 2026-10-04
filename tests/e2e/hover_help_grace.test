@@ -34,8 +34,8 @@ scroll 10 34 down
 scroll 10 34 down
 expect screen contains "→ Run it"
 expect screen lacks "Arrows or j/k"
-# `→ Run it` is on row 35 now: the click runs `file.new`.
-click 8 35
+# `→ Run it` is the box's last row (36) now: the click runs `file.new`.
+click 8 36
 expect screen contains "New file (workspace-relative)"
 key esc
 # A step AWAY from the box switches at once: down onto b.txt's row

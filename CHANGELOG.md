@@ -158,7 +158,7 @@ the release ships one file), and one line per change a user can see.
   `Width: 42 cells · 21%` — is its own help: hovering it shows the
   label, not *no help written yet*, and the hover audit no longer
   counts it as uncovered.
-- The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command ends its info-view entry with `Key: …`, that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
+- The hover help names the keyboard shortcut: a button, chip, rail icon, launcher dock entry, menu or palette row whose click runs a command shows `Key: …` on the line right under its info-view entry's title, in view without scrolling — that command's chord in your profile (`Key: Ctrl+K Ctrl+T` in standard, `Key: Space t t` in vim for the theme pill), and says nothing when the profile binds none or the entry already lists it.
 
 ### Claude Code's review
 
