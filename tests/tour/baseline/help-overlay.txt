@@ -29,7 +29,7 @@
    │                          │  ·                     Restart mnml (rebuild + relaunch via run.sh)                                                                     █│
    │                          │  ·                     Reset mnml to factory defaults (backup + relaunch)                                                               █│
    │                          │  ·                     Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)                                           █│
-   │                          │▾ ── view ── (221)                                                                                                                       █│
+   │                          │▾ ── view ── (224)                                                                                                                       █│
    │                          │  ctrl+b · space t e    Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)                                    █│
    │                          │  ·                     Reset file tree width to the config default                                                                      █│
    │                          │  ·                     Click-discovery overlay (highlight what's clickable)                                                             █│
@@ -40,7 +40,7 @@
    │                          │▾ ── integrations ── (45)                                                                                                                █│
    │                          │  ·                     Configure integration auth… (pick from installed)                                                                █│
    │                          │  ·                     Run diagnostics on an integration… (auth + config probe)                                                         █│
-   │                          │▾ ── view ── (221)                                                                                                                       █│
+   │                          │▾ ── view ── (224)                                                                                                                       █│
    │                          │  ctrl+k ctrl+r · f1    Keybindings & help — help overlay (auto-generated keymap reference)                                              █│
    │                          │  ctrl+,                Settings overlay (keyboard-driven schema editor)                                                                 █│
    │                          │  ·                     Settings: search… (open the settings overlay with the filter focused)                                            █│
@@ -56,5 +56,5 @@
    │ opens the palette.                 │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  19:53  ws   —
+ TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                              󱸀 ▇▂! →W  󱼀 󰐎  LSP?   1  14:23  ws   —
 
