@@ -1255,6 +1255,7 @@ otherwise. Copy what you need; leave the rest out.
     // ── statusline ─────────────────────────────────────────────────────
     .statusline = .{
         .hover_items = 8, // how many things a figure's hover lists before `… and N more`; 0 lists none
+        .hidden = .{}, // segments left off the row, by name, e.g. `.{ "clock", "jobs", "bitbucket_prs.prs_mine" }`; right-click the statusline → Segments ▸ toggles one and writes this
     },
 }
 ```

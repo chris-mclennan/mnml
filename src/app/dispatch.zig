@@ -1402,6 +1402,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .toggle_statusline_segment => |seg_key| try statusline_app.toggleHidden(app, seg_key),
         .rail_show => |s| activity_bar.setHidden(app, s, false) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
@@ -2767,6 +2768,8 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     app.toast("language: {s} (via {s})", .{ lang, via });
                 },
                 statusline.seg_restricted => try runCmd(app, .@"workspace.review_trust"),
+                // Between the chips: the row's own menu.
+                statusline.seg_bar => if (right) try statusline_app.openBarMenu(app, m.x, m.y),
                 else => if (statusline_app.SegId.of(seg)) |id| switch (id) {
                     .branch => if (right) try context_menus.openBranchMenu(app, m.x, m.y) else try runCmd(app, .@"git.status_pane"),
                     .pr => if (right) try context_menus.openPrMenu(app, m.x, m.y) else if (statusline_app.currentPr(app)) |pr| git_app.openExternal(app, pr.url),

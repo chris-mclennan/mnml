@@ -206,7 +206,7 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
         // hides, an eye shows, the dock arrow moves down onto the dock
         // and back up off it.
         .rail_hide => if (ascii) "-" else "\u{f070}", // fa-eye_slash
-        .rail_show => if (ascii) "+" else "\u{f06e}", // fa-eye
+        .rail_show, .toggle_statusline_segment => if (ascii) "+" else "\u{f06e}", // fa-eye
         .rail_to_dock => if (ascii) "v" else "\u{f063}", // fa-arrow_down
         .rail_from_dock => if (ascii) "^" else "\u{f062}", // fa-arrow_up
         // // changed (lua-plumbing): a script list's row menu.

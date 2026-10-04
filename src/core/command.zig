@@ -714,6 +714,10 @@ pub const MenuAction = union(enum) {
     rail_hide: @import("../ui/activity_bar.zig").Section,
     /// The gear menu's *Show hidden sections ▸* rows: one back.
     rail_show: @import("../ui/activity_bar.zig").Section,
+    /// The statusline's *Segments ▸* rows: show or hide one segment
+    /// by its `statusline.hidden` name (`app/statusline.zig`). The menu
+    /// or a static owns the bytes.
+    toggle_statusline_segment: []const u8,
     /// The rail menu's *Show on dock instead*: hidden here, its
     /// command pinned on the launcher dock.
     rail_to_dock: @import("../ui/activity_bar.zig").Section,

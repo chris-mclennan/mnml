@@ -370,6 +370,15 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
     if (std.mem.eql(u8, menu, "File")) if (parent) |p| if (std.mem.eql(u8, p, "Open recent file") and item.action == .command and menu_bar.isRecentId(item.action.command)) return try menu_bar.recentFile(app, arena, label);
     if (std.mem.eql(u8, menu, "Create…")) if (parent) |p| if (std.mem.eql(u8, p, "Integrations")) return try plus.integration(arena, label);
     if (item.action == .claude_account) return try claudeAccountRow(arena, item.action.claude_account);
+    // The statusline's own menu: *Segments ▸* and one row per segment.
+    if (std.mem.eql(u8, menu, "Statusline") and std.mem.eql(u8, label, "Segments")) return .{
+        .title = "Statusline segments",
+        .body = "Every segment the statusline can show, ticked while it is shown — the built-in chips first, then the ones integrations and scripts publish, by id. A row shows or hides its segment at once and writes `statusline.hidden` to the home config, so the row stays the same in every workspace. RESTRICTED and the sandbox chip are not listed: they never hide.",
+    };
+    if (item.action == .toggle_statusline_segment) return .{
+        .title = try std.fmt.allocPrint(arena, "{s} {s} on the statusline", .{ if (item.checked) "Hide" else "Show", label }),
+        .body = try std.fmt.allocPrint(arena, "{s} the `{s}` segment and writes `statusline.hidden` to the home config. A hidden segment only leaves the row: what it counts goes on counting, and its command still runs from the palette.", .{ if (item.checked) "Takes off the row" else "Puts back on the row", item.action.toggle_statusline_segment }),
+    };
     return null;
 }
 

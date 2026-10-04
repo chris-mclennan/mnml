@@ -759,9 +759,149 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&right, arena, Seg.init(ui.fmt("  {s} ", .{lang}), p.bg_darker, p.blue).strong().withHit(sl.seg_language));
     }
 
-    try insertSessions(app, ui, area.w, left.items, &right, sessions_at);
+    // `statusline.hidden`: the chips the user took off the row go
+    // before the session ring measures what is left.
+    const kept_left = try visible(app, arena, left.items);
+    const kept_before = try visible(app, arena, right.items[0..sessions_at]);
+    const kept_after = try visible(app, arena, right.items[sessions_at..]);
+    var kept_right: Lane = .empty;
+    try kept_right.appendSlice(arena, kept_before);
+    try kept_right.appendSlice(arena, kept_after);
+    if (!isHidden(app, "sessions")) try insertSessions(app, ui, area.w, kept_left, &kept_right, kept_before.len);
 
-    return .{ .left = left.items, .right = right.items, .middle = middle };
+    return .{ .left = kept_left, .right = kept_right.items, .middle = middle };
+}
+
+// ─── hiding segments ─────────────────────────────────────────────────────
+
+/// A segment the *Segments* submenu lists: the word `statusline.hidden`
+/// holds and the row's label. Every chip with a hit is here except the
+/// two that say the setup is not what it looks like — RESTRICTED and
+/// the sandbox chip — which never hide.
+pub const Named = struct { key: []const u8, label: []const u8 };
+
+pub const named = [_]Named{
+    .{ .key = "mode", .label = "Mode" },
+    .{ .key = "zoom", .label = "Zoom" },
+    .{ .key = "dev_profile", .label = "Profile (dev)" },
+    .{ .key = "branch", .label = "Branch" },
+    .{ .key = "pr", .label = "Pull request" },
+    .{ .key = "file", .label = "File" },
+    .{ .key = "diagnostics", .label = "Diagnostics" },
+    .{ .key = "symbol", .label = "Symbol" },
+    .{ .key = "macro", .label = "Macro recording" },
+    .{ .key = "find", .label = "Find matches" },
+    .{ .key = "test_run", .label = "Tests" },
+    .{ .key = "jobs", .label = "Background jobs" },
+    .{ .key = "ai_claude", .label = "Claude usage" },
+    .{ .key = "ai_codex", .label = "Codex usage" },
+    .{ .key = "sessions", .label = "Sessions" },
+    .{ .key = "ghost", .label = "Ghost text" },
+    .{ .key = "coverage", .label = "Coverage" },
+    .{ .key = "now_playing", .label = "Now playing" },
+    .{ .key = "transfer", .label = "Transfers" },
+    .{ .key = "lsp", .label = "LSP" },
+    .{ .key = "wrap", .label = "Wrap" },
+    .{ .key = "autosave", .label = "Autosave" },
+    .{ .key = "highlight", .label = "Highlight" },
+    .{ .key = "filesize", .label = "File size" },
+    .{ .key = "position", .label = "Position" },
+    .{ .key = "sel", .label = "Selection" },
+    .{ .key = "stress", .label = "Stress meter" },
+    .{ .key = "bell", .label = "Messages" },
+    .{ .key = "clock", .label = "Clock" },
+    .{ .key = "workspace", .label = "Workspace" },
+    .{ .key = "language", .label = "Language" },
+};
+
+/// The word a chip's hit id answers to in `statusline.hidden`: the
+/// built-in's name, a host segment's own id; null for a chip that
+/// cannot hide.
+pub fn keyOfHit(app: *const App, hit: u32) ?[]const u8 {
+    switch (hit) {
+        sl.seg_mode => return "mode",
+        sl.seg_file => return "file",
+        sl.seg_position => return "position",
+        sl.seg_language => return "language",
+        sl.seg_restricted, sl.seg_bar => return null,
+        else => {},
+    }
+    if (hit >= sl.seg_dyn_base) {
+        const slot = hit - sl.seg_dyn_base;
+        const segs = app.ipc_fx.segments.items;
+        return if (slot < segs.len) segs[slot].id else null;
+    }
+    const id = SegId.of(hit) orelse return null;
+    return switch (id) {
+        .sandbox => null,
+        .np_brand, .np_play, .np_next, .np_track => "now_playing",
+        .session_prev, .session_next => "sessions",
+        else => @tagName(id),
+    };
+}
+
+pub fn isHidden(app: *const App, key: []const u8) bool {
+    for (app.statusline_hidden.items) |h| if (std.mem.eql(u8, h, key)) return true;
+    return false;
+}
+
+/// `segs` without the chips `statusline.hidden` names.
+fn visible(app: *const App, arena: Allocator, segs: []const Seg) Allocator.Error![]const Seg {
+    if (app.statusline_hidden.items.len == 0) return segs;
+    var out: Lane = .empty;
+    for (segs) |sg| {
+        if (sg.hit) |h| if (keyOfHit(app, h)) |k| if (isHidden(app, k)) continue;
+        try out.append(arena, sg);
+    }
+    return out.items;
+}
+
+/// Show or hide one segment, and write `statusline.hidden` home.
+pub fn toggleHidden(app: *App, key: []const u8) Allocator.Error!void {
+    const gpa = app.gpa;
+    var hid = false;
+    var i: usize = 0;
+    while (i < app.statusline_hidden.items.len) {
+        if (std.mem.eql(u8, app.statusline_hidden.items[i], key)) {
+            gpa.free(app.statusline_hidden.orderedRemove(i));
+            hid = true;
+        } else i += 1;
+    }
+    if (!hid) try app.statusline_hidden.append(gpa, try gpa.dupe(u8, key));
+    const settings = @import("settings.zig");
+    _ = try settings.persist(app, .home, &.{ "statusline", "hidden" }, @as([]const []const u8, app.statusline_hidden.items));
+    app.toast("statusline: {s} {s} (statusline.hidden)", .{ key, if (hid) "shown again" else "hidden" });
+    app.needs_render = true;
+}
+
+/// The statusline's own menu — the right button on the row between
+/// chips: *Segments ▸*, every segment with a tick on the ones shown,
+/// built-ins first and then the host segments by id.
+pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const a = mem.allocator();
+    var kids: std.ArrayListUnmanaged(command.MenuItem) = .empty;
+    for (named) |n| try kids.append(a, .{ .label = n.label, .action = .{ .toggle_statusline_segment = n.key }, .checked = !isHidden(app, n.key), .checkable = true });
+    for (app.ipc_fx.segments.items, 0..) |sg, i| {
+        const id = try a.dupe(u8, sg.id);
+        try kids.append(a, .{ .label = id, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
+    }
+    // A name the file holds that no segment answers to any more (an
+    // integration since removed) still gets its row, so it can go.
+    for (app.statusline_hidden.items) |h| {
+        var known = false;
+        for (named) |n| known = known or std.mem.eql(u8, n.key, h);
+        for (app.ipc_fx.segments.items) |sg| known = known or std.mem.eql(u8, sg.id, h);
+        if (!known) {
+            const id = try a.dupe(u8, h);
+            try kids.append(a, .{ .label = id, .action = .{ .toggle_statusline_segment = id }, .checkable = true });
+        }
+    }
+    const rows = try app.gpa.alloc(command.MenuItem, 1);
+    errdefer app.gpa.free(rows);
+    rows[0] = .{ .label = "Segments", .action = .none, .submenu = kids.items };
+    try context_menus.openOwned(app, "Statusline", rows, x, y, mem);
 }
 
 /// The session ring's chip, into `right` at `at`: ` ‹ ▣ 3/7 › ` — the
@@ -829,6 +969,9 @@ pub fn enclosingSymbol(syms: []const lsp_types.Symbol, row: u32) ?[]const u8 {
 
 /// `render.drawStatusline`: build, then paint.
 pub fn draw(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
+    // The row under the chips, registered first so every chip wins its
+    // own cells: the right button between them opens `openBarMenu`.
+    ui.hit(area, .{ .statusline_seg = sl.seg_bar });
     sl.draw(ui, area, try build(app, ui, area));
 }
 
@@ -1172,10 +1315,10 @@ test "row 38 at 120×40 is the Rust spec's, cell for cell, but the clock" {
     try testing.expect(Color.eql(b.cell(@intCast(delta_col), 38).bg, p.teal));
     try testing.expect(Color.eql(b.cell(112, 38).fg, p.blue));
     try testing.expect(b.cell(112, 38).bold);
-    // Every chip on the row is a hit, and the gap is not.
+    // Every chip on the row is a hit, and the gap is the bar's own.
     try testing.expectEqual(sl.seg_mode, b.app.hits.at(1, 38).?.statusline_seg);
     try testing.expectEqual(SegId.branch.raw(), b.app.hits.at(9, 38).?.statusline_seg);
-    try testing.expect(b.app.hits.at(50, 38) == null);
+    try testing.expectEqual(sl.seg_bar, b.app.hits.at(50, 38).?.statusline_seg);
     try testing.expectEqual(SegId.coverage.raw(), b.app.hits.at(@intCast(delta_col), 38).?.statusline_seg);
     try testing.expectEqual(sl.seg_language, b.app.hits.at(118, 38).?.statusline_seg);
 }
@@ -1267,7 +1410,7 @@ test "every chip on the row registers its hit, has words, and its click does wha
     defer seen.deinit();
     var x: u16 = 0;
     while (x < 120) : (x += 1) if (b.app.hits.at(x, 38)) |h| if (h == .statusline_seg) try seen.put(h.statusline_seg, {});
-    const expected = [_]u32{ sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, SegId.branch.raw(), SegId.coverage.raw(), SegId.np_brand.raw(), SegId.np_play.raw(), SegId.wrap.raw(), SegId.filesize.raw(), SegId.bell.raw(), SegId.clock.raw(), SegId.workspace.raw() };
+    const expected = [_]u32{ sl.seg_bar, sl.seg_mode, sl.seg_file, sl.seg_position, sl.seg_language, SegId.branch.raw(), SegId.coverage.raw(), SegId.np_brand.raw(), SegId.np_play.raw(), SegId.wrap.raw(), SegId.filesize.raw(), SegId.bell.raw(), SegId.clock.raw(), SegId.workspace.raw() };
     try testing.expectEqual(expected.len, seen.count());
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -1812,7 +1955,7 @@ test "the mode chip: the standard profile's context labels, the vim profile's mo
     try testing.expect(Color.eql(b.cell(1, 38).bg, t.mode_edit.bg));
     try testing.expectEqual(sl.seg_mode, b.app.hits.at(0, 38).?.statusline_seg);
     try testing.expectEqual(sl.seg_mode, b.app.hits.at(5, 38).?.statusline_seg);
-    try testing.expect(b.app.hits.at(6, 38) == null or b.app.hits.at(6, 38).? != .statusline_seg);
+    try testing.expect(b.app.hits.at(6, 38) == null or b.app.hits.at(6, 38).? != .statusline_seg or b.app.hits.at(6, 38).?.statusline_seg == sl.seg_bar);
     // Vim: the diamond-V in orange, then the label, one pill on the mode's ground.
     try command.run(&b.app, .{ .static = .@"editor.toggle_keymap" });
     try testing.expect(std.mem.startsWith(u8, try b.row(38), " " ++ sl.vim_glyph ++ " NORMAL " ++ sl.pl_right_nerd));
@@ -2051,4 +2194,52 @@ test "enclosingSymbol: the innermost container holding the row, never a variable
     };
     try testing.expectEqualStrings("foo", enclosingSymbol(&flat, 2).?);
     try testing.expectEqualStrings("bar", enclosingSymbol(&flat, 9).?);
+}
+
+test "statusline.hidden: the bar's Segments menu ticks what is shown; a toggle takes the chip off the row, writes the home config, and a fresh App reads it back" {
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    const y: u16 = 38;
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.clock.raw()) != null);
+    // Between the chips the row is the bar's own hit.
+    _ = try b.row(y);
+    try testing.expectEqual(sl.seg_bar, b.app.hits.at(60, y).?.statusline_seg);
+    try openBarMenu(&b.app, 60, y);
+    const m = &b.app.overlay.menu;
+    try testing.expectEqualStrings("Statusline", m.title);
+    try testing.expectEqualStrings("Segments", m.items[0].label);
+    var clock_row: ?command.MenuItem = null;
+    for (m.items[0].submenu) |it| {
+        // Never listed: they say the setup is not what it looks like.
+        try testing.expect(!std.mem.eql(u8, it.label, "RESTRICTED"));
+        if (std.mem.eql(u8, it.label, "Clock")) clock_row = it;
+    }
+    try testing.expect(clock_row.?.checked);
+    try testing.expectEqualStrings("clock", clock_row.?.action.toggle_statusline_segment);
+    try b.app.handle(.{ .key = app_mod.Key.named(.esc) });
+
+    try toggleHidden(&b.app, "clock");
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.clock.raw()) == null);
+    const cfg_text = try std.Io.Dir.cwd().readFileAlloc(testing.io, try std.fs.path.join(b.app.frame.allocator(), &.{ b.root, "config.zon" }), testing.allocator, .unlimited);
+    defer testing.allocator.free(cfg_text);
+    try testing.expect(std.mem.indexOf(u8, cfg_text, ".hidden = .{\"clock\"}") != null);
+
+    var vars = std.process.Environ.Map.init(testing.allocator);
+    defer vars.deinit();
+    try vars.put("MNML_DATA_ROOT", b.root);
+    var loaded = try @import("../config/load.zig").load(testing.allocator, testing.io, .{ .workspace = b.ws, .env = .{ .vars = &vars } });
+    var again = try App.initWith(testing.allocator, testing.io, .{ .cfg = loaded.config, .loaded = loaded, .workspace = b.ws, .data_root = b.root, .cols = 120, .rows = 40 });
+    loaded = undefined; // the app owns it now
+    defer again.deinit();
+    try testing.expect(isHidden(&again, "clock"));
+    try openBarMenu(&again, 60, y);
+    for (again.overlay.menu.items[0].submenu) |it| if (std.mem.eql(u8, it.label, "Clock")) try testing.expect(!it.checked);
+
+    // And back: the second toggle shows it again and empties the list.
+    try toggleHidden(&b.app, "clock");
+    _ = try b.row(y);
+    try testing.expect(b.colOf(y, SegId.clock.raw()) != null);
+    try testing.expect(!isHidden(&b.app, "clock"));
 }

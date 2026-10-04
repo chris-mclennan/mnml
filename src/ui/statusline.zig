@@ -48,6 +48,9 @@ pub const seg_position: u32 = 2;
 pub const seg_language: u32 = 3;
 /// `RESTRICTED` — the workspace's exec-bearing config is stripped.
 pub const seg_restricted: u32 = 4;
+/// The row itself, under the chips: the right button there opens the
+/// statusline's own menu (`app/statusline.zig`, *Segments ▸*).
+pub const seg_bar: u32 = 5;
 /// Ids the app defines start here (and stay below `seg_dyn_base`).
 pub const seg_app_base: u32 = 16;
 /// `seg_dyn_base + i` is a host segment's slot in `ipc/effects.zig`.

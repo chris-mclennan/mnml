@@ -347,6 +347,7 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
         },
         statusline.seg_file => return .{ .title = "File", .detail = "the open file, ● when unsaved · right-click: copy the path / close the buffer" },
         statusline.seg_position => return .{ .title = "Position", .detail = "click: go to line" },
+        statusline.seg_bar => return .{ .title = "Statusline", .detail = "right-click: Segments — show or hide any chip on this row (statusline.hidden)" },
         statusline.seg_language => return .{ .title = "Language", .detail = "the file's language, by name, extension or shebang · click says how" },
         statusline.seg_restricted => return if (app.workspace_toml != null and (app.loaded == null or app.loaded.?.trust_prompt == null)) .{
             .title = "RESTRICTED — this workspace's .mnml/config.toml is mnml 0.2's and is not read",
