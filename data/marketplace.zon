@@ -21,7 +21,7 @@
             .label = "Jira",
             .description = "Jira: work, boards and fix versions — three chips on one binary",
             .category = "tracker",
-            .version = "0.2.1",
+            .version = "0.2.2",
             .binary = "mnml-jira",
             .docs = "https://github.com/chris-mclennan/mnml/tree/main/integrations/jira",
             .chip = .{ .glyph = "\u{f0303}", .fallback = "J", .color = "blue" }, // nf-md-jira
@@ -31,7 +31,7 @@
             .label = "Bitbucket",
             .description = "Bitbucket: pull requests and pipelines across the workspace",
             .category = "forge",
-            .version = "0.2.1",
+            .version = "0.2.2",
             .binary = "mnml-bitbucket",
             .docs = "https://github.com/chris-mclennan/mnml/tree/main/integrations/bitbucket",
             .chip = .{ .glyph = "\u{f00a8}", .fallback = "B", .color = "blue" }, // nf-md-bitbucket

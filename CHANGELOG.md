@@ -10,7 +10,18 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
-## v0.3.2 (unreleased)
+## v0.3.2
+
+mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own
+— every Claude Code and Codex session side by side, with a ring that walks
+the ones waiting on you — and mnml grows an API: a local socket with
+`mnml remote`, a gate on what a program in a pane may ask for, and a face
+for Claude Code's IDE protocol, so a session can open files, read the
+selection and show its diffs in a review pane with no setup. Ticket keys
+and PR references are links wherever they appear. The dashboards prefetch
+and refresh on their own cadence. Jira and Bitbucket 0.2.2 ship alongside:
+their chips wear Atlassian's own icons, and their cards and terminals link
+to the issue or pull request they name.
 
 ### Safety
 
