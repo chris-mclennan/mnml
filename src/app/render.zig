@@ -3210,7 +3210,7 @@ fn paintMenuRows(ui: Ui, inner: Rect, p: RowsProps) std.AutoHashMapUnmanaged(usi
             _ = ui.putStr(xx, r.y, r.right() -| xx, menu_glyph.forItem(it, ui.ascii), style);
             xx += icon_col;
         }
-        const label_fg = if (it.action == .none and it.submenu.len == 0) th.muted.fg else style.fg;
+        const label_fg = if (it.isInfo()) th.muted.fg else style.fg;
         const label = rowLabel(ui, it, tick_col);
         // The trailing marker: ` ▸` on a dropdown parent, `▸ ` on a
         // context parent, `⋮ ` on a curatable menu's focused leaf.

@@ -655,7 +655,7 @@ What mnml does with each field:
 | `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest. The live run replaces it over Tier 2, where it may also carry `items` (below) |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
 | `values_sources[]` | the statusline poller (`src/app/integration_poll.zig`): each entry's `command` runs as `<binary> --values --workspace <ws>` every `poll_interval_secs` (300 by default), one worker per source, staggered, backed off on a failure, and quiet while a pane of the integration is open; `prefetch = true` also runs the whole-pane warm |
-| `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary. See *Links* below |
+| `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary, a terminal pane, an editor, the Markdown preview, a commit's message in the git graph, a toast, an HTTP response body. See *Links* below |
 | `context_menu[]`, `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
 
 `binary` may be `$NAME` (or `$NAME/rest`): the variable's value is the
@@ -742,7 +742,8 @@ auth field's `$BITBUCKET_WORKSPACE`.
 
 The in-repo integrations: Jira's Work chip declares the issue key
 above, Bitbucket's PRs chip the pull request. The sample's
-`manifest.zon` carries a commented example.
+`manifest.zon` declares one, live: `SAMPLE-12` links to
+`https://example.com/sample/SAMPLE-12`.
 
 ## Publishing an integration — the catalogue entry
 

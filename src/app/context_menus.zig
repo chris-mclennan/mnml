@@ -1508,8 +1508,12 @@ fn openSidebarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
 /// between the sidebar and the editor: its width by the config or by
 /// hand, the column's two ways out of sight, and the side it lives on.
 pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
     const rows = try items(app, &.{
-        .{ .label = "Reset width", .action = .{ .command = .@"view.reset_tree_width" } },
+        // What the column is now, before the rows that change it.
+        .{ .label = try treeWidthLabel(mem.allocator(), app.tree.width, app.screen.width), .action = .none },
+        .{ .label = "Reset width", .action = .{ .command = .@"view.reset_tree_width" }, .separator_before = true },
         .{ .label = "Set width…", .action = .{ .command = .@"view.set_tree_width" } },
         .{ .label = "Hide sidebar", .action = .{ .command = if (app.cfg.ui.sidebar_side == .left) .@"view.toggle_tree" else .@"view.toggle_right_panel" }, .separator_before = true },
         // A ticked row unticks: checked, it puts the sidebar back to
@@ -1519,6 +1523,14 @@ pub fn openTreeDividerMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Sidebar divider", rows, x, y);
+    app.overlay.menu.mem = mem;
+}
+
+/// The sidebar divider menu's heading: the column's width in cells and
+/// as the share of the window *Set width…* also reads (`25%`).
+pub fn treeWidthLabel(a: Allocator, width: u16, cols: u16) Allocator.Error![]const u8 {
+    const pct: u32 = if (cols == 0) 0 else (@as(u32, width) * 100 + cols / 2) / cols;
+    return std.fmt.allocPrint(a, "Width: {d} cells · {d}%", .{ width, pct });
 }
 
 /// A right-click on either column's divider. The sidebar's column —
@@ -2657,12 +2669,17 @@ test "the sidebar divider: a right-click opens its menu — reset, set, hide, au
         .{ "Auto-hide sidebar", .@"view.sidebar_mode_auto" },
         .{ "Move sidebar to the right", .@"view.flip_sidebar_side" },
     };
-    try t.expectEqual(want.len, app.overlay.menu.items.len);
-    for (want, app.overlay.menu.items) |w, it| {
+    // Above them, what the column is now: 40 of 200 cells.
+    try t.expectEqual(want.len + 1, app.overlay.menu.items.len);
+    try t.expectEqualStrings("Width: 40 cells · 20%", app.overlay.menu.items[0].label);
+    try t.expect(app.overlay.menu.items[0].isInfo());
+    // The keyboard cursor starts past it, on the first row that acts.
+    try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    for (want, app.overlay.menu.items[1..]) |w, it| {
         try t.expectEqualStrings(w[0], it.label);
         try t.expectEqual(w[1], it.action.command);
     }
-    try t.expect(!app.overlay.menu.items[3].checked);
+    try t.expect(!app.overlay.menu.items[4].checked);
     // A drag still starts from a left press; the menu is the right's.
     closeMenu(&app);
     try app.handle(.{ .mouse = .{ .x = 40, .y = 10, .kind = .press, .button = .left } });
@@ -2670,6 +2687,12 @@ test "the sidebar divider: a right-click opens its menu — reset, set, hide, au
     try app.handle(.{ .mouse = .{ .x = 52, .y = 10, .kind = .release, .button = .left } });
     try t.expectEqual(@as(u16, 52), app.tree.width);
     try t.expect(app.side.tree_pinned);
+    // The heading follows the drag; an arrow up never lands on it.
+    try openTreeDividerMenu(&app, 5, 5);
+    try t.expectEqualStrings("Width: 52 cells · 26%", app.overlay.menu.items[0].label);
+    for (0..3) |_| try app.handle(.{ .key = app_mod.Key.named(.up) });
+    try t.expectEqual(@as(usize, 1), app.overlay.menu.cursor);
+    closeMenu(&app);
 
     // Set width…: the prompt, seeded with the width now; a share.
     try command.run(&app, .{ .static = .@"view.set_tree_width" });
@@ -2702,7 +2725,7 @@ test "the sidebar divider: a right-click opens its menu — reset, set, hide, au
     try command.run(&app, .{ .static = .@"view.sidebar_mode_auto" });
     try t.expectEqual(Config.Sidebar.auto, app.cfg.ui.sidebar);
     try openTreeDividerMenu(&app, 5, 5);
-    try t.expect(app.overlay.menu.items[3].checked);
+    try t.expect(app.overlay.menu.items[4].checked);
     closeMenu(&app);
     try command.run(&app, .{ .static = .@"view.sidebar_mode_always" });
 }
@@ -2734,7 +2757,7 @@ test "the sidebar divider's move row: the default sections swap columns, a secti
     // The explorer that was shown on the left shows on the right now.
     try t.expectEqual(side.Section.explorer, side.shown(&app, .right).?);
     try openTreeDividerMenu(&app, 5, 5);
-    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[4].label);
+    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[5].label);
     closeMenu(&app);
     // A section moved by hand to the LEFT (against the new default)
     // stays there when the default flips back.
@@ -2789,8 +2812,8 @@ test "moving the sidebar right takes its rail, its width and its divider menu wi
     try app.handle(.{ .mouse = .{ .x = dx, .y = 10, .kind = .press, .button = .right } });
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("Sidebar divider", app.overlay.menu.title);
-    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[4].label);
-    try t.expectEqual(command.CommandId.@"view.toggle_right_panel", app.overlay.menu.items[2].action.command);
+    try t.expectEqualStrings("Move sidebar to the left", app.overlay.menu.items[5].label);
+    try t.expectEqual(command.CommandId.@"view.toggle_right_panel", app.overlay.menu.items[3].action.command);
     closeMenu(&app);
     // A drag on it pins the sidebar's own width.
     try app.handle(.{ .mouse = .{ .x = dx, .y = 10, .kind = .press, .button = .left } });
@@ -2814,8 +2837,8 @@ test "the divider menu's ticked Auto-hide row unticks, and a revealed auto-hide 
     defer app.deinit();
     try app.render();
     try openTreeDividerMenu(&app, 5, 5);
-    try t.expect(!app.overlay.menu.items[3].checked);
-    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[3].action);
+    try t.expect(!app.overlay.menu.items[4].checked);
+    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[4].action);
     try t.expectEqual(Config.Sidebar.auto, app.cfg.ui.sidebar);
     if (app.overlay == .menu) closeMenu(&app);
     // Revealed, the panel's edge rule is its divider: a right-click
@@ -2832,8 +2855,8 @@ test "the divider menu's ticked Auto-hide row unticks, and a revealed auto-hide 
     try t.expect(app.overlay == .menu);
     try t.expectEqualStrings("Sidebar divider", app.overlay.menu.title);
     // The tick is on, and the ticked row puts the sidebar back.
-    try t.expect(app.overlay.menu.items[3].checked);
-    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[3].action);
+    try t.expect(app.overlay.menu.items[4].checked);
+    try @import("dispatch.zig").runMenuActionForTest(&app, app.overlay.menu.items[4].action);
     try t.expectEqual(Config.Sidebar.always, app.cfg.ui.sidebar);
 }
 

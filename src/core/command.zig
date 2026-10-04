@@ -923,6 +923,12 @@ pub const MenuItem = struct {
     /// // changed (ui-polish): rows this one opens to the right (`▸`);
     /// a literal slice — the open menu copies what it shows onto the gpa.
     submenu: []const MenuItem = &.{},
+
+    /// A row that only says something — no action, nothing it opens:
+    /// drawn muted, and the keyboard cursor steps over it.
+    pub fn isInfo(it: MenuItem) bool {
+        return it.action == .none and it.submenu.len == 0;
+    }
 };
 
 // ─── tests ──────────────────────────────────────────────────────────────

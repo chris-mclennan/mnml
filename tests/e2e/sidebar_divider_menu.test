@@ -5,6 +5,8 @@
 write whole_at_thirty.md "one\n"
 expect screen contains "whole_at_thirty.md "
 rightclick 30 10
+# Above the rows, what the column is now: 30 of 120 cells.
+expect screen contains "Width: 30 cells · 25%"
 expect screen contains "Reset width"
 expect screen contains "Set width…"
 expect screen contains "Hide sidebar"
@@ -19,6 +21,7 @@ type "40%"
 key enter
 expect screen contains "sidebar width: 48"
 rightclick 48 10
+expect screen contains "Width: 48 cells · 40%"
 expect screen contains "Reset width"
 # Junk is refused and the width stays.
 key down
