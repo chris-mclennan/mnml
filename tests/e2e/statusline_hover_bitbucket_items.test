@@ -36,8 +36,11 @@ expect screen contains "acme/api"
 # request of mine that moved. Five, and five is what the same run asked
 # for before `items` existed — measured against the pre-branch binary,
 # same paths in the same order. A hover that costs a request is not
-# worth having, and this line is what says so.
-shell test "$(wc -l < wire.jsonl | tr -d ' ')" -eq 5
+# worth having, and this line is what says so. The two more are each
+# repo's pipelines for the bare-number links' range table, asked for on
+# a first run and then once an hour — not by the hover.
+shell test "$(wc -l < wire.jsonl | tr -d ' ')" -eq 7
+shell test "$(grep -c '/pipelines/' wire.jsonl)" -eq 2
 
 # A row is a click target, and a press on it runs what the row names
 # — here the mine-only tab. The box sits above the chip; its first
