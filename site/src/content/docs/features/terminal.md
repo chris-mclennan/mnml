@@ -107,6 +107,14 @@ hands the keyboard back.
 
 `ctrl+c`, `ctrl+d`, `ctrl+z` and `ctrl+l` always go to the program.
 
+## Links
+
+URLs in a pane's output, and the ticket keys and pull-request
+references your integrations declare, wear a dotted underline and light
+under the pointer. `Ctrl`+click (`Cmd`+click on macOS) opens one; a
+plain press still starts a selection. Right-click a link for *Copy link*
+and *Open link*. See [Links](/docs/features/links).
+
 ## Windows
 
 On Windows, panes use the system's ConPTY. The Windows build compiles

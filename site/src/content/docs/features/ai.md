@@ -120,8 +120,8 @@ which processes are alive; it needs no hooks installed in either tool.
 
 Each row shows the session's state — *waiting*, *live*, *tool*, *idle*,
 *failed* or *done* — its name, tokens, estimated cost, age and how many
-files are dirty in its working directory. The table refreshes every few
-seconds.
+files are dirty in its working directory. The table keeps itself up to
+date; [How often it reads](#how-often-it-reads) has the details.
 
 | Key | Action |
 | --- | ------ |
@@ -139,6 +139,61 @@ seconds.
 
 `sessions.changes` shows what a session changed since it started —
 committed and uncommitted — and lets you diff, stage and commit it.
+
+A URL or ticket key in a row's summary, or on a SESSIONS card, is a
+link; see [Links](/docs/features/links).
+
+### How often it reads
+
+The SESSIONS section and the sessions table share one listing, and mnml
+keeps it current without re-reading the whole machine every few
+seconds. The first read starts with mnml, in the background, so the list
+is ready the first time you open it. After that, two kinds of work run
+on separate clocks.
+
+**The transcripts** are on a fixed tick. mnml checks every known
+transcript's size and modification time, and lists the transcript
+folders for new ones, every **500 ms** while SESSIONS or the sessions
+table is on screen and every **2 s** while neither is. Only a transcript
+that changed is read, so a new or changed one shows within half a second
+and a quiet machine reads nothing. This tick is not configurable.
+
+**The liveness pass** — the process list, each session's state and
+`git status` for each working directory — and the **cloud runs** are
+the expensive part, and each runs at one of three intervals:
+
+| Interval | When it applies | SESSIONS default | Cloud runs default |
+| -------- | --------------- | ---------------- | ------------------ |
+| fast | A view is on screen and something is live: a session thinking or in a tool, or a cloud run in progress. | 2 s | 10 s |
+| slow | A view is on screen with nothing live. | 5 s | 30 s |
+| idle | No view is on screen, so the next open still shows a recent list. | 30 s | 2 min |
+
+A view coming on screen runs one pass at once. The ⟳ chip and
+`sessions.refresh` read everything now, whatever the interval.
+
+Settings → **Integrations** → **Dashboard refresh** chooses how the
+interval is picked (`ui.dashboard_refresh`, in your home config):
+
+| Value | What it does |
+| ----- | ------------ |
+| `auto` | The default: fast while something is live, slow while nothing is, idle off screen. |
+| `fast` | Holds the fast interval while a view is on screen, live or not; idle off screen. |
+| `slow` | Holds the slow interval while a view is on screen; idle off screen. |
+| `manual` | Reads nothing on its own — not even the transcript tick — until you press the ⟳ chip or run `sessions.refresh`. |
+
+The intervals themselves are in `config.zon`, in milliseconds; `0`
+means never:
+
+```zig
+.sessions = .{
+    .refresh = .{ .fast_ms = 2000, .slow_ms = 5000, .idle_ms = 30000 },
+},
+.cloud_agents = .{
+    .refresh = .{ .fast_ms = 10000, .slow_ms = 30000, .idle_ms = 120000 },
+},
+```
+
+The cloud's are longer because every read is a call to `aws`.
 
 ## A worktree per session
 

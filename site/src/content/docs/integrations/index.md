@@ -87,6 +87,54 @@ this file leaves every integration where it already was. The built-in
 chips are not integrations and keep their own defaults, so Browser
 keeps its chip.
 
+### The Jira and Bitbucket chips
+
+Jira and Bitbucket put five chips between them, one per pane. Four wear
+Atlassian's own icons — the ones Jira's and Bitbucket's sidebars draw
+for the same pages — so each chip says what it opens rather than which
+product it belongs to:
+
+| Chip | Icon | Codepoint | With `--ascii` |
+| ---- | ---- | --------- | -------------- |
+| Bitbucket PRs | the two-branch pull request | `U+F1C15` | `BP` |
+| Bitbucket Pipelines | the pipeline loop | `U+F1C16` | `BL` |
+| Jira Boards | the three-column board | `U+F1C17` | `JB` |
+| Jira Fix Versions | the ship (a release) | `U+F1C18` | `JV` |
+
+The Jira Work chip keeps the Jira logo, a Nerd Font glyph, and reads
+`JW` under `--ascii`.
+
+The four marks are Atlassian's design-system SVGs, from the
+`@atlaskit/icon` and `@atlaskit/icon-lab` packages (Apache-2.0;
+[`data/glyphs/NOTICE`](https://github.com/chris-mclennan/mnml/blob/main/data/glyphs/NOTICE)
+has the details). They are baked into mnml's own symbols font,
+`MnmlSymbols.ttf`, at the sizes they have on Atlassian's 16-unit grid,
+so the pull request stands taller than the pipeline loop, as it does on
+Atlassian's pages.
+
+Because they live in `MnmlSymbols.ttf`, an older copy of the font in
+your font directory lacks them. From a checkout of the repository,
+install the current one with:
+
+```text
+./run.sh install-font
+```
+
+It merges with the face already installed rather than overwriting it,
+and backs the old file up first. From a release download, install
+`share/mnml/fonts/MnmlSymbols.ttf` like any other font; see
+[Help](/docs/help) for the Ghostty line that routes mnml's glyphs to it.
+Until the font has them, a toast at startup says how many integration
+icons will render as `?`; `:integrations.audit_glyphs` lists each one.
+
+## Links
+
+The Jira integration teaches mnml its ticket keys, and Bitbucket its
+pull-request references, so `ACME-123` and `widget#42` link to the
+issue or pull request wherever mnml shows them — session cards,
+terminals, editors, toasts. See [Links](/docs/features/links), which
+also covers how your own integration can declare a shape of text.
+
 ## Private integrations
 
 An integration does not have to be published. You can point mnml at a
