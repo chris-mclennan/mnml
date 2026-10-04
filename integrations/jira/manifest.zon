@@ -11,7 +11,7 @@
     .version = "0.2.2",
     .binary = "mnml-jira",
     .category = "tracker",
-    .chip = .{ .glyph = "\u{f0303}", .fallback = "JW", .color = "blue", .tooltip = "Jira Work", .in_palette_bar = false }, // nf-md-jira
+    .chip = .{ .glyph = "\u{f1c19}", .fallback = "JW", .color = "blue", .tooltip = "Jira Work", .in_palette_bar = false }, // MnmlSymbols: Atlassian work-items
     .commands = .{
         .{ .id = "jira_work.open", .title = "Jira Work: open", .args = .{ "--only", "work" }, .keys = .{"space i j w"} },
         .{ .id = "jira_work.refresh", .title = "Jira Work: republish the statusline count", .ex = "term mnml-jira --values --only work --workspace {{workspace}}" },
