@@ -56,5 +56,5 @@
    │ · [Ctrl+P] Files                   │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- EDIT  dev   main  󰐙 1  󰛕 1   util.zig  › sum                                                                              󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  15:33  ws   zig
+ EDIT   main  󰐙 1  󰛕 1   util.zig  › sum                                                                                    󱸀 95% 52%  󱼀 󰐎  LSP?  460B  Ln 8/20 Col 2   1  18:37  ws   zig
 

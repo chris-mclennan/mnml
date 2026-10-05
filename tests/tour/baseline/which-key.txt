@@ -40,21 +40,21 @@
    │                                    │                                                                                   Ctrl+N         new file
    │                                    │                                                                                   Ctrl+Q         quit
    │                                    │
-   │                                    │                                                                   mnml 0.3.1-dev+g4fe8b14e
+   │                                    │                                                                    mnml 0.3.3 · 1a9bc2c7
    │                                    │
  ┌ Ctrl+K ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │            a → sessions                          ctrl+left → focus left                           ctrl+t → theme…                                    r → reveal in Finder / Explorer               │
- │            b → blame toggle                         ctrl+m → zoom the split / restore            ctrl+up → focus up                              right → move split right                          │
- │       ctrl+0 → fold all                             ctrl+o → switch workspace                       down → move split down                           s → save all                                  │
- │       ctrl+\ → split down                           ctrl+p → buffers                               enter → keep preview tab                shift+enter → pin / unpin tab                           │
- │   ctrl+alt+c → copy path                     ctrl+pagedown → next buffer                             f12 → definition to the side              shift+h → pin hover help                            │
- │       ctrl+b → pin/unpin the sidebar           ctrl+pageup → previous buffer                           g → +git (1)                                  t → theme light ↔ dark                        │
- │    ctrl+down → focus down                           ctrl+q → last edit location                        i → +integrations (1)                        up → move split up                             │
+ │            a → sessions                             ctrl+l → toggle fold                    ctrl+shift+n → messages (toast log)                      p → copy path                                 │
+ │            b → blame toggle                      ctrl+left → focus left                           ctrl+t → theme…                                    r → reveal in Finder / Explorer               │
+ │       ctrl+0 → fold all                             ctrl+m → zoom the split / restore            ctrl+up → focus up                              right → move split right                          │
+ │       ctrl+\ → split down                           ctrl+o → switch workspace                       down → move split down                           s → save all                                  │
+ │   ctrl+alt+c → copy path                            ctrl+p → buffers                               enter → keep preview tab                shift+enter → pin / unpin tab                           │
+ │       ctrl+b → pin/unpin the sidebar         ctrl+pagedown → next buffer                             f12 → definition to the side              shift+h → pin hover help                            │
+ │    ctrl+down → focus down                      ctrl+pageup → previous buffer                           g → +git (1)                                  t → theme light ↔ dark                        │
+ │       ctrl+e → recent items                         ctrl+q → last edit location                        i → +integrations (1)                        up → move split up                             │
  │       ctrl+f → format selection                     ctrl+r → keybindings reference                     j → background jobs                           w → close others                              │
  │       ctrl+i → hover docs                       ctrl+right → focus right                            left → move split left                           z → full screen (Esc Esc leaves)              │
  │       ctrl+j → unfold all                           ctrl+s → cheatsheet (all chords)                   n → new tab page                                                                            │
- │       ctrl+l → toggle fold                    ctrl+shift+n → messages (toast log)                      p → copy path                                                                               │
  │  esc to cancel                                                                                                                                                                                     │
  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  19:52  ws   —
+ TREE   main  󰐙 1  󰛕 1  [no file]                                                                                                                   󱸀 95% 52%  󱼀 󰐎  LSP?   1  18:37  ws   —
 

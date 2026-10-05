@@ -56,5 +56,5 @@
    │                                    │▌
   │                                    │▌
    │                                    │▌                                                         ⋯
- VIEW  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                           󱸀 P 95%! →W  󱼀 󰐎  LSP?   1  19:28  ws   —
+ VIEW   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 P 95%! →W  󱼀 󰐎  LSP?   1  18:37  ws   —
 
