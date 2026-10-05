@@ -10,7 +10,7 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
-## v0.3.3 (unreleased)
+## v0.3.3 (2026-10-05)
 
 ### Integrations add rows to each other's menus
 
