@@ -15,6 +15,7 @@
           "title": "Release Notes",
           "children": [
             { "type": "link", "path": "/", "title": "Overview" },
+            { "type": "link", "path": "/0-3-3", "title": "0.3.3" },
             { "type": "link", "path": "/0-3-2", "title": "0.3.2" },
             { "type": "link", "path": "/0-3-1", "title": "0.3.1" },
             { "type": "link", "path": "/0-3-0", "title": "0.3.0" }
