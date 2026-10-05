@@ -750,3 +750,17 @@ test "hover: the element's command rides along when it has one, and is absent on
     const without = try encode(arena, SiblingMessage{ .hover = .{ .title = "Refresh" } });
     try testing.expect(std.mem.indexOf(u8, without, "command") == null);
 }
+
+test "hover: command and row ride together; an older hover (neither) still decodes" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const both = try roundTrip(SiblingMessage, arena, .{ .hover = .{ .title = "Row", .command = "jira_work.open", .row = .{ .kind = "ticket", .key = "ACME-123", .state = "In Progress" } } });
+    try testing.expectEqualStrings("jira_work.open", both.hover.command.?);
+    try testing.expectEqualStrings("ACME-123", both.hover.row.?.key);
+    const old = try decode(SiblingMessage, arena, "{\"hover\":{\"title\":\"t\",\"body\":\"b\"}}");
+    try testing.expect(old.hover.command == null and old.hover.row == null);
+    // A row a newer pane fills with fields this host lacks still decodes.
+    const newer = try decode(SiblingMessage, arena, "{\"hover\":{\"title\":\"t\",\"row\":{\"kind\":\"pr\",\"n\":42,\"future\":1}}}");
+    try testing.expectEqual(@as(u64, 42), newer.hover.row.?.n);
+}
