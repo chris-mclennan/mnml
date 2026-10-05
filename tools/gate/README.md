@@ -2,7 +2,10 @@
 
 The scripts that land branches on `main` and decide whether `main` may be
 pushed. They act on the checkout they live in (the repo root is two levels
-above this directory) and expect branch worktrees at `<repo>-worktrees/<branch>`.
+above this directory) and find each branch's worktree in `git worktree list`
+(`wt_of` in `tools/wt-lib.sh`), so a branch merges from `../.worktrees/<repo>/<branch>`
+(`tools/wt.sh add`) or from the older `<repo>-worktrees/<branch>` alike; a branch
+with no worktree stops the queue.
 
 **The one rule: never push around them.** `main` reaches origin only through
 `merge-batch.sh` or `fix-main.sh`, after a green chain. A red chain is fixed on
@@ -26,7 +29,7 @@ Only one batch runs at a time (`/tmp/mnml-batch.lock.d`).
 | --- | --- |
 | `merge-batch.sh BRANCH...` | Per branch: rebase its worktree on `main` (conflicts through `resolve-loop.sh`), merge `--no-ff` with its message file, remove the worktree, regenerate `docs/commands.md`, then a quick gate (build + ReleaseSafe unit) that stops the queue on red. After the last branch: the full chain, a bundle to `~/Backups/mnml-zig/`, a refusal when origin is ahead of local `main`, the push, and the real-screen tour. Clears a `.zig-cache` over 40 GB first when nothing is building. |
 | `fix-main.sh LABEL` | The tail of `merge-batch.sh` alone: full chain, bundle, origin-ahead refusal, push, tour. |
-| `chain-scrub.sh` | The full chain: work-data and gate-path audits, fmt, arena audit, `-Dpartial=false`, the heavy phase, glyph audit, the drive build, the size sweep, the sharded corpus, the PTY mouse check, extra integration roots, the bitbucket and jira suites, `run-sh-check`, docs. |
+| `chain-scrub.sh` | The full chain: work-data and gate-path audits, fmt, arena audit, `-Dpartial=false`, the heavy phase, glyph audit, the drive build, the size sweep, the sharded corpus, the PTY mouse check, extra integration roots, the bitbucket and jira suites, `run-sh-check`, `wt-check` (`tools/wt.sh` and the worktree lookup on a throwaway repo, ~10 s), docs. |
 | `heavy-phase.sh` | ReleaseSafe unit, Debug unit and the five cross-target gate builds, in parallel (2+2 wide). |
 | `corpus-sharded.sh BIN N OUTLOG` | The e2e corpus as N parallel shards, merged into one `X/Y passed` line. |
 | `resolve-loop.sh` | Called by `merge-batch.sh` mid-rebase: keep-both for `docs/` and `CHANGELOG.md`, keep-both plus the pin re-sum for `specs.zig` / `command.zig`, the notch sum for `settings_wheel.test`; anything else stops the queue. |

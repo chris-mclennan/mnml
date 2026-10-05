@@ -1712,8 +1712,7 @@ profile this way. Either prompts for a branch name (seeded
 <root>/<name> HEAD` in the workspace's repository and opens the session
 in the tree with `MNML_WORKSPACE` pointing at it.
 
-`<root>` is `<repo>-worktrees` beside the repository (this project's
-own convention: `mnml-zig-worktrees/<track>`) unless
+`<root>` is `<repo>-worktrees` beside the repository unless
 `.ai.default_worktree_root` names another — `~` expands, a relative
 path sits under the repository, an absolute one is taken as is. The
 name is validated as a branch name; an existing directory or branch is
