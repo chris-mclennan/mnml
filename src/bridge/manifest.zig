@@ -53,10 +53,10 @@ const LegacyEntry = struct { target: []const u8, title: []const u8 = "", label: 
 
 /// `Manifest` with its `context_menu` rows in the older shape.
 const LegacyManifest = blk: {
-    const fields = @typeInfo(Manifest).@"struct".fields;
+    const fields = compat.structFields(Manifest);
     var names: [fields.len][]const u8 = undefined;
     var types: [fields.len]type = undefined;
-    var attrs: [fields.len]std.builtin.Type.StructField.Attributes = undefined;
+    var attrs: [fields.len]compat.StructFieldAttributes = undefined;
     const empty: []const LegacyEntry = &.{};
     for (fields, 0..) |f, i| {
         names[i] = f.name;
@@ -73,7 +73,7 @@ const LegacyManifest = blk: {
 fn legacy(arena: Allocator, text: [:0]const u8) ?Manifest {
     const old = compat.zonParse(LegacyManifest, arena, text, null, .{ .ignore_unknown_fields = true }) catch return null;
     var m: Manifest = undefined;
-    inline for (@typeInfo(Manifest).@"struct".fields) |f| {
+    inline for (compat.structFields(Manifest)) |f| {
         if (comptime !std.mem.eql(u8, f.name, "context_menu")) @field(m, f.name) = @field(old, f.name);
     }
     const rows = arena.alloc(manifest.ContextMenuEntry, old.context_menu.len) catch return null;

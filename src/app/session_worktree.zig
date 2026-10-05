@@ -43,6 +43,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -793,7 +794,7 @@ test "validName: one directory name and a branch name at once" {
     try t.expect(!validName("../x"));
     try t.expect(!validName("x/.."));
     try t.expect(!validName("C:x"));
-    try t.expect(!validName("x" ** 81));
+    try t.expect(!validName(compat.repeat("x", 81)));
 }
 
 test "rootFor: <parent>/.worktrees/<repo> by default; the override with ~ expanded, relative from the repo, absolute as is" {
