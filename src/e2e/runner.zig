@@ -44,6 +44,7 @@ const key = @import("../core/key.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const ipc_command = @import("../ipc/command.zig");
 const build_options = @import("build_options");
+const session_worktree = @import("../app/session_worktree.zig");
 
 pub const Driver = driver_mod.Driver;
 pub const Factory = driver_mod.Factory;
@@ -375,8 +376,14 @@ const Run = struct {
         defer script.deinit();
 
         self.workspace = makeTempDir(gpa, io, self.opts.tmp_root) catch |e| return self.fail("tempdir: {s}", .{@errorName(e)});
+        const beside = treesBeside(gpa, io, self.workspace) catch |e| {
+            removeWorkspace(io, self.workspace, null);
+            gpa.free(self.workspace);
+            return self.fail("tempdir: {s}", .{@errorName(e)});
+        };
         defer {
-            Io.Dir.cwd().deleteTree(io, self.workspace) catch {};
+            removeWorkspace(io, self.workspace, beside);
+            if (beside) |b| gpa.free(b);
             gpa.free(self.workspace);
         }
         self.cmd_offset = 0;
@@ -1435,6 +1442,30 @@ pub fn makeTempDir(gpa: Allocator, io: Io, tmp_root: []const u8) ![]u8 {
     }
 }
 
+/// The folder a session worktree made by this file's script lands in:
+/// mnml's default root for the workspace, `<tmp_root>/.worktrees/<the
+/// workspace's name>` (`app/session_worktree.zig` `defaultRoot`) — a
+/// sibling of the workspace, so removing the workspace leaves it. Null
+/// when something is there already: the workspace's name is unique only
+/// while it exists, and a folder of that name is an earlier run's (a
+/// timed-out file's, a crashed run's) — never this file's to remove.
+pub fn treesBeside(gpa: Allocator, io: Io, workspace: []const u8) Allocator.Error!?[]u8 {
+    const parent = std.fs.path.dirname(workspace) orelse return null;
+    const path = try std.fs.path.join(gpa, &.{ parent, session_worktree.shared_dir, std.fs.path.basename(workspace) });
+    _ = Io.Dir.cwd().statFile(io, path, .{}) catch return path;
+    gpa.free(path);
+    return null;
+}
+
+/// The end of a file: its workspace, and the trees its sessions made
+/// beside it (`treesBeside`, when this file owns that folder). The shared
+/// `.worktrees` folder itself stays — another run's trees may be in it,
+/// or about to be.
+pub fn removeWorkspace(io: Io, workspace: []const u8, beside: ?[]const u8) void {
+    Io.Dir.cwd().deleteTree(io, workspace) catch {};
+    if (beside) |b| Io.Dir.cwd().deleteTree(io, b) catch {};
+}
+
 /// `mkdir`, failing when the directory is already there.
 fn createFresh(io: Io, path: []const u8) !void {
     try Io.Dir.cwd().createDir(io, path, .default_dir);
@@ -2174,6 +2205,54 @@ test "each file persists into its own data root, so one that leaves something in
     defer t.allocator.free(shared_b);
     var o4 = runFile(t.allocator, t.io, sf.factory(), shared_b, content_size, opts);
     try expectPassed(&o4);
+}
+
+test "a file's session worktrees beside its workspace go with it; another run's folder and the shared .worktrees stay" {
+    // `shell` is `/bin/sh -c`: POSIX, as the shell-step tests above.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var env = try TestEnv.init();
+    defer env.deinit();
+    var opts = env.opts();
+    opts.allow_shell = true;
+    var sf: StubFactory = .{};
+    // Another run's tree in the shared folder, there before this file.
+    try env.tmp.dir.createDirPath(t.io, ".worktrees/someone-else/session-1");
+    // The file leaves a tree where mnml's default root puts it, with an
+    // uncommitted file in it — what `sessions_worktree_remove_keeps_files`
+    // leaves.
+    const leaves = try env.script("w1.test", "shell mkdir -p \"../.worktrees/$(basename \"$PWD\")/session-1\" && echo half > \"../.worktrees/$(basename \"$PWD\")/session-1/draft.txt\"\nshell test -f \"../.worktrees/$(basename \"$PWD\")/session-1/draft.txt\"\n");
+    defer t.allocator.free(leaves);
+    var o = runFile(t.allocator, t.io, sf.factory(), leaves, content_size, opts);
+    try expectPassed(&o);
+    var dir = try env.tmp.dir.openDir(t.io, ".worktrees", .{ .iterate = true });
+    defer dir.close(t.io);
+    var it = dir.iterate();
+    const only = (try it.next(t.io)).?;
+    try t.expectEqualStrings("someone-else", only.name);
+    try t.expect((try it.next(t.io)) == null);
+    _ = try env.tmp.dir.statFile(t.io, ".worktrees/someone-else/session-1", .{});
+}
+
+test "treesBeside claims the folder only when nothing is there: an earlier run's of the same name is left alone" {
+    var env = try TestEnv.init();
+    defer env.deinit();
+    try env.tmp.dir.createDirPath(t.io, "mnml-e2e-aaaaaa");
+    try env.tmp.dir.createDirPath(t.io, "mnml-e2e-bbbbbb");
+    try env.tmp.dir.createDirPath(t.io, ".worktrees/mnml-e2e-bbbbbb/stale");
+    const fresh_ws = try std.fs.path.join(t.allocator, &.{ env.root, "mnml-e2e-aaaaaa" });
+    defer t.allocator.free(fresh_ws);
+    const stale_ws = try std.fs.path.join(t.allocator, &.{ env.root, "mnml-e2e-bbbbbb" });
+    defer t.allocator.free(stale_ws);
+    const fresh = (try treesBeside(t.allocator, t.io, fresh_ws)).?;
+    defer t.allocator.free(fresh);
+    const want = try std.fs.path.join(t.allocator, &.{ env.root, ".worktrees", "mnml-e2e-aaaaaa" });
+    defer t.allocator.free(want);
+    try t.expectEqualStrings(want, fresh);
+    try t.expect((try treesBeside(t.allocator, t.io, stale_ws)) == null);
+    // The stale one's file ends: its workspace goes, the old folder stays.
+    removeWorkspace(t.io, stale_ws, null);
+    try t.expectError(error.FileNotFound, env.tmp.dir.statFile(t.io, "mnml-e2e-bbbbbb", .{}));
+    _ = try env.tmp.dir.statFile(t.io, ".worktrees/mnml-e2e-bbbbbb/stale", .{});
 }
 
 test "parse errors and unreadable files are outcomes, never panics" {
