@@ -1,15 +1,9 @@
 # env: MNML_PROFILE=dev
-# The dev profile says so on the statusline. One machine runs two
-# mnmls — the installed one you live in and the build you are working
-# on — and the only thing telling them apart on screen is this chip
-# beside the mode (`src/app/statusline.zig`, `src/config/profile.zig`).
-# The window title carries the same tag, which a screen dump cannot
-# see; `tools/run-sh-check.sh` covers the rest of the profile's names.
-#
-# The stable profile paints nothing at all — every other script in this
-# corpus runs in it and none of them show a `dev`, which is the other
-# half of this assertion.
+# There is one mnml: a build from source and an installed one share a
+# data root and paint the same statusline. A leftover MNML_PROFILE from
+# an older run.sh names nothing — no ` dev ` chip beside the mode
+# (`src/config/data_root.zig`; the data-root side is a unit test there).
 write hello.txt "hi"
 open hello.txt
-expect screen contains "dev"
 expect screen contains "hello.txt"
+expect screen lacks " dev "
