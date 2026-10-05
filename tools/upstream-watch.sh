@@ -6,6 +6,7 @@
 #   tools/upstream-watch.sh --dry-run --json --only zig      # the state JSON alone
 #   tools/upstream-watch.sh --dry-run --prev-state OLD.json   # + the comment decision against OLD
 #   tools/upstream-watch.sh --decide OLD.json NEW.json        # the decision alone (offline)
+#   tools/upstream-watch.sh --classify-tests LOG [ROOT]       # a test step's log → key=value lines
 #   tools/upstream-watch.sh --publish                 # the weekly workflow: update the tracking issue
 #
 # Read-only against every upstream. The only writes anywhere are
@@ -68,7 +69,10 @@
 #   UW_REPO        owner/repo for --publish and the release (default
 #                  $GITHUB_REPOSITORY, else chris-mclennan/mnml)
 #   UW_CI_GHOSTTY_SHA, UW_CI_GHOSTTY_BUILD, UW_CI_TERMINAL_TESTS,
-#   UW_CI_TERMINAL_FAILED, UW_CI_RESIZE, UW_CI_ZIG_NEXT,
+#   UW_CI_TERMINAL_FAILED, UW_CI_TERMINAL_CRASHED,
+#   UW_CI_TERMINAL_UNCOMPILED, UW_CI_TERMINAL_MATCHED, UW_CI_TERMINAL_ERROR
+#   (--classify-tests' failed / crashed / uncompiled / matched /
+#   first_error), UW_CI_RESIZE, UW_CI_ZIG_NEXT,
 #   UW_CI_ZIG_NEXT_VERSION, UW_CI_ZIG_GHOSTTY (ghostty main's
 #   minimum_zig_version) — the workflow's job results (success /
 #                  failure / skipped / cancelled; RESIZE is broken /
@@ -112,6 +116,8 @@ usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 root="${UW_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 repo_slug="${UW_REPO:-${GITHUB_REPOSITORY:-chris-mclennan/mnml}}"
 mode=
+classify_log=
+classify_root=
 json_only=
 only=
 prev_state=
@@ -125,13 +131,16 @@ while [ $# -gt 0 ]; do
         --only) only="${2:?--only needs a list}"; shift ;;
         --prev-state) prev_state="${2:?--prev-state needs a file}"; shift ;;
         --decide) mode=decide; decide_old="${2:?}"; decide_new="${3:?}"; shift 2 ;;
+        --classify-tests)
+            mode=classify; classify_log="${2:?--classify-tests needs a log}"; shift
+            case "${2:-}" in "" | -*) ;; *) classify_root="$2"; shift ;; esac ;;
         -h | --help) usage; exit 0 ;;
         *) echo "upstream-watch: unknown argument $1" >&2; usage >&2; exit 64 ;;
     esac
     shift
 done
-[ -n "$mode" ] || { echo "upstream-watch: give --dry-run, --publish or --decide" >&2; exit 64; }
-command -v jq > /dev/null || { echo "upstream-watch: needs jq" >&2; exit 64; }
+[ -n "$mode" ] || { echo "upstream-watch: give --dry-run, --publish, --decide or --classify-tests" >&2; exit 64; }
+[ "$mode" = classify ] || command -v jq > /dev/null || { echo "upstream-watch: needs jq" >&2; exit 64; }
 
 # ── the network, or the fixtures ────────────────────────────────────
 
@@ -612,6 +621,68 @@ section_channels() {
 
 # ── ci (the workflow's own jobs) ─────────────────────────────────────
 
+# What a failed terminal-tests step amounts to, from --classify-tests'
+# counts: tests that failed, binaries that crashed or wedged, binaries
+# that did not compile (with the first error), a filter that matched
+# nothing, or — none of those — the step's first error line. Never "0 failed": a step can fail with no
+# test failing, and the report has to say how.
+terminal_failure() {
+    local f="${UW_CI_TERMINAL_FAILED:-0}" c="${UW_CI_TERMINAL_CRASHED:-0}" u="${UW_CI_TERMINAL_UNCOMPILED:-0}"
+    local e="${UW_CI_TERMINAL_ERROR:-}" parts=() out
+    case "$f$c$u" in *[!0-9]*) f=0 c=0 u=0 ;; esac
+    [ "$f" -eq 0 ] || parts+=("$f $( [ "$f" -eq 1 ] && echo test || echo tests) failed")
+    [ "$c" -eq 0 ] || parts+=("$c $( [ "$c" -eq 1 ] && echo test || echo tests) crashed or wedged the process")
+    [ "$u" -eq 0 ] || parts+=("$u test $( [ "$u" -eq 1 ] && echo binary || echo binaries) did not compile")
+    if [ ${#parts[@]} -eq 0 ] && [ "${UW_CI_TERMINAL_MATCHED-}" = 0 ]; then
+        out="the test filter matched no test"
+    elif [ ${#parts[@]} -eq 0 ]; then
+        out="no test failed, crashed or failed to compile"
+        if [ -n "$e" ]; then out+="; first error: $e"; else out+="; the run's log has the cause"; fi
+    else
+        out=$(IFS=';'; printf '%s' "${parts[*]}" | sed 's/;/; /g')
+        [ "$u" -eq 0 ] || [ -z "$e" ] || out+=" — first error: $e"
+    fi
+    printf '%s' "$out"
+}
+
+# --classify-tests: read a test step's log (the trace runner's output,
+# the build runner's) and print, for $GITHUB_OUTPUT:
+#   failed=N       the runners' `F failed;` summed
+#   crashed=N      `CRASH <test>` / `WEDGED <test>` lines, a crash before
+#                  the first test, and a process the build runner saw
+#                  die on a signal
+#   uncompiled=N   test binaries that did not compile
+#   matched=N      tests MNML_TEST_FILTER matched, summed over the trace
+#                  runner's `filter …: N of M tests matched` lines (empty
+#                  when no binary ran filtered)
+#   first_error=…  the first compiler diagnostic, as `<binary>: <error>`
+#                  with ROOT (default: the current directory) and the
+#                  Zig lib directory cut from the paths; with none, the
+#                  first other `error:` line that says something
+classify_tests() { # log root
+    local log="$1" root="${2:-$PWD}" failed crashed uncompiled matched first bin
+    [ -r "$log" ] || { echo "upstream-watch: cannot read $log" >&2; return 64; }
+    root="${root%/}/"
+    failed=$(grep -oE '[0-9]+ failed;' "$log" | awk '{ n += $1 } END { print n + 0 }')
+    crashed=$(grep -cE '^ *(CRASH|WEDGED) |terminated with signal' "$log")
+    uncompiled=$(grep -cE '^error: [0-9]+ compilation errors?$' "$log")
+    matched=$(grep -oE '^filter .*: [0-9]+ of [0-9]+ tests? matched$' "$log" \
+        | sed -E 's/.*: ([0-9]+) of [0-9]+ tests? matched$/\1/' | awk '{ n += $1; any = 1 } END { if (any) print n }')
+    first=$(grep -m1 -E '^[^ ]+\.zig:[0-9]+:[0-9]+: error: ' "$log")
+    if [ -n "$first" ]; then
+        # The binary: the `failed command:` that follows the diagnostic.
+        bin=$(awk -v d="$first" 'f && /^failed command: / { print; exit } $0 == d { f = 1 }' "$log" \
+            | grep -oE -- '-Mroot=[^ ]+' | head -1 | sed 's/^-Mroot=//')
+        first=$(printf '%s' "$first" | sed -E 's|^.*/lib/(zig/)?std/|std/|')
+        first="${first#"$root"}"
+        bin="${bin#"$root"}"
+        [ -z "$bin" ] || first="$bin: $first"
+    else
+        first=$(grep -E '^error: ' "$log" | grep -vE 'compilation errors?$|the following (build|test) command failed' | head -1)
+    fi
+    printf 'failed=%s\ncrashed=%s\nuncompiled=%s\nmatched=%s\nfirst_error=%s\n' "$failed" "$crashed" "$uncompiled" "$matched" "$first"
+}
+
 section_ci() {
     local any="${UW_CI_GHOSTTY_BUILD:-}${UW_CI_TERMINAL_TESTS:-}${UW_CI_RESIZE:-}${UW_CI_ZIG_NEXT:-}"
     [ -n "$any" ] || return 0
@@ -619,7 +690,8 @@ section_ci() {
     case "${UW_CI_GHOSTTY_BUILD:-}" in success) build=yes ;; failure) build=no ;; *) build="not run" ;; esac
     case "${UW_CI_TERMINAL_TESTS:-}" in
         success) tests=pass ;;
-        failure) tests="fail (${UW_CI_TERMINAL_FAILED:-?} failed)" ;;
+        failure) tests="fail — $(terminal_failure)" ;;
+        cancelled) tests="cancelled — the step did not finish (the job's time limit, or the run was cancelled)" ;;
         *) tests="not run" ;;
     esac
     case "${UW_CI_RESIZE:-}" in
@@ -650,11 +722,18 @@ section_ci() {
     say "- resize redraw: $resize"
     say "- $zig"
     say ""
+    # The counts are signal; the first error's text is info (its paths
+    # and line numbers move with every Zig and every runner), and so is
+    # the number of tests the filter matched (it grows with the suite).
     put .ci "$(jq -nc --arg b "$build" --arg t "${UW_CI_TERMINAL_TESTS:-not run}" --arg f "${UW_CI_TERMINAL_FAILED:-}" \
+        --arg c "${UW_CI_TERMINAL_CRASHED:-}" --arg u "${UW_CI_TERMINAL_UNCOMPILED:-}" --arg e "${UW_CI_TERMINAL_ERROR:-}" \
+        --arg m "${UW_CI_TERMINAL_MATCHED:-}" \
         --arg r "${UW_CI_RESIZE:-not run}" --arg z "${UW_CI_ZIG_NEXT:-skipped}" --arg zv "${UW_CI_ZIG_NEXT_VERSION:-}" --arg s "$sha" \
         --arg gz "${UW_CI_ZIG_GHOSTTY:-}" \
-        '{ghostty_build: $b, terminal_tests: $t, terminal_failed: $f, resize: $r, zig_next: $z, zig_next_version: $zv,
-          zig_next_expected_failure: ($z == "failure" and $gz != "" and $gz != $zv), info: {ghostty_sha: $s, ghostty_zig: $gz}}')"
+        '{ghostty_build: $b, terminal_tests: $t, terminal_failed: $f, terminal_crashed: $c, terminal_uncompiled: $u,
+          resize: $r, zig_next: $z, zig_next_version: $zv,
+          zig_next_expected_failure: ($z == "failure" and $gz != "" and $gz != $zv),
+          info: {ghostty_sha: $s, ghostty_zig: $gz, terminal_error: $e, terminal_matched: $m}}')"
 }
 
 # ── the decision ─────────────────────────────────────────────────────
@@ -705,6 +784,10 @@ decide() { # old new (files; read once each, so a pipe or <(…) is fine)
 if [ "$mode" = decide ]; then
     decide "$decide_old" "$decide_new"
     exit 0
+fi
+if [ "$mode" = classify ]; then
+    classify_tests "$classify_log" "$classify_root"
+    exit $?
 fi
 
 # ── --publish: read the tracking issue's stored state first ─────────

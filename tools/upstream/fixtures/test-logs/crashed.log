@@ -1,0 +1,8 @@
+▶ 1/2 pty.test.a session opens
+  CRASH pty.test.a session opens (.{ .signal = 6 }) — the suite goes on from the next test
+▶ 2/2 pty.test.a grid resizes
+  WEDGED: no progress for 300 s; sampling pid 41 before killing it
+  WEDGED pty.test.a grid resizes — no progress for 300 s, killed; the suite goes on from the next test
+0 passed; 0 skipped; 0 failed; 0 FLAKY.
+2 tests crashed the process.
+error: the following build command failed with exit code 1:
