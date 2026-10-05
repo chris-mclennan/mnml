@@ -856,6 +856,9 @@ pub fn Painter(comptime Target: type) type {
             body_target: Target,
         ) Allocator.Error!void {
             if (box.w < 8 or box.h < 4) return;
+            // The box first: the last mark painted wins a click, so the
+            // chips marked after it sit on top of it.
+            try p.mark(box, body_target);
             p.fill(box, p.th.overlayBg());
             p.frameBox(box, p.th.overlayBorder());
             _ = p.putFit(box.x + 2, box.y, box.w -| 4, heading, p.th.bright());
@@ -877,7 +880,6 @@ pub fn Painter(comptime Target: type) type {
             try p.mark(.{ .x = cancel_x, .y = row, .w = cw, .h = 1 }, cancel_target);
             _ = p.put(ok_x, row, okw, ok_label, p.th.chipActive());
             try p.mark(.{ .x = ok_x, .y = row, .w = okw, .h = 1 }, ok_target);
-            try p.mark(box, body_target);
         }
 
         // ─── the scrollbar ───────────────────────────────────────────
@@ -1592,6 +1594,20 @@ test "a detail panel carries a × in its corner and a scrollbar whose track is o
     // The press maps back to a window position.
     try testing.expectEqual(@as(usize, 0), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 0));
     try testing.expectEqual(@as(usize, 24), scrollAt(.{ .x = 19, .y = 0, .w = 1, .h = 6 }, 30, 6, 5));
+}
+
+test "a confirm's chips sit on top of its box: a click on OK is OK, a click on Cancel is Cancel, elsewhere is the box" {
+    var r = try Rig.init(40, 8);
+    defer r.deinit();
+    var p = r.painter(Theme.fromHello(null), .{});
+    const box: Rect = .{ .x = 2, .y = 1, .w = 36, .h = 6 };
+    try p.confirmBox(box, "Merge?", &.{"the line"}, " OK ", .{ .chip = 1 }, " Cancel ", .{ .chip = 2 }, .detail);
+    // The chips are right-anchored on the last inner row.
+    const row = box.bottom() - 2;
+    const ok_x = box.right() - 2 - width(" OK ");
+    try testing.expectEqual(Demo{ .chip = 1 }, r.hits.at(ok_x, row).?);
+    try testing.expectEqual(Demo{ .chip = 2 }, r.hits.at(ok_x - 2, row).?);
+    try testing.expectEqual(Demo.detail, r.hits.at(box.x + 3, box.y + 2).?);
 }
 
 test "the frame and the rules come from one glyph set, with an ascii twin" {
