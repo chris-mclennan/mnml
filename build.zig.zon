@@ -145,8 +145,8 @@
             .hash = "N-V-__8AAIziCgDpLMkHhH-ROghr9-KrLeZ1p2lVMJALMMqL",
         },
         .ts_ocaml = .{
-            .url = "https://static.crates.io/crates/tree-sitter-ocaml/tree-sitter-ocaml-0.25.0.crate",
-            .hash = "N-V-__8AAMWGNQIzo1S52zQpOCgEm3VbIIY2avrHRXlEREdx",
+            .url = "https://static.crates.io/crates/tree-sitter-ocaml/tree-sitter-ocaml-0.26.0.crate",
+            .hash = "N-V-__8AAKqV_QMneuw2XSuSyasr8hIF-G1E3Qe8DqcwL6Tb",
         },
         .ts_dart = .{
             .url = "https://static.crates.io/crates/tree-sitter-dart/tree-sitter-dart-0.2.0.crate",
