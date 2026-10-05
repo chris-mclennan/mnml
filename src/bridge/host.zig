@@ -181,7 +181,7 @@ pub const Event = struct {
         watch_session: struct { key: []u8, id: []u8, cwd: []u8, prompt_line: []u8 },
         /// The element under the pointer, named by the pane for the
         /// info view. Owned.
-        hover: struct { title: []u8, body: []u8, command: []u8 = &.{} },
+        hover: struct { title: []u8, body: []u8, command: []u8 = &.{}, row: []u8 = &.{} },
         /// The sibling said goodbye.
         bye,
         /// The stream ended without one; the reason is for the banner.
@@ -221,6 +221,7 @@ pub const Event = struct {
                 gpa.free(h.title);
                 gpa.free(h.body);
                 if (h.command.len > 0) gpa.free(h.command);
+                if (h.row.len > 0) gpa.free(h.row);
             },
             .connected, .frame, .cursor, .bye => {},
         }
@@ -558,7 +559,13 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
                     gpa.free(body);
                     continue;
                 };
-                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .hover = .{ .title = title, .body = body, .command = cmd } } });
+                const row: []u8 = if (h.row) |rr| packRow(gpa, rr) catch {
+                    gpa.free(title);
+                    gpa.free(body);
+                    if (cmd.len > 0) gpa.free(cmd);
+                    continue;
+                } else &.{};
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .hover = .{ .title = title, .body = body, .command = cmd, .row = row } } });
             },
             .bye => {
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .bye });
@@ -746,4 +753,45 @@ test "close: a sibling that never connected and outlives goodbye is killed, not 
     // seconds after the kill — was a zombie: the cancel's SIGIO had
     // landed in the reap's `waitpid` (`core/child.zig`, `reap`).
     try testing.expect(child_os.goneWithin(io, pid, .fromSeconds(10)));
+}
+
+/// A hovered row's `wire.RowRef` as one owned string — its six fields
+/// joined by `row_sep`, each cut to 200 bytes — so the event and the
+/// pane keep one allocation (`unpackRow` reads it back).
+pub fn packRow(gpa: Allocator, r: wire.RowRef) Allocator.Error![]u8 {
+    var nbuf: [24]u8 = undefined;
+    const n = if (r.n == 0) "" else std.fmt.bufPrint(&nbuf, "{d}", .{r.n}) catch "";
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for ([_][]const u8{ r.kind, r.id, r.key, r.repo, n, r.state }, 0..) |f, i| {
+        if (i > 0) try out.append(gpa, row_sep);
+        for (f[0..@min(f.len, 200)]) |c| if (c != row_sep) try out.append(gpa, c);
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+pub const row_sep: u8 = 0x1f;
+
+/// `packRow`'s fields back, `n` as text; null for an empty string.
+pub const UnpackedRow = struct { kind: []const u8, id: []const u8, key: []const u8, repo: []const u8, n: []const u8, state: []const u8 };
+
+pub fn unpackRow(s: []const u8) ?UnpackedRow {
+    if (s.len == 0) return null;
+    var it = std.mem.splitScalar(u8, s, row_sep);
+    var f: [6][]const u8 = .{ "", "", "", "", "", "" };
+    for (&f) |*x| x.* = it.next() orelse "";
+    if (f[0].len == 0) return null;
+    return .{ .kind = f[0], .id = f[1], .key = f[2], .repo = f[3], .n = f[4], .state = f[5] };
+}
+
+test "packRow / unpackRow: a row's fields round-trip; no row is null" {
+    const p = try packRow(std.testing.allocator, .{ .kind = "pr", .id = "42", .repo = "acme/widget", .n = 42, .state = "OPEN" });
+    defer std.testing.allocator.free(p);
+    const u = unpackRow(p).?;
+    try std.testing.expectEqualStrings("pr", u.kind);
+    try std.testing.expectEqualStrings("acme/widget", u.repo);
+    try std.testing.expectEqualStrings("42", u.n);
+    try std.testing.expectEqualStrings("OPEN", u.state);
+    try std.testing.expectEqualStrings("", u.key);
+    try std.testing.expect(unpackRow("") == null);
 }

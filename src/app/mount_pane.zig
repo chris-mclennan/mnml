@@ -130,14 +130,20 @@ pub const MountPane = struct {
     /// The command id the named element's click runs, when the pane
     /// said one — the info view's `Key:` line spells its chord.
     hover_command: []u8 = &.{},
+    /// The row under the pointer, when the pane named one
+    /// (`host.packRow`): what a right-click's contributed menu rows
+    /// match and fill from (`app/menu_contrib.zig`). Owned.
+    hover_row: []u8 = &.{},
 
     pub fn clearHover(self: *MountPane) void {
         if (self.hover_title.len > 0) self.gpa.free(self.hover_title);
         if (self.hover_body.len > 0) self.gpa.free(self.hover_body);
         if (self.hover_command.len > 0) self.gpa.free(self.hover_command);
+        if (self.hover_row.len > 0) self.gpa.free(self.hover_row);
         self.hover_title = &.{};
         self.hover_body = &.{};
         self.hover_command = &.{};
+        self.hover_row = &.{};
     }
 
     pub fn deinit(self: *MountPane, gpa: Allocator) void {
@@ -503,10 +509,13 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             const body = try gpa.dupe(u8, h.body);
             errdefer gpa.free(body);
             const cmd: []u8 = if (h.command.len > 0) try gpa.dupe(u8, h.command) else &.{};
+            errdefer if (cmd.len > 0) gpa.free(cmd);
+            const row: []u8 = if (h.row.len > 0) try gpa.dupe(u8, h.row) else &.{};
             p.clearHover();
             p.hover_title = title;
             p.hover_body = body;
             p.hover_command = cmd;
+            p.hover_row = row;
         },
         .bye => try p.setExit("exited"),
         .closed => |reason| try p.setExit(reason),
@@ -690,6 +699,12 @@ pub fn click(app: *App, id: PaneId, p: *MountPane, row: u32, m: Mouse, rect: ?Re
         try app.forceClosePane(id);
         return;
     }
+    // A right-click on a row the pane named, when another integration
+    // contributes rows for its kind: the host's menu of them. With
+    // none, the click is the pane's as before.
+    if (m.button == .right) if (host.unpackRow(p.hover_row)) |r| {
+        if (try @import("menu_contrib.zig").openRowMenu(app, p.integration orelse "", r, m.x, m.y)) return;
+    };
     const col: u16 = if (rect) |r| m.x -| r.x else m.x;
     const button: wire.Button = switch (m.button) {
         .left, .none => .left,

@@ -1,0 +1,39 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# env: ACME_SITE=https://tracker.example.com
+# Another integration's rows on a link's menu (docs/SDK.md, *Menu
+# contributions*). The stand-in "acme" launcher links a ticket key and
+# a PR ref and says what each stands for (`.kind`); the sample
+# integration — its real manifest — contributes `Echo ticket key` to
+# every ticket and `Echo pull request` to every PR. A right-click on
+# either link in a terminal pane lists the sample's row under a muted
+# `Sample` header after the link's own rows, and picking it runs the
+# sample's command with the key (or repo and number) filled in.
+write bin/claude #!/bin/bash\nprintf 'fix ACME-123 in acme/widget#42 now\\n'\nexec sleep 600
+shell chmod +x bin/claude
+write acme.zon ".{ .id = \"acme\", .label = \"Acme\", .commands = .{ .{ .id = \"acme.hello\", .title = \"Acme: hello\", .run = \":echo hi\" } }, .auth = .{ .{ .key = \"site_url\", .label = \"Site\", .kind = .url, .env_fallback = \"ACME_SITE\" } }, .links = .{ .{ .pattern = \"[A-Z][A-Z0-9]+-[0-9]+\", .url = \"{site_url}/browse/{0}\", .kind = \"ticket\" }, .{ .pattern = \"(?<![/\\\\w.-])(acme)/([A-Za-z0-9_.-]+)#([0-9]+)\", .url = \"https://bitbucket.org/{1}/{2}/pull-requests/{3}\", .kind = \"pr\" } } }"
+shell mkdir -p "$MNML_DATA_ROOT/integrations" && cp acme.zon "$MNML_DATA_ROOT/integrations/acme.zon"
+shell sed "s|\"mnml-sample\"|\"$MNML_SAMPLE_INTEGRATION\"|" "${MNML_REPO:?}/integrations/sample/manifest.zon" > "$MNML_DATA_ROOT/integrations/sample.zon"
+command integrations.refresh
+command ai.claude_code_new
+expect within 5000 screen contains "fix ACME-123 in acme/widget#42 now"
+# `ACME-123` at columns 36..43, `acme/widget#42` at 48..61.
+wait 200
+rightclick 38 2
+expect screen contains "Copy link"
+expect screen contains "Sample"
+expect screen contains "Echo ticket key"
+expect screen lacks "Echo pull request"
+# Copy link, Open link, then the header the cursor steps over.
+key down
+key down
+key enter
+expect screen contains "Sample saw ACME-123"
+# The PR ref: the sample's PR row, with the repo and number.
+rightclick 52 2
+expect screen contains "Echo pull request"
+expect screen lacks "Echo ticket key"
+key down
+key down
+key enter
+expect screen contains "Sample saw acme/widget#42"

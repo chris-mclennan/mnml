@@ -242,6 +242,8 @@ pub fn forItem(it: command.MenuItem, ascii: bool) []const u8 {
             .reauth => if (ascii) "s" else "\u{f090}", // fa-sign_in
             .remove => if (ascii) "d" else "\u{f1f8}", // fa-trash, as the command rows that remove
         },
+        // Another integration's row: the plug a contributed command wears.
+        .contribution => if (ascii) "+" else "\u{f1e6}", // fa-plug
         .dyn, .none => if (it.submenu.len > 0) (if (ascii) "=" else "\u{f0c9}") else "",
     };
 }

@@ -1,0 +1,50 @@
+# A Jira pane row's right-click carries another integration's rows
+# (docs/SDK.md, *Menu contributions*). The Jira pane names the ticket
+# under the pointer to the host with its hover (`RowRef`); with the
+# sample integration installed — its real manifest, which contributes
+# `Echo ticket key` to every ticket — a right-click on a ticket row
+# opens the host's menu titled with the key, the sample's row under a
+# muted `Sample` header, and picking it toasts the key. Without a
+# contribution the click is the pane's, as before (the work-tree file).
+# env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
+# env: JIRA_API_TOKEN=fake-token
+# env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 180 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+wait 500
+write sdk/mnml-sdk/build.zig ""
+write integrations/jira/build.zig ""
+write integrations/jira/manifest.zon ".{ .id = \"jira_work\", .label = \"Jira Work\", .version = \"0.2.0\", .binary = \"$MNML_JIRA\", .category = \"tracker\", .commands = .{ .{ .id = \"jira_work.open\", .title = \"Jira Work\", .args = .{ \"--only\", \"work\" } } }, .statusline = .{ .{ .id = \"assigned\", .text = \"\u{f0303}\", .color = \"#1B5DCF\", .click_command = \"jira_work.open\" } } }"
+write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 }, .tabs = .{ .{ .name = \"Assigned\", .kind = .work_assigned }, .{ .name = \"Recently Done\", .kind = .work_recently_done } } }"
+command integrations.show_in_dev
+expect screen contains "INTEGRATIONS"
+drag 30 5 60 5
+expect screen contains "[dev] Jira Work  0.2.0  not installed"
+key i
+expect screen contains "installed jira_work from"
+wait 1200
+expect screen lacks "installed jira_work from"
+command integrations.open_as_tab
+command jira_work.open
+wait 8000
+command view.toggle_tree
+command view.focus_pane
+expect screen contains "JIRA WORK (3)"
+shell mkdir -p "$MNML_DATA_ROOT/integrations" && sed "s|\"mnml-sample\"|\"$MNML_SAMPLE_INTEGRATION\"|" "${MNML_REPO:?}/integrations/sample/manifest.zon" > "$MNML_DATA_ROOT/integrations/sample.zon"
+command integrations.refresh
+expect screen contains "ENG-1"
+# The pointer on ENG-1's row: the pane names the ticket to the host.
+hover 6 12
+wait 800
+rightclick 6 12
+expect screen contains "Sample"
+expect screen contains "Echo ticket key"
+expect screen lacks "Echo pull request"
+# The header is muted and the cursor starts past it, on the row.
+key enter
+expect screen contains "Sample saw ENG-1"
+# Off a ticket (a status group's row) the click is the pane's again.
+hover 3 11
+wait 800
+rightclick 3 11
+expect screen lacks "Echo ticket key"
+shell kill "$(cat fake-jira.pid)" 2>/dev/null || true
