@@ -1,0 +1,958 @@
+
+===== A: one-line prompt, narrow/widen x3 [lib]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 20: cursor row 3 -> 4, col 31 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 0  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path $| <- cursor
+       6 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path $|
+      row  5: got |ome/path $|  want ||
+      cursor: got row 5 col 11  want row 4 col 11
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 5 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 3 -> 4, col 31 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 0  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path $| <- cursor
+       6 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path $|
+      row  5: got |ome/path $|  want ||
+      cursor: got row 5 col 11  want row 4 col 11
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 5 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 3 -> 4, col 31 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 0  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path $| <- cursor
+       6 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path $|
+      row  5: got |ome/path $|  want ||
+      cursor: got row 5 col 11  want row 4 col 11
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 5 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+===== A: one-line prompt, narrow/widen x3 [preclear-1.3.1]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 20: cursor row 3 -> 3, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path $| <- cursor
+       5 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 4 -> 3, col 11 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 1  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |PROMPT-user@host:~/some/path $| <- cursor
+       3 ||
+      row  2: got |PROMPT-user@host:~/some/path $|  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/some/path $|
+      cursor: got row 2 col 31  want row 3 col 31
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+  resize 40 -> 20: cursor row 2 -> 2, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 || <- cursor
+       3 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |PROMPT-user@host:~/s|
+       3 |ome/path $| <- cursor
+       4 ||
+      row  2: got |PROMPT-user@host:~/s|  want |OUTPUT-END|
+      row  3: got |ome/path $|  want |PROMPT-user@host:~/s|
+      row  4: got ||  want |ome/path $|
+      cursor: got row 3 col 11  want row 4 col 11
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 3 -> 2, col 11 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 1  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 || <- cursor
+       3 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |PROMPT-user@host:~/some/path $| <- cursor
+       2 ||
+      row  1: got |PROMPT-user@host:~/some/path $|  want |OUTPUT-1|
+      row  2: got ||  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/some/path $|
+      cursor: got row 1 col 31  want row 3 col 31
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+  resize 40 -> 20: cursor row 1 -> 1, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 || <- cursor
+       2 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |PROMPT-user@host:~/s|
+       2 |ome/path $| <- cursor
+       3 ||
+      row  1: got |PROMPT-user@host:~/s|  want |OUTPUT-1|
+      row  2: got |ome/path $|  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/s|
+      row  4: got ||  want |ome/path $|
+      cursor: got row 2 col 11  want row 4 col 11
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 2 -> 1, col 11 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 1  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 ||
+       1 || <- cursor
+       2 ||
+    after zsh's redraw:
+       0 |PROMPT-user@host:~/some/path $| <- cursor
+       1 ||
+      row  0: got |PROMPT-user@host:~/some/path $|  want |$ true|
+      row  1: got ||  want |OUTPUT-1|
+      row  2: got ||  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/some/path $|
+      cursor: got row 0 col 31  want row 3 col 31
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+===== A: one-line prompt, narrow/widen x3 [preclear-unwrap]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 20: cursor row 3 -> 3, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path $| <- cursor
+       5 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 4 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 3 -> 3, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path $| <- cursor
+       5 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 4 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 3 -> 3, col 31 -> 19; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path $| <- cursor
+       5 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 4 -> 4, col 11 -> 11; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 40 columns wide all along
+
+===== B: two-line prompt (long first line), narrow/widen x3 [lib]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+
+  resize 40 -> 20: cursor row 4 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 1  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path|
+       6 |>| <- cursor
+       7 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path|
+      row  5: got |ome/path|  want |>|
+      row  6: got |>|  want ||
+      cursor: got row 6 col 2  want row 5 col 2
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 6 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 4 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 1  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path|
+       6 |>| <- cursor
+       7 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path|
+      row  5: got |ome/path|  want |>|
+      row  6: got |>|  want ||
+      cursor: got row 6 col 2  want row 5 col 2
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 6 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 4 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 1  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |PROMPT-user@host:~/s|
+       5 |ome/path|
+       6 |>| <- cursor
+       7 ||
+      row  4: got |PROMPT-user@host:~/s|  want |ome/path|
+      row  5: got |ome/path|  want |>|
+      row  6: got |>|  want ||
+      cursor: got row 6 col 2  want row 5 col 2
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 6 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+===== B: two-line prompt (long first line), narrow/widen x3 [preclear-1.3.1]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+
+  resize 40 -> 20: cursor row 4 -> 4, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path|
+       5 |>| <- cursor
+       6 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 5 -> 4, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 2  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |PROMPT-user@host:~/some/path|
+       3 |>| <- cursor
+       4 ||
+      row  2: got |PROMPT-user@host:~/some/path|  want |OUTPUT-END|
+      row  3: got |>|  want |PROMPT-user@host:~/some/path|
+      row  4: got ||  want |>|
+      cursor: got row 3 col 2  want row 4 col 2
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+  resize 40 -> 20: cursor row 3 -> 3, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 ||
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |PROMPT-user@host:~/s|
+       3 |ome/path|
+       4 |>| <- cursor
+       5 ||
+      row  2: got |PROMPT-user@host:~/s|  want |OUTPUT-END|
+      row  3: got |ome/path|  want |PROMPT-user@host:~/s|
+      row  4: got |>|  want |ome/path|
+      row  5: got ||  want |>|
+      cursor: got row 4 col 2  want row 5 col 2
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 4 -> 3, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 2  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 ||
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |PROMPT-user@host:~/some/path|
+       2 |>| <- cursor
+       3 ||
+      row  1: got |PROMPT-user@host:~/some/path|  want |OUTPUT-1|
+      row  2: got |>|  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/some/path|
+      row  4: got ||  want |>|
+      cursor: got row 2 col 2  want row 4 col 2
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+  resize 40 -> 20: cursor row 2 -> 2, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 ||
+       2 || <- cursor
+       3 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |PROMPT-user@host:~/s|
+       2 |ome/path|
+       3 |>| <- cursor
+       4 ||
+      row  1: got |PROMPT-user@host:~/s|  want |OUTPUT-1|
+      row  2: got |ome/path|  want |OUTPUT-END|
+      row  3: got |>|  want |PROMPT-user@host:~/s|
+      row  4: got ||  want |ome/path|
+      row  5: got ||  want |>|
+      cursor: got row 3 col 2  want row 5 col 2
+    WRONG: differs from a terminal 20 columns wide all along (rows above)
+
+  resize 20 -> 40: cursor row 3 -> 2, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 2  => climb OVERSHOOTS into the output above
+    right after Terminal.resize:
+       0 ||
+       1 ||
+       2 || <- cursor
+       3 ||
+    after zsh's redraw:
+       0 |PROMPT-user@host:~/some/path|
+       1 |>| <- cursor
+       2 ||
+      row  0: got |PROMPT-user@host:~/some/path|  want |$ true|
+      row  1: got |>|  want |OUTPUT-1|
+      row  2: got ||  want |OUTPUT-END|
+      row  3: got ||  want |PROMPT-user@host:~/some/path|
+      row  4: got ||  want |>|
+      cursor: got row 1 col 2  want row 4 col 2
+    WRONG: differs from a terminal 40 columns wide all along (rows above)
+
+===== B: two-line prompt (long first line), narrow/widen x3 [preclear-unwrap]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+
+  resize 40 -> 20: cursor row 4 -> 4, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path|
+       5 |>| <- cursor
+       6 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 5 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 4 -> 4, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path|
+       5 |>| <- cursor
+       6 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 5 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+  resize 40 -> 20: cursor row 4 -> 4, col 2 -> 2; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/s|
+       4 |ome/path|
+       5 |>| <- cursor
+       6 ||
+    OK: same as a terminal 20 columns wide all along
+
+  resize 20 -> 40: cursor row 5 -> 5, col 2 -> 2; 2 row(s) below the row zsh climbs back to, zsh climbs 2
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |>| <- cursor
+       5 ||
+    OK: same as a terminal 40 columns wide all along
+
+===== C: one-line prompt, narrowed step by step [lib]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 34: cursor row 3 -> 3, col 31 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 34 columns wide all along
+
+  resize 34 -> 28: cursor row 3 -> 4, col 31 -> 3; 1 row(s) below the row zsh climbs back to, zsh climbs 0  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 |PROMPT-user@host:~/some/path|
+       5 | $| <- cursor
+       6 ||
+      row  4: got |PROMPT-user@host:~/some/path|  want | $|
+      row  5: got | $|  want ||
+      cursor: got row 5 col 3  want row 4 col 3
+    WRONG: differs from a terminal 28 columns wide all along (rows above)
+
+  resize 28 -> 22: cursor row 5 -> 5, col 3 -> 15; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/som|
+       4 ||
+       5 || <- cursor
+       6 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/som|
+       4 |PROMPT-user@host:~/som|
+       5 |e/path $| <- cursor
+       6 ||
+      row  4: got |PROMPT-user@host:~/som|  want |e/path $|
+      row  5: got |e/path $|  want ||
+      cursor: got row 5 col 9  want row 4 col 9
+    WRONG: differs from a terminal 22 columns wide all along (rows above)
+
+  resize 22 -> 16: cursor row 5 -> 6, col 9 -> 5; 2 row(s) below the row zsh climbs back to, zsh climbs 1  => climb stops SHORT
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host|
+       4 ||
+       5 ||
+       6 || <- cursor
+       7 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host|
+       4 ||
+       5 |PROMPT-user@host|
+       6 |:~/some/path $| <- cursor
+       7 ||
+      row  4: got ||  want |:~/some/path $|
+      row  5: got |PROMPT-user@host|  want ||
+      row  6: got |:~/some/path $|  want ||
+      cursor: got row 6 col 15  want row 4 col 15
+    WRONG: differs from a terminal 16 columns wide all along (rows above)
+
+===== C: one-line prompt, narrowed step by step [preclear-1.3.1]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 34: cursor row 3 -> 3, col 31 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 34 columns wide all along
+
+  resize 34 -> 28: cursor row 3 -> 3, col 31 -> 27; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 | $| <- cursor
+       5 ||
+    OK: same as a terminal 28 columns wide all along
+
+  resize 28 -> 22: cursor row 4 -> 4, col 3 -> 9; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/som|
+       4 |e/path $| <- cursor
+       5 ||
+    OK: same as a terminal 22 columns wide all along
+
+  resize 22 -> 16: cursor row 4 -> 4, col 9 -> 15; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host|
+       4 |:~/some/path $| <- cursor
+       5 ||
+    OK: same as a terminal 16 columns wide all along
+
+===== C: one-line prompt, narrowed step by step [preclear-unwrap]
+  start at 40 columns:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+
+  resize 40 -> 34: cursor row 3 -> 3, col 31 -> 31; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path $| <- cursor
+       4 ||
+    OK: same as a terminal 34 columns wide all along
+
+  resize 34 -> 28: cursor row 3 -> 3, col 31 -> 27; 0 row(s) below the row zsh climbs back to, zsh climbs 0
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 || <- cursor
+       4 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/some/path|
+       4 | $| <- cursor
+       5 ||
+    OK: same as a terminal 28 columns wide all along
+
+  resize 28 -> 22: cursor row 4 -> 4, col 3 -> 3; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host:~/som|
+       4 |e/path $| <- cursor
+       5 ||
+    OK: same as a terminal 22 columns wide all along
+
+  resize 22 -> 16: cursor row 4 -> 4, col 9 -> 9; 1 row(s) below the row zsh climbs back to, zsh climbs 1
+    right after Terminal.resize:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 ||
+       4 || <- cursor
+       5 ||
+    after zsh's redraw:
+       0 |$ true|
+       1 |OUTPUT-1|
+       2 |OUTPUT-END|
+       3 |PROMPT-user@host|
+       4 |:~/some/path $| <- cursor
+       5 ||
+    OK: same as a terminal 16 columns wide all along
+
+===== SUMMARY (resizes after which the screen differs from a fresh render)
+  A: one-line prompt, narrow/widen x3
+      lib              3/6
+      preclear-1.3.1   5/6
+      preclear-unwrap  0/6
+  B: two-line prompt (long first line), narrow/widen x3
+      lib              3/6
+      preclear-1.3.1   5/6
+      preclear-unwrap  0/6
+  C: one-line prompt, narrowed step by step
+      lib              3/4
+      preclear-1.3.1   0/4
+      preclear-unwrap  0/4
