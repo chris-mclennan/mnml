@@ -1508,6 +1508,11 @@ pub const App = struct {
     /// The wizard's answers while one of its install panes runs; the
     /// pane's exit puts them back (`first_launch.refresh`).
     wizard_stash: ?first_launch.State = null,
+    /// The first-launch wizard is owed and has not opened yet: another
+    /// overlay was up when the terminal loop asked (`first_launch.arm`).
+    /// `tick` opens it once nothing is in the way. Only the terminal
+    /// loop sets it, so headless runs and `.test` scripts never see it.
+    wizard_pending: bool = false,
     /// Whether `claude` / `codex` resolve on PATH, as of `checked_ms`
     /// — the AI chips read it every frame (`first_launch_install.cliOnPath`).
     cli_probe: struct { claude: bool = false, codex: bool = false, checked_ms: ?i64 = null } = .{},
@@ -3683,6 +3688,8 @@ pub const App = struct {
         if (self.undo_chip) |u| if (now >= u.expires_ms) self.dropUndo();
         try @import("app/ipc_gate.zig").tick(self, now);
         try dispatch.finishDeferredInserts(self);
+        // The first-launch wizard an overlay held off at startup.
+        try first_launch.resumePending(self);
         if (self.theme_auto_poll_ms) |at| if (now >= at) try @import("app/cmd_view.zig").pollSystemTheme(self);
         pty_pane.tickAll(self);
         try @import("app/pty_search.zig").tickAll(self);

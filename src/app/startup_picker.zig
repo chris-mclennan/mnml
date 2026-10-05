@@ -33,8 +33,10 @@ const max_recent = 9;
 
 pub fn onStartup(app: *App, _: hooks.HookArgs) void {
     if (!wanted(app)) return;
-    // The trust dialog and the first-launch wizard come first.
-    if (app.overlay != .none) return;
+    // The trust dialog and the first-launch wizard come first. The
+    // wizard is only owed yet (`first_launch.arm`) — it opens after this
+    // hook, and an open picker would have hidden it.
+    if (app.overlay != .none or app.wizard_pending) return;
     show(app) catch {};
 }
 
