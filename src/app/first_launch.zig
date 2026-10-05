@@ -28,7 +28,7 @@
 //! checked. Space — or Enter, on the way out — installs the checked ones
 //! on the spot through the marketplace's own install
 //! (`marketplace.enqueue`): the release index's download for a released
-//! mnml, the checkout's build for a dev one. The wizard stays open and
+//! mnml, the checkout's build for a source build. The wizard stays open and
 //! each row follows it (queued → installing… → installed). Esc, or
 //! nothing checked, installs nothing.
 //!
