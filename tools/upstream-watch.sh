@@ -43,8 +43,11 @@
 #             Zig only after ghostty has.
 #   channels  the latest GitHub release against the Homebrew tap's
 #             formula, winget's newest manifest (and an open winget PR),
-#             the version the site's /download page prints, and
-#             https://mnml.sh/demo answering 200. Only disagreements.
+#             the version the site's /download page names (its
+#             mnml-release-version meta, else its version line) and
+#             https://mnml.sh/demo answering 200. Only disagreements,
+#             plus a line when the page was built from the committed
+#             release data (its mnml-release-source meta).
 #   ci        the workflow's ghostty-main and zig-next jobs, from the
 #             UW_CI_* variables (below); absent when none is set.
 #
@@ -559,7 +562,7 @@ section_threads() {
 # ── channels ─────────────────────────────────────────────────────────
 
 section_channels() {
-    local tag ver tap_repo tap_path tap wg_id wg_dir wg prs site_v demo dis='[]' lines=""
+    local tag ver tap_repo tap_path tap wg_id wg_dir wg prs site_v demo dis='[]' lines="" lines_info="" site_src=unread
     tag=$(gh_get "repos/$repo_slug/releases/latest" | jq -r '.tag_name // empty' 2> /dev/null)
     ver="${tag#v}"
     say "## Release channels"
@@ -605,18 +608,37 @@ section_channels() {
         fi
     fi
 
-    # (c) the site: /download prints `<p class="version">Version X.Y.Z`.
-    site_v=$(http_get "https://mnml.sh/download/" | grep -oE 'class="version">Version [0-9][0-9A-Za-z.-]*' | head -1 | sed 's/.*Version //')
-    if [ -z "$site_v" ]; then disagree "site: mnml.sh/download printed no \`class=\"version\">Version …\`"
-    elif [ "$site_v" != "$ver" ]; then disagree "site: mnml.sh/download says $site_v, the release is $ver"; fi
+    # (c) the site: /download's release marker,
+    # <meta name="mnml-release-version|mnml-release-source" content="…">
+    # (source api | redirect | committed — where the build learned the
+    # release; site/scripts/prepare.mjs). A page from before the marker
+    # is read by its `<p class="version">Version X.Y.Z` line instead.
+    local page built
+    page=$(http_get "https://mnml.sh/download/")
+    meta() { grep -oE "<meta[^>]*name=\"$1\"[^>]*>" <<< "$page" | head -1 | grep -oE 'content="[^"]*"' | sed 's/^content="//; s/"$//'; }
+    site_v=$(meta mnml-release-version)
+    site_src=$(meta mnml-release-source)
+    if [ -z "$site_v" ]; then
+        site_src=unmarked
+        site_v=$(grep -oE 'class="version">Version [0-9][0-9A-Za-z.-]*' <<< "$page" | head -1 | sed 's/.*Version //')
+    fi
+    built=""
+    [ "$site_src" = committed ] && built=" (built from the committed release data)"
+    if [ -z "$site_v" ]; then disagree "site: mnml.sh/download printed no release marker and no \`class=\"version\">Version …\`"
+    elif [ "$site_v" != "$ver" ]; then disagree "site: mnml.sh/download says $site_v$built, the release is $ver"
+    elif [ -n "$built" ]; then lines_info="- site: built from the committed release data — $site_v"$'\n'; fi
 
     # (d) the demo answers.
     demo=$(http_status "https://mnml.sh/demo")
     [ "$demo" = 200 ] || disagree "demo: https://mnml.sh/demo answered $demo"
 
     if [ -n "$lines" ]; then report+="$lines"; else say "- $tag everywhere: release, Homebrew, winget, mnml.sh/download; mnml.sh/demo answers 200"; fi
+    # The right version, but the build could not ask GitHub: info, not a
+    # disagreement — the page goes stale at the next release unless the
+    # committed data is pinned (docs/RELEASE.md, "The site's release").
+    report+="$lines_info"
     say ""
-    put .channels "$(jq -nc --argjson d "$dis" --arg t "$tag" '{disagree: $d, info: {release: $t}}')"
+    put .channels "$(jq -nc --argjson d "$dis" --arg t "$tag" --arg s "$site_src" '{disagree: $d, info: {release: $t, site_source: $s}}')"
 }
 
 # ── ci (the workflow's own jobs) ─────────────────────────────────────

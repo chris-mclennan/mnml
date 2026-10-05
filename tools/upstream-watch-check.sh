@@ -12,6 +12,10 @@
 #   week2/       overlays week1: a maintainer commented on the thread
 #   week3/       overlays week1: the toolchain pull request merged and
 #                the issue's last task was ticked
+#   site-api/, site-committed/, site-old/
+#                overlay week1: mnml.sh/download with its release marker —
+#                current from the API, current from the committed data,
+#                and older than the release
 #   test-logs/   a terminal-tests step's log, one per outcome: tests
 #                failed, a test crashed or wedged, binaries did not
 #                compile, the filter matched nothing, the step failed
@@ -117,6 +121,27 @@ if [ "$(q w1 '.channels.disagree | length')" = 1 ] \
     && ! has "$o" "- winget:" && ! has "$o" "- site: mnml.sh" && ! has "$o" "- demo:"; then
     ok "a release channel that disagrees (the tap); winget's v-prefixed dir, the site and the demo agree"
 else bad "release channels" "$(sed -n '/^## Release/,/^State/p' "$o")"; fi
+
+# ── the site's release marker ──
+# week1's page has no marker: the version line is read (the case above).
+if [ "$(q w1 '.channels.info.site_source')" = unmarked ]; then ok "site: a page without the marker is read by its version line (source unmarked)"
+else bad "site: unmarked page" "$(q w1 '.channels')"; fi
+run sapi "$fx/site-api:$fx/week1" 2026-01-01T00:00:00Z --only channels
+run scom "$fx/site-committed:$fx/week1" 2026-01-01T00:00:00Z --only channels
+run sold "$fx/site-old:$fx/week1" 2026-01-01T00:00:00Z --only channels
+if [ "$(q sapi '.channels.info.site_source')" = api ] && ! has "$scratch/sapi.out" "- site:" \
+    && [ "$(q sapi '.channels.disagree | map(select(startswith("site:"))) | length')" = 0 ]; then
+    ok "site: the marker, current, from the API → nothing to say"
+else bad "site: marker current (api)" "$(sed -n '/^## Release/,/^State/p' "$scratch/sapi.out")"; fi
+if [ "$(q scom '.channels.info.site_source')" = committed ] \
+    && has "$scratch/scom.out" "- site: built from the committed release data — 1.4.0" \
+    && [ "$(q scom '.channels.disagree | map(select(startswith("site:"))) | length')" = 0 ]; then
+    ok "site: current but built from the committed data → said, not a disagreement"
+else bad "site: marker says committed" "$(sed -n '/^## Release/,/^State/p' "$scratch/scom.out")"; fi
+if has "$scratch/sold.out" "- site: mnml.sh/download says 1.3.9 (built from the committed release data), the release is 1.4.0" \
+    && [ "$(q sold '.channels.disagree | map(select(startswith("site:"))) | length')" = 1 ]; then
+    ok "site: older than the release → a disagreement naming the committed data"
+else bad "site: older than the release" "$(sed -n '/^## Release/,/^State/p' "$scratch/sold.out")"; fi
 
 # ── threads ──
 o2="$scratch/w2.out"
