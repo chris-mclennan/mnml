@@ -141,7 +141,14 @@ nested:
   a: true
   b: ~
 T
-cp $HOME/Projects/mnml-zig-worktrees/chrome-fixture/ws/requests/demo.http "$ROOT/pristine/ws/requests/demo.http"
+# demo.http comes from the chrome fixture: FIXTURE=dir, else the main
+# checkout's git-ignored .mnml/chrome-fixture, else its older place
+# beside the main checkout (<repo>-worktrees/chrome-fixture).
+if [ -z "${FIXTURE:-}" ]; then
+  REPO=$(cd "$(dirname "$0")/../../.." && pwd); . "$REPO/tools/wt-lib.sh"; MAIN=$(wt_main "$REPO")
+  FIXTURE=$MAIN/.mnml/chrome-fixture; [ -d "$FIXTURE" ] || FIXTURE=$MAIN-worktrees/chrome-fixture
+fi
+cp "$FIXTURE/ws/requests/demo.http" "$ROOT/pristine/ws/requests/demo.http"
 [ -n "$WALK_PNG" ] && cp "$WALK_PNG" "$S/sample.png"
 # 2. data roots: private copies of the REAL ~/.config/mnml (both apps read it; Rust config.toml, Zig config.zon)
 cp -R $HOME/.config/mnml "$ROOT/pristine/rs-data"

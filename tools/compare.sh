@@ -20,8 +20,10 @@
 #                dump (polled at 1 ms) — see tools/compare-drive.py
 #   <side>.timing.json / <side>.log            the raw numbers, stderr
 #
-# The workspace is a private copy of the chrome fixture
-# (../chrome-fixture beside the repo, or FIXTURE=dir) with
+# The workspace is a private copy of the chrome fixture (FIXTURE=dir,
+# else the main checkout's git-ignored .mnml/chrome-fixture — a fixture
+# is shared state, not a worktree — else its older place,
+# <repo>-worktrees/chrome-fixture beside the main checkout) with
 # src/large.rs written into it by tools/gen-large-fixture.py, so a steps
 # file opens `src/large.rs`. Both editors get a private data root and a
 # private IPC dir: Rust's is <ws>/.mnml/ipc (fixed), the Zig one is
@@ -44,7 +46,14 @@ COLS=${SIZE%x*}; ROWS=${SIZE#*x}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 STEPS=$ROOT/docs/ui-spec/steps-$NAME.jsonl
 [ -f "$STEPS" ] || { echo "compare: no steps file: $STEPS" >&2; exit 64; }
-FIXTURE=${FIXTURE:-$ROOT/../chrome-fixture}
+if [ -z "${FIXTURE:-}" ]; then
+  . "$ROOT/tools/wt-lib.sh"; MAIN=$(wt_main "$ROOT") || MAIN=$ROOT
+  FIXTURE=$MAIN/.mnml/chrome-fixture
+  if [ ! -d "$FIXTURE" ] && [ -d "$MAIN-worktrees/chrome-fixture" ]; then
+    FIXTURE=$MAIN-worktrees/chrome-fixture
+    echo "compare: the fixture is still at its older place $FIXTURE (its home is $MAIN/.mnml/chrome-fixture)" >&2
+  fi
+fi
 [ -d "$FIXTURE/ws" ] && [ -d "$FIXTURE/rs-data" ] && [ -d "$FIXTURE/zig-data" ] || { echo "compare: FIXTURE needs ws/ rs-data/ zig-data/: $FIXTURE" >&2; exit 64; }
 case ${MNML_INPUT:-} in
   vim|standard) INPUT=$MNML_INPUT ;;

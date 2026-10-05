@@ -383,7 +383,9 @@ session files, so two runs on the same paths would cross-talk (another
 run's keystrokes land in your screen, and the number jumps). Every run
 therefore copies `ws` / `rs-data` / `zig-data` under a fresh `mktemp
 -d` and drives both editors there; any number of runs — several agents
-on the shared `mnml-zig-worktrees/chrome-fixture` — can go at once, and
+on the shared chrome fixture (`.mnml/chrome-fixture` in the main
+checkout; older setups keep it at `../mnml-zig-worktrees/chrome-fixture`)
+— can go at once, and
 the fixture itself is never written. Inside the copy every absolute
 path that names a source directory is rewritten to the copy's realpath
 (the Zig app resolves the workspace to its realpath and `session.zig`
