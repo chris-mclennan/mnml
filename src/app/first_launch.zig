@@ -2,7 +2,11 @@
 //! what Enter writes.
 //!
 //! Gated by one key, `ui.first_launch_complete`: the terminal loop opens
-//! the wizard on start while it is false, and only Enter sets it. Esc is
+//! the wizard on start while it is false, and only Enter sets it. An
+//! overlay already up then (the trust dialog) does not cancel it: the
+//! wizard is owed (`App.wizard_pending`) and `App.tick` opens it when
+//! that overlay closes. The startup picker a launch from `$HOME` shows
+//! stands aside for it altogether. Esc is
 //! "ask me later" and persists nothing — an undecided user must not have
 //! their config rewritten. The `.test` runner never opens it on its own;
 //! a script asks with `first_launch.show`.
@@ -215,10 +219,30 @@ pub fn installChecked(app: *App) command.CommandError!usize {
     return asked;
 }
 
-/// Open on start when nobody has finished it yet.
+/// The terminal loop, before the `startup` hook: the wizard is owed
+/// when nobody has finished it yet. Owing it first lets the startup
+/// picker (a launch from `$HOME`) stand aside for it.
+pub fn arm(app: *App) void {
+    app.wizard_pending = !app.cfg.ui.first_launch_complete;
+}
+
+/// The terminal loop, after the `startup` hook: open the owed wizard
+/// now, or — when an overlay is already up (the trust dialog) — as
+/// soon as it closes (`resumePending`, from `App.tick`).
 pub fn showIfPending(app: *App) Allocator.Error!void {
-    if (app.cfg.ui.first_launch_complete) return;
-    if (app.overlay != .none) return; // the trust dialog goes first
+    arm(app);
+    try resumePending(app);
+}
+
+/// Open the owed wizard once nothing else is on screen.
+pub fn resumePending(app: *App) Allocator.Error!void {
+    if (!app.wizard_pending) return;
+    if (app.cfg.ui.first_launch_complete) {
+        app.wizard_pending = false;
+        return;
+    }
+    if (app.overlay != .none) return;
+    app.wizard_pending = false;
     try show(app);
 }
 
@@ -579,6 +603,63 @@ test "Esc persists nothing and the wizard reopens; Enter writes the touched answ
     try t.expect(std.mem.indexOf(u8, text, "routing") == null);
     try showIfPending(&app);
     try t.expect(app.overlay == .none); // done means done
+}
+
+test "an overlay up at startup delays the wizard, and it opens when that overlay closes; Esc on it then waits for the next launch" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    // Nothing owes the wizard until the terminal loop says so: a tick
+    // in a headless run or a `.test` script never opens it.
+    try app.tick(1_000);
+    try t.expect(app.overlay == .none);
+    // The trust dialog (any overlay) is up when the loop asks.
+    try command.run(&app, .{ .static = .@"app.startup_picker" });
+    try t.expect(app.overlay == .picker);
+    try showIfPending(&app);
+    try t.expect(app.overlay == .picker);
+    try app.tick(2_000);
+    try t.expect(app.overlay == .picker);
+    // It closes: the next tick brings the wizard.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try app.tick(3_000);
+    try t.expect(app.overlay == .wizard);
+    try t.expect(!app.wizard_pending);
+    // Esc: ask me later — nothing written, and not again this run.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.tick(4_000);
+    try t.expect(app.overlay == .none);
+    try t.expectError(error.FileNotFound, tmp.dir.access(t.io, "config.zon", .{}));
+}
+
+test "a first launch from $HOME opens the wizard, not the startup picker" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try app.env.put("HOME", root);
+    const startup_picker = @import("startup_picker.zig");
+    // The loop's order: owed, the startup hook, then the open.
+    arm(&app);
+    startup_picker.onStartup(&app, .startup);
+    try t.expect(app.overlay == .none);
+    try showIfPending(&app);
+    try t.expect(app.overlay == .wizard);
+    // Once the setup is done, $HOME gets its picker again.
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    app.cfg.ui.first_launch_complete = true;
+    arm(&app);
+    startup_picker.onStartup(&app, .startup);
+    try t.expect(app.overlay == .picker);
 }
 
 test "the wizard renders its sections on the 120x40 screen and walks them" {

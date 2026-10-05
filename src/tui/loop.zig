@@ -176,12 +176,16 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // — and the pane somebody opens an hour later should find a broker
     // rather than the file bucket. `tick` only re-checks after this.
     @import("../app/broker.zig").sync(&app);
+    // Owed before the hook runs, so the startup picker (a launch from
+    // `$HOME`) stands aside for the first-launch wizard.
+    @import("../app/first_launch.zig").arm(&app);
     app.hooks.emit(&app, .startup);
     // After the session restore, so its toast lands on the restored
     // frame; only here, because it reaches GitHub.
     @import("../app/update.zig").startupCheck(&app);
     @import("../app/font_scan.zig").startupFetch(&app);
-    // Once, until Enter says the setup is done (after the trust dialog).
+    // Until Enter says the setup is done: now, or when the overlay
+    // already up (the trust dialog) closes — `App.tick` keeps asking.
     try @import("../app/first_launch.zig").showIfPending(&app);
 
     var bridge: Io.Group = .init;
