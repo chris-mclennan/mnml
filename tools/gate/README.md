@@ -2,7 +2,10 @@
 
 The scripts that land branches on `main` and decide whether `main` may be
 pushed. They act on the checkout they live in (the repo root is two levels
-above this directory) and expect branch worktrees at `<repo>-worktrees/<branch>`.
+above this directory) and find each branch's worktree in `git worktree list`
+(`wt_of` in `tools/wt-lib.sh`), so a branch merges from `../.worktrees/<repo>/<branch>`
+(`tools/wt.sh add`) or from the older `<repo>-worktrees/<branch>` alike; a branch
+with no worktree stops the queue.
 
 **The one rule: never push around them.** `main` reaches origin only through
 `merge-batch.sh` or `fix-main.sh`, after a green chain. A red chain is fixed on

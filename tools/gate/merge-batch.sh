@@ -8,7 +8,10 @@ set -u -o pipefail
 LOCKD=/tmp/mnml-batch.lock.d; if ! mkdir "$LOCKD" 2>/dev/null; then if [ -f "$LOCKD/pid" ] && kill -0 "$(cat "$LOCKD/pid")" 2>/dev/null; then echo "ANOTHER BATCH IS RUNNING (pid $(cat "$LOCKD/pid")) — refusing to start"; exit 2; else rm -rf "$LOCKD"; mkdir "$LOCKD"; fi; fi; echo $$ > "$LOCKD/pid"; trap 'rm -rf "$LOCKD"' EXIT
 export CHAIN_TMP=$(mktemp -d /tmp/mnml-chain.XXXXXX)
 S="$(cd "$(dirname "$0")" && pwd)"
-R="$(cd "$S/../.." && pwd)"; W="$R-worktrees"
+R="$(cd "$S/../.." && pwd)"
+# A branch's worktree is looked up in git's own list (tools/wt-lib.sh wt_of), so it merges
+# from ../.worktrees/<repo>/<branch> or from the older <repo>-worktrees/<branch> alike.
+. "$S/../wt-lib.sh"
 # Merge messages are written by hand per branch; logs outlive the run. Both are git-ignored.
 M=$S/msgs; L=$S/logs; mkdir -p "$L"
 # Zig never prunes its cache; a batch adds gigabytes. Over 40 GB, clear it — only when
@@ -26,7 +29,7 @@ waitlock() { local n=0; while [ -e $R/.git/index.lock ]; do sleep 5; n=$((n+1));
 for b in "$@"; do
   echo "=== $b $(date '+%H:%M')"
   waitlock || exit 1
-  cd $W/$b || { echo "no worktree $b"; exit 1; }
+  WT=$(wt_of "$R" "$b"); [ -n "$WT" ] && cd "$WT" || { echo "no worktree $b"; exit 1; }
   git rebase main 2>&1 | grep -E "CONFLICT|Successfully|up to date" | head -3
   # Doc rows and the command-id pins collide on every track: docs/ keep-both, specs.zig keep-both + pin re-sum; anything else stops the queue.
   $S/resolve-loop.sh | grep -E "auto-resolved|pins=|STOP"
@@ -39,7 +42,7 @@ for b in "$@"; do
   [ "$BEFORE" != "$AFTER" ] || { echo "MERGE DID NOT LAND: $b"; git merge --abort 2>/dev/null; exit 1; }
   U=$(git diff --name-only --diff-filter=U); [ -z "$U" ] || { echo "MERGE CONFLICT: $U"; exit 1; }
   echo "merged: $(git log -1 --oneline)"
-  git worktree remove --force $W/$b && git branch -d $b | tail -1
+  git worktree remove --force "$WT" && git branch -d $b | tail -1
   # the Settings script pins no total since settings-followups; no re-pin
   zig build docs >/dev/null 2>&1; if ! git diff --quiet -- docs/commands.md; then git commit -q -m "docs(commands): regenerate the command table
 

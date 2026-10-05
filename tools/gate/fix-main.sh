@@ -8,7 +8,7 @@ set -u -o pipefail
 LOCKD=/tmp/mnml-batch.lock.d; if ! mkdir "$LOCKD" 2>/dev/null; then if [ -f "$LOCKD/pid" ] && kill -0 "$(cat "$LOCKD/pid")" 2>/dev/null; then echo "ANOTHER BATCH IS RUNNING (pid $(cat "$LOCKD/pid")) — refusing to start"; exit 2; else rm -rf "$LOCKD"; mkdir "$LOCKD"; fi; fi; echo $$ > "$LOCKD/pid"; trap 'rm -rf "$LOCKD"' EXIT
 export CHAIN_TMP=$(mktemp -d /tmp/mnml-chain.XXXXXX)
 S="$(cd "$(dirname "$0")" && pwd)"
-R="$(cd "$S/../.." && pwd)"; W="$R-worktrees"
+R="$(cd "$S/../.." && pwd)"
 # Merge messages are written by hand per branch; logs outlive the run. Both are git-ignored.
 M=$S/msgs; L=$S/logs; mkdir -p "$L"
 # Zig never prunes its cache; a batch adds gigabytes. Over 40 GB, clear it — only when
