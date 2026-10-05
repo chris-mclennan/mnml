@@ -324,9 +324,7 @@ pub fn parseText(arena: Allocator, text: [:0]const u8) !Config {
     // The parser unrolls a branch per field at compile time; a config
     // this wide passes the default quota.
     @setEvalBranchQuota(4000);
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(arena);
-    return std.zon.parse.fromSliceAlloc(Config, arena, text, &diag, .{ .free_on_error = false });
+    return sdk.zig_compat.zonParse(Config, arena, text, null, .{});
 }
 
 /// The config as ZON, owned — what `save` writes.
@@ -447,7 +445,7 @@ test "dataRoot: MNML_DATA_ROOT, XDG_CONFIG_HOME, HOME, then USERPROFILE (Windows
 test "the scaffold parses and validates once the placeholders are real" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
-    const z = try arena.allocator().dupeZ(u8, template);
+    const z = try arena.allocator().dupeSentinel(u8, template, 0);
     const cfg = try parseText(arena.allocator(), z);
     var why: []const u8 = "";
     try validate(cfg, &why);

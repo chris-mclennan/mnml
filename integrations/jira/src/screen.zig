@@ -1486,7 +1486,7 @@ pub const Painter = struct {
         const Row = sdk.pane.chrome.SheetRow(hit.Target);
         var sheet: std.ArrayList(Row) = .empty;
         const active = try keymap.active(p.arena, p.a.context());
-        inline for (@typeInfo(keymap.Section).@"enum".fields) |sf| {
+        inline for (sdk.zig_compat.enumFields(keymap.Section)) |sf| {
             const section: keymap.Section = @enumFromInt(sf.value);
             var any = false;
             for (active) |b| if (b.section == section) {
@@ -1767,7 +1767,7 @@ test "Work: the header, the tab strip, the mode chips, the columns, the tree row
     // from column 2; nothing before it and nothing after it, since
     // `block` lays no track.
     const rule = std.mem.trimEnd(u8, try rowText(ar, &f, 2), " ");
-    try testing.expectEqualStrings("\u{258c} " ++ ("\u{2580}" ** 12), rule);
+    try testing.expectEqualStrings("\u{258c} " ++ sdk.zig_compat.repeat("\u{2580}", 12), rule);
     try testing.expect(std.mem.indexOf(u8, rule, "\u{2501}") == null);
     const r2 = try rowText(ar, &f, 3);
     try testing.expect(std.mem.indexOf(u8, r2, " basic ") != null);

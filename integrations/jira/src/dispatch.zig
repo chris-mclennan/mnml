@@ -8,6 +8,7 @@
 //! says which channels fired.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const model = @import("model.zig");
@@ -43,7 +44,7 @@ pub const Button = enum {
     }
 
     pub fn fromKind(s: []const u8) ?Button {
-        inline for (@typeInfo(Button).@"enum".fields) |f| {
+        inline for (compat.enumFields(Button)) |f| {
             const b: Button = @enumFromInt(f.value);
             if (std.mem.eql(u8, b.kind(), s)) return b;
         }

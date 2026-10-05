@@ -201,7 +201,7 @@ pub const Pipeline = struct {
     /// not know is passed through as the API spelled it.
     pub fn typeLabel(p: Pipeline) []const u8 {
         if (std.ascii.eqlIgnoreCase(p.selector_type, "custom")) return "custom";
-        if (std.ascii.indexOfIgnoreCase(p.target_type, "pullrequest") != null or std.ascii.eqlIgnoreCase(p.selector_type, "pull-requests")) return "pull-request";
+        if (std.ascii.findIgnoreCase(p.target_type, "pullrequest") != null or std.ascii.eqlIgnoreCase(p.selector_type, "pull-requests")) return "pull-request";
         if (std.ascii.eqlIgnoreCase(p.ref_type, "tag") or std.ascii.eqlIgnoreCase(p.selector_type, "tags")) return "tag";
         if (p.selector_type.len == 0 or std.ascii.eqlIgnoreCase(p.selector_type, "branches") or std.ascii.eqlIgnoreCase(p.selector_type, "default")) return "branch";
         return p.selector_type;

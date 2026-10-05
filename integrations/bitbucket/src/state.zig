@@ -109,9 +109,7 @@ pub fn pathBeside(gpa: Allocator, config_path: []const u8) Allocator.Error![]u8 
 }
 
 pub fn parseText(arena: Allocator, text: [:0]const u8) !State {
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(arena);
-    return std.zon.parse.fromSliceAlloc(State, arena, text, &diag, .{ .free_on_error = false });
+    return @import("mnml_sdk").zig_compat.zonParse(State, arena, text, null, .{});
 }
 
 /// The file's contents, on `arena`; an empty state when there is no

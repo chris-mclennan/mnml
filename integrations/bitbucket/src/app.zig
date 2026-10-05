@@ -128,7 +128,7 @@ pub const Picker = struct {
     pub fn visible(p: *const Picker, a: Allocator) Allocator.Error![]const usize {
         var out: std.ArrayList(usize) = .empty;
         for (p.items, 0..) |it, i| {
-            if (p.query.items.len == 0 or std.ascii.indexOfIgnoreCase(it.label, p.query.items) != null) try out.append(a, i);
+            if (p.query.items.len == 0 or std.ascii.findIgnoreCase(it.label, p.query.items) != null) try out.append(a, i);
         }
         return out.toOwnedSlice(a);
     }
@@ -1032,7 +1032,7 @@ pub const App = struct {
         const ts = app.activeTab();
         var buf: [512]u8 = undefined;
         const text = rowSearchText(ts, r, &buf);
-        return std.ascii.indexOfIgnoreCase(text, q) != null;
+        return std.ascii.findIgnoreCase(text, q) != null;
     }
 
     /// The words a filter can match on a row.
