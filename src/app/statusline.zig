@@ -61,7 +61,6 @@ const tests_pane = @import("tests_pane.zig");
 const syntax_mod = @import("syntax.zig");
 const outline = @import("outline.zig");
 const ids = @import("../core/ids.zig");
-const profile_mod = @import("../config/profile.zig");
 const command = @import("../core/command.zig");
 const CommandError = command.CommandError;
 const session_cycle = @import("session_cycle.zig");
@@ -118,10 +117,6 @@ pub const SegId = enum(u32) {
     /// ` zoom ` — this page is zoomed (`view.toggle_zoom`): one split
     /// fills the body and the rest of the tree is hidden, not gone.
     zoom,
-    /// ` dev ` — this is the build being worked on, not the installed
-    /// mnml (`MNML_PROFILE=dev`, `src/config/profile.zig`). The stable
-    /// profile paints nothing: you are meant to forget it is a choice.
-    dev_profile,
     /// ` sandbox ` — a `--sandbox` run: HOME, the config and the state
     /// are a throwaway directory (`src/config/sandbox.zig`). ` sandbox? `
     /// on red when `MNML_SANDBOX` is set but they are not.
@@ -498,13 +493,6 @@ pub fn build(app: *App, ui: Ui, area: Rect) Allocator.Error!sl.Info {
         try push(&left, arena, Seg.init(" zoom ", p.bg_darker, mode_bg).strong().withHit(SegId.zoom.raw()));
     }
 
-    // ── the profile ──
-    // Which mnml this is, next to the mode, where the eye already
-    // goes. Nothing at all in the stable profile.
-    if (profile_mod.tag(app.profile()).len > 0) {
-        try push(&left, arena, Seg.init(ui.fmt(" {s} ", .{profile_mod.tag(app.profile())}), p.bg_darker, p.orange).strong().withHit(SegId.dev_profile.raw()));
-    }
-
     // ── the sandbox ──
     // Beside the profile: this is not your real setup. Red, with a `?`,
     // when the variable says sandbox and the home or data root says
@@ -791,7 +779,6 @@ pub const Named = struct { key: []const u8, label: []const u8 };
 pub const named = [_]Named{
     .{ .key = "mode", .label = "Mode" },
     .{ .key = "zoom", .label = "Zoom" },
-    .{ .key = "dev_profile", .label = "Profile (dev)" },
     .{ .key = "branch", .label = "Branch" },
     .{ .key = "pr", .label = "Pull request" },
     .{ .key = "file", .label = "File" },
@@ -1266,7 +1253,6 @@ test "the mode chip names the open line — CMD for the app's and for a buffer's
 test "SegId.of covers the app's ids and nothing else" {
     try testing.expectEqual(SegId.branch, SegId.of(sl.seg_app_base).?);
     try testing.expectEqual(SegId.workspace, SegId.of(SegId.workspace.raw()).?);
-    try testing.expectEqual(SegId.dev_profile, SegId.of(SegId.dev_profile.raw()).?);
     try testing.expectEqual(SegId.sandbox, SegId.of(SegId.sandbox.raw()).?);
     try testing.expect(SegId.of(sl.seg_mode) == null);
     try testing.expectEqual(SegId.session_next, SegId.of(SegId.session_next.raw()).?);

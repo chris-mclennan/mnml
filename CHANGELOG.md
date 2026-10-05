@@ -44,6 +44,24 @@ the release ships one file), and one line per change a user can see.
   trust question, no longer cancels the wizard: it opens as soon as
   that dialog closes.
 
+### One data root for every build; the dev profile is gone
+
+- A build from source and an installed mnml now share one data root
+  (`~/.config/mnml`), one session file (`.mnml/session.zon`) and one
+  statusline. `MNML_PROFILE` and `--profile` are no longer read; the
+  `dev` chip, the `[dev]` window title, the first-launch seeding and
+  `mnml profile seed` are gone. `--sandbox`, `--demo` and
+  `MNML_DATA_ROOT` still pick a root of their own.
+- A leftover `~/.config/mnml-dev` (and `.mnml/session-dev.zon`) is
+  ignored. Delete it, or move what you want from it into
+  `~/.config/mnml`, by hand.
+- `mnml paths` prints the data root, session file, IPC mailbox and
+  running-instance marker (it replaces `mnml profile`; on Windows,
+  `run.ps1 paths`).
+- `--version` reads `mnml 0.3.3+g<sha>` for a source build, and the
+  start page shows `mnml 0.3.3 · <sha>`; a release reads its version
+  alone.
+
 ### Claude tokens renew on every system
 
 - A Claude account whose token is turned down renews it with the

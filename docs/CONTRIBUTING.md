@@ -525,9 +525,8 @@ no marker (docs/CONFIG.md, *Sandbox*), so these verbs never reach it. `restart` 
 `{"cmd":"restart"}` / `{"cmd":"quit"}` in `<ws>/.mnml/ipc-zig/command`;
 the terminal loop tails that file for those two lines only (the headless
 loop takes the whole command set). `MNML_BIN`, `MNML_IPC_SUBDIR`,
-`MNML_IPC_DIR`, `MNML_ZIG`, `MNML_OPTIMIZE` and `MNML_PROFILE`
-parameterize the wrapper (a launch defaults to the dev profile — see
-below; the build / test / check / install verbs never set it);
+`MNML_IPC_DIR`, `MNML_ZIG` and `MNML_OPTIMIZE` parameterize the
+wrapper;
 `tools/run-sh-check.sh` exercises every non-interactive verb on a
 throwaway workspace with all of them pointed at a tempdir, and
 `tools/pty-lifecycle.py` proves the marker on a real pty.
@@ -597,20 +596,18 @@ font directory at launch, so restart yours. Without the face the
 affected glyphs fall back — the hollow cursor to `▯` — rather than
 rendering as `?`; `:integrations.audit_glyphs` says which are at risk.
 
-**Develop in the dev profile.** `./run.sh` launches with
-`MNML_PROFILE=dev`, which moves every name the two copies could fight
-over: `~/.config/mnml-dev` for state, `.mnml/session-dev.zon` for the
-session (so the same workspace open in both keeps two layouts), the
-`ipc-zig` mailbox, the `mnml-zig-running-…` marker. The first dev
-launch seeds itself from your stable config and says so; see
-`docs/CONFIG.md`, "Profiles", for exactly what travels and what never
-does.
+**One data root.** `./run.sh` runs the source build on the same
+`~/.config/mnml` and `.mnml/session.zon` as the installed `mnml` — there
+is no separate dev state to drift (`docs/CONFIG.md`, "One mnml, one
+data root"). The source build keeps its own `ipc-zig` mailbox and
+`mnml-zig-running-…` marker, so `./run.sh restart` never reaches the
+installed instance. Want a throwaway state instead? `--sandbox`, or an
+explicit `MNML_DATA_ROOT`.
 
-**Which one am I in?** The statusline paints a `dev` chip beside the
-mode and the window title reads `mnml [dev] — work`. From a shell,
-`mnml profile` prints the profile, its data root, session file, mailbox
-and marker. Nothing is painted in the stable profile: that one you are
-meant to forget is a choice.
+**Which build is this?** The start page's version line reads
+`mnml 0.3.3 · <sha>` for a source build and `mnml 0.3.3` for a release.
+From a shell, `mnml paths` prints the data root, session file, mailbox
+and marker.
 
 **The loop.** Live in `mnml`. Work in `./run.sh`. When a change has
 been through the gate below, `./run.sh install` and the daily driver
@@ -628,7 +625,7 @@ PowerShell 5.1 and 7 both run it; no modules.
 .\run.ps1 install                # default prefix %LOCALAPPDATA%\Programs\mnml
 .\run.ps1 install-font           # per-user font dir + the HKCU registration
 .\run.ps1 installed-status
-.\run.ps1 profile                # data root, session, mailbox, %TEMP% marker
+.\run.ps1 paths                  # data root, session, mailbox, %TEMP% marker
 ```
 
 Three differences, all because Windows differs: the prefix default,

@@ -52,7 +52,7 @@
 //! listed integrations on the old bridge, which this host cannot mount.
 //!
 //! What `use_defaults` puts first: the release index for this mnml's
-//! version — skipped by a dev build, which has no release — then the
+//! version — skipped by a source build, which has no release — then the
 //! `mnml` catalogue. And with no config at all, whatever is in
 //! `<data root>/marketplace/local/` (`localRoot`): a folder of
 //! manifests and integration folders, listed as the `local` source with
@@ -153,7 +153,7 @@ pub const SourceSpec = struct {
     repo: []u8,
     /// The repo path, the keyword, the local folder (absolute), the
     /// catalogue file (mnml), or the index's URL with this mnml's
-    /// version in it — empty when a dev build has none to fill in.
+    /// version in it — empty when a source build has none to fill in.
     path: []u8,
     official: bool = false,
 
@@ -330,7 +330,7 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
     if (app.cfg.marketplace.use_defaults) {
         // This mnml's release index leads — what was released for this
         // version is the first thing the tab lists — then the
-        // catalogue this checkout builds. A dev build resolves no index
+        // catalogue this checkout builds. A source build resolves no index
         // URL (it has no release), so the catalogue is all it lists.
         for (Config.default_marketplace_sources) |s| {
             var spec = try specOf(app, gpa, s);
@@ -463,7 +463,7 @@ pub fn sourceCount(app: *App) usize {
 }
 
 /// Whether a configured source lists anything in this build: only a
-/// release index whose URL needs this mnml's version, in a dev build
+/// release index whose URL needs this mnml's version, in a source build
 /// that has none, does not.
 fn sourceResolves(arena: Allocator, s: Config.MarketplaceSource) bool {
     return switch (s) {
@@ -1943,7 +1943,7 @@ const hello_zon =
     \\.{ .id = "hello", .label = "Hello", .description = "The sample", .version = "0.1.0", .binary = "mnml-hello" }
 ;
 
-test "the default index is chris-mclennan/mnml's, and a dev build never asks it: no release version, no URL" {
+test "the default index is chris-mclennan/mnml's, and a source build never asks it: no release version, no URL" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -1957,7 +1957,7 @@ test "the default index is chris-mclennan/mnml's, and a dev build never asks it:
     );
 }
 
-test "a dev build's default source is the mnml catalogue: its release index has no version to resolve, and nothing from the 0.2 monorepo, launchers or crates is prepended" {
+test "a source build's default source is the mnml catalogue: its release index has no version to resolve, and nothing from the 0.2 monorepo, launchers or crates is prepended" {
     const gpa = testing.allocator;
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
@@ -1979,10 +1979,10 @@ test "a dev build's default source is the mnml catalogue: its release index has 
     try testing.expectEqualStrings("mnml", specs[0].id);
     try testing.expect(specs[0].kind == .mnml);
     try testing.expect(specs[0].official);
-    // A dev build's catalogue is the checkout's, so the install has a
+    // A source build's catalogue is the checkout's, so the install has a
     // `zig-out/bin` to fall back to.
     try testing.expect(specs[0].repo.len > 0);
-    // The one default is the release index, and a dev build — this
+    // The one default is the release index, and a source build — this
     // one — has no release for it to name.
     try testing.expectEqual(@as(usize, 1), Config.default_marketplace_sources.len);
     try testing.expect(Config.default_marketplace_sources[0] == .release_index);
@@ -2307,7 +2307,7 @@ test "the release index: only what this SDK and platform can run is listed, it s
     defer app.deinit();
     app.tree.visible = false;
     app.tree.width = 80;
-    // The default index needs this build's version, and a dev build has
+    // The default index needs this build's version, and a source build has
     // none: the catalogue and the configured index are the two.
     try testing.expectEqual(@as(usize, 2), sourceCount(&app));
 

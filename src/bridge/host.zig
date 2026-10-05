@@ -600,7 +600,7 @@ pub const EnvVars = struct {
     ipc_dir: []const u8,
     /// The host's data root. An integration reads its config, its token
     /// and its caches under the same root its host uses — a host on a
-    /// private root (a dev profile, the corpus) must never have its
+    /// private root (a sandbox, the corpus) must never have its
     /// panes reading the user's real `~/.config/mnml`.
     data_root: []const u8 = "",
     /// `integrations.request_log`, passed down so the SDK's

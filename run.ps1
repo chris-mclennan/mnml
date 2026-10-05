@@ -6,7 +6,7 @@
   `run.sh` is bash, so on Windows the install has been by hand since the
   Windows backends landed (docs/WINDOWS.md, "Known gaps"). This is the
   twin of the four verbs that matter for living in mnml rather than
-  developing it — install, install-font, installed-status, profile —
+  developing it — install, install-font, installed-status, paths —
   with the same semantics, the same refusals and the same dry-run plan.
 
   It is NOT a twin of the whole script. The restart loop, `shot`,
@@ -30,7 +30,7 @@
   beyond what ships with the OS.
 
 .PARAMETER Verb
-  install | install-font | installed-status | profile | help
+  install | install-font | installed-status | paths | help
 
 .PARAMETER Prefix
   Where `install` puts things. Default: $env:MNML_PREFIX, else
@@ -62,8 +62,6 @@
     MNML_OPTIMIZE   the optimize mode (default ReleaseSafe; anything
                     else is refused without -AllowDirty)
     MNML_PREFIX / PREFIX   where `install` puts things
-    MNML_PROFILE    which mnml `profile` reports on (default dev, the
-                    way a launch from this tree runs)
 #>
 
 [CmdletBinding()]
@@ -177,12 +175,12 @@ function Invoke-Zig {
     return $code
 }
 
-# Is `$Path` an mnml-zig? `--version` says so; the Rust mnml and
-# anything else on the machine do not.
+# Is `$Path` an mnml-zig? `--version` is `mnml 0.3.x` or later; the
+# Rust mnml (frozen at 0.2) and anything else on the machine are not.
 function Test-IsOurs($Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     $r = Invoke-Capture -Exe $Path -Arguments @('--version')
-    return ($r.Text -match '(?m)^mnml(-zig)? .*\((stable|dev) profile\)')
+    return ($r.Text -match '(?m)^mnml(-zig)? (0\.([3-9]|[1-9][0-9]+)|[1-9][0-9]*)\.')
 }
 
 # Set an environment variable, or REMOVE it when the value is $null —
@@ -194,16 +192,12 @@ function Set-Env {
     else { Set-Item "Env:$Name" $Value }
 }
 
-# The installed mnml's data root for a profile — asked of the binary
-# itself, so data_root.zig's ladder (%USERPROFILE% rung included) is
-# never duplicated here. `$Profile` is an automatic variable in
-# PowerShell, hence the name.
+# The installed mnml's data root — asked of the binary itself
+# (`mnml paths`), so data_root.zig's ladder (%USERPROFILE% rung
+# included) is never duplicated here.
 function Get-DataRoot {
-    param([string]$Path, [string]$ProfileName = 'stable')
-    $saved = $env:MNML_PROFILE
-    $env:MNML_PROFILE = $ProfileName
-    try { $r = Invoke-Capture -Exe $Path -Arguments @('profile') }
-    finally { Set-Env 'MNML_PROFILE' $saved }
+    param([string]$Path)
+    $r = Invoke-Capture -Exe $Path -Arguments @('paths')
     $m = [regex]::Match($r.Text, '(?m)^data:\s*(.+?)\s*$')
     if ($m.Success) { return $m.Groups[1].Value }
     return ''
@@ -287,10 +281,9 @@ function Invoke-Install {
         if ((Invoke-Zig 'build' '-Doptimize=ReleaseSafe' '-Dinstall-names=true' 'jira-integration' 'bitbucket-integration') -ne 0) {
             Log "${say}: the integration build failed"; return 1
         }
-        # 4. Verified: it runs, it says what it is, and it says it
-        #    defaults to the stable profile — the point of -Dinstall-names.
+        # 4. Verified: it runs and it says what it is.
         $ver = (Invoke-Capture -Exe $built -Arguments @('--version')).Text
-        if ($ver -notmatch '(?m)^mnml(-zig)? .*\(stable profile\)') {
+        if (-not (Test-IsOurs $built)) {
             Log "${say}: $built --version said ""$ver"" — refusing to install an unverified build"
             return 1
         }
@@ -340,7 +333,7 @@ function Invoke-Install {
         Plan '(no zig-out\share yet — the build makes it)'
     }
 
-    # 6. The manifests, in the STABLE profile's data root, pointing at
+    # 6. The manifests, in the data root, pointing at
     #    the binaries just installed. Each integration writes its own
     #    (`<binary> --install`), so the manifest and the binary cannot
     #    drift; <root>\bin\<name>.exe is then re-COPIED from PREFIX\bin
@@ -349,11 +342,11 @@ function Invoke-Install {
     #    under the running installed mnml.
     $root = ''
     if ($DryRun) {
-        if (Test-Path -LiteralPath $built) { $root = Get-DataRoot -Path $built -ProfileName 'stable' }
-        if (-not $root) { $root = '(the stable data root)' }
+        if (Test-Path -LiteralPath $built) { $root = Get-DataRoot -Path $built }
+        if (-not $root) { $root = '(the data root)' }
     }
     else {
-        $root = Get-DataRoot -Path $dest -ProfileName 'stable'
+        $root = Get-DataRoot -Path $dest
         if (-not $root) { Log "${say}: could not ask $dest for its data root"; return 1 }
     }
     Log "${say}: manifests → $root\integrations, copies → $root\bin"
@@ -365,13 +358,11 @@ function Invoke-Install {
             continue
         }
         if ($DryRun) {
-            Plan "would run    MNML_PROFILE=stable MNML_DATA_ROOT=$root $exe --install"
+            Plan "would run    MNML_DATA_ROOT=$root $exe --install"
             Plan "would copy   $exe → $copy"
             continue
         }
-        $savedProfile = $env:MNML_PROFILE
         $savedRoot = $env:MNML_DATA_ROOT
-        $env:MNML_PROFILE = 'stable'
         $env:MNML_DATA_ROOT = $root
         try {
             $r = Invoke-Capture -Exe $exe -Arguments @('--install')
@@ -380,7 +371,6 @@ function Invoke-Install {
             }
         }
         finally {
-            Set-Env 'MNML_PROFILE' $savedProfile
             Set-Env 'MNML_DATA_ROOT' $savedRoot
         }
         # A copy, not a symlink: a symlink needs Developer Mode or an
@@ -411,7 +401,7 @@ function Invoke-Install {
         return 0
     }
 
-    Log "installed. ``$dest`` is the stable profile; ``zig build`` here is the dev one."
+    Log "installed. ``$dest`` and a ``zig build`` here share one data root ($root)."
     $binDir = Join-Path $Prefix 'bin'
     $userPath = ''
     if ($OnWindows) { $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') }
@@ -565,7 +555,7 @@ function Invoke-InstalledStatus {
     $describe = (Invoke-Capture -Exe 'git' -Arguments @('-C', $Repo, 'describe', '--tags', '--always', '--dirty')).Text
     if (-not $describe) { $describe = $head }
     Write-Host "here:      $describe  (HEAD $head)"
-    $root = Get-DataRoot -Path $dest -ProfileName 'stable'
+    $root = Get-DataRoot -Path $dest
     if (-not $root) { $root = '?' }
     Write-Host "data:      $root"
     $binDir = Join-Path $root 'bin'
@@ -589,25 +579,21 @@ function Invoke-InstalledStatus {
     return 0
 }
 
-# ── profile ─────────────────────────────────────────────────────────────
-# Which mnml is this tree's build, and where does it keep everything?
-# The answer comes from the binary (`mnml profile`) rather than being
+# ── paths ───────────────────────────────────────────────────────────────
+# Where does this tree's build keep everything?
+# The answer comes from the binary (`mnml paths`) rather than being
 # reconstructed here, so the %USERPROFILE% rung, the %TEMP% marker and
 # the mailbox name are whatever the program actually resolves — which is
 # the thing a first Windows session most wants to see confirmed.
 
-function Invoke-Profile {
+function Invoke-Paths {
     $built = BinPath 'mnml-zig'
     if (-not (Test-Path -LiteralPath $built)) {
-        Log "profile: no binary at $built — run ``zig build -Doptimize=ReleaseSafe`` first"
+        Log "paths: no binary at $built — run ``zig build -Doptimize=ReleaseSafe`` first"
         return 1
     }
-    $p = if ($env:MNML_PROFILE) { $env:MNML_PROFILE } else { 'dev' }
     Write-Host "binary:   $built"
-    $saved = $env:MNML_PROFILE
-    $env:MNML_PROFILE = $p
-    try { $r = Invoke-Capture -Exe $built -Arguments @('profile') }
-    finally { Set-Env 'MNML_PROFILE' $saved }
+    $r = Invoke-Capture -Exe $built -Arguments @('paths')
     Write-Host $r.Text
     if ($r.Code -ne 0) { return $r.Code }
     $installed = JoinPath $Prefix 'bin' ('mnml' + $ExeExt)
@@ -628,9 +614,9 @@ run.ps1 — run.sh's daily-driver verbs, for Windows.
       Install this build as the mnml you live in: a verified ReleaseSafe
       build of the host (as mnml.exe) and the shipped integrations to
       PREFIX\bin, zig-out\share to PREFIX\share, and each integration's
-      manifest into the STABLE profile's data root with a copy of its
+      manifest into the data root with a copy of its
       binary at <data root>\bin — so a rebuild in this repo never moves
-      the binaries under the running stable copy.
+      the binaries under the running installed copy.
       Default prefix: %LOCALAPPDATA%\Programs\mnml.
       Refuses a dirty tree or a non-ReleaseSafe MNML_OPTIMIZE
       (-AllowDirty), and refuses to overwrite a PREFIX\bin\mnml.exe that
@@ -645,15 +631,14 @@ run.ps1 — run.sh's daily-driver verbs, for Windows.
 
   .\run.ps1 installed-status [-Prefix DIR]
       The installed mnml's version and prefix against this tree's HEAD,
-      its stable data root, and whether each <data root>\bin copy still
+      its data root, and whether each <data root>\bin copy still
       matches the one in the prefix.
 
-  .\run.ps1 profile
-      What this tree's build resolves for the current profile: data
-      root, session file, IPC mailbox and the %TEMP% marker, straight
-      from the binary. MNML_PROFILE picks the profile (default dev).
+  .\run.ps1 paths
+      What this tree's build resolves: data root, session file, IPC
+      mailbox and the %TEMP% marker, straight from the binary.
 
-Environment: MNML_ZIG, MNML_OPTIMIZE, MNML_PREFIX / PREFIX, MNML_PROFILE.
+Environment: MNML_ZIG, MNML_OPTIMIZE, MNML_PREFIX / PREFIX.
 The restart loop, headless, shot, clean and the IPC verbs are bash-only
 (run.sh); docs/WINDOWS.md says what else is not proven on Windows yet.
 '@ | Write-Host
@@ -665,7 +650,7 @@ switch ($Verb) {
     'install' { exit (Invoke-Install) }
     'install-font' { exit (Invoke-InstallFont) }
     'installed-status' { exit (Invoke-InstalledStatus) }
-    'profile' { exit (Invoke-Profile) }
+    'paths' { exit (Invoke-Paths) }
     'help' { Show-Help; exit 0 }
     '-h' { Show-Help; exit 0 }
     '--help' { Show-Help; exit 0 }

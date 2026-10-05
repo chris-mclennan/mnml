@@ -1,0 +1,9 @@
+# env: MNML_PROFILE=dev
+# There is one mnml: a build from source and an installed one share a
+# data root and paint the same statusline. A leftover MNML_PROFILE from
+# an older run.sh names nothing — no ` dev ` chip beside the mode
+# (`src/config/data_root.zig`; the data-root side is a unit test there).
+write hello.txt "hi"
+open hello.txt
+expect screen contains "hello.txt"
+expect screen lacks " dev "

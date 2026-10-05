@@ -87,7 +87,7 @@ New-Item -ItemType Directory -Path $Tmp -Force | Out-Null
 # Everything the script or the app could write, redirected under $Tmp.
 $SavedEnv = @{}
 foreach ($k in @('MNML_PREFIX', 'PREFIX', 'MNML_DATA_ROOT', 'MNML_ZIG', 'MNML_OPTIMIZE',
-                 'MNML_PROFILE', 'USERPROFILE', 'LOCALAPPDATA', 'HOME', 'XDG_CONFIG_HOME')) {
+                 'USERPROFILE', 'LOCALAPPDATA', 'HOME', 'XDG_CONFIG_HOME')) {
     $SavedEnv[$k] = [Environment]::GetEnvironmentVariable($k)
 }
 function Restore-Env {
@@ -107,7 +107,6 @@ try {
     $env:LOCALAPPDATA = $LocalApp
     $env:HOME = $FakeHome
     Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
-    Remove-Item Env:MNML_PROFILE -ErrorAction SilentlyContinue
     Remove-Item Env:MNML_OPTIMIZE -ErrorAction SilentlyContinue
     Remove-Item Env:PREFIX -ErrorAction SilentlyContinue
 
@@ -178,7 +177,7 @@ exit /b 0
     # ── 1. help, and an unknown verb ────────────────────────────────
     $r = Run-Verb @('help')
     Check 'help: exit 0' ($r.Code -eq 0) $r.Text
-    Check 'help: names every verb' (($r.Text -match 'install-font') -and ($r.Text -match 'installed-status') -and ($r.Text -match 'profile')) $r.Text
+    Check 'help: names every verb' (($r.Text -match 'install-font') -and ($r.Text -match 'installed-status') -and ($r.Text -match 'paths')) $r.Text
     $r = Run-Verb @('nonsense')
     Check 'an unknown verb exits 2' ($r.Code -eq 2) $r.Text
 
@@ -188,7 +187,7 @@ exit /b 0
     Check 'install -DryRun: names the host copy' ($r.Text -match [regex]::Escape("would copy   $RealBin")) $r.Text
     Check 'install -DryRun: names the host destination' ($r.Text -match [regex]::Escape((Join-Path (Join-Path $PrefixDry 'bin') ('mnml' + $ExeExt)))) $r.Text
     Check 'install -DryRun: names the integration copy' ($r.Text -match [regex]::Escape((Join-Path (Join-Path $PrefixDry 'bin') ('mnml-jira' + $ExeExt)))) $r.Text
-    Check 'install -DryRun: names the manifest write into the stable data root' ($r.Text -match [regex]::Escape("would run    MNML_PROFILE=stable MNML_DATA_ROOT=$DataRoot")) $r.Text
+    Check 'install -DryRun: names the manifest write into the data root' ($r.Text -match [regex]::Escape("would run    MNML_DATA_ROOT=$DataRoot")) $r.Text
     Check 'install -DryRun: names the copy into the data root' ($r.Text -match [regex]::Escape((Join-Path (Join-Path $DataRoot 'bin') ('mnml-jira' + $ExeExt)))) $r.Text
     Check 'install -DryRun: the sample is a fixture, not a chip' ($r.Text -match 'would skip   mnml-sample --install') $r.Text
     Check 'install -DryRun: names install-font as the font step' ($r.Text -match '\.\\run\.ps1 install-font') $r.Text
@@ -236,7 +235,7 @@ exit /b 0
     $InstalledMnml = Join-Path (Join-Path $PrefixOk 'bin') ('mnml' + $ExeExt)
     Check 'install: the host landed as PREFIX\bin\mnml' (Test-Path -LiteralPath $InstalledMnml) ''
     $v = (& $InstalledMnml --version 2>&1 | Out-String)
-    Check 'install: PREFIX\bin\mnml --version says what it is' ($v -match '(?m)^mnml(-zig)? .*\((stable|dev) profile\)') $v
+    Check 'install: PREFIX\bin\mnml --version says what it is' ($v -match '(?m)^mnml(-zig)? 0\.[3-9]') $v
     Check 'install: the integration landed too' (Test-Path -LiteralPath (Join-Path (Join-Path $PrefixOk 'bin') ('mnml-jira' + $ExeExt))) ''
     Check 'install: the font came with it' (Test-Path -LiteralPath (Join-Path $PrefixOk 'share\mnml\fonts\MnmlSymbols.ttf')) ''
     Check 'install: the integration catalogue came with it' (Test-Path -LiteralPath (Join-Path $PrefixOk 'share\mnml\marketplace.zon')) ''

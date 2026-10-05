@@ -111,13 +111,14 @@ for: if a later change to it asks for something new, you are asked
 again. `workspace.review_trust` shows the decision and lets you forget
 it.
 
-## Profiles
+## One data root
 
-`--profile dev` (or `MNML_PROFILE=dev`) runs mnml with its own data
-root, session and settings — `~/.config/mnml-dev` — and a `dev` chip on
-the statusline. It is meant for running a development build of mnml
-beside the one you use every day. The first dev launch copies your
-settings across, never your credentials.
+Every mnml — installed, or built from source — keeps its state in the
+same `~/.config/mnml`. There is no separate dev profile: a leftover
+`~/.config/mnml-dev` from an older build is ignored; delete it, or move
+what you want from it into `~/.config/mnml`, by hand. For a throwaway
+state, launch with `--sandbox` or point `MNML_DATA_ROOT` somewhere
+else.
 
 ## Coming from 0.2.x
 

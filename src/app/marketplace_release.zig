@@ -206,7 +206,7 @@ pub fn isReleaseVersion(v: []const u8) bool {
 }
 
 /// `template` with `{version}` replaced by `version`. Null when the
-/// template needs a version and `version` has no release — a dev build
+/// template needs a version and `version` has no release — a source build
 /// has no index of its own to read. A template without `{version}` is
 /// itself.
 pub fn resolveUrl(arena: Allocator, template: []const u8, version: []const u8) Allocator.Error!?[]const u8 {
@@ -555,7 +555,7 @@ test "sha256: a matching sum passes in either case; any other is refused" {
     try testing.expect(!verify("abc", ""));
 }
 
-test "versions: an update is an older installed version; a dev build resolves no versioned index" {
+test "versions: an update is an older installed version; a source build resolves no versioned index" {
     try testing.expect(catalogue.olderThan("0.2.0", "0.4.0"));
     try testing.expect(!catalogue.olderThan("0.4.0", "0.4.0"));
     try testing.expect(!catalogue.olderThan("0.5.0", "0.4.0"));

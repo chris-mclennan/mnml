@@ -21,7 +21,7 @@
             // The statusline clock.
             "\\b\\d{1,2}:\\d{2}\\b",
             // The build's version and hash (start surface, About).
-            "\\d+\\.\\d+\\.\\d+-dev\\+g[0-9a-f]+(-dirty)?",
+            "\\d+\\.\\d+\\.\\d+(\\+g| · )[0-9a-f]{7,}(-dirty)?",
             // An integration pane's freshness ("as of 2s ago").
             "as of \\S+ ago",
             // The tree header's workspace path, abbreviated to what the

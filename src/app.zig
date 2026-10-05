@@ -3239,15 +3239,6 @@ pub const App = struct {
         e.buf.macros_by_app = true;
     }
 
-    /// Which mnml this is — the installed one or the one being worked
-    /// on. It rides in the environment (`MNML_PROFILE`), so a pane, a
-    /// spawned integration and the session file all read the same
-    /// answer without anything being threaded through
-    /// (`src/config/profile.zig`).
-    pub fn profile(self: *const App) config.Profile {
-        return config.profile.of(&self.env);
-    }
-
     /// Whether this is a `--sandbox` run (`config/sandbox.zig`): `.on`
     /// when `MNML_SANDBOX` is set and the home and data root really are
     /// throwaway, `.unsafe` when the variable is set but they are not.

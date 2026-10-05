@@ -9,9 +9,7 @@
 //! the file still naming this instance's workspace. Headless writes
 //! nothing: the wrapper keeps the marker for a headless loop itself.
 //!
-//! The prefix is the profile's (`src/config/profile.zig`): the dev
-//! profile is always `mnml-zig-running-…`, and the stable one is what
-//! the build was named — `mnml-running-…` for an installed mnml
+//! The prefix is what the build was named — `mnml-running-…` for an installed mnml
 //! (`-Dinstall-names`), this tree's `mnml-zig-running-…` otherwise. So
 //! the installed mnml and a `run.sh` build never find each other's
 //! instance (`docs/DESIGN.md`, "Side-by-side mechanics").
@@ -19,14 +17,12 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const profile_mod = @import("../config/profile.zig");
+const build_options = @import("build_options");
 
 pub const file_suffix = ".workspace";
 
-/// The marker prefix for this environment's profile.
-pub fn filePrefix(env: *const std.process.Environ.Map) []const u8 {
-    return profile_mod.markerPrefix(profile_mod.of(env));
-}
+/// The marker prefix this build was named with.
+pub const file_prefix = build_options.marker_prefix;
 
 /// The marker's path for this environment. `TMPDIR` (then `TEMP`, `TMP`
 /// — the Windows spellings), else `/tmp`; `USER` (then `USERNAME`), else
@@ -34,7 +30,7 @@ pub fn filePrefix(env: *const std.process.Environ.Map) []const u8 {
 pub fn path(alloc: Allocator, env: *const std.process.Environ.Map) Allocator.Error![]u8 {
     const tmp = firstNonEmpty(env, &.{ "TMPDIR", "TEMP", "TMP" }) orelse "/tmp";
     const user = firstNonEmpty(env, &.{ "USER", "USERNAME" }) orelse "x";
-    const name = try std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ filePrefix(env), user, file_suffix });
+    const name = try std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ file_prefix, user, file_suffix });
     defer alloc.free(name);
     return std.fs.path.join(alloc, &.{ tmp, name });
 }
@@ -169,24 +165,6 @@ test "no TMPDIR means /tmp; no USER means x; an empty value counts as unset" {
     const empty = try path(t.allocator, &env);
     defer t.allocator.free(empty);
     try sdk_testing.expectPath("/tmp/mnml-zig-running-x.workspace", empty);
-}
-
-test "the dev profile has its own marker, so restart never reaches the other instance" {
-    var env = std.process.Environ.Map.init(t.allocator);
-    defer env.deinit();
-    try env.put("TMPDIR", "/t");
-    try env.put("USER", "chris");
-    try env.put("MNML_PROFILE", "dev");
-    const dev = try path(t.allocator, &env);
-    defer t.allocator.free(dev);
-    try sdk_testing.expectPath("/t/mnml-zig-running-chris.workspace", dev);
-
-    try env.put("MNML_PROFILE", "stable");
-    const stable = try path(t.allocator, &env);
-    defer t.allocator.free(stable);
-    const want = try std.fmt.allocPrint(t.allocator, "/t/{s}chris.workspace", .{profile_mod.markerPrefix(.stable)});
-    defer t.allocator.free(want);
-    try sdk_testing.expectPath(want, stable);
 }
 
 test "the Windows spellings fill in: TEMP for TMPDIR, USERNAME for USER" {

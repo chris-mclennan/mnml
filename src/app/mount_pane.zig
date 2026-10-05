@@ -16,7 +16,6 @@ const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
-const profile = @import("../config/profile.zig");
 const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const Key = app_mod.Key;
@@ -223,12 +222,12 @@ pub const EnvPair = struct { name: []const u8, value: []const u8 };
 var next_id: u32 = 0;
 
 /// Where the file-IPC channel is for this app: `MNML_IPC_DIR`, else
-/// `<workspace>/.mnml/<the profile's mailbox>`. On the frame arena. The
+/// `<workspace>/.mnml/<the build's mailbox>`. On the frame arena. The
 /// LAUNCH workspace's: the channel listens there for the whole run, so
 /// a switch to another root (`workspace_switch.zig`) does not move it.
 pub fn ipcDir(app: *App) Allocator.Error![]const u8 {
     if (app.env.get("MNML_IPC_DIR")) |d| if (d.len > 0) return d;
-    return std.fs.path.join(app.frame.allocator(), &.{ app.launch_workspace, ".mnml", profile.ipcSubdir(app.profile()) });
+    return std.fs.path.join(app.frame.allocator(), &.{ app.launch_workspace, ".mnml", build_options.ipc_subdir });
 }
 
 /// `ipcDir`, made to exist: it is the directory an integration is told
@@ -1111,20 +1110,18 @@ test "a deep link reaches the pane that is already open rather than a second one
     try testing.expect(findOpen(&app, "bb --only prs-mine") == null);
 }
 
-test "an integration inherits the profile's data root, so its caches and sync marks land under the dev root" {
+test "an integration inherits the host's data root, so its caches and sync marks land beside the host's" {
     var env: std.process.Environ.Map = .init(testing.allocator);
     defer env.deinit();
-    try env.put("MNML_PROFILE", "dev");
     var app = try App.initWith(testing.allocator, testing.io, .{
         .workspace = "/ws",
-        // What `main` resolved for this profile (`config/data_root.zig`).
-        .data_root = "/home/x/.config/mnml-dev",
+        // What `main` resolved (`config/data_root.zig`).
+        .data_root = "/elsewhere/mnml-root",
         .cols = 40,
         .rows = 8,
         .env = &env,
     });
     defer app.deinit();
-    try testing.expectEqual(profile.Profile.dev, app.profile());
 
     // The env a mount is spawned with — the same call `open` makes.
     var child = try host.envFor(testing.allocator, &app.env, .{
@@ -1136,11 +1133,9 @@ test "an integration inherits the profile's data root, so its caches and sync ma
     });
     defer child.deinit();
     // The integration writes its config, cache, sync marks, etags and
-    // request log under this — so the dev profile's Jira cache is not
-    // the installed mnml's, without the integration knowing profiles
-    // exist at all.
-    try testing.expectEqualStrings("/home/x/.config/mnml-dev", child.get("MNML_DATA_ROOT").?);
-    try testing.expectEqualStrings("dev", child.get("MNML_PROFILE").?);
+    // request log under this — a host on an explicit root keeps its
+    // integrations' state there too.
+    try testing.expectEqualStrings("/elsewhere/mnml-root", child.get("MNML_DATA_ROOT").?);
 }
 
 test "the IPC channel an integration is told about exists even when the workspace is too deep for its socket" {

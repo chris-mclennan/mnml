@@ -112,6 +112,15 @@ fn worker(st: *State, events: *event.EventQueue, io: Io, gpa: Allocator) Io.Canc
     events.post(io, .timer);
 }
 
+/// The version as the start page shows it: a source build's
+/// `0.3.2+g1a2b3c4[-dirty]` reads `0.3.2 · 1a2b3c4[-dirty]`, a release
+/// build's `0.3.2` is itself. `+meta` that is not a git build id passes
+/// through unchanged.
+pub fn display(buf: []u8, version: []const u8) []const u8 {
+    const plus = std.mem.indexOf(u8, version, "+g") orelse return version;
+    return std.fmt.bufPrint(buf, "{s} \u{00B7} {s}", .{ version[0..plus], version[plus + 2 ..] }) catch version;
+}
+
 /// GET the latest release; compare its tag to `current`.
 fn fetch(gpa: Allocator, io: Io) (Allocator.Error || Io.Cancelable)!Result {
     var req = try http_parse.Request.init(gpa);
@@ -207,10 +216,18 @@ test "isNewer: semver order, v prefix and suffixes, garbage is never newer" {
     try t.expect(!isNewer("0.1.3", "garbage"));
     // What a checkout builds (`<zon version>+g<sha>[-dirty]`) against the
     // endpoint's repo as it is before the cutover: its latest is a 0.2.x
-    // Rust release, which is never newer than a 0.3.0-dev build.
+    // Rust release, which is never newer than a 0.3.0-source build.
     try t.expect(!isNewer("0.2.22", "0.3.0-dev+g1a2b3c4-dirty"));
     try t.expect(!isNewer("v0.2.23", "0.3.0-dev+g1a2b3c4"));
     try t.expect(!isNewer("0.2.22", "0.3.0-dev"));
+}
+
+test "display: a source build reads version · sha, a release build its version alone" {
+    var buf: [64]u8 = undefined;
+    try t.expectEqualStrings("0.3.2 \u{00B7} 1a2b3c4", display(&buf, "0.3.2+g1a2b3c4"));
+    try t.expectEqualStrings("0.3.2 \u{00B7} 1a2b3c4-dirty", display(&buf, "0.3.2+g1a2b3c4-dirty"));
+    try t.expectEqualStrings("0.3.2", display(&buf, "0.3.2"));
+    try t.expectEqualStrings("0.3.2+build7", display(&buf, "0.3.2+build7"));
 }
 
 test "tagFromJson reads tag_name and strips the v; the tick toasts what the worker left" {

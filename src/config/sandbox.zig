@@ -9,7 +9,7 @@
 //!
 //!   HOME              <root>
 //!   XDG_CONFIG_HOME   <root>/xdg
-//!   MNML_DATA_ROOT    <root>/xdg/mnml   (the dev profile adds `-dev`)
+//!   MNML_DATA_ROOT    <root>/xdg/mnml
 //!   MNML_SANDBOX      <root>            (the statusline's chip reads it)
 //!   MNML_SANDBOX_PID  <pid>             (who removes <root> on exit)
 //!
@@ -328,7 +328,7 @@ const t = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;
 
 fn testTakesValue(a: []const u8) bool {
-    return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config") or std.mem.eql(u8, a, "--profile");
+    return std.mem.eql(u8, a, "--input") or std.mem.eql(u8, a, "--config");
 }
 
 test "the probe: a home under the temp root, or named mnml-sandbox-*, is a sandbox; the temp root itself, a sibling and the real home are not" {
@@ -387,7 +387,7 @@ test "the re-exec plan: the flag kept, the binary absolute, HOME / XDG_CONFIG_HO
 
     // A flag's value is not a workspace: the sandbox's is still added,
     // and every argument passes through in order.
-    const valued = try plan(arena, "/x", &.{ "mnml-zig", "--input", "vim", "--sandbox", "--profile", "dev" }, root, 1, testTakesValue, .{});
+    const valued = try plan(arena, "/x", &.{ "mnml-zig", "--input", "vim", "--sandbox", "--config", "c.zon" }, root, 1, testTakesValue, .{});
     try t.expectEqual(@as(usize, 7), valued.argv.len);
     try t.expectEqualStrings("vim", valued.argv[2]);
     try t.expectEqualStrings("--sandbox", valued.argv[3]);
@@ -462,7 +462,7 @@ test "create: a private mnml-sandbox-* directory with xdg/mnml and workspace ins
     ws.close(t.io);
 
     // The environment the re-exec hands on: the data root is the
-    // sandbox's, for both profiles, and the chip says so.
+    // sandbox's, and the chip says so.
     const p = try plan(arena, "/x", &.{"mnml-zig"}, root, 1, testTakesValue, .{});
     var env: Map = .init(t.allocator);
     defer env.deinit();
@@ -474,9 +474,4 @@ test "create: a private mnml-sandbox-* directory with xdg/mnml and workspace ins
     defer t.allocator.free(dr);
     try t.expect(isUnder(dr, root));
     try t.expectEqual(State.on, state(&env, dr));
-    try env.put("MNML_PROFILE", "dev");
-    const dev = try data_root.dataRoot(t.allocator, t.io, .{ .vars = &env });
-    defer t.allocator.free(dev);
-    try t.expect(isUnder(dev, root));
-    try t.expect(std.mem.endsWith(u8, dev, "-dev"));
 }

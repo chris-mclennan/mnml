@@ -140,7 +140,7 @@ writes the manifests; a newer version in the index makes the row
 `update available`, and installing again is the update. The
 first-launch setup offers Jira and Bitbucket from the same listing
 (`docs/CONFIG.md`, "First launch"). `MNML_MARKETPLACE_INDEX=<url>`
-points a session at any index — how a dev build installs from a
+points a session at any index — how a source build installs from a
 release.
 
 ## The symbols font
@@ -168,12 +168,12 @@ written out.
 ## The shipped names
 
 `zig build release` (and so `dist`, and so every archive) builds with
-`-Dinstall-names`: the stable profile's IPC mailbox is `<ws>/.mnml/ipc`
+`-Dinstall-names`: the IPC mailbox is `<ws>/.mnml/ipc`
 and its running-instance marker is `mnml-running-$USER.workspace` — a
 shipped mnml is the one you live in, so it owns the plain names. This
-repo's own builds keep `ipc-zig` / `mnml-zig-running-…` so a dev build
-never finds a shipped instance, and `MNML_PROFILE=dev` takes those
-names in any build (`docs/CONFIG.md`, "Profiles"). An explicit
+repo's own builds keep `ipc-zig` / `mnml-zig-running-…` so a source
+build never finds a shipped instance (`docs/CONFIG.md`, "One mnml, one
+data root"). An explicit
 `-Dipc-subdir` / `-Dmarker-prefix` still wins and is forwarded to the
 per-target builds.
 
@@ -305,10 +305,13 @@ a direct edit on `main`, never "just the zon".
 
 ## Versions
 
-- `build.zig.zon`'s `.version` is the dev baseline (`0.3.2-dev`). It is not
-  the tag; `-Dversion=` is, and `release.yml` passes the tag through. Bump
-  it to the NEXT patch right after tagging, or every dev build between
-  releases names the version already shipped.
+- `build.zig.zon`'s `.version` is the NEXT version to ship (`0.3.3`), with
+  no suffix. A source build adds the git sha as its build id —
+  `0.3.3+g1a2b3c4[-dirty]`, which the start page shows as
+  `mnml 0.3.3 · 1a2b3c4`. It is not the tag; `-Dversion=` is, and
+  `release.yml` passes the tag through, so a release reads `mnml 0.3.3`
+  alone. Bump `.version` to the next patch right after tagging, or every
+  source build between releases names the version already shipped.
 - A prerelease tag (`v0.3.0-rc0`) creates a GitHub prerelease. The MSI's
   ProductVersion is numeric, so `build.ps1` strips the suffix to `0.3.0` for
   the installer database only.

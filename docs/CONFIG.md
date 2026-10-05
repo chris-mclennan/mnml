@@ -1155,7 +1155,7 @@ otherwise. Copy what you need; leave the rest out.
         // downloads the archive, refuses it unless the sha256 matches,
         // writes the binary to `<data root>/integrations/<id>/bin/`,
         // links `<data root>/bin/<name>` at it and runs
-        // `<binary> --install`. A dev build (a checkout, whose version
+        // `<binary> --install`. A source build (a checkout, whose version
         // has no release) skips the index. Nothing is bundled in the
         // mnml archive; the first-launch setup offers Jira and Bitbucket
         // from the same index.
@@ -1211,7 +1211,7 @@ otherwise. Copy what you need; leave the rest out.
             .{ .local_folder = .{ .id = "private", .path = "~/mnml-private" } },
             // A release index somewhere else — a mirror, or a fork's
             // releases. `{version}` in the URL is this mnml's version; a
-            // dev build skips a URL that needs one.
+            // source build skips a URL that needs one.
             .{ .release_index = .{ .id = "mirror", .url = "https://mirror.example/mnml/v{version}/integrations.json" } },
         },
         // Four environment overrides, for a scripted run (the .test
@@ -1222,7 +1222,7 @@ otherwise. Copy what you need; leave the rest out.
         //       paths are workspace-relative; `~` expanded.
         //   MNML_MARKETPLACE_INDEX=<url>        a release_index source
         //       named `index` at that URL, and the ONLY source while it
-        //       is set — how a dev build installs from a release.
+        //       is set — how a source build installs from a release.
         //   MNML_MARKETPLACE_LOCAL=<folder>     a local_folder source,
         //       and the ONLY source while it is set.
         //   MNML_MARKETPLACE_GITHUB=<owner>/<repo>[:<apps dir>]
@@ -1871,77 +1871,44 @@ command toasts the path to write.
 3. `$XDG_CONFIG_HOME/mnml/config.zon` when the variable is set
 4. `$HOME/.config/mnml/config.zon`
 
-That ladder answers for the `stable` profile; the `dev` profile is the
-same answer with `-dev` on the end (below).
+## One mnml, one data root
 
-## Profiles
+Every build answers the same ladder: the installed `mnml` and a build
+from this repo (`./run.sh`) share `~/.config/mnml`, the session file
+`<ws>/.mnml/session.zon` and the statusline. There is no dev profile
+any more — `MNML_PROFILE` and `--profile` are not read. The per-launch
+choices that do move the root are explicit: `MNML_DATA_ROOT`,
+`--sandbox` and `--demo`.
 
-One machine runs two mnmls: the installed `mnml` you live in and the
-build you are working on. A **profile** decides which state each one
-touches. There are two, and `stable` is the default — you ask for the
-other:
-
-```sh
-MNML_PROFILE=dev mnml           # or
-mnml --profile dev              # the flag writes the variable for the process
-./run.sh                        # the dev workflow: dev unless you say otherwise
-```
-
-|                   | `stable`                   | `dev`                        |
-| ----------------- | -------------------------- | ---------------------------- |
-| data root         | the ladder above           | the same, `-dev` appended     |
-| `config.zon`      | `~/.config/mnml`           | `~/.config/mnml-dev`          |
-| session file      | `<ws>/.mnml/session.zon`   | `<ws>/.mnml/session-dev.zon`  |
-| IPC mailbox       | `<ws>/.mnml/ipc`\*         | `<ws>/.mnml/ipc-zig`          |
-| running marker    | `mnml-running-$USER…`\*    | `mnml-zig-running-$USER…`     |
-| statusline        | —                          | a `dev` chip beside the mode  |
-| window title      | `mnml — work`              | `mnml [dev] — work`           |
+| what              | where                                          |
+| ----------------- | ---------------------------------------------- |
+| data root         | the ladder above                               |
+| session file      | `<ws>/.mnml/session.zon`                       |
+| IPC mailbox       | `<ws>/.mnml/ipc`\* (`MNML_IPC_DIR` overrides)  |
+| running marker    | `mnml-running-$USER…`\*                        |
+| window title      | `mnml — work`                                  |
 
 \* the build names these: `zig build release` and `run.sh install` pass
-`-Dinstall-names`, which spells the stable profile the way a shipped
-mnml does. This repo's own builds keep `ipc-zig` /
-`mnml-zig-running-…` for BOTH profiles, so nothing in the tree moves;
-the dev profile's names are its own either way. `MNML_IPC_DIR` still
-overrides the mailbox outright.
+`-Dinstall-names`, which spells them the way a shipped mnml does. This
+repo's own builds keep `ipc-zig` / `mnml-zig-running-…`, so a source
+build and an installed mnml in the same workspace do not answer each
+other's IPC.
 
-The suffix applies at every rung, including an explicit
-`$MNML_DATA_ROOT` — `MNML_DATA_ROOT=/tmp/x MNML_PROFILE=dev` is
-`/tmp/x-dev`. A test with a private root stays private.
+`mnml paths` prints all four for the binary you run.
 
-`mnml profile` prints all five for the profile in play.
-
-### Seeding
-
-The first dev launch finds an empty dev root and copies your setup out
-of the stable one — `config.zon`, `integration-settings.zon`,
-`integrations/` (manifests and their configs), `launchers/`, `themes/`
-— then toasts `dev profile seeded from ~/.config/mnml`. It never
-copies a credential (any name containing `token`, `secret`,
-`credential`, `password`, `cookie`, a `.pem` / `.key`), a cache, a
-backup, the trash, a request log or a session. It is one-shot: a dev
-root with any state is left alone.
-
-```sh
-mnml profile seed --from stable --force   # copy again, filling in what is missing
-```
-
-`--force` never overwrites a file the dev root already has — it is a
-second pass, not a rollback.
-
-Every dev launch also links the integrations built beside the running
-binary into `<dev root>/bin/`, which is where mnml looks for an
-integration's binary first. So the dev profile drives the integrations
-you just built and the stable profile drives the ones you installed.
+**Upgrading from a dev profile.** Builds before 0.3.3 ran `./run.sh`
+under a `dev` profile with its own root, `~/.config/mnml-dev`, and its
+own `<ws>/.mnml/session-dev.zon`. mnml no longer reads either: a
+leftover `~/.config/mnml-dev` is ignored. Delete it, or move what you
+want from it into `~/.config/mnml`, by hand.
 
 ### What integrations see
 
 An integration inherits `MNML_DATA_ROOT` from the host, already
-resolved for the profile, so its config, cache, sync marks, etags and
-request log land under the dev root without the integration knowing
-profiles exist.
+resolved, so its config, cache, sync marks, etags and request log land
+under the same root as the host's.
 
-The one thing meant NOT to be per-profile is the cross-process
-rate-limit bucket. Its file is the first of these that applies
+The cross-process rate-limit bucket is meant to be one per machine. Its file is the first of these that applies
 (`sdk/mnml-sdk/src/ratelimit.zig`):
 
 1. `<SERVICE>_RATELIMIT_STATE` (`JIRA_RATELIMIT_STATE`, …) names the
@@ -1950,11 +1917,10 @@ rate-limit bucket. Its file is the first of these that applies
 3. `<MNML_DATA_ROOT>/ratelimit/<service>.json`
 4. `~/.config/mnml/ratelimit/<service>.json`
 
-It should be one budget per machine: two profiles each spending a full
-budget against the same API is the bug, not the feature. With
-`MNML_SHARED_STATE_DIR` unset the bucket falls back under the data
-root, which is the profile's — set the variable to have every profile,
-and any other tool on the machine that agrees to the file format,
+Two roots each spending a full budget against the same API is the bug,
+not the feature. With `MNML_SHARED_STATE_DIR` unset the bucket falls
+back under the data root — set the variable to have every root (a
+sandbox, a test's private root), and any other tool on the machine that agrees to the file format,
 share one budget.
 
 ## Sandbox
@@ -1979,7 +1945,7 @@ pid — with these set on top of the environment it was started with
 | --- | --- |
 | `HOME` | `<root>` |
 | `XDG_CONFIG_HOME` | `<root>/xdg` |
-| `MNML_DATA_ROOT` | `<root>/xdg/mnml` (the dev profile adds `-dev`) |
+| `MNML_DATA_ROOT` | `<root>/xdg/mnml` |
 | `MNML_SANDBOX` | `<root>` — what paints the chip |
 | `MNML_SANDBOX_PID` | the pid, which is the process that removes `<root>` |
 

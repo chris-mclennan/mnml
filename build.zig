@@ -144,13 +144,9 @@ pub fn build(b: *std.Build) void {
     // file-IPC mailbox under `<ws>/.mnml/` and the running-instance
     // marker under TMPDIR. A shipped mnml owns `ipc` / `mnml-running-…`
     // (Rust mnml's names — it is frozen); this repo's own builds keep
-    // `ipc-zig` / `mnml-zig-running-…` so a dev build and the installed
+    // `ipc-zig` / `mnml-zig-running-…` so a source build and the installed
     // one can run side by side (docs/DESIGN.md, "Side-by-side
     // mechanics"). `run.sh install` and `release` pass -Dinstall-names.
-    //
-    // Both name the STABLE profile only: `MNML_PROFILE=dev` always
-    // takes `ipc-zig` / `mnml-zig-running-…` (src/config/profile.zig),
-    // so a dev launch of an installed mnml is still its own instance.
     const install_names = b.option(bool, "install-names", "Name the IPC mailbox and the marker the way a shipped mnml does (ipc, mnml-running-)") orelse false;
     const ipc_subdir_opt = b.option([]const u8, "ipc-subdir", "IPC directory name under <ws>/.mnml/ (default: ipc-zig; ipc with -Dinstall-names)");
     const ipc_subdir = ipc_subdir_opt orelse if (install_names) "ipc" else "ipc-zig";
@@ -695,10 +691,10 @@ pub fn build(b: *std.Build) void {
     // ── release ──
     // What ships. Three steps and one option:
     //
-    //   -Dversion=X      the string `--version` prints. Absent, a dev build
+    //   -Dversion=X      the string `--version` prints. Absent, a source build
     //                    derives it: build.zig.zon's `.version`, the git short
     //                    SHA, and `-dirty` when the tree has uncommitted changes
-    //                    (`0.3.0-dev+g1a2b3c4-dirty`).
+    //                    (`0.3.2+g1a2b3c4-dirty`).
     //   release-one      this target's exe, installed as
     //                    zig-out/release/<rust-triple>/mnml[.exe]. The Rust
     //                    triple, not Zig's, because every downstream consumer —
@@ -1033,7 +1029,7 @@ pub fn build(b: *std.Build) void {
     // — the thing that stops two worktrees running the corpus at once.
     build_options.addOption([]const u8, "e2e_corpus_dir", b.pathFromRoot("tests/e2e"));
     // `lua/`: the curated script set, in this repo the way `integrations/`
-    // and `launchers/` are. A dev build lists it in the SCRIPTS section's
+    // and `launchers/` are. A source build lists it in the SCRIPTS section's
     // Marketplace tab with no config at all, because the folder's
     // absolute path is baked in here; a packaged build finds the same set
     // as `share/mnml/lua` beside the binary instead
@@ -1042,7 +1038,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "scripts_dir", b.pathFromRoot("lua"));
     // `data/marketplace.zon`: the mnml catalogue — the Marketplace
     // tab's default source, the same way `lua/` is the SCRIPTS tab's.
-    // A dev build reads the checkout's copy (its absolute path is baked
+    // A source build reads the checkout's copy (its absolute path is baked
     // in here); a packaged build finds it as `share/mnml/marketplace.zon`
     // beside the binary (`src/app/marketplace_catalogue.zig`'s `find`,
     // `nfpm/mnml.yaml`, `scripts/package.sh`) — which is also the
@@ -1214,7 +1210,7 @@ const version_git_head = [_][]const u8{ "git", "--no-optional-locks", "rev-parse
 const version_git_status = [_][]const u8{ "git", "--no-optional-locks", "status", "--porcelain", "--untracked-files=no" };
 
 /// `<zon version>+g<short sha>[-dirty]` — what a build without `-Dversion=`
-/// prints. The zon file is read as text (a dev build should not fail because
+/// prints. The zon file is read as text (a source build should not fail because
 /// the manifest grew a field); git is optional (a tarball checkout has none).
 fn deriveVersion(b: *std.Build) []const u8 {
     const zon = b.build_root.handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, .limited(1 << 20)) catch @panic("build.zig.zon unreadable");

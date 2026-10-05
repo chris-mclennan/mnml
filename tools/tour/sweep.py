@@ -353,13 +353,9 @@ class FileRun:
             env[k] = val
             scope[k] = val
         # `$MNML_DATA_ROOT` in a `shell` step is where the APP reads —
-        # the runner exports the file's own root. The driver starts the
-        # app with `MNML_DATA_ROOT=<run>/data` under `MNML_PROFILE=dev`,
-        # which the app resolves to `<run>/data-dev`; a shell that wrote
-        # to `<run>/data` was writing where nothing reads (the REQUESTS
-        # view found no files). Shell scope only: the app's own comes
-        # through the driver, and a second copy would suffix it twice.
-        scope["MNML_DATA_ROOT"] = data_root + "-dev"
+        # the driver starts the app with `MNML_DATA_ROOT=<run>/data`.
+        # Shell scope only: the app's own comes through the driver.
+        scope["MNML_DATA_ROOT"] = data_root
         self.shell_env = scope
         return env
 

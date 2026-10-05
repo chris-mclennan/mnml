@@ -314,7 +314,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) void {
             .branch = app.git.headLabel(),
             .changed = changedFiles(app),
             .shortcuts = out,
-            .version = update.current,
+            .version = update.display(arena.alloc(u8, 96) catch &.{}, update.current),
         });
     }
     // The SESSIONS rows are the section's scan, which runs on its first
@@ -331,7 +331,7 @@ pub fn draw(app: *App, ui: Ui, area: Rect) void {
         .recent = entries(app, ui, .recent) catch &.{},
         .sessions = entries(app, ui, .sessions) catch &.{},
         .shortcuts = entries(app, ui, .shortcuts) catch &.{},
-        .version = update.current,
+        .version = update.display(arena.alloc(u8, 96) catch &.{}, update.current),
         .focused = app.focus == .welcome,
     });
 }

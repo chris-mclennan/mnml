@@ -205,12 +205,11 @@ variable at `0` they are refused rather than run through `cmd`.
   (`restart` / `stop` / `status`). Those drive a running instance,
   which is a separate pass.
 
-  Profiles themselves are the program and work there —
-  `MNML_PROFILE=dev` / `--profile dev` moves the data root
-  (`%USERPROFILE%\.config\mnml-dev`, via `data_root.zig`'s USERPROFILE
-  rung), the session file, the IPC mailbox, the marker under `%TEMP%`,
-  and paints the `dev` chip. `run.ps1 profile` prints all four from the
-  binary itself, which is how a first Windows session confirms them.
+  The paths themselves are the program's — the data root
+  (`%USERPROFILE%\.config\mnml`, via `data_root.zig`'s USERPROFILE
+  rung), the session file, the IPC mailbox and the marker under
+  `%TEMP%`. `run.ps1 paths` prints all four from the binary itself,
+  which is how a first Windows session confirms them.
 
   The SDK had the other half of that rung missing: `manifest.zig`'s
   `dataRoot` went `MNML_DATA_ROOT` → `XDG_CONFIG_HOME` → `HOME` and

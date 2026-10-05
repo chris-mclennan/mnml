@@ -1,6 +1,6 @@
 //! The `mnml` source — the catalogue of integrations this checkout
 //! builds. The Marketplace tab's default source for a released mnml is
-//! its release index (`marketplace_release.zig`); a dev build, which has
+//! its release index (`marketplace_release.zig`); a source build, which has
 //! no release, lists this instead, and a catalogue row the index also
 //! lists is dropped in favour of the index's download.
 //!
@@ -108,7 +108,7 @@ pub const file_name = "marketplace.zon";
 ///
 ///   1. `build_path` — `build_options.marketplace_catalogue`, the
 ///      checkout's own `data/marketplace.zon` baked in at build time,
-///      so a dev build lists the shipped set with no config at all;
+///      so a source build lists the shipped set with no config at all;
 ///   2. `<exe dir>/../share/mnml/marketplace.zon` — the `.deb` / `.rpm`
 ///      layout (`/usr/bin/mnml` + `/usr/share/…`);
 ///   3. `<exe dir>/share/mnml/marketplace.zon` — the archive layout;
@@ -140,7 +140,7 @@ fn isFile(io: Io, path: []const u8) bool {
 /// The checkout a catalogue came from — `<catalogue>/../..`, when that
 /// holds a `zig-out/bin`. Empty for a packaged catalogue, whose
 /// `share/mnml/marketplace.zon` has no such parent. This is what makes
-/// a dev build link to the binaries it just built.
+/// a source build link to the binaries it just built.
 pub fn repoOf(io: Io, arena: Allocator, catalogue_path: []const u8) Allocator.Error![]const u8 {
     const data_dir = std.fs.path.dirname(catalogue_path) orelse return "";
     const repo = std.fs.path.dirname(data_dir) orelse return "";
