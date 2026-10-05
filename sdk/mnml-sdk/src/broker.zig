@@ -68,6 +68,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const repeat = @import("zig_compat.zig").repeat;
+const compat = @import("zig_compat.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const ratelimit = @import("ratelimit.zig");
@@ -181,7 +183,7 @@ pub const Class = enum(u2) {
     /// The class a name spells, or null. Case-sensitive: these are
     /// wire tokens, not user input.
     pub fn parse(name: []const u8) ?Class {
-        inline for (@typeInfo(Class).@"enum".fields) |f| {
+        inline for (compat.enumFields(Class)) |f| {
             if (std.mem.eql(u8, name, f.name)) return @enumFromInt(f.value);
         }
         return null;
@@ -394,7 +396,7 @@ pub const Why = enum {
     }
 
     pub fn parse(name: []const u8) ?Why {
-        inline for (@typeInfo(Why).@"enum".fields) |f| {
+        inline for (compat.enumFields(Why)) |f| {
             if (std.mem.eql(u8, name, f.name)) return @enumFromInt(f.value);
         }
         return null;
@@ -1505,7 +1507,7 @@ test "two deep buckets fall back to two sockets, so their brokers never meet" {
     defer env_a.deinit();
     var env_b = std.process.Environ.Map.init(t.allocator);
     defer env_b.deinit();
-    const deep = "/very" ++ "/deep" ** 24;
+    const deep = "/very" ++ repeat("/deep", 24);
     try env_a.put("MNML_SHARED_STATE_DIR", deep ++ "/a");
     try env_b.put("MNML_SHARED_STATE_DIR", deep ++ "/b");
     const a = try socketPath(t.allocator, t.io, &env_a, "bitbucket");
@@ -1556,8 +1558,8 @@ test "an explicit override past the sockaddr_un is kept, refused, and explained 
     // The boundary is the NUL's: `sun_path` holds 104 bytes on macOS,
     // so 103 of them may be path.
     try t.expectEqual(os_path_len - 1, os_max_path_len);
-    try t.expect(!pathTooLong("x" ** os_max_path_len));
-    try t.expect(pathTooLong("x" ** (os_max_path_len + 1)));
+    try t.expect(!pathTooLong(repeat("x", os_max_path_len)));
+    try t.expect(pathTooLong(repeat("x", (os_max_path_len + 1))));
     // And a derived path never trips it — that is what the headroom is.
     try t.expect(max_path_len < os_max_path_len);
 
@@ -1602,7 +1604,7 @@ test "every other bind failure names its errno, and a leftover lock names the st
         explainStart(&buf, "/tmp/x.sock", error.PermissionDenied, "bitbucket", 4242),
     );
     // The length case is its own sentence, not an errno.
-    const long = "x" ** (os_max_path_len + 7);
+    const long = repeat("x", (os_max_path_len + 7));
     try t.expect(std.mem.startsWith(
         u8,
         explainStart(&buf, long, error.PathTooLong, "jira", null),

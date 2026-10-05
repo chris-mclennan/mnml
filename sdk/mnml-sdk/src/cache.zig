@@ -24,6 +24,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("zig_compat.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Value = std.json.Value;
@@ -372,7 +373,7 @@ fn merge(a: Allocator, f: *File, opts: PutOptions, records: anytype, now: i64) A
         };
         touched[i] = true;
         const o = &f.records.items[i];
-        inline for (std.meta.fields(@TypeOf(rec))) |fld| {
+        inline for (compat.fields(@TypeOf(rec))) |fld| {
             const v = @field(rec, fld.name);
             const jv: Value = switch (fld.type) {
                 []const u8 => .{ .string = try a.dupe(u8, v) },
@@ -525,7 +526,7 @@ pub fn Found(comptime T: type) type {
 /// A record object as `T`; strings borrowed from the parsed file.
 pub fn decode(comptime T: type, a: Allocator, o: ObjectMap) Allocator.Error!T {
     var out: T = .{ .id = str(o, "id") };
-    inline for (std.meta.fields(T)) |fld| {
+    inline for (compat.fields(T)) |fld| {
         if (comptime std.mem.eql(u8, fld.name, "id")) continue;
         switch (fld.type) {
             []const u8 => @field(out, fld.name) = str(o, fld.name),

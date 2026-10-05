@@ -16,6 +16,7 @@
 //! task returns through.
 
 const std = @import("std");
+const compat = @import("../zig_compat.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -111,7 +112,7 @@ pub fn dupeDeep(comptime T: type, a: Allocator, v: T) Allocator.Error!T {
         .pointer => |p| switch (p.size) {
             .slice => {
                 if (p.child == u8) {
-                    if (p.sentinel() != null) return a.dupeZ(u8, v);
+                    if (p.sentinel() != null) return a.dupeSentinel(u8, v, 0);
                     return a.dupe(u8, v);
                 }
                 if (p.sentinel() != null) @compileError("dupeDeep: a sentinel slice of " ++ @typeName(p.child));
@@ -126,9 +127,9 @@ pub fn dupeDeep(comptime T: type, a: Allocator, v: T) Allocator.Error!T {
             },
             else => @compileError("dupeDeep: a many- or C-pointer in " ++ @typeName(T)),
         },
-        .@"struct" => |s| {
+        .@"struct" => {
             var out: T = v;
-            inline for (s.fields) |f| {
+            inline for (compat.structFields(T)) |f| {
                 if (!f.is_comptime) @field(out, f.name) = try dupeDeep(f.type, a, @field(v, f.name));
             }
             return out;

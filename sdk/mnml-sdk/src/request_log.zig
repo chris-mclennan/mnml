@@ -717,7 +717,7 @@ test "a credential never reaches the file: not in the query, not in the authorit
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "ATCTT") == null);
     try t.expect(std.mem.indexOf(u8, text, "hunter2") == null);
-    try t.expect(std.ascii.indexOfIgnoreCase(text, "authorization") == null);
+    try t.expect(std.ascii.findIgnoreCase(text, "authorization") == null);
     try t.expect(std.mem.indexOf(u8, text, "access_token=***") != null);
 }
 

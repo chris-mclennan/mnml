@@ -10,6 +10,7 @@
 //! and dispatch stays one lookup.
 
 const std = @import("std");
+const repeat = @import("../zig_compat.zig").repeat;
 const Allocator = std.mem.Allocator;
 const frame_mod = @import("../frame.zig");
 const theme_mod = @import("theme.zig");
@@ -1234,14 +1235,14 @@ test "one tab wears one bar the width of its word — no track stub after it as 
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &.{" 1 One "}, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 5) ++ " " ** 33, s.row);
-        try std.testing.expectEqualStrings("  AAAAA" ++ " " ** 33, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_quarter, 5)) ++ repeat(" ", 33), s.row);
+        try std.testing.expectEqualStrings("  AAAAA" ++ repeat(" ", 33), s.shape);
     }
     // `rule`: the heavy bar and not one cell of the light track.
     {
         const s = try strip(gpa, .rule, false, 40, 20, &.{" 1 One "}, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_rule_active ** 5) ++ " " ** 33, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_rule_active, 5)) ++ repeat(" ", 33), s.row);
         try std.testing.expect(std.mem.indexOf(u8, s.row, tab_rule) == null);
     }
 }
@@ -1254,25 +1255,25 @@ test "two tabs meet at the midpoint of the gap between their words — an odd ga
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 13) ++ " " ** 25, s.row);
-        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ " " ** 25, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_quarter, 13)) ++ repeat(" ", 25), s.row);
+        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ repeat(" ", 25), s.shape);
     }
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 1);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ repeat(" ", 25), s.shape);
     }
     // `One ` `Two` at x 1: ink 1..4 and 6..9, a gap of two (the first
     // label's padding and the separator) — one cell each: 1..5 and 5..9.
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "One ", "Two" }, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings(" AAAAtttt" ++ " " ** 31, s.shape);
+        try std.testing.expectEqualStrings(" AAAAtttt" ++ repeat(" ", 31), s.shape);
     }
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "One ", "Two" }, 1);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings(" ttttAAAA" ++ " " ** 31, s.shape);
+        try std.testing.expectEqualStrings(" ttttAAAA" ++ repeat(" ", 31), s.shape);
     }
 }
 
@@ -1283,7 +1284,7 @@ test "padding inside a label is gap, not ink — the bar measures the trimmed wo
     // own 4..12 and 12..20, and the track starts at 4, not at 1.
     const s = try strip(gpa, .quarter_track, false, 40, 20, &.{ "   1 One   ", "  2 Two  " }, 0);
     defer s.deinit(gpa);
-    try std.testing.expectEqualStrings("    AAAAAAAAtttttttt" ++ " " ** 20, s.shape);
+    try std.testing.expectEqualStrings("    AAAAAAAAtttttttt" ++ repeat(" ", 20), s.shape);
     // A press on the first label's first cell (x 1) and its last cell
     // (x 11) — both padding — still lands on tab 0.
     try std.testing.expectEqual(@as(?u8, 0), s.hit_first);
@@ -1296,35 +1297,35 @@ test "every indicator shape spans the same ownership: the word plus half the gap
     {
         const s = try strip(gpa, .block, false, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_block ** 7) ++ " " ** 31, s.row);
-        try std.testing.expectEqualStrings("  AAAAAAA" ++ " " ** 31, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_block, 7)) ++ repeat(" ", 31), s.row);
+        try std.testing.expectEqualStrings("  AAAAAAA" ++ repeat(" ", 31), s.shape);
     }
     // `rule`: heavy over 2..9, the light track on to the last word's end
     // at 15, and nothing past it.
     {
         const s = try strip(gpa, .rule, false, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_rule_active ** 7) ++ (tab_rule ** 6) ++ " " ** 25, s.row);
-        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ " " ** 25, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_rule_active, 7)) ++ (repeat(tab_rule, 6)) ++ repeat(" ", 25), s.row);
+        try std.testing.expectEqualStrings("  AAAAAAAtttttt" ++ repeat(" ", 25), s.shape);
     }
     // `line`: the light rule over the active tab only.
     {
         const s = try strip(gpa, .line, false, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_rule ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_rule, 7)) ++ repeat(" ", 31), s.row);
     }
     // `quarter`: the quarter bar over the active tab only.
     {
         const s = try strip(gpa, .quarter, false, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_quarter, 7)) ++ repeat(" ", 31), s.row);
     }
     // `quarter_track`: the same bar along the track, the active stretch in colour.
     {
         const s = try strip(gpa, .quarter_track, false, 40, 20, &two_padded, 1);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ (tab_quarter ** 13) ++ " " ** 25, s.row);
-        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat(tab_quarter, 13)) ++ repeat(" ", 25), s.row);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ repeat(" ", 25), s.shape);
     }
 }
 
@@ -1333,34 +1334,34 @@ test "the ascii twins draw the same ownership, so a terminal without the font st
     {
         const s = try strip(gpa, .block, true, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("=" ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat("=", 7)) ++ repeat(" ", 31), s.row);
     }
     {
         const s = try strip(gpa, .rule, true, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("=" ** 7) ++ ("-" ** 6) ++ " " ** 25, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat("=", 7)) ++ (repeat("-", 6)) ++ repeat(" ", 25), s.row);
     }
     {
         const s = try strip(gpa, .line, true, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("-" ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat("-", 7)) ++ repeat(" ", 31), s.row);
     }
     {
         const s = try strip(gpa, .quarter, true, 40, 20, &two_padded, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("_" ** 7) ++ " " ** 31, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat("_", 7)) ++ repeat(" ", 31), s.row);
     }
     {
         const s = try strip(gpa, .quarter_track, true, 40, 20, &two_padded, 1);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("_" ** 13) ++ " " ** 25, s.row);
-        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ " " ** 25, s.shape);
+        try std.testing.expectEqualStrings("  " ++ (repeat("_", 13)) ++ repeat(" ", 25), s.row);
+        try std.testing.expectEqualStrings("  tttttttAAAAAA" ++ repeat(" ", 25), s.shape);
     }
     // One tab in ascii: the same no-stub rule.
     {
         const s = try strip(gpa, .quarter_track, true, 40, 20, &.{" 1 One "}, 0);
         defer s.deinit(gpa);
-        try std.testing.expectEqualStrings("  " ++ ("_" ** 5) ++ " " ** 33, s.row);
+        try std.testing.expectEqualStrings("  " ++ (repeat("_", 5)) ++ repeat(" ", 33), s.row);
     }
 }
 
@@ -1371,7 +1372,7 @@ test "a tab that does not fit the strip is not laid out, and the track stops at 
     // reaching toward a tab that is not there.
     const s = try strip(gpa, .quarter_track, false, 12, 20, &two_padded, 0);
     defer s.deinit(gpa);
-    try std.testing.expectEqualStrings("  AAAAA" ++ " " ** 5, s.shape);
+    try std.testing.expectEqualStrings("  AAAAA" ++ repeat(" ", 5), s.shape);
 }
 
 test "a pane too short for the indicator row spends none: the label wears the terminal's underline instead" {

@@ -9,6 +9,7 @@
 //! keeps its vocabulary and shares the bookkeeping.
 
 const std = @import("std");
+const compat = @import("../zig_compat.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Rect = struct {
@@ -64,14 +65,14 @@ fn hasPointer(comptime T: type) bool {
         .pointer => true,
         .optional => |o| hasPointer(o.child),
         .array => |a| hasPointer(a.child),
-        .@"struct" => |st| blk: {
-            inline for (st.fields) |f| {
+        .@"struct" => blk: {
+            inline for (compat.structFields(T)) |f| {
                 if (hasPointer(f.type)) break :blk true;
             }
             break :blk false;
         },
-        .@"union" => |u| blk: {
-            inline for (u.fields) |f| {
+        .@"union" => blk: {
+            inline for (compat.unionFields(T)) |f| {
                 if (hasPointer(f.type)) break :blk true;
             }
             break :blk false;

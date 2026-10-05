@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const budget_mod = @import("../budget.zig");
+const compat = @import("../zig_compat.zig");
 
 /// One entry: a few words of title, a sentence or two of body, and —
 /// when the element's click runs a command — that command's id, so the
@@ -107,7 +108,7 @@ pub fn key(buf: []u8, key_label: []const u8, what: []const u8) Help {
 const testing = std.testing;
 
 test "every common element has a title and a body, and none of them is the host's generic row" {
-    inline for (@typeInfo(Common).@"enum".fields) |f| {
+    inline for (compat.enumFields(Common)) |f| {
         const h = common(@field(Common, f.name));
         try testing.expect(h.title.len > 0 and h.title.len <= 40);
         try testing.expect(h.body.len > 0 and h.body.len <= 300);

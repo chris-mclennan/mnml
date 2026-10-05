@@ -154,6 +154,8 @@ pub const zon_edit = @import("zon_edit.zig");
 pub const platform = @import("platform.zig");
 pub const base_url = @import("base_url.zig");
 pub const testing = @import("testing.zig");
+/// The Zig version seam (the app and the integrations reach it here too).
+pub const zig_compat = @import("zig_compat.zig");
 
 pub const Mount = client.Mount;
 pub const Frame = frame.Frame;
@@ -201,4 +203,5 @@ test {
     _ = platform;
     _ = base_url;
     _ = testing;
+    _ = zig_compat;
 }

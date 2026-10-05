@@ -42,6 +42,7 @@
 //! what is left belongs to whoever is actually looking at something.
 
 const std = @import("std");
+const compat = @import("zig_compat.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const broker = @import("broker.zig");
@@ -975,7 +976,7 @@ test "every reason has a broker class, and the classes agree with the pacer's tw
     // Nothing a pane does ever queues as `batch`. That class is what a
     // shell script names on the command line, and it is the back of
     // the queue because nothing else can reach it.
-    inline for (@typeInfo(request_log.Reason).@"enum".fields) |f| {
+    inline for (compat.enumFields(request_log.Reason)) |f| {
         try t.expect(classOf(@field(request_log.Reason, f.name)) != .batch);
     }
 
