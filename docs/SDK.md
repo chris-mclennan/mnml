@@ -862,6 +862,17 @@ number), `{key}` (the key, or the matched text), `{repo}`
 link's address). An unknown `{…}` stays as written, and a `{{token}}`
 is still the launcher's (`.ex = "echo Triage {key}"`).
 
+The values come from whatever was clicked — a link is whatever a
+terminal printed — so the host treats them as untrusted. In `args`
+each value lands inside its one argv element as it is. In a `run`
+line, which can reach `sh -c`, each value is quoted as one literal word
+for the quoting context it sits in (bare, `'…'` or `"…"`), so it can
+never close a quote or start a command; on Windows, where `cmd /d /c`
+has no such quoting, a value is filled only from letters, digits,
+spaces and `/\._-+:@,#=~`. A value holding a NUL or a line break —
+or, on Windows, any other character — is refused and the command does
+not run.
+
 **Where they appear.** Every installed, enabled integration's matching
 rows follow the menu's own, each integration's under a separator and a
 muted header with its `label`, integrations by label and rows in
