@@ -51,6 +51,12 @@ the release ships one file), and one line per change a user can see.
 - Each of the first nine cards wears its number, a muted digit in the
   column left of the card, under the on-screen / ready mark; the sessions table has a `#` column with the
   same numbers. The card's hover lists its chord.
+- In the sessions view — the sessions mode on screen, or the SESSIONS
+  panel with the keys — plain `Ctrl+1` … `Ctrl+9` focus the session
+  whose card wears that number, in both profiles. Elsewhere they stay
+  the tabs'. The sessions mode's own `Ctrl+1` … `Ctrl+9` used to count
+  sessions without the docked ones, so the key could miss the card by
+  one; `sessions.show_1` … `show_9` are gone with it.
 
 ### Claude accounts: one Re-auth per account
 
