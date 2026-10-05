@@ -158,8 +158,13 @@ pub fn reloadIfMoved(app: *App) void {
                 const path = cache.filePath(sa, root, e.name, k) catch continue;
                 const stat = Io.Dir.cwd().statFile(app.io, path, .{}) catch continue;
                 h.update(path);
-                h.update(std.mem.asBytes(&stat.mtime.nanoseconds));
-                h.update(std.mem.asBytes(&stat.size));
+                // Widened first: the field is an i96, whose in-memory
+                // form carries padding bytes that are not part of its
+                // value — hashed raw, an unmoved file read as moved.
+                const mtime_ns: i128 = stat.mtime.nanoseconds;
+                const size: u64 = stat.size;
+                h.update(std.mem.asBytes(&mtime_ns));
+                h.update(std.mem.asBytes(&size));
                 files.append(sa, path) catch continue;
             }
         }
