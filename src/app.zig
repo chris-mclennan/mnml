@@ -2109,6 +2109,7 @@ pub const App = struct {
         // Panes go before the manifests their mount runners borrow, and
         // before the documents their buffers release.
         self.panes.deinit();
+        self.ai.deinitJobs(gpa);
         self.docs.destroy();
         self.integrations.deinit(gpa);
         self.link_rules.deinit(gpa);
