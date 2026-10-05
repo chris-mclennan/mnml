@@ -121,8 +121,8 @@
             .hash = "N-V-__8AAADyyAAIh1gf8Of9Jy5UXbBDeX1qrwmgM2mH4rj6",
         },
         .ts_haskell = .{
-            .url = "https://static.crates.io/crates/tree-sitter-haskell/tree-sitter-haskell-0.23.1.crate",
-            .hash = "N-V-__8AAAz1OAHOzmAn-PrKGaLnYGGEk_dC3hIB0ni8I90j",
+            .url = "https://static.crates.io/crates/tree-sitter-haskell/tree-sitter-haskell-0.24.1.crate",
+            .hash = "N-V-__8AALK3OQGhcze8HcKPXxKXqGxT8fNhqKTheMoKYAoW",
         },
         .ts_php = .{
             .url = "https://static.crates.io/crates/tree-sitter-php/tree-sitter-php-0.24.2.crate",

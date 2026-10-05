@@ -1225,10 +1225,11 @@ test "a long injected range keeps its tree between windows and lets go of it at 
 test "the match cap is a crash guard: a query that fans out past the cursor's 16-bit capture-list ids finishes instead of reading a freed list" {
     const gpa = testing.allocator;
     // The 54-byte Haskell fixture pasted some 2400 times, and the two
-    // patterns tree-sitter-haskell 0.23.1 shipped with a misplaced paren
-    // (`src/highlight/queries/haskell.scm` corrects them): `match: (_)`
-    // as a third, unanchored sibling keeps a match in progress per
-    // signature - more than the cursor's 16-bit ids can name. Without a
+    // patterns tree-sitter-haskell ships with a misplaced paren (0.23.1
+    // and 0.24.1 alike; `src/highlight/queries/haskell.scm` corrects
+    // them): `match: (_)` as a third, unanchored sibling keeps a match in
+    // progress per signature - more than the cursor's 16-bit ids can
+    // name. Without a
     // cap that reads a freed capture list; at 65535 it runs for minutes.
     //
     // The work before the cap trips grows with the cube of the input
@@ -1252,7 +1253,8 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     defer tree.deinit();
     const broken =
         \\((decl/signature name: (variable) @_name type: (type))
-        \\  . (decl name: (variable) @variable) match: (_)
+        \\  . [(decl/function name: (variable) @variable) (decl/bind name: (variable) @variable)]
+        \\  match: (_)
         \\  (#eq? @_name @variable))
     ;
     const q = try ts.Query.init(e.language(), broken, null);
