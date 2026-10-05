@@ -267,7 +267,7 @@ const phase_one = [_]Row{
     // ── submenu parents ──
     .{ .label = "Advanced", .entry = .{
         .title = "Advanced ▸ — paste a token",
-        .body = "Opens *Paste a token…*: a hidden prompt for a Claude Code OAuth token, written to this account's token file. Re-auth is the everyday way to sign an account in; this is for a token from somewhere the keychain cannot reach — another machine, a system without the macOS keychain.",
+        .body = "Opens *Paste a token…*: a hidden prompt for a Claude Code OAuth token, written to this account's token file. Re-auth is the everyday way to sign an account in; this is for a token from somewhere Re-auth cannot reach — another machine, say.",
         .keys = &.{.{ .chord = "→ / ←", .label = "Open / close the submenu" }},
         .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Paste a token" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth instead" } } },
     } },
@@ -423,12 +423,12 @@ fn claudeAccountRow(arena: Allocator, a: command.ClaudeAccountAct) Allocator.Err
     return switch (a.act) {
         .reauth => .{
             .title = try std.fmt.allocPrint(arena, "Re-auth {s}", .{a.name}),
-            .body = try std.fmt.allocPrint(arena, "Opens a pane running `claude login` and watches the Claude Code login it leaves in the macOS keychain. When the login that lands is `{s}`'s — its email is the one the account is known by, or it has none yet — it is written to `{s}`'s token file and the pane closes; nothing else to press. A login for another account on file is not filed: a box says whose it is and offers to file it there instead.", .{ a.name, a.name }),
+            .body = try std.fmt.allocPrint(arena, "Opens a pane running `claude login` and watches the Claude Code login it leaves — the macOS keychain, or `~/.claude/.credentials.json` on Linux and Windows. When the login that lands is `{s}`'s — its email is the one the account is known by, or it has none yet — it is written to `{s}`'s token file and the pane closes; nothing else to press. A login for another account on file is not filed: a box says whose it is and offers to file it there instead.", .{ a.name, a.name }),
             .links = &.{ .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth an account" } }, .{ .command = .{ .id = .@"ai.claude_usage", .label = "The usage pane" } } },
         },
         .link => .{
             .title = try std.fmt.allocPrint(arena, "Paste a token for {s}", .{a.name}),
-            .body = try std.fmt.allocPrint(arena, "Advanced: opens a hidden prompt for the Claude Code OAuth token of `{s}` and writes it to that account's own token file (mode 0600), then fetches its usage. The token is the `accessToken` in the CLI's login, or the whole login blob. Re-auth does the same without copying anything — this is for a machine without the keychain, or a token from elsewhere.", .{a.name}),
+            .body = try std.fmt.allocPrint(arena, "Advanced: opens a hidden prompt for the Claude Code OAuth token of `{s}` and writes it to that account's own token file (mode 0600), then fetches its usage. The token is the `accessToken` in the CLI's login, or the whole login blob. Re-auth does the same without copying anything — this is for a token from elsewhere.", .{a.name}),
             .links = &.{ .{ .command = .{ .id = .@"ai.link_claude_token", .label = "Paste a token" } }, .{ .command = .{ .id = .@"ai.claude_reauth", .label = "Re-auth instead" } } },
         },
         .rename => .{
