@@ -21,7 +21,7 @@ Decisions already made (by the user):
 
 Working rules (from plan approval, 2026-09-04):
 - **History is a deliverable.** Small commits, one concern each, clean and followable; never squash a branch into a blob. Commit messages describe mnml on its own terms — do NOT say "port" repeatedly.
-- **Worktrees exclusively** (`mnml-zig-worktrees/<task>/`); agents work there, I merge into main.
+- **Worktrees exclusively** (`../.worktrees/mnml-zig/<task>/`, made and removed with `tools/wt.sh`); agents work there, I merge into main.
 - **Subagents by default** for every leaf; serial trunk design is the one exception.
 - **Ghostty is the first-class terminal** (user is on ghostty/macOS; ghostty is also the vt vendor). Look to ghostty for conventions and standardization — kitty keyboard, modes 2026/2027/2048, OSC 52, kitty graphics, shell integration. **But Windows/Linux users without ghostty must be fully served**: runtime capability detection, graceful degradation, test on all three platforms before calling a terminal feature done.
 

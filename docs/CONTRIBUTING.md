@@ -27,14 +27,33 @@ call a terminal feature done until it has run on all three platforms.
 
 ## Worktrees, always
 
-Every task lives in its own worktree under `../mnml-zig-worktrees/<task>/`
-on a branch of the same name. Nothing is committed on `main` directly;
-the maintainer merges. A worktree that another session might share is a
-worktree you do not type into.
+Every task lives in its own worktree at `../.worktrees/mnml-zig/<task>/`
+— outside the repository, beside it — on a branch of the same name.
+Nothing is committed on `main` directly; the maintainer merges. A
+worktree that another session might share is a worktree you do not
+type into.
 
 ```sh
-git worktree add ../mnml-zig-worktrees/session-restore -b session-restore
+tools/wt.sh add session-restore        # prints ../.worktrees/mnml-zig/session-restore
+tools/wt.sh remove session-restore     # once merged; deletes the branch too
+tools/wt.sh gc                         # which worktrees are safe to remove, and why not
 ```
+
+The root is `<parent of the repo>/.worktrees/<repo>/` — never `/tmp`,
+never a dot-folder in your home, never inside a repository. A name is
+one path segment of lowercase letters, digits, `-`, `.` and `_`, at most
+100 characters, and is the branch name too.
+
+Whoever creates a worktree removes it, with `tools/wt.sh remove`: it
+runs `git worktree remove` (never a recursive delete) and refuses a tree
+that is dirty, locked, has a process with its cwd or a file open inside
+it, or whose branch has commits `main` does not — `--abandon` gives the
+branch up instead, removing the tree and leaving the branch. `gc` only
+reports: per worktree, safe or not and every reason (dirty, unmerged,
+touched in the last 24 hours, locked, in use). Trees still at the older
+`../mnml-zig-worktrees/<task>/` predate this; `gc` lists them and
+`tools/wt.sh move <task>` relocates one with `git worktree move`.
+`tools/wt-check.sh` proves all of this on a throwaway repository.
 
 ## Commits
 
