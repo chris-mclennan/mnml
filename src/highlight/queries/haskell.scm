@@ -1,14 +1,15 @@
-;; tree-sitter-haskell 0.23.1's queries/highlights.scm, with one correction.
+;; tree-sitter-haskell 0.24.1's queries/highlights.scm, with one correction.
 ;;
 ;; Two of its patterns pair a signature with the declaration that follows
-;; it. As shipped, the closing paren of `(decl ...)` comes BEFORE
-;; `match: (_)`, which leaves `match: (_)` a third, unanchored sibling
-;; step: any node at all, later on, completes the match. The query cursor
-;; then keeps one match in progress per signature in the file until the
-;; end of its parent, and evaluates the `#eq?` on every candidate - on a
+;; it. As shipped, `match: (_)` comes AFTER the closing bracket of the
+;; `[(decl/function ...) (decl/bind ...)]` alternation, which leaves
+;; `match: (_)` a third, unanchored sibling step: any node at all, later
+;; on, completes the match. The query cursor then keeps one match in
+;; progress per signature in the file until the end of its parent, and
+;; evaluates the `#eq?` on every candidate - on a
 ;; 128 KB module of ~2600 signature/declaration pairs that is 4 s per
 ;; pattern with a match cap of 256, and every one of the pattern's
-;; matches dropped. With `match: (_)` inside the declaration, where it
+;; matches dropped. With `match: (_)` inside each declaration, where it
 ;; was meant (nvim-treesitter's copy of the query has it there), the
 ;; whole query runs in 16 ms and never nears the cap.
 ;;
@@ -83,6 +84,7 @@
   "then"
   "else"
   "case"
+  "cases"
   "of"
 ] @keyword.conditional
 
@@ -146,11 +148,12 @@
 
 ; ----------------------------------------------------------------------------
 ; Functions and variables
-(decl
-  [
-   name: (variable) @function
-   names: (binding_list (variable) @function)
-  ])
+[
+  (decl/function name: (variable) @function)
+  (decl/bind name: (variable) @function)
+  (decl/signature name: (variable) @function)
+  (decl/signature names: (binding_list (variable) @function))
+]
 
 (decl/bind
   name: (variable) @variable)
@@ -165,9 +168,10 @@
   name: (variable) @_name
   type: (type))
   .
-  (decl
-    name: (variable) @variable
-    match: (_))
+  [
+    (decl/function name: (variable) @variable match: (_))
+    (decl/bind name: (variable) @variable match: (_))
+  ]
   (#eq? @_name @variable))
 
 ; but consider a type that involves 'IO' a decl/function
@@ -183,9 +187,10 @@
     constructor: (name) @_type)
   (#eq? @_type "IO"))
   .
-  (decl
-    name: (variable) @function
-    match: (_))
+  [
+    (decl/function name: (variable) @function match: (_))
+    (decl/bind name: (variable) @function match: (_))
+  ]
   (#eq? @_name @function))
 
 ((decl/signature) @function

@@ -67,7 +67,7 @@ pub const entries = [_]Entry{
     .{ .key = "nix", .language = tree_sitter_nix, .highlights = &.{q.nix_highlights}, .injections = q.nix_injections, .fixture = "{ pkgs ? import <nixpkgs> {} }:\npkgs.hello\n" },
     // OCaml's implementation and interface grammars share one highlights query.
     .{ .key = "ocaml", .language = tree_sitter_ocaml, .highlights = &.{q.ocaml_highlights}, .fixture = "let f x = x + 1\nlet () = print_int (f 1)\n" },
-    .{ .key = "mli", .language = tree_sitter_ocaml_interface, .highlights = &.{ocaml_interface_highlights}, .fixture = "val f : int -> int\n" },
+    .{ .key = "mli", .language = tree_sitter_ocaml_interface, .highlights = &.{q.ocaml_highlights}, .fixture = "val f : int -> int\n" },
     .{ .key = "dart", .language = tree_sitter_dart, .highlights = &.{q.dart_highlights}, .fixture = "int f(int x) {\n  return x + 1;\n}\n" },
     .{ .key = "sql", .language = tree_sitter_sql, .highlights = &.{q.sql_highlights}, .fixture = "SELECT id, name FROM users WHERE id = 1;\n" },
     .{ .key = "make", .language = tree_sitter_make, .highlights = &.{q.make_highlights}, .fixture = "all: main.o\n\tcc -o app main.o\n" },
@@ -81,18 +81,6 @@ pub const entries = [_]Entry{
     .{ .key = "vue", .language = tree_sitter_vue, .highlights = &.{q.vue_highlights}, .injections = q.vue_injections, .fixture = "<template>\n  <div>{{ msg }}</div>\n</template>\n" },
     .{ .key = "svelte", .language = tree_sitter_svelte, .highlights = &.{q.svelte_highlights}, .injections = svelte_injections, .fixture = "<script>\n  let n = 1;\n</script>\n<p>{n}</p>\n" },
     .{ .key = "astro", .language = tree_sitter_astro, .highlights = &.{q.astro_highlights}, .injections = q.astro_injections, .fixture = "---\nconst x = 1;\n---\n<p>{x}</p>\n" },
-};
-
-/// The interface grammar has no `shebang` node, so the crate's one shared `highlights.scm`
-/// fails to compile against it (`ts_query_new` → NodeType at the comment pattern). The Rust
-/// highlighter hit the same wall and silently left `.mli` files plain; here that single
-/// alternative is dropped at comptime and the rest of the query is shared as intended.
-const ocaml_interface_highlights: []const u8 = blk: {
-    @setEvalBranchQuota(100_000);
-    const needle = " (shebang)";
-    const i = std.mem.indexOf(u8, q.ocaml_highlights, needle) orelse
-        @compileError("ocaml highlights.scm no longer mentions (shebang) — drop this patch");
-    break :blk q.ocaml_highlights[0..i] ++ q.ocaml_highlights[i + needle.len ..];
 };
 
 /// svelte-ng's injections inject EVERY `raw_text` as JavaScript — the

@@ -150,11 +150,12 @@ test "layering: js = js + extra, ts = js + extra + ts, tsx = js + jsx + extra + 
     try testing.expect(std.mem.endsWith(u8, tsx, queries.typescript_highlights));
     try testing.expectEqualStrings(js_plus_jsx, jsx);
     try testing.expect(std.mem.indexOf(u8, queries.javascript_highlights_extra, "(decorator") != null);
-    // The interface grammar reuses ocaml's query minus the one node it lacks; the two
-    // Markdown grammars have distinct queries.
+    // The interface grammar shares ocaml's query whole: it names no node the interface
+    // grammar lacks (the crate dropped `shebang` from it). The two Markdown grammars have
+    // distinct queries.
     const ocaml = table.highlightSource(table.find("ocaml").?);
     const mli = table.highlightSource(table.find("mli").?);
-    try testing.expectEqual(ocaml.len - " (shebang)".len, mli.len);
+    try testing.expectEqualStrings(ocaml, mli);
     try testing.expect(std.mem.indexOf(u8, mli, "shebang") == null);
     try testing.expect(std.mem.indexOf(u8, mli, "(line_number_directive) (directive)] @comment") != null);
     try testing.expect(!std.mem.eql(u8, table.highlightSource(table.find("md").?), table.highlightSource(table.find("markdown_inline").?)));
