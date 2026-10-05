@@ -1,4 +1,5 @@
 .{
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .uilib = .{
             // example-org/uilib

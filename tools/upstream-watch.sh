@@ -32,9 +32,14 @@
 #   npm       site/ and demo/cloudflare/: `npm outdated` by major/minor/
 #             patch and `npm audit` by severity. Skipped (and said so)
 #             where node_modules is absent — the workflow runs `npm ci`.
-#   threads   the upstream discussions in THREADS below: open/closed,
-#             answered, comments, maintainer comments, labels; a change
-#             since --prev-state is called out.
+#   threads   the upstream threads in THREADS below. A discussion:
+#             open/closed, answered, comments, maintainer comments,
+#             labels. An issue: state, comments, and a task list's
+#             done/total checkboxes. A pull request: open/merged/closed,
+#             draft (head sha, comments, mergeable state as info). A
+#             change since --prev-state is called out. ZIG_MOVE_PR's state
+#             also gets its own line under "Zig <next>": mnml moves to that
+#             Zig only after ghostty has.
 #   channels  the latest GitHub release against the Homebrew tap's
 #             formula, winget's newest manifest (and an open winget PR),
 #             the version the site's /download page prints, and
@@ -64,7 +69,8 @@
 #                  $GITHUB_REPOSITORY, else chris-mclennan/mnml)
 #   UW_CI_GHOSTTY_SHA, UW_CI_GHOSTTY_BUILD, UW_CI_TERMINAL_TESTS,
 #   UW_CI_TERMINAL_FAILED, UW_CI_RESIZE, UW_CI_ZIG_NEXT,
-#   UW_CI_ZIG_NEXT_VERSION — the workflow's job results (success /
+#   UW_CI_ZIG_NEXT_VERSION, UW_CI_ZIG_GHOSTTY (ghostty main's
+#   minimum_zig_version) — the workflow's job results (success /
 #                  failure / skipped / cancelled; RESIZE is broken /
 #                  fixed / unknown).
 #   UW_RUN_URL     a link to the workflow run, put under the report
@@ -76,13 +82,26 @@
 
 set -u
 
-# Upstream discussions to follow: owner/repo#number. Add a line to add one.
-# (UW_THREADS, space-separated, replaces the list — the offline check's.)
+# Upstream threads to follow, one per line: `discussion:owner/repo#N`,
+# `issue:owner/repo#N` or `pr:owner/repo#N` (a bare `owner/repo#N` is a
+# discussion). Discussions are read through GraphQL, issues and pull
+# requests through REST. (UW_THREADS, space-separated, replaces the list —
+# the offline check's.)
 THREADS=(
-    "ghostty-org/ghostty#13629"
-    "ghostty-org/ghostty#13460"
+    "discussion:ghostty-org/ghostty#13629" # the resize-redraw regression (dde3d4d6b)
+    "discussion:ghostty-org/ghostty#13460" # its user-visible report
+    "issue:ghostty-org/ghostty#14518"      # Zig 0.17 migration: ghostty's dependency checklist
+    "pr:ghostty-org/ghostty#14519"         # Update to Zig 0.17
 )
 [ -z "${UW_THREADS:-}" ] || read -r -a THREADS <<< "$UW_THREADS"
+
+# The pull request that moves ghostty to the next Zig, and that Zig. mnml
+# builds ghostty's module inside its own build, and ghostty's build calls
+# requireZig(minimum_zig_version): mnml cannot move to a newer Zig before
+# ghostty does. Its merge is the signal the Zig section and the comment
+# call out. (UW_ZIG_MOVE_PR / UW_ZIG_MOVE_VERSION replace them.)
+ZIG_MOVE_PR="${UW_ZIG_MOVE_PR:-ghostty-org/ghostty#14519}"
+ZIG_MOVE_VERSION="${UW_ZIG_MOVE_VERSION:-0.17}"
 
 LABEL=upstream-watch
 UA="mnml upstream-watch (https://github.com/chris-mclennan/mnml)"
@@ -332,8 +351,33 @@ section_zig() {
     else
         say "- newest stable: $latest — minimum_zig_version $min, CI installs $ci"
     fi
+    # ghostty main's own minimum: mnml cannot build with a newer Zig until
+    # it moves (the workflow's zig-next job reads this to decide whether a
+    # failure there is expected).
+    local gmin
+    gmin=$(gh_raw "repos/ghostty-org/ghostty/contents/build.zig.zon" \
+        | grep -oE 'minimum_zig_version[[:space:]]*=[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\(.*\)"/\1/')
+    [ -z "$gmin" ] || say "- ghostty main requires Zig $gmin"
     say ""
-    put .zig "$(jq -nc --arg m "$min" --arg c "$ci" --arg l "$latest" '{minimum: $m, ci: $c, latest_stable: $l}')"
+    put .zig "$(jq -nc --arg m "$min" --arg c "$ci" --arg l "$latest" --arg g "$gmin" \
+        '{minimum: $m, ci: $c, latest_stable: $l, ghostty_main_minimum: $g}')"
+
+    # The pull request that moves ghostty to the next Zig.
+    if [ -n "$ZIG_MOVE_PR" ]; then
+        local pr pstate
+        pr=$(thread_pr "$ZIG_MOVE_PR")
+        pstate=$(jq -r '.state // empty' <<< "$pr" 2> /dev/null)
+        say "## Zig $ZIG_MOVE_VERSION"
+        say ""
+        case "$pstate" in
+            merged) say "- ghostty's Zig $ZIG_MOVE_VERSION move: PR #${ZIG_MOVE_PR##*#} **MERGED** — mnml can move to Zig $ZIG_MOVE_VERSION" ;;
+            open) say "- ghostty's Zig $ZIG_MOVE_VERSION move: PR #${ZIG_MOVE_PR##*#} open$(jq -r 'if .draft then " (draft)" else "" end' <<< "$pr") — mnml follows when it merges" ;;
+            closed) say "- ghostty's Zig $ZIG_MOVE_VERSION move: PR #${ZIG_MOVE_PR##*#} closed without merging — look for its successor" ;;
+            *) say "- ghostty's Zig $ZIG_MOVE_VERSION move: PR #${ZIG_MOVE_PR##*#} could not be read" ;;
+        esac
+        say ""
+        put .zig.info "$(jq -nc --arg s "$pstate" --arg pr "$ZIG_MOVE_PR" '{move_pr: $pr, move_pr_state: $s}')"
+    fi
 }
 
 # ── actions ──────────────────────────────────────────────────────────
@@ -419,35 +463,85 @@ section_npm() {
 
 # ── threads ──────────────────────────────────────────────────────────
 
+# One thread as the state holds it; empty when unreadable. The key in
+# the state is `owner/repo#N` whatever the kind (GitHub numbers issues,
+# pull requests and discussions from one sequence).
+thread_discussion() { # owner/repo#N
+    local owner name num
+    owner="${1%%/*}"; name="${1#*/}"; name="${name%%#*}"; num="${1##*#}"
+    gh_discussion "$owner" "$name" "$num" | jq -c '.data.repository.discussion // empty
+        | {kind: "discussion",
+           state: (if .closed then "closed" else "open" end),
+           answered: .isAnswered,
+           comments: .comments.totalCount,
+           maintainer_comments: ([.comments.nodes[] | ., (.replies.nodes[]?)
+               | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER"
+                        or .authorAssociation == "COLLABORATOR")] | length),
+           labels: ([.labels.nodes[].name] | sort | join(", ")),
+           info: {title: .title, updated: .updatedAt}}' 2> /dev/null
+}
+
+# An issue: state, comments, and its body's task list (`- [x]` / `- [ ]`).
+thread_issue() { # owner/repo#N
+    local or="${1%%#*}" num="${1##*#}"
+    gh_get "repos/$or/issues/$num" | jq -c 'select(.number != null)
+        | ([(.body // "") | scan("(?m)^[ \\t]*[-*+] \\[([ xX])\\]")[0]]) as $boxes
+        | {kind: "issue", state: .state, comments: .comments,
+           tasks_done: ($boxes | map(select(. != " ")) | length),
+           tasks_total: ($boxes | length),
+           labels: ([.labels[].name] | sort | join(", ")),
+           info: {title: .title, updated: .updated_at}}' 2> /dev/null
+}
+
+# A pull request: open / merged / closed and draft are signal; the head
+# sha, comment count and mergeable state move with every push and are
+# info.
+thread_pr() { # owner/repo#N
+    local or="${1%%#*}" num="${1##*#}"
+    gh_get "repos/$or/pulls/$num" | jq -c 'select(.number != null)
+        | {kind: "pr",
+           state: (if .merged then "merged" elif .state == "closed" then "closed" else "open" end),
+           draft: (.draft // false),
+           info: {title: .title, head: .head.sha, commits: .commits,
+                  comments: ((.comments // 0) + (.review_comments // 0)),
+                  mergeable_state: .mergeable_state, updated: .updated_at}}' 2> /dev/null
+}
+
 section_threads() {
-    local t owner name num raw d threads='{}' line was
+    local t kind ref owner name num d threads='{}' line was path
     say "## Upstream threads"
     say ""
     for t in "${THREADS[@]}"; do
-        owner="${t%%/*}"; name="${t#*/}"; name="${name%%#*}"; num="${t##*#}"
-        raw=$(gh_discussion "$owner" "$name" "$num")
-        d=$(jq -c '.data.repository.discussion // empty
-            | {state: (if .closed then "closed" else "open" end),
-               answered: .isAnswered,
-               comments: .comments.totalCount,
-               maintainer_comments: ([.comments.nodes[] | ., (.replies.nodes[]?)
-                   | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER"
-                            or .authorAssociation == "COLLABORATOR")] | length),
-               labels: ([.labels.nodes[].name] | sort | join(", ")),
-               info: {title: .title, updated: .updatedAt}}' <<< "$raw" 2> /dev/null)
+        case "$t" in
+            discussion:* | issue:* | pr:*) kind="${t%%:*}"; ref="${t#*:}" ;;
+            *) kind=discussion; ref="$t" ;;
+        esac
+        owner="${ref%%/*}"; name="${ref#*/}"; name="${name%%#*}"; num="${ref##*#}"
+        case "$kind" in
+            discussion) d=$(thread_discussion "$ref"); path=discussions ;;
+            issue) d=$(thread_issue "$ref"); path=issues ;;
+            pr) d=$(thread_pr "$ref"); path=pull ;;
+        esac
         if [ -z "$d" ]; then
-            say "- $t: could not be read"
+            say "- $ref ($kind): could not be read"
             continue
         fi
-        line=$(jq -r '"\(.state), \(if .answered then "answered" else "unanswered" end), \(.comments) comments (\(.maintainer_comments) from maintainers), labels: \(if .labels == "" then "none" else .labels end) — \(.info.title)"' <<< "$d")
+        line=$(jq -r 'def labels: if (.labels // "") == "" then "none" else .labels end;
+            if .kind == "discussion" then
+              "\(.state), \(if .answered then "answered" else "unanswered" end), \(.comments) comments (\(.maintainer_comments) from maintainers), labels: \(labels)"
+            elif .kind == "issue" then
+              "issue \(.state), \(.comments) comments\(if .tasks_total > 0 then ", tasks \(.tasks_done)/\(.tasks_total) done" else "" end), labels: \(labels)"
+            else
+              "pull request \(if .state == "merged" then "MERGED" else .state end)\(if .draft then " (draft)" else "" end), \(.info.commits) commits, head \(.info.head[0:8])\(if .info.mergeable_state then ", mergeable: \(.info.mergeable_state)" else "" end)"
+            end + " — \(.info.title)"' <<< "$d")
         was=""
         if [ -n "$prev_state" ] && [ -f "$prev_state" ]; then
-            was=$(jq -r --arg t "$t" --argjson n "$d" '.threads[$t] // empty | . as $o
-                | [("state","answered","comments","maintainer_comments","labels") as $k
-                   | select($o[$k] != $n[$k]) | "\($k) \($o[$k]) → \($n[$k])"] | join("; ")' "$prev_state" 2> /dev/null)
+            was=$(jq -r --arg t "$ref" --argjson n "$d" '.threads[$t] // empty | . as $o
+                | [$n | to_entries[] | select(.key != "info" and .key != "kind")
+                   | select($o[.key] != .value) | "\(.key) \($o[.key]) → \(.value)"] | join("; ")' "$prev_state" 2> /dev/null)
         fi
-        say "- [$t](https://github.com/$owner/$name/discussions/$num): $line${was:+ — **changed since last run:** $was}"
-        threads=$(jq -c --arg t "$t" --argjson d "$d" '.[$t] = $d' <<< "$threads")
+        say "- [$ref](https://github.com/$owner/$name/$path/$num): $line${was:+ — **changed since last run:** $was}"
+        threads=$(jq -c --arg t "$ref" --argjson d "$d" '.[$t] = $d' <<< "$threads")
     done
     say ""
     put .threads "$threads"
@@ -534,9 +628,18 @@ section_ci() {
         unknown) resize="unknown — the repro did not reach its verdict" ;;
         *) resize="not run" ;;
     esac
-    case "${UW_CI_ZIG_NEXT:-}:${UW_CI_ZIG_NEXT_VERSION:-}" in
-        success:*) zig="builds with zig ${UW_CI_ZIG_NEXT_VERSION:-next}: yes" ;;
-        failure:*) zig="builds with zig ${UW_CI_ZIG_NEXT_VERSION:-next}: no" ;;
+    # A failure while ghostty main itself still requires an older Zig is
+    # expected (ghostty's build calls requireZig); the workflow keeps it
+    # from turning the run red, and the line says why.
+    local gz="${UW_CI_ZIG_GHOSTTY:-}" nv="${UW_CI_ZIG_NEXT_VERSION:-}"
+    case "${UW_CI_ZIG_NEXT:-}:$nv" in
+        success:*) zig="newest Zig ${nv:-next}: mnml builds with it" ;;
+        failure:*)
+            if [ -n "$gz" ] && [ "$gz" != "$nv" ]; then
+                zig="newest Zig $nv: mnml does not build with it yet — ghostty requires $gz${ZIG_MOVE_PR:+ (PR #${ZIG_MOVE_PR##*#})}"
+            else
+                zig="newest Zig ${nv:-next}: mnml does NOT build with it${gz:+ — and ghostty main requires $gz already}"
+            fi ;;
         *:) zig="zig: no newer stable release to try" ;;
         *) zig="builds with zig $UW_CI_ZIG_NEXT_VERSION: not run" ;;
     esac
@@ -549,7 +652,9 @@ section_ci() {
     say ""
     put .ci "$(jq -nc --arg b "$build" --arg t "${UW_CI_TERMINAL_TESTS:-not run}" --arg f "${UW_CI_TERMINAL_FAILED:-}" \
         --arg r "${UW_CI_RESIZE:-not run}" --arg z "${UW_CI_ZIG_NEXT:-skipped}" --arg zv "${UW_CI_ZIG_NEXT_VERSION:-}" --arg s "$sha" \
-        '{ghostty_build: $b, terminal_tests: $t, terminal_failed: $f, resize: $r, zig_next: $z, zig_next_version: $zv, info: {ghostty_sha: $s}}')"
+        --arg gz "${UW_CI_ZIG_GHOSTTY:-}" \
+        '{ghostty_build: $b, terminal_tests: $t, terminal_failed: $f, resize: $r, zig_next: $z, zig_next_version: $zv,
+          zig_next_expected_failure: ($z == "failure" and $gz != "" and $gz != $zv), info: {ghostty_sha: $s, ghostty_zig: $gz}}')"
 }
 
 # ── the decision ─────────────────────────────────────────────────────
@@ -586,6 +691,12 @@ decide() { # old new (files; read once each, so a pipe or <(…) is fine)
         | awk -F'\t' '$2 != $3 { printf "- %s: %s → %s\n", $1, $2, $3 }')
     n=$(printf '%s\n' "$lines" | grep -c '^- ')
     echo "changed"
+    # The one change worth a headline of its own: ghostty moved to the
+    # next Zig, so mnml can.
+    if [ -n "$ZIG_MOVE_PR" ] && [ "$(jq -r --arg p "${ZIG_MOVE_PR}" '.threads[$p].state // empty' <<< "$newj")" = merged ] \
+        && [ "$(jq -r --arg p "${ZIG_MOVE_PR}" '.threads[$p].state // empty' <<< "$oldj")" != merged ]; then
+        echo "**ghostty's Zig $ZIG_MOVE_VERSION move (PR #${ZIG_MOVE_PR##*#}) MERGED — mnml can move to Zig $ZIG_MOVE_VERSION** (docs/RELEASE.md, \"Dependencies\")."
+    fi
     echo "Upstream watch: $n change(s) since the last run."
     printf '%s\n' "$lines" | head -3
     [ "$n" -le 3 ] || echo "- … and $((n - 3)) more; the issue body has the full report."

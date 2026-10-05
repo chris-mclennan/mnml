@@ -211,9 +211,16 @@ says each week what is behind and whether moving looks safe;
 - **Actions** pinned by sha whose major tag has moved.
 - **npm** in `site/` and `demo/cloudflare/`: outdated by major/minor/patch,
   `npm audit` by severity.
-- **Upstream threads** mnml follows (ghostty discussions #13629 and
-  #13460, the resize-redraw regression; the list is at the top of the
-  script): state, comments, maintainer comments, labels.
+- **Upstream threads** mnml follows (the list is at the top of the
+  script; discussions, issues and pull requests): ghostty discussions
+  #13629 and #13460, the resize-redraw regression; issue #14518, ghostty's
+  Zig 0.17 checklist (tasks done/total); and PR #14519, "Update to Zig
+  0.17". mnml cannot move to a newer Zig before ghostty does — ghostty's
+  build calls `requireZig(minimum_zig_version)` inside ours — so that PR
+  merging is the signal: the report's "Zig 0.17" line and the issue
+  comment then say mnml can move. Until ghostty main requires the newer
+  Zig, the weekly zig-next build is expected to fail and is reported as
+  such without turning the run red.
 - **Release channels**: the latest release against the Homebrew tap, the
   newest winget manifest, the version mnml.sh/download prints, and
   mnml.sh/demo answering — after a release, a disagreement here is a

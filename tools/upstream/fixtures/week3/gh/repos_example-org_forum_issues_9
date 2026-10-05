@@ -1,0 +1,13 @@
+{
+ "number": 9,
+ "title": "Invented: next-toolchain migration",
+ "state": "open",
+ "comments": 2,
+ "body": "Invented: what the move needs.\n\n- [x] `dep-one` has a branch\n- [x] `dep-two` \u2014 open PR\n* [X] `dep-three` works as-is\n\nNot a task: [ ] inline.\n",
+ "labels": [
+  {
+   "name": "tracking"
+  }
+ ],
+ "updated_at": "2026-03-01T00:00:00Z"
+}

@@ -10,11 +10,15 @@
 #   week1-info/  overlays week1: only info-level values moved (upstream
 #                gained commits) — the fingerprint must not move
 #   week2/       overlays week1: a maintainer commented on the thread
+#   week3/       overlays week1: the toolchain pull request merged and
+#                the issue's last task was ticked
 #
 # Cases: a pin behind, a pin current, a crate behind (and one current,
 # and Lua on its newest 5.4.x), a mirror behind ghostty's, an action tag
 # that moved (and an annotated tag that did not), Zig behind, npm counts,
-# a thread that gained a maintainer comment, a release channel that
+# a thread that gained a maintainer comment, an issue's task list, a
+# pull request open and merged (the Zig-move note and the comment's
+# headline), zig-next's expected and real failure lines, a release channel that
 # disagrees (and one that agrees through a prefixed winget directory),
 # identical state → no comment, info-only change → no comment, changed
 # state → the comment's text, a first run, and no request without a
@@ -28,7 +32,11 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 script="${UW_SCRIPT:-tools/upstream-watch.sh}"
 fx=tools/upstream/fixtures
-export UW_ROOT="$fx/root" UW_THREADS="example-org/forum#7" UW_REPO=example-org/app
+export UW_ROOT="$fx/root" UW_REPO=example-org/app
+# #7 bare (a discussion, the old form), #9 an issue, #8 the pull request
+# that moves the toolchain (the ZIG_MOVE_PR role).
+export UW_THREADS="example-org/forum#7 issue:example-org/forum#9 pr:example-org/forum#8"
+export UW_ZIG_MOVE_PR="example-org/forum#8" UW_ZIG_MOVE_VERSION=0.17
 unset UW_CI_GHOSTTY_BUILD UW_CI_TERMINAL_TESTS UW_CI_RESIZE UW_CI_ZIG_NEXT UW_RUN_URL
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/uw-check.XXXXXX")" || exit 2
@@ -55,6 +63,7 @@ run w1 "$fx/week1"
 run w1again "$fx/week1" 2026-01-08T00:00:00Z
 run w1info "$fx/week1-info:$fx/week1" 2026-01-08T00:00:00Z
 run w2 "$fx/week2:$fx/week1" 2026-01-08T00:00:00Z --prev-state "$scratch/w1.json"
+run w3 "$fx/week3:$fx/week1" 2026-01-15T00:00:00Z --prev-state "$scratch/w1.json"
 
 # ── parsing ──
 o="$scratch/w1.out"
@@ -121,6 +130,37 @@ if has "$scratch/ci.out" "- builds against ghostty main (eeeeeeee): yes" \
     ok "the ghostty-main and zig-next results: one line each"
 else bad "the job-result lines" "$(sed -n '/^## Against/,/^State/p' "$scratch/ci.out")"; fi
 
+if has "$o" "- [example-org/forum#9](https://github.com/example-org/forum/issues/9): issue open, 2 comments, tasks 2/3 done, labels: tracking" \
+    && [ "$(q w1 '.threads["example-org/forum#9"].tasks_done')" = 2 ]; then
+    ok "an issue with a task list: state, comments, done/total checkboxes (an inline [ ] is not a task)"
+else bad "an issue with a task list" "$(grep 'forum#9' "$o")"; fi
+
+if has "$o" "- [example-org/forum#8](https://github.com/example-org/forum/pull/8): pull request open, 33 commits, head 88888888, mergeable: blocked" \
+    && has "$o" "- ghostty's Zig 0.17 move: PR #8 open — mnml follows when it merges" \
+    && [ "$(q w1 '.threads["example-org/forum#8"].state')" = open ] && [ "$(q w1 '.threads["example-org/forum#8"].head')" = null ]; then
+    ok "a pull request open: its line, the Zig 0.17 note, the head sha kept out of the signal"
+else bad "a pull request open" "$(grep -E 'forum#8|Zig 0.17 move' "$o")"; fi
+
+o3="$scratch/w3.out"
+if has "$o3" "pull request MERGED" && has "$o3" "- ghostty's Zig 0.17 move: PR #8 **MERGED** — mnml can move to Zig 0.17" \
+    && has "$o3" "**changed since last run:** state open → merged" && has "$o3" "tasks 3/3 done"; then
+    ok "a pull request merged: the report says mnml can move"
+else bad "a pull request merged" "$(grep -E 'forum#|Zig 0.17 move' "$o3")"; fi
+
+if has "$o" "- ghostty main requires Zig 0.16.0" && [ "$(q w1 '.zig.ghostty_main_minimum')" = 0.16.0 ]; then
+    ok "zig: ghostty main's own minimum_zig_version"
+else bad "ghostty main's minimum" "$(sed -n '/^## Zig$/,/^## Zig 0/p' "$o")"; fi
+
+UW_FIXTURES="$fx/week1" UW_CI_GHOSTTY_BUILD=success UW_CI_TERMINAL_TESTS=success UW_CI_RESIZE=broken \
+    UW_CI_ZIG_NEXT=failure UW_CI_ZIG_NEXT_VERSION=0.17.0 UW_CI_ZIG_GHOSTTY=0.16.0 \
+    bash "$script" --dry-run --only ci > "$scratch/zn.out" 2>&1
+UW_FIXTURES="$fx/week1" UW_CI_ZIG_NEXT=failure UW_CI_ZIG_NEXT_VERSION=0.17.0 UW_CI_ZIG_GHOSTTY=0.17.0 \
+    bash "$script" --dry-run --only ci > "$scratch/zn2.out" 2>&1
+if has "$scratch/zn.out" "- newest Zig 0.17.0: mnml does not build with it yet — ghostty requires 0.16.0 (PR #8)" \
+    && has "$scratch/zn2.out" "- newest Zig 0.17.0: mnml does NOT build with it — and ghostty main requires 0.17.0 already"; then
+    ok "zig-next: an expected failure says why; once ghostty requires the new Zig it reads as a real one"
+else bad "the zig-next lines" "$(grep -h 'newest Zig' "$scratch/zn.out" "$scratch/zn2.out")"; fi
+
 # ── the decision ──
 d() { UW_ROOT="$UW_ROOT" bash "$script" --decide "$1" "$2"; }
 
@@ -140,6 +180,14 @@ Upstream watch: 2 change(s) since the last run.
 - threads.example-org/forum#7.maintainer_comments: 0 → 1"
 if [ "$out" = "$want" ]; then ok "changed state → 'changed' and the comment says what moved"
 else bad "changed state's comment" "$out"; fi
+
+out=$(d "$scratch/w1.json" "$scratch/w3.json")
+if [ "$(head -1 <<< "$out")" = changed ] \
+    && grep -qF "**ghostty's Zig 0.17 move (PR #8) MERGED — mnml can move to Zig 0.17**" <<< "$out" \
+    && grep -qF -- '- threads.example-org/forum#8.state: "open" → "merged"' <<< "$out" \
+    && grep -qF -- '- threads.example-org/forum#9.tasks_done: 2 → 3' <<< "$out"; then
+    ok "the pull request merged → the comment leads with: mnml can move"
+else bad "the merged pull request's comment" "$out"; fi
 
 : > "$scratch/empty.json"
 out=$(d "$scratch/empty.json" "$scratch/w1.json")
