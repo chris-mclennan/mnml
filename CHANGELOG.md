@@ -270,6 +270,21 @@ the release ships one file), and one line per change a user can see.
   between the N sessions; an open editor is no longer squeezed into a
   fourth equal column. On an empty page the N sessions fill the row as
   before.
+- A session started in a worktree of its own now gets it in a shared
+  `.worktrees` folder beside your repository, one folder per
+  repository: a repository at `~/Projects/app` puts its trees in
+  `~/Projects/.worktrees/app/<name>`, outside every repository. The
+  folders are made the first time they are needed. A repository at the
+  top of a disk uses `~/.worktrees/app/<name>` instead.
+- Existing worktrees stay where they are. Merge, remove, *Open worktree
+  in tree*, the SESSIONS tag and the git panel's WORKTREES row find a
+  tree by the path it was made at, so the ones in an `app-worktrees`
+  folder keep working.
+- To keep the old `<repo>-worktrees` folder beside the repository, set
+  `ai.default_worktree_root` to `"../app-worktrees"`, with your
+  repository's name in place of `app`.
+- A worktree name is one folder name now: letters, digits, `-`, `_` and
+  `.`. A name with `/` (`feat/login`) is refused with the reason.
 
 ### Claude Code's review
 
