@@ -118,6 +118,8 @@ pointer it lights in the theme's accent with a solid underline.
 | Right-click | A menu with *Copy link* and *Open link*. |
 | Wheel | Scrolls whatever the link sits on. A link never stops a list scrolling. |
 
+Installed integrations can add rows of their own under those two — a *Triage* row on every ticket key, say — each group under the contributing integration's name; see *Menu contributions* in the SDK guide.
+
 A SESSIONS card's own menu also lists each link on the card as an
 `Open …` row. Right-click the card for it, or press `Shift+F10`
 (`view.context_menu_at_focus`) on the focused card.

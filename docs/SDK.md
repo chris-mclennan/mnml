@@ -32,7 +32,7 @@ integrations/sample/
    twin and a theme colour), two commands — `sample.open`, first, is
    what the chip, Enter and the statusline segment run; `sample.hello`
    is an `ex` line that toasts — a `statusline` segment, a
-   `context_menu` row, and a `settings` row that reaches the binary as
+   pair of `context_menu` rows (*Menu contributions*), and a `settings` row that reaches the binary as
    `MNML_SETTING_MOOD`.
 3. **Paint** in `main.zig`: connect (`Mount.connectEnv`), size a
    `Frame` to `mount.geometry`, `setTitle`, paint, `send`; then the
@@ -686,7 +686,8 @@ What mnml does with each field:
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
 | `values_sources[]` | the statusline poller (`src/app/integration_poll.zig`): each entry's `command` runs as `<binary> --values --workspace <ws>` every `poll_interval_secs` (300 by default), one worker per source, staggered, backed off on a failure, and quiet while a pane of the integration is open; `prefetch = true` also runs the whole-pane warm |
 | `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary, a terminal pane, an editor, the Markdown preview, a commit's message in the git graph, a toast, an HTTP response body. See *Links* below |
-| `context_menu[]`, `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menus / auth store is a later slice |
+| `context_menu[]` | rows this integration adds to menus mnml builds for other panes' rows and for links — see *Menu contributions* below |
+| `menu_bar[]`, `auth[]` | parsed and shown in the detail pane; wiring into mnml's menu bar / auth store is a later slice |
 
 **One mark per chip.** A chip, its statusline segment and its pane wear
 one glyph, spelled once — the manifest's `chip.glyph`. A segment's
@@ -832,6 +833,62 @@ The in-repo integrations: Jira's Work chip declares the issue key
 above, Bitbucket's PRs chip the pull request. The sample's
 `manifest.zon` declares one, live: `SAMPLE-12` links to
 `https://example.com/sample/SAMPLE-12`.
+
+## Menu contributions — rows on other integrations' menus
+
+An integration can add rows to menus it does not own: a Jira ticket's
+row, a Bitbucket pull request, a ticket key linked in a terminal. The
+owner of the menu never learns who added what — mnml merges them.
+
+```zig
+.context_menu = .{
+    .{ .target = .{ .kind = "ticket" }, .label = "Triage with Claude", .command = "loops.triage" },
+    .{ .target = .{ .kind = "pane:bitbucket:pr" }, .label = "Watch", .command = "loops.watch", .when = "state=OPEN", .hover = "Follows the PR until it merges" },
+},
+```
+
+| field | |
+|---|---|
+| `target.kind` | `ticket`, `pr`, `pipeline` — a row or link of that kind anywhere; `link` — every link; `pane:<integration id>:<row kind>` — that integration's pane rows of that kind only. Anything else is refused at load with the reason |
+| `label` | the row's text (`title` is the older spelling, still read) |
+| `command` | one of this integration's own `commands[]` ids |
+| `when` | optional: `field=value` or `field!=value` over `kind` `id` `key` `repo` `n` `state`, the value compared ignoring case |
+| `hover` | optional: the info view's copy for the row; the label when left out |
+
+When the row is picked, mnml runs `command` with the clicked thing's
+values in its `run` line or its `args`: `{id}` (a ticket's key, a PR's
+number), `{key}` (the key, or the matched text), `{repo}`
+(`workspace/repo`), `{n}` (a PR's or pipeline's number) and `{url}` (a
+link's address). An unknown `{…}` stays as written, and a `{{token}}`
+is still the launcher's (`.ex = "echo Triage {key}"`).
+
+**Where they appear.** Every installed, enabled integration's matching
+rows follow the menu's own, each integration's under a separator and a
+muted header with its `label`, integrations by label and rows in
+manifest order:
+
+- **A link's menu** — a terminal pane, a session card, a preview: the
+  link's kind comes from the `links[]` entry that made it — a range
+  link's `ranges`, a literal one's `.kind` (`ticket`, `pr`, `pipeline`;
+  left out, only `link` rows join). Jira's issue key declares `ticket`,
+  Bitbucket's `<repo>#<n>` forms `pr`.
+- **A mounted pane's row** — a pane names the row under the pointer
+  with its hover: `help.row = .{ .kind = "ticket", .key = "ACME-123",
+  .state = "In Progress" }` (`wire.RowRef`) on the `Help` it passes
+  to `mount.hoverHelp`, beside the `command` that names its Key line. A right-click
+  there, when some integration contributes to that kind (or to
+  `pane:<this pane's id>:<kind>`), opens the host's menu titled with the
+  row's key instead of reaching the pane; with no contribution the click
+  is the pane's, as before. The Jira pane names its ticket rows and
+  cards.
+
+The older shape — `.target = "tree.file"`, `.title = …` — still loads
+and shows in the detail pane; those host-surface targets (`tree.file`
+`tree.dir` `tab` `pane`) are not wired into a menu.
+
+The sample is the reference: `Echo ticket key` on every `ticket` and
+`Echo pull request` on every `pr` (`when = "state!=DECLINED"`), each an
+`ex` line that toasts what it was given.
 
 ## Publishing an integration — the catalogue entry
 
