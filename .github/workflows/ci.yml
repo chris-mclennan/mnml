@@ -80,9 +80,9 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, optimize: Debug, step: test, timeout: 60 }
-          - { os: ubuntu-latest, optimize: ReleaseSafe, step: test, timeout: 40 }
+          - { os: ubuntu-latest, optimize: ReleaseSafe, step: test, timeout: 60 }
           - { os: macos-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
-          - { os: macos-latest, optimize: ReleaseSafe, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 40 }
+          - { os: macos-latest, optimize: ReleaseSafe, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
           - { os: windows-latest, optimize: Debug, step: unit -Dtest-trace=true -Dtest-trace-live=true, timeout: 60 }
           # Streams each test's name, as macOS does: on 2026-09-29 this leg
           # hit its limit once and then had a test binary stop responding
@@ -104,6 +104,14 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: ${{ matrix.os }}-${{ matrix.optimize }}
+          # setup-zig's default limit (2048 MB) is below what a ReleaseSafe
+          # suite's cache grows to in a few runs; when it is passed the
+          # action saves an EMPTY cache, and the next run starts cold: the
+          # main test binary then starts at +30–39 min and the 40-minute
+          # step limit was hit four times in the first week of October.
+          # The limit is raised so the cache keeps the whole suite, and the
+          # ReleaseSafe steps get the 60 minutes Windows already had.
+          cache-size-limit: 6144
 
       # The dependency tree comes from github and three other hosts; one
       # dropped connection ("invalid HTTP response: HttpConnectionClosed")
