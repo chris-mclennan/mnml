@@ -5,7 +5,7 @@
 import Site from "../layouts/Site.astro";
 import Icon from "../components/Icon.astro";
 import Cmd from "../components/Cmd.astro";
-import { VERSION, TAG, RELEASE_URL, asset, versionSlug } from "../lib/release.mjs";
+import { VERSION, TAG, SOURCE, RELEASE_URL, asset, versionSlug } from "../lib/release.mjs";
 import { PAGES } from "../lib/nav.mjs";
 import { BREW_INSTALL, CURL_INSTALL, IRM_INSTALL, RELEASES } from "../repo.mjs";
 import { WINGET_INSTALL } from "../lib/readme.mjs";
@@ -33,6 +33,10 @@ const win = [
 const sums = asset(/^sha256\.sum$/);
 ---
 <Site title="Download" description={`Download mnml ${VERSION} for macOS, Linux and Windows.`}>
+  {/* What this build named, and where it learned it (api | redirect |
+      committed): read by npm run smoke and tools/upstream-watch.sh. */}
+  <meta slot="head" name="mnml-release-version" content={VERSION} />
+  <meta slot="head" name="mnml-release-source" content={SOURCE} />
   <main class="download-page">
     <div class="grid">
       <div class="download-head">

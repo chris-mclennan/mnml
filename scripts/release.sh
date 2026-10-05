@@ -12,11 +12,13 @@
 #      release.yml runs, so a build that fails here fails here and not on
 #      the runner
 #   4. the packaged binary for this machine prints the version
-#   5. an annotated tag, locally
+#   5. site/src/data/release.json names the previous release (the
+#      site's fallback; pinned after each release — docs/RELEASE.md)
+#   6. an annotated tag, locally
 #
 # It never pushes. The last line is the command that does; run it yourself,
-# then watch the Release workflow and run scripts/dist-check.sh vX.Y.Z when
-# it is done.
+# then watch the Release workflow, run scripts/dist-check.sh vX.Y.Z when
+# it is done, and pin the site to it (node site/scripts/pin-release.mjs).
 set -euo pipefail
 
 tag=${1:?usage: release.sh vX.Y.Z [--dry-run]}
@@ -54,6 +56,12 @@ if printf '%s\n' "$notes" | grep -Eiq '(bearer |xox[bp]-|sk-[a-z0-9]{8,}|token\s
 fi
 printf '%s\n' "$notes" | head -n 12
 [ "$(printf '%s\n' "$notes" | wc -l)" -gt 12 ] && echo "…"
+
+say "site release data"
+# The download page falls back to site/src/data/release.json when GitHub
+# cannot be asked at build time; it must name the release before this one.
+command -v node >/dev/null 2>&1 || { echo "release: node is needed to check site/src/data/release.json" >&2; exit 1; }
+node site/scripts/pin-release.mjs --check
 
 say "zig build dist -Dversion=$version"
 start=$(date +%s)
@@ -101,3 +109,7 @@ echo
 echo "then, when it is green, count the assets — green is not enough:"
 echo
 echo "  scripts/dist-check.sh $tag"
+echo
+echo "then pin the site's fallback release and commit it (with the zon bump):"
+echo
+echo "  node site/scripts/pin-release.mjs $tag"

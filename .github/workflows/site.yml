@@ -1,6 +1,8 @@
 # The website (site/, plain Astro): build it and run the smoke test —
-# dead internal links and #fragments, and a HEAD on every release
-# download URL the built pages carry — on every push touching site/**.
+# dead internal links and #fragments, a HEAD on every release download
+# URL the built pages carry, and the release the download page names
+# against the tags and GitHub's newest release — on every push touching
+# site/**.
 #
 # The build reads docs/*.md (the generated reference pages) and
 # README.md (the winget line), so those wake it too. No deploy step:
@@ -42,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Every tag: smoke holds src/data/release.json to the newest
+          # vX.Y.Z tag reachable from HEAD (scripts/pin-release.mjs).
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           # npm 10 ships with Node 22 and wrote site/package-lock.json;
@@ -53,8 +59,15 @@ jobs:
       - name: Install site deps
         working-directory: site
         run: npm ci --no-audit --no-fund
+      - name: Release resolver tests
+        working-directory: site
+        run: npm test
       - name: Build site
         working-directory: site
+        # The token lifts the API's rate limit for the release lookup
+        # (scripts/prepare.mjs); the build works without it.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: npm run build
       - name: Smoke — internal links + download HEAD
         working-directory: site
@@ -62,4 +75,5 @@ jobs:
         # main and the schedule hit the real URLs.
         env:
           SKIP_DOWNLOAD_CHECKS: ${{ github.event_name == 'pull_request' && '1' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: npm run smoke

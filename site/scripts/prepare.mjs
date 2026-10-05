@@ -1,10 +1,11 @@
 // Runs before `astro build` / `astro dev`:
 //   1. the repo docs the generated pages are rendered from must exist —
 //      a moved doc fails here with its name, not deep inside a render;
-//   2. GitHub's latest release is fetched (8 s budget) into
-//      src/data/release.latest.json, which the download page prefers to
-//      the committed src/data/release.json. Offline, or with
-//      SITE_OFFLINE=1, the committed file stands.
+//   2. GitHub's newest mnml release is resolved (API, then the
+//      releases/latest redirect, then the committed
+//      src/data/release.json; a 20 s budget in all) into
+//      src/data/release.latest.json, which the download page prefers.
+//      With SITE_OFFLINE=1 the committed file stands.
 import fs from "node:fs";
 import path from "node:path";
 import { PAGES } from "../src/lib/nav.mjs";
@@ -32,22 +33,42 @@ console.log(`prepare: ${gen.length} generated-page sources found`);
   for (const l of unparsed) console.warn(`prepare: option reference could not place this line (it stays in the whole file): ${l.trim()}`);
 }
 
+// The release (scripts/release-source.mjs has the sources and their
+// order). release.latest.json is written on every build — including a
+// fall back to the committed file — so a file left by an earlier build
+// never stands in for this one's answer; it carries `source`, which the
+// download page prints as <meta name="mnml-release-source">.
+// SITE_GITHUB_API / SITE_GITHUB_WEB replace https://api.github.com /
+// https://github.com (point one at http://127.0.0.1:9 to rehearse it
+// being down).
 const out = path.resolve("src/data/release.latest.json");
 if (process.env.SITE_OFFLINE === "1") {
   fs.rmSync(out, { force: true });
-  console.log("prepare: SITE_OFFLINE=1 — using src/data/release.json");
+  console.log("prepare: SITE_OFFLINE=1 — using src/data/release.json (source: committed)");
 } else {
-  try {
-    const headers = { accept: "application/vnd.github+json", "user-agent": "mnml-site-build" };
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers, signal: AbortSignal.timeout(8000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    const rel = { tag: j.tag_name, version: j.tag_name.replace(/^v/, ""), assets: j.assets.map((a) => a.name) };
-    if (!rel.assets.length) throw new Error("the latest release has no assets");
-    fs.writeFileSync(out, JSON.stringify(rel, null, 2) + "\n");
-    console.log(`prepare: latest release ${rel.tag}, ${rel.assets.length} assets`);
-  } catch (e) {
-    console.log(`prepare: could not read the latest release (${e.message}) — using ${fs.existsSync(out) ? "the last fetched one" : "src/data/release.json"}`);
+  const { resolveRelease, tokenFrom } = await import("./release-source.mjs");
+  const committed = JSON.parse(fs.readFileSync(path.resolve("src/data/release.json"), "utf8"));
+  const token = tokenFrom(process.env);
+  const { release, source } = await resolveRelease({
+    fetch,
+    repo: REPO,
+    committed,
+    token,
+    api: process.env.SITE_GITHUB_API || undefined,
+    web: process.env.SITE_GITHUB_WEB || undefined,
+    log: (s) => console.log(`prepare: ${s}`),
+  });
+  fs.writeFileSync(out, JSON.stringify({ ...release, source }, null, 2) + "\n");
+  const how = {
+    api: `from the GitHub API${token ? " (with a token)" : ""}`,
+    redirect: release.tag === committed.tag
+      ? "from the releases/latest redirect, which agrees with src/data/release.json"
+      : "from the releases/latest redirect; asset names from src/data/release.json, the installer checked",
+    committed: "from src/data/release.json",
+  }[source];
+  console.log(`prepare: release ${release.tag}, ${release.assets.length} assets — ${how} (source: ${source})`);
+  if (source === "committed") {
+    console.warn(`prepare: WARNING — GitHub could not be asked which release is newest; the download page names the committed ${committed.tag}. If a newer release exists the page is stale until the next build: run \`node scripts/pin-release.mjs vX.Y.Z\` (docs/RELEASE.md).`);
   }
 }
 

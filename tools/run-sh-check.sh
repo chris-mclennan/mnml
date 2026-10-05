@@ -134,6 +134,15 @@ out=$(bash "$ROOT/tools/keymap-parity-check.sh" "$ROOT" 2>&1); rc=$?
 check "docs: KEYMAP_PARITY.md names every spec chord and only spec chords" '[ $rc -eq 0 ]' "$out"
 out=$(bash "$ROOT/tools/config-doc-check.sh" "$ROOT" 2>&1); rc=$?
 check "docs: CONFIG.md documents every Config field at its default" '[ $rc -eq 0 ]' "$out"
+# The site's fallback release (site/src/data/release.json) against the
+# newest vX.Y.Z tag reachable from HEAD: red from a release's tag push
+# until `node site/scripts/pin-release.mjs vX.Y.Z` lands (docs/RELEASE.md).
+if command -v node >/dev/null 2>&1; then
+  out=$(node "$ROOT/site/scripts/pin-release.mjs" --check 2>&1); rc=$?
+  check "docs: site/src/data/release.json names the newest tagged release" '[ $rc -eq 0 ]' "$out"
+else
+  bad "docs: site/src/data/release.json names the newest tagged release" "node is not on PATH"
+fi
 check "check: the sequence runs the Debug unit suite" 'grep -q "bash tools/debug-suite-check.sh" "$ROOT/run.sh"'
 check "check: the sequence still runs the ReleaseSafe suite" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe" "$ROOT/run.sh"'
 check "check: the ReleaseSafe suite runs under the trace runner (FLAKY reported, as in Debug)" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe -Dtest-trace=true" "$ROOT/run.sh"'
