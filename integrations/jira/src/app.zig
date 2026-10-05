@@ -185,6 +185,10 @@ pub const RefreshJob = struct {
     /// job's arena.
     listing: []const u8 = "",
     refresh_interval_secs: u32 = 0,
+    /// A release tab's project and version: its whole fetch is the
+    /// release's `keys` in the cache. On the job's arena.
+    release_project: []const u8 = "",
+    release_name: []const u8 = "",
 
     pub fn deinit(j: *RefreshJob) void {
         j.arena.deinit();
@@ -374,6 +378,9 @@ pub const App = struct {
     /// The shared recent-items cache's directory (`src/recent.zig`);
     /// null when it is off. Owned by main's arena.
     recent_root: ?[]const u8 = null,
+    /// `recent_items.current_release` as mnml handed it down
+    /// (`recent.current_release_env`): the release `current` names.
+    recent_current_release: []const u8 = "",
     /// Tickets refetched on their own because the feed named them.
     feed_fetches: u32 = 0,
     /// The one refetch in flight, and the group it runs on. With no
@@ -1049,6 +1056,10 @@ pub const App = struct {
         errdefer job.deinit();
         const arena = job.arena.allocator();
         job.listing = try std.fmt.allocPrint(arena, "tab:{s}", .{t.cfg.name});
+        if (t.cfg.isFixVersions()) if (@import("screen.zig").fixVersionOf(t.jql)) |name| {
+            job.release_project = try arena.dupe(u8, t.cfg.project);
+            job.release_name = try arena.dupe(u8, name);
+        };
         // A board tab is fetched through the agile endpoint, whose
         // query is a list of clauses rather than one JQL string — the
         // window would have to be spliced somewhere else, so it is not
@@ -1168,6 +1179,7 @@ pub const App = struct {
                 // The listing as the shared cache's: whole unless this
                 // was a window onto it.
                 _ = recent.publish(job.arena.child_allocator, client.io, job.recent_root, job.listing, !delta, job.refresh_interval_secs, issues);
+                if (!delta and job.release_name.len > 0) _ = recent.publishReleaseKeys(job.arena.child_allocator, client.io, job.recent_root, job.release_project, job.release_name, job.refresh_interval_secs, issues);
                 return .{ .idx = job.idx, .arena = arena, .issues = issues, .delta = delta, .base_jql = base, .departed = departed };
             },
         }
@@ -1611,11 +1623,13 @@ pub const App = struct {
         }) {
             .ok => |v| v,
             .failed => |f| {
+                recent.releasesFailed(a.gpa, a.io, a.recent_root);
                 t.jql = "issuekey = ''";
                 t.last_error = try std.fmt.allocPrint(t.meta.allocator(), "fetching unreleased versions: {s}", .{f.message});
                 return;
             },
         };
+        _ = recent.publishReleases(a.gpa, a.io, a.recent_root, t.cfg.project, versions, a.recent_current_release, a.cfg.refresh_interval_secs);
         const open = try jira.unreleasedVersions(arena, versions, t.cfg.version_name_contains);
         const picked = jira.pickVersion(open, mode) orelse {
             t.jql = "issuekey = ''";
@@ -2876,8 +2890,12 @@ pub const App = struct {
             error.OutOfMemory => return error.OutOfMemory,
             error.Transport => return .{ .failed = .{ .status = 0, .message = "the site did not answer" } },
         }) {
-            .failed => |f| return .{ .failed = f },
+            .failed => |f| {
+                recent.releasesFailed(a.gpa, a.io, a.recent_root);
+                return .{ .failed = f };
+            },
             .ok => |all| {
+                _ = recent.publishReleases(a.gpa, a.io, a.recent_root, project, all, a.recent_current_release, a.cfg.refresh_interval_secs);
                 var items: std.ArrayList(pickers.Item) = .empty;
                 if (clear_row) |c| try items.append(arena, .{ .id = "", .label = c });
                 for (try jira.pickerVersions(arena, all)) |v| {
