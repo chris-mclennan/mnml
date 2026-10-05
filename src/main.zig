@@ -84,6 +84,8 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "broker")) return brokerSubcommand(gpa, io, env, args[2..], w);
     // `mnml remote` / `mnml r`: a running mnml, over its API socket.
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "remote") or std.mem.eql(u8, args[1], "r"))) return remoteSubcommand(gpa, io, env, args[2..], w);
+    // `mnml cache get|ls|clear`: the shared recent-items cache.
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "cache")) return cacheSubcommand(gpa, io, env, args[2..], w);
     if (args.len >= 2) if (httpSubcommand(gpa, io, env, args[1], args[2..], w)) |code| return code;
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--version") or std.mem.eql(u8, a, "-V")) {
@@ -91,7 +93,7 @@ pub fn main(init: std.process.Init) !u8 {
             try w.flush();
             return 0;
         }
-        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] [--demo] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | remote open|run|status|panes|ping|instances|call (alias r) | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) return usage(w, null, "mnml [WORKSPACE] [FILE…] [--input vim|standard] [--ascii] [--config PATH] [--no-session] [--headless] [--startup-picker] [--profile dev|stable] [--sandbox] [--sandbox-keep] [--demo] | profile seed [--from stable] [--force] | test [PATH…] [--gate] [--sizes ladder|WxH,…] [--filter NAME] [--skip NAME] [--shard I/N] [--strict] | hover-audit [--strict] [--write-todo PATH] | run FILE | chain run FILE | discover SPEC | sync | sync-check | proxy --url URL | broker acquire|status|serve | remote open|run|status|panes|ping|instances|call (alias r) | cache get|ls|clear | --rebase-todo PLAN TODO | --commit-msg QUEUE FILE");
     }
     if (parseInputFlag(args[1..], w)) |style| {
         app_driver.default_factory.input_style = style;
@@ -456,6 +458,16 @@ fn remoteSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, rest:
     defer gpa.free(argv);
     for (rest, 0..) |a, i| argv[i] = a;
     return @import("api/remote.zig").run(gpa, io, env, cwd_buf[0..cwd_len], argv, .{ .out = w, .err = &err_file.interface });
+}
+
+/// `mnml cache get|ls|clear` — the shared recent-items cache, from a shell.
+fn cacheSubcommand(gpa: Allocator, io: Io, env: *std.process.Environ.Map, rest: []const [:0]const u8, w: *Io.Writer) u8 {
+    var err_buf: [4096]u8 = undefined;
+    var err_file: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
+    const argv = gpa.alloc([]const u8, rest.len) catch return 1;
+    defer gpa.free(argv);
+    for (rest, 0..) |a, i| argv[i] = a;
+    return @import("cache_cli.zig").run(gpa, io, env, argv, .{ .out = w, .err = &err_file.interface });
 }
 
 /// `mnml-zig broker acquire|status …` — the batch class, from a shell.
@@ -1104,6 +1116,7 @@ fn headlessSubcommand(gpa_in: Allocator, io: Io, env: *std.process.Environ.Map, 
 }
 
 test {
+    _ = @import("cache_cli.zig");
     _ = @import("config/root.zig");
     _ = @import("core/alloc.zig");
     _ = @import("core/zon_fields.zig");
