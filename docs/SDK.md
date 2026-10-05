@@ -1367,6 +1367,35 @@ is best effort and returns an `Outcome`, never an error.
   only — never under a workspace's `.mnml/`, never in a repo or a bug
   report. Tests point `MNML_SHARED_STATE_DIR` at a scratch directory.
 
+### Who writes what
+
+| file | listings | complete |
+|------|----------|----------|
+| `jira/ticket.json` | `assigned_open`, `qa_actionable` (`--values`), `tab:<name>` | yes, unless a delta window or an event feed's keys |
+| `jira/release.json` | `versions:<PROJECT>` — whenever the pane fetches a project's versions (a release tab resolving its version, the Fix Version picker) | yes |
+| `bitbucket/pr.json` | `authored`, `reviewing` (`--values`), `tab:<name>` | when every repo answered |
+| `bitbucket/pipeline.json` | `probe` (`--values`' hourly per-repo probe), `tab:<name>` | never: a run that left the newest page aged out, it did not change |
+
+A release's `role`: `current` is the project's nearest unreleased
+version by `release_date`, the undated after every dated one (then by
+name); `next` is the unreleased one after it. mnml's
+`recent_items.current_release` reaches the integrations it starts as
+`$MNML_RECENT_CURRENT_RELEASE=ACME/2026.10` and names `current`
+outright; `next` is then the one after that. A release's `keys` are
+the issues a release tab last listed for it, carried across the next
+versions fetch. Pinned through eviction: every record with a role.
+
+### Reading it from a shell
+
+```
+mnml cache get <kind> <id>                     # the record as JSON; exit 1 when absent
+mnml cache ls <kind> [--source S] [--limit N]  # id, title, status, source[, stale] — tab-separated, newest first
+mnml cache clear [kind] [--yes]                # remove that kind's files, or every source's; asks unless --yes
+```
+
+In mnml, `picker.recent_items` lists the cached tickets and pull
+requests, newest first, and Enter opens one where its link would.
+
 ## The shared bucket file — a public contract
 
 `budget.shared_bucket` names a file holding one token bucket that every

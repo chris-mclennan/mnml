@@ -78,6 +78,7 @@ and `.keys.vim` / `.keys.standard` add to or override their own.
 | `editor.add_cursor_at_next_word` | `ctrl+d` | standard | vim: `Ctrl-D` scrolls half a page |
 | `file.new` | `ctrl+n` | standard | vim: `Ctrl-N` toggles the tree (NvChad) |
 | `picker.recent` | `ctrl+r` | standard | vim: `Ctrl-R` is redo |
+| `picker.recent_items` | `space f i` / `ctrl+k ctrl+e` | vim / standard | `space f r` is `picker.recent` in both and `ctrl+k ctrl+r` is `view.help`, so the next free pair |
 | `buffer.close` | `ctrl+w` | standard | vim: `Ctrl-W` is the window prefix |
 | `tab.new` | `ctrl+k n` | standard | a `Ctrl+K` chord |
 | `theme.toggle` | `ctrl+k t` | standard | a `Ctrl+K` chord |

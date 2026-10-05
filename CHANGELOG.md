@@ -93,6 +93,25 @@ the release ships one file), and one line per change a user can see.
   `Ticket`, `Pr`, `Pipeline` and `Release` records, with the file
   format documented as a contract (`docs/SDK.md`, *The recent-items
   cache*).
+- Pull requests too: `widget#45`, a `PR 45` the link ranges resolved,
+  or a link to the pull request's page hovers as
+  `acme/widget#45 · Redesign the empty state · OPEN · Max Orr`. The
+  Bitbucket integration writes the pull requests its `--values` poll and
+  its pane's tabs list, and the pipeline runs its hourly probe and its
+  Pipelines tabs see (`recent/bitbucket/pr.json`, `pipeline.json`).
+- The Jira integration writes each project's fix versions whenever it
+  fetches them anyway — a release tab resolving its version, the Fix
+  Version picker — as releases, with the issues a release tab lists.
+  The nearest unreleased release date is `current`, the one after it
+  `next`; `recent_items.current_release = "ACME/2026.10"` names
+  `current` outright.
+- *Recent tickets and pull requests* (`picker.recent_items`, vim
+  `Space f i`, standard `Ctrl+K Ctrl+E`) lists what the integrations
+  last polled, newest first, a stale one marked; Enter opens it where
+  its link would.
+- `mnml cache get <kind> <id>`, `mnml cache ls <kind> [--source S]
+  [--limit N]` and `mnml cache clear [kind] [--yes]` read and clear the
+  cache from a shell (`docs/API.md`).
 
 ### A bare pull-request or pipeline number links
 
