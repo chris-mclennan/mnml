@@ -290,10 +290,9 @@ not.
 
 6. **Where does it keep its state?**
    ```powershell
-   .\run.ps1 profile
+   .\run.ps1 paths
    ```
-   *Pass:* `data:` under `%USERPROFILE%\.config\mnml` (stable) or
-   `mnml-dev` (dev), `ipc:` the literal `<workspace>/.mnml/…` pattern, and `marker:`
+   *Pass:* `data:` under `%USERPROFILE%\.config\mnml`, `ipc:` the literal `<workspace>/.mnml/…` pattern, and `marker:`
    under `%TEMP%`. These are the `data_root.zig` USERPROFILE rung and
    the `%TEMP%` marker — the two Windows path decisions nothing on a Mac
    can confirm.

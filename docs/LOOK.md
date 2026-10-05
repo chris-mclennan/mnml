@@ -96,7 +96,7 @@ a stand-in `claude` ahead of the clean `PATH`, a fake manifest's
 `ACME_SITE`. A value may name the window's own variables, so
 `--env 'PATH=/abs/stand-ins:$PATH'` prepends a directory (quote it so
 your shell leaves `$PATH` alone). It adds, never loosens: `HOME`,
-`TMPDIR`, `MNML_DATA_ROOT`, `MNML_IPC_DIR`, `MNML_PROFILE`, the
+`TMPDIR`, `MNML_DATA_ROOT`, `MNML_IPC_DIR`, the
 artifacts and sessions homes and the proxies stay the window's own, and
 an `--env` naming one is refused. The pairs are kept in the root's
 `look.json`.

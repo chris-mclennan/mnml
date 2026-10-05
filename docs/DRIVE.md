@@ -192,9 +192,7 @@ Into the data root:
   true` (or the setup wizard opens over the whole screen; the `.test`
   runner never meets it because it does not run the startup hook, and
   the very first harness window anyone saw was that wizard).
-  Written to **both** `<root>` and `<root>-dev`, because the harness
-  launches `--profile dev` and the dev profile is the stable answer with
-  `-dev` on the end (`src/config/data_root.zig`).
+  Written to `<root>`, which the harness passes as `MNML_DATA_ROOT`.
 
   It also carries **two keys copied from your own `~/.config/mnml/config.zon`**
   — `ui.tree_width` and `ui.tab_indicator` — so a hunter is looking at
