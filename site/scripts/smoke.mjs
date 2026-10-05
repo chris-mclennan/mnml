@@ -3,11 +3,21 @@
 //      and every #fragment to an id on the page it points at;
 //   2. every release download URL anywhere in dist/ — a button's href or
 //      an install line's text — answers a HEAD with 200 after redirects.
-// SKIP_DOWNLOAD_CHECKS=1 skips (2) (site.yml sets it on pull requests).
-// Exits 1 on any failure.
+//   3. the download page carries its release marker
+//      (<meta name="mnml-release-version|mnml-release-source">), and
+//      src/data/release.json is not older than the newest vX.Y.Z tag
+//      reachable from HEAD (scripts/pin-release.mjs --check; needs the
+//      tags — site.yml checks out with fetch-depth: 0);
+//   4. the built page's version is not older than the newest mnml
+//      release GitHub names (API with GITHUB_TOKEN / GH_TOKEN when set,
+//      else the releases/latest redirect).
+// SKIP_DOWNLOAD_CHECKS=1 skips (2) and (4) (site.yml sets it on pull
+// requests). Exits 1 on any failure.
 import fs from "node:fs";
 import path from "node:path";
 import { REPO } from "../src/repo.mjs";
+import { client, cmpTag, isCoreTag, newestByApi, tokenFrom } from "./release-source.mjs";
+import { check as pinnedCheck } from "./pin-release.mjs";
 
 const DIST = path.resolve("dist");
 if (!fs.existsSync(DIST)) {
@@ -90,6 +100,44 @@ if (process.env.SKIP_DOWNLOAD_CHECKS === "1") {
     }
   }));
 }
+// 3. The release marker, and the committed release against the tags.
+const dlPage = html.get(path.join(DIST, "download/index.html")) ?? "";
+const meta = (name) => dlPage.match(new RegExp(`<meta[^>]*name="${name}"[^>]*content="([^"]*)"`))?.[1] ?? null;
+const builtVersion = meta("mnml-release-version");
+const builtSource = meta("mnml-release-source");
+if (!builtVersion || !builtSource) {
+  bad.push("download/index.html has no <meta name=\"mnml-release-version\"> / <meta name=\"mnml-release-source\">");
+} else {
+  console.log(`smoke: the download page names ${builtVersion} (source: ${builtSource})`);
+}
+{
+  const r = pinnedCheck();
+  if (r.ok) console.log(r.msg.replace(/^pin-release/, "smoke"));
+  else bad.push(r.msg.replace(/^pin-release: /, ""));
+}
+
+// 4. The built page against the newest release GitHub names.
+if (process.env.SKIP_DOWNLOAD_CHECKS === "1") {
+  console.log("smoke: the newest-release comparison skipped (SKIP_DOWNLOAD_CHECKS=1)");
+} else if (builtVersion) {
+  const c = client({ fetch, repo: REPO, token: tokenFrom(process.env), api: process.env.SITE_GITHUB_API || undefined, web: process.env.SITE_GITHUB_WEB || undefined });
+  const api = await newestByApi(c, REPO);
+  let newest = api.ok ? api.release.tag : null;
+  let how = "the API";
+  if (!newest) {
+    const red = await c.redirectTag();
+    if (red.ok && isCoreTag(red.tag)) { newest = red.tag; how = "the releases/latest redirect"; }
+  }
+  const built = `v${builtVersion}`;
+  if (!newest) {
+    console.warn(`smoke: WARNING — could not learn the newest release (API: ${api.why}); the page's ${builtVersion} is unchecked`);
+  } else if (!isCoreTag(built) || cmpTag(built, newest) < 0) {
+    bad.push(`the download page names ${builtVersion} (source: ${builtSource}), but ${newest} is released (per ${how})`);
+  } else {
+    console.log(`smoke: the download page's ${builtVersion} is the newest release (per ${how})`);
+  }
+}
+
 if (bad.length) {
   for (const b of bad) console.error(`smoke: FAIL ${b}`);
   console.error(`smoke: ${bad.length} failure(s)`);
