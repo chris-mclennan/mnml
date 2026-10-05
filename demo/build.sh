@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # demo/build.sh — build the web demo's image (default tag mnml-demo:local).
 #
-#   demo/build.sh [TAG] [--cross] [--platform linux/amd64|linux/arm64]
+#   demo/build.sh [TAG] [--cross] [--platform linux/amd64|linux/arm64] [--no-check]
+#
+# The built image is checked by demo/selftest.sh (the integrations are
+# there, every glyph on screen is in a served font) and the build fails
+# when it does not pass; --no-check skips that.
 #
 # --cross: build the Linux binaries here, with this machine's Zig
 # (cross-compiling to the docker engine's architecture), and hand them to
@@ -19,10 +23,11 @@
 # the image does not need (the Dockerfile fetches the packages itself).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TAG=mnml-demo:local CROSS=0 PLATFORM=
+TAG=mnml-demo:local CROSS=0 PLATFORM= CHECK=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --cross) CROSS=1 ;;
+    --no-check) CHECK=0 ;;
     --platform) PLATFORM=$2; shift ;;
     --platform=*) PLATFORM=${1#--platform=} ;;
     *) TAG=$1 ;;
@@ -68,3 +73,6 @@ fi
   | COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata --null -s ",^$STAGE_REL/,," -cf - -T - \
   | docker build -f demo/Dockerfile ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} ${BUILDER_ARGS[@]+"${BUILDER_ARGS[@]}"} --build-arg MNML_VERSION="$VERSION" -t "$TAG" -
 echo "demo/build.sh: $TAG built in $(( $(date +%s) - start ))s; $(docker image inspect "$TAG" --format '{{.Size}}' | awk '{printf "%.0f MB", $1/1e6}')"
+if [ "$CHECK" = 1 ]; then
+  "$ROOT/demo/selftest.sh" "$TAG" || { echo "demo/build.sh: $TAG failed its self-test (demo/selftest.sh)" >&2; exit 1; }
+fi
