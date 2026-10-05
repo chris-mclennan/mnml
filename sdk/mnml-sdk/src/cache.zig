@@ -837,21 +837,25 @@ test "the write is a temp file renamed over the old one, 0600, with no temp file
     }
 }
 
+/// The platform's separator: the paths under test are joined, so a test
+/// spells its expectation with it.
+const sep = std.fs.path.sep_str;
+
 test "the directory: the shared state dir, then the data root, then ~/.config/mnml; MNML_RECENT_ITEMS=0 writes nothing" {
     var env: Map = .init(t.allocator);
     defer env.deinit();
     try env.put("HOME", "/h");
     const p1 = (try rootDir(t.allocator, &env)).?;
     defer t.allocator.free(p1);
-    try t.expectEqualStrings("/h/.config/mnml/recent", p1);
+    try t.expectEqualStrings("/h" ++ sep ++ ".config" ++ sep ++ "mnml" ++ sep ++ "recent", p1);
     try env.put("MNML_DATA_ROOT", "/d");
     const p2 = (try rootDir(t.allocator, &env)).?;
     defer t.allocator.free(p2);
-    try t.expectEqualStrings("/d/recent", p2);
+    try t.expectEqualStrings("/d" ++ sep ++ "recent", p2);
     try env.put("MNML_SHARED_STATE_DIR", "/s");
     const p3 = (try rootDir(t.allocator, &env)).?;
     defer t.allocator.free(p3);
-    try t.expectEqualStrings("/s/recent", p3);
+    try t.expectEqualStrings("/s" ++ sep ++ "recent", p3);
     try env.put("MNML_RECENT_ITEMS", "0");
     try t.expectEqual(Outcome.disabled, put(t.allocator, t.io, &env, .{ .source = "jira", .kind = .ticket }, &[_]Ticket{login}));
 }
@@ -871,5 +875,5 @@ test "query filters on the fixed fields, newest first, and a source name cannot 
     try t.expectEqual(@as(usize, 1), queryAt(.ticket, a, t.io, s.root, .{ .since_secs = 150 }, 1200).len);
     try t.expectEqual(@as(usize, 1), queryAt(.ticket, a, t.io, s.root, .{ .limit = 1 }, 1200).len);
     const p = try filePath(a, "/r", "../x", .ticket);
-    try t.expectEqualStrings("/r/_/ticket.json", p);
+    try t.expectEqualStrings("/r" ++ sep ++ "_" ++ sep ++ "ticket.json", p);
 }

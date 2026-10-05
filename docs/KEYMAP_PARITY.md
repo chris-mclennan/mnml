@@ -22,8 +22,8 @@ binds the chord to something else; **missing** — mnml binds nothing there
 | NvChad / Neovim (vim profile) | 36 | 9 | 16 |
 | VS Code 1.138 (standard profile) | 117 | 27 | 39 |
 
-mnml's own chords (bound in mnml, defined by neither oracle): **251** in the vim
-profile, **157** in the standard profile — section (c).
+mnml's own chords (bound in mnml, defined by neither oracle): **252** in the vim
+profile, **158** in the standard profile — section (c).
 Section (d) lists what the three sections miss — **4** vim and **31**
 standard chords `src/commands/specs.zig` binds with no verdict yet.
 `tools/keymap-parity-check.sh` diffs this page against the specs both ways
@@ -585,6 +585,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `space d u` | `dap.toggle_panel` |
 | `space d w` | `dap.add_watch` |
 | `space f g` | `find.grep` |
+| `space f i` | `picker.recent_items` |
 | `space f r` | `picker.recent` |
 | `space g b` | `git.blame_toggle` |
 | `space g c` | `git.commit` |
@@ -731,6 +732,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `ctrl+;` | `app.command_line` |
 | `ctrl+k a` | `view.activity_sessions` |
 | `ctrl+k b` | `git.blame_toggle` |
+| `ctrl+k ctrl+e` | `picker.recent_items` |
 | `ctrl+k g c` | `git.commit` |
 | `ctrl+k i d` | `integrations.show_details` |
 | `ctrl+k j` | `jobs.show` |
