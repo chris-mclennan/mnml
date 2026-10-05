@@ -222,16 +222,24 @@ pub const Mount = struct {
     /// (`hello.capabilities.hover_help`), and only when it changed, so
     /// a pane may call this on every pointer move. `""` clears it.
     pub fn hover(m: *Mount, title: []const u8, body: []const u8) SendError!void {
+        return m.hoverHelp(.{ .title = title, .body = body });
+    }
+
+    /// `hover` from one `pane.help.Help` entry, its `command` with it:
+    /// the host then ends the entry with that command's `Key:` chord.
+    pub fn hoverHelp(m: *Mount, help: @import("pane/help.zig").Help) SendError!void {
         if (!m.hello.capabilities.hover_help) return;
         var h = std.hash.Wyhash.init(0);
-        h.update(title);
+        h.update(help.title);
         h.update("\x00");
-        h.update(body);
+        h.update(help.body);
+        h.update("\x00");
+        h.update(help.command orelse "");
         const sig = h.final();
         if (m.hover_sent and sig == m.hover_sig) return;
         m.hover_sig = sig;
         m.hover_sent = true;
-        try m.sendMessage(.{ .hover = .{ .title = title, .body = body } });
+        try m.sendMessage(.{ .hover = .{ .title = help.title, .body = help.body, .command = help.command } });
     }
 
     pub fn command(m: *Mount, id: []const u8) SendError!void {

@@ -1607,7 +1607,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
                     // Room for the budget chip's hover, the longest.
                     var hb: [1024]u8 = undefined;
                     const help = app.helpAt(hv.col, hv.row, &hb);
-                    mount.hover(help.title, help.body) catch {};
+                    mount.hoverHelp(help) catch {};
                 },
                 .session_state => |ss| {
                     defer gpa.free(ss.key);

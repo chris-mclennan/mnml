@@ -15,10 +15,22 @@
 const std = @import("std");
 const budget_mod = @import("../budget.zig");
 
-/// One entry: a few words of title, a sentence or two of body.
+/// One entry: a few words of title, a sentence or two of body, and —
+/// when the element's click runs a command — that command's id, so the
+/// host can end the entry with its `Key:` chord. The id is the pane's
+/// own published one (`<integration>.<verb>`) or a host id; the host
+/// spells the chord, so the pane never guesses at the user's profile.
 pub const Help = struct {
     title: []const u8,
     body: []const u8 = "",
+    command: ?[]const u8 = null,
+
+    /// The same entry, naming the command its element's click runs.
+    pub fn runs(h: Help, id: []const u8) Help {
+        var out = h;
+        out.command = id;
+        return out;
+    }
 };
 
 /// The toolkit's own elements.

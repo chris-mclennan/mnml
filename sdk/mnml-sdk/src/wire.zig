@@ -348,7 +348,12 @@ pub const SiblingMessage = union(enum) {
     /// other part of mnml has). A short title, a sentence or two of
     /// body; an empty title says "nothing to explain here". Only sent
     /// to a host whose `hello.capabilities.hover_help` is set.
-    hover: struct { title: []const u8 = "", body: []const u8 = "" },
+    /// `command`, when the element's click runs a command — the pane's
+    /// own published id (`<integration>.<verb>`) or a host id — lets
+    /// the host end the entry with that command's `Key:` chord, the
+    /// way its own hover help does. Optional both ways: an older host
+    /// ignores it, an older pane never sends it.
+    hover: struct { title: []const u8 = "", body: []const u8 = "", command: ?[]const u8 = null },
     /// A clean exit.
     bye,
 };
@@ -707,4 +712,18 @@ test "hover: a pane names the element under the pointer, and only a host that sa
     try testing.expect(!old.hello.capabilities.hover_help);
     const new = try decode(HostMessage, arena, "{\"hello\":{\"protocol\":3,\"geometry\":{\"cols\":8,\"rows\":2},\"capabilities\":{\"hover_help\":true}}}");
     try testing.expect(new.hello.capabilities.hover_help);
+}
+
+test "hover: the element's command rides along when it has one, and is absent on the wire when it has none" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const with = try encode(arena, SiblingMessage{ .hover = .{ .title = "Refresh", .body = "Fetch again.", .command = "sample.refresh" } });
+    try testing.expectEqualStrings("{\"hover\":{\"title\":\"Refresh\",\"body\":\"Fetch again.\",\"command\":\"sample.refresh\"}}", with);
+    try testing.expectEqualStrings("sample.refresh", (try decode(SiblingMessage, arena, with)).hover.command.?);
+    // A pane from before the field: the line decodes, with no command.
+    const old = try decode(SiblingMessage, arena, "{\"hover\":{\"title\":\"Refresh\",\"body\":\"Fetch again.\"}}");
+    try testing.expectEqual(@as(?[]const u8, null), old.hover.command);
+    const without = try encode(arena, SiblingMessage{ .hover = .{ .title = "Refresh" } });
+    try testing.expect(std.mem.indexOf(u8, without, "command") == null);
 }
