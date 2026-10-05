@@ -1,0 +1,13 @@
+# Invented: the offline check's ci.yml.
+name: CI
+on: workflow_dispatch
+env:
+  ZIG_VERSION: 0.16.0
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: example-org/stale-action@3333333333333333333333333333333333333333 # v3
+      - uses: example-org/fresh-action@5555555555555555555555555555555555555555 # v5.1.0
+      - uses: example-org/annotated-action@6666666666666666666666666666666666666666 # v2
+      - uses: example-org/stale-action@3333333333333333333333333333333333333333 # v3

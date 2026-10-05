@@ -1,0 +1,9 @@
+.{
+    .dependencies = .{
+        .uilib = .{
+            // example-org/uilib
+            .url = "https://deps.files.ghostty.org/uilib-2222222222222222222222222222222222222222.tar.gz",
+            .hash = "uilib-0.0.0-DDDD",
+        },
+    },
+}

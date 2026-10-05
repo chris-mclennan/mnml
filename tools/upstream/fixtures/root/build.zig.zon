@@ -1,0 +1,36 @@
+.{
+    .name = .example_app,
+    .version = "0.0.0",
+    .fingerprint = 0x1234567890abcdef,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .termlib = .{
+            .url = "https://github.com/example-org/termlib/archive/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz",
+            .hash = "termlib-0.0.0-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        },
+        .steady = .{
+            .url = "https://github.com/example-org/steady/archive/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tar.gz",
+            .hash = "steady-0.0.0-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        },
+        .uilib = .{
+            .url = "https://deps.files.ghostty.org/uilib-1111111111111111111111111111111111111111.tar.gz",
+            .hash = "uilib-0.0.0-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        },
+        .ts_alpha = .{
+            .url = "https://static.crates.io/crates/tree-sitter-alpha/tree-sitter-alpha-0.1.0.crate",
+            .hash = "N-V-__8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        },
+        .ts_beta = .{
+            .url = "https://static.crates.io/crates/tree-sitter-beta/tree-sitter-beta-1.0.0.crate",
+            .hash = "N-V-__8AABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        },
+        .lua = .{
+            .url = "https://www.lua.org/ftp/lua-5.4.9.tar.gz",
+            .hash = "N-V-__8AACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

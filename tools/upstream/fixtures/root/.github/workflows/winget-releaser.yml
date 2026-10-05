@@ -1,0 +1,10 @@
+# Invented: the offline check's winget workflow.
+name: winget
+on: workflow_dispatch
+jobs:
+  winget:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo publish
+        with:
+          identifier: Example.App

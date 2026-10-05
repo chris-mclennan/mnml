@@ -1,0 +1,7 @@
+{
+ "crate": {
+  "name": "tree-sitter-alpha",
+  "max_stable_version": "0.2.0",
+  "max_version": "0.3.0-rc1"
+ }
+}
