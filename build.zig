@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .@"emit-lib-vt" = true,
+        .@"emit-xcframework" = false,
         .simd = pty_simd,
     });
     const ghostty_vt = ghostty_dep.module("ghostty-vt");
@@ -63,8 +64,27 @@ pub fn build(b: *std.Build) void {
     });
     pty_mod.addImport("ghostty-vt", ghostty_vt);
 
+    // ── sdk ──
+    // `sdk/mnml-sdk`: the package an integration depends on, imported by
+    // the host too (below). Made this early because it also carries the
+    // Zig version seam (`zig_compat`) every module here reaches.
+    const sdk_mod = b.createModule(.{
+        .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        // Frame pointers stay in every mode: a wedged test on a runner is
+        // sampled from the outside, and without them the sample is dyld noise.
+        .omit_frame_pointer = false,
+        // `warm.zig` probes a pid with `std.c.kill` / `std.c.getpid`.
+        // macOS always links libc, so that compiles there without
+        // asking; on Linux it is a compile error unless the dependency
+        // is spelled out — and every integration importing the SDK
+        // inherits it from here.
+        .link_libc = true,
+    });
+
     // ── syntax: tree-sitter ──
-    const ts = addTreeSitter(b, target, optimize);
+    const ts = addTreeSitter(b, target, optimize, sdk_mod);
 
     // ── lua ──
     // Lua 5.4 compiled from C inside this build, bound through zlua's
@@ -137,7 +157,7 @@ pub fn build(b: *std.Build) void {
     // failed four files against Debug, which is what `zig build e2e`
     // builds by default. A deadline is an amount of WORK; this is what
     // converts it to a clock.
-    build_options.addOption(u64, "debug_slowdown", if (optimize == .Debug) 20 else 1);
+    build_options.addOption(u64, "debug_slowdown", if (isDebug(optimize)) 20 else 1);
 
     // ── the side-by-side names: -Dinstall-names ──
     // The two names a second mnml on one machine would collide on: the
@@ -184,12 +204,12 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&exe_install.step);
     // The installed binary, for the unit tests that run it as a process
     // (`src/config/sandbox_signal_test.zig`: a signal ends `--sandbox`).
-    build_options.addOption([]const u8, "mnml_exe", b.getInstallPath(.bin, b.fmt("mnml-zig{s}", .{if (target.result.os.tag == .windows) ".exe" else ""})));
+    addInstalledBinOption(b, build_options, "mnml_exe", b.fmt("mnml-zig{s}", .{if (target.result.os.tag == .windows) ".exe" else ""}));
 
     const run_step = b.step("run", "Run mnml-zig");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    addPassthruArgs(b, run_cmd);
     run_step.dependOn(&run_cmd.step);
 
     // ── tests ──
@@ -268,7 +288,7 @@ pub fn build(b: *std.Build) void {
     }.make;
     const e2e_step = b.step("e2e", "Run the .test corpus (tests/e2e) through the runner; `-- ARGS` reach `mnml-zig test`");
     const e2e_run = e2eRun(b, exe, "mnml-zig test (the corpus)", &.{}, test_filter);
-    if (b.args) |args| e2e_run.addArgs(args);
+    addPassthruArgs(b, e2e_run);
     e2e_step.dependOn(&e2e_run.step);
     const gate_in_test = e2eRun(b, exe, "mnml-zig test --gate", &.{"--gate"}, test_filter);
     gate_in_test.step.dependOn(&tests_run.step);
@@ -299,6 +319,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .imports = &.{
                 .{ .name = "vaxis", .module = vaxis_mod },
+                .{ .name = "mnml_sdk", .module = sdk_mod },
             },
         }),
     });
@@ -331,7 +352,7 @@ pub fn build(b: *std.Build) void {
     });
     const gen = b.addExecutable(.{ .name = "gen-commands", .root_module = gen_mod });
     const gen_run = b.addRunArtifact(gen);
-    gen_run.addArg(b.pathFromRoot("docs/commands.md"));
+    addRootPathArg(b, gen_run, "docs/commands.md");
     gen_run.has_side_effects = true;
     const docs_step = b.step("docs", "Regenerate docs/commands.md from the command spec table");
     docs_step.dependOn(&gen_run.step);
@@ -382,9 +403,9 @@ pub fn build(b: *std.Build) void {
     // `--strict` fails on a site without one. The tool's own tests walk
     // the same three trees under `zig build unit` and assert the same.
     const glyph_opts = b.addOptions();
-    glyph_opts.addOptionPath("src_root", b.path("src"));
-    glyph_opts.addOptionPath("sdk_root", b.path("sdk/mnml-sdk/src"));
-    glyph_opts.addOptionPath("integrations_root", b.path("integrations"));
+    addSourceDirOption(b, glyph_opts, "src_root", "src");
+    addSourceDirOption(b, glyph_opts, "sdk_root", "sdk/mnml-sdk/src");
+    addSourceDirOption(b, glyph_opts, "integrations_root", "integrations");
     glyph_opts.addOptionPath("glyph_json", b.path("data/nerd-glyphnames.json"));
     const glyph_mod = b.createModule(.{ .root_source_file = b.path("tools/glyph_audit.zig"), .target = target, .optimize = optimize });
     glyph_mod.addOptions("build_options", glyph_opts);
@@ -496,13 +517,13 @@ pub fn build(b: *std.Build) void {
     // Its own unit test walks the real `src/` under `zig build test`, so
     // the seventh bug of that shape fails the suite rather than shipping.
     const arena_opts = b.addOptions();
-    arena_opts.addOptionPath("src_root", b.path("src"));
+    addSourceDirOption(b, arena_opts, "src_root", "src");
     // The job-result rule travels where the frame-arena ones do not:
     // an integration has no menus and no screen, but it does have a
     // worker handing results back with their own arenas, which is the
     // shape the bitbucket chip shipped broken.
-    arena_opts.addOptionPath("integrations_root", b.path("integrations"));
-    arena_opts.addOptionPath("sdk_root", b.path("sdk"));
+    addSourceDirOption(b, arena_opts, "integrations_root", "integrations");
+    addSourceDirOption(b, arena_opts, "sdk_root", "sdk");
     const arena_mod = b.createModule(.{ .root_source_file = b.path("tools/arena_audit.zig"), .target = target, .optimize = optimize });
     arena_mod.addOptions("build_options", arena_opts);
     const arena_exe = b.addExecutable(.{ .name = "arena-audit", .root_module = arena_mod });
@@ -549,9 +570,9 @@ pub fn build(b: *std.Build) void {
     // Its unit test walks the three real trees under `zig build unit`, so
     // the next fork fails the suite rather than shipping.
     const chrome_opts = b.addOptions();
-    chrome_opts.addOptionPath("src_root", b.path("src"));
-    chrome_opts.addOptionPath("sdk_root", b.path("sdk"));
-    chrome_opts.addOptionPath("integrations_root", b.path("integrations"));
+    addSourceDirOption(b, chrome_opts, "src_root", "src");
+    addSourceDirOption(b, chrome_opts, "sdk_root", "sdk");
+    addSourceDirOption(b, chrome_opts, "integrations_root", "integrations");
     const chrome_mod = b.createModule(.{ .root_source_file = b.path("tools/chrome_audit.zig"), .target = target, .optimize = optimize });
     chrome_mod.addOptions("build_options", chrome_opts);
     const chrome_exe = b.addExecutable(.{ .name = "chrome-audit", .root_module = chrome_mod });
@@ -658,7 +679,7 @@ pub fn build(b: *std.Build) void {
         const demo_install = b.addInstallArtifact(demo, .{});
         const demo_run = b.addRunArtifact(demo);
         demo_run.step.dependOn(&demo_install.step);
-        if (b.args) |args| demo_run.addArgs(args);
+        addPassthruArgs(b, demo_run);
         const demo_step = b.step("pty-demo", "Run the pty demo (a shell in a ghostty-vt Terminal)");
         demo_step.dependOn(&demo_run.step);
 
@@ -678,6 +699,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "vaxis", .module = vaxis_mod },
             .{ .name = "themes", .module = themes_mod },
+            .{ .name = "mnml_sdk", .module = sdk_mod },
         },
     });
     const canvas_demo = b.addExecutable(.{ .name = "canvas-demo", .root_module = canvas_demo_mod });
@@ -749,13 +771,8 @@ pub fn build(b: *std.Build) void {
             "-Dinstall-names=true",
             b.fmt("-Dpartial={}", .{partial}),
             b.fmt("-Dpty-simd={}", .{pty_simd}),
-            "--prefix",
-            b.install_path,
-            "--cache-dir",
-            b.cache_root.path orelse ".zig-cache",
-            "--global-cache-dir",
-            b.graph.global_cache_root.path orelse ".",
         });
+        addNestedBuildDirArgs(b, nested, "");
         if (ipc_subdir_opt) |v| nested.addArg(b.fmt("-Dipc-subdir={s}", .{v}));
         if (marker_prefix_opt) |v| nested.addArg(b.fmt("-Dmarker-prefix={s}", .{v}));
         nested.setCwd(b.path("."));
@@ -789,13 +806,8 @@ pub fn build(b: *std.Build) void {
             "-Doptimize=ReleaseSafe",
             "--summary",
             "failures",
-            "--prefix",
-            b.fmt("{s}/gate-targets/{s}", .{ b.install_path, rt.zig }),
-            "--cache-dir",
-            b.cache_root.path orelse ".zig-cache",
-            "--global-cache-dir",
-            b.graph.global_cache_root.path orelse ".",
         });
+        addNestedBuildDirArgs(b, nested, b.fmt("gate-targets/{s}", .{rt.zig}));
         nested.setCwd(b.path("."));
         nested.setName(b.fmt("zig build gate-build -Dtarget={s}", .{rt.zig}));
         // Its outputs land under the prefix, not in the cache — always run it.
@@ -811,11 +823,9 @@ pub fn build(b: *std.Build) void {
         "scripts/package.sh",
         "--version",
         version,
-        "--release-dir",
-        b.pathJoin(&.{ b.install_path, "release" }),
-        "--out",
-        b.pathJoin(&.{ b.install_path, "dist" }),
     });
+    addInstallPrefixArg(b, pack, "--release-dir", "release");
+    addInstallPrefixArg(b, pack, "--out", "dist");
     pack.setCwd(b.path("."));
     pack.setName("scripts/package.sh");
     pack.has_side_effects = true;
@@ -829,20 +839,6 @@ pub fn build(b: *std.Build) void {
     // `mnml-hello` is the sample integration: `zig build sdk-example`
     // installs it, and the host's integration test spawns it through a
     // real mount socket (the path travels as a build option).
-    const sdk_mod = b.createModule(.{
-        .root_source_file = b.path("sdk/mnml-sdk/src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        // Frame pointers stay in every mode: a wedged test on a runner is
-        // sampled from the outside, and without them the sample is dyld noise.
-        .omit_frame_pointer = false,
-        // `warm.zig` probes a pid with `std.c.kill` / `std.c.getpid`.
-        // macOS always links libc, so that compiles there without
-        // asking; on Linux it is a compile error unless the dependency
-        // is spelled out — and every integration importing the SDK
-        // inherits it from here.
-        .link_libc = true,
-    });
     root_module.addImport("mnml_sdk", sdk_mod);
     // The SDK's own tests — `ratelimit.zig`'s shared bucket among them,
     // which no integration's test binary would reach on its own (tests
@@ -859,7 +855,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&hello_install.step);
     const sdk_example_step = b.step("sdk-example", "Build the sample integration (zig-out/bin/mnml-hello)");
     sdk_example_step.dependOn(&hello_install.step);
-    build_options.addOption([]const u8, "sdk_example_exe", b.getInstallPath(.bin, if (target.result.os.tag == .windows) "mnml-hello.exe" else "mnml-hello"));
+    addInstalledBinOption(b, build_options, "sdk_example_exe", if (target.result.os.tag == .windows) "mnml-hello.exe" else "mnml-hello");
     tests_run.step.dependOn(&hello_install.step);
     gate_step.dependOn(&b.addInstallArtifact(hello, .{
         .dest_dir = .{ .override = gate_dir },
@@ -886,7 +882,7 @@ pub fn build(b: *std.Build) void {
     const sample_exe_name = b.fmt("mnml-sample{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
     const sample_step = b.step("sample-integration", "Build the sample integration (zig-out/bin/mnml-sample)");
     sample_step.dependOn(&sample_install.step);
-    build_options.addOption([]const u8, "sample_integration_exe", b.getInstallPath(.bin, sample_exe_name));
+    addInstalledBinOption(b, build_options, "sample_integration_exe", sample_exe_name);
     tests_run.step.dependOn(&sample_install.step);
     e2e_run.step.dependOn(&sample_install.step);
     gate_in_test.step.dependOn(&sample_install.step);
@@ -912,7 +908,7 @@ pub fn build(b: *std.Build) void {
     const bitbucket_exe_name = b.fmt("mnml-bitbucket{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
     const bitbucket_step = b.step("bitbucket-integration", "Build the Bitbucket integration (zig-out/bin/mnml-bitbucket)");
     bitbucket_step.dependOn(&bitbucket_install.step);
-    build_options.addOption([]const u8, "bitbucket_integration_exe", b.getInstallPath(.bin, bitbucket_exe_name));
+    addInstalledBinOption(b, build_options, "bitbucket_integration_exe", bitbucket_exe_name);
     e2e_run.step.dependOn(&bitbucket_install.step);
     gate_in_test.step.dependOn(&bitbucket_install.step);
     corpus_run.step.dependOn(&bitbucket_install.step);
@@ -931,7 +927,7 @@ pub fn build(b: *std.Build) void {
     const fake_bitbucket_install = b.addInstallArtifact(fake_bitbucket, .{});
     b.getInstallStep().dependOn(&fake_bitbucket_install.step);
     const fake_bitbucket_exe_name = b.fmt("mnml-fake-bitbucket{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
-    build_options.addOption([]const u8, "fake_bitbucket_exe", b.getInstallPath(.bin, fake_bitbucket_exe_name));
+    addInstalledBinOption(b, build_options, "fake_bitbucket_exe", fake_bitbucket_exe_name);
     bitbucket_step.dependOn(&fake_bitbucket_install.step);
     tests_run.step.dependOn(&fake_bitbucket_install.step);
     e2e_run.step.dependOn(&fake_bitbucket_install.step);
@@ -958,7 +954,7 @@ pub fn build(b: *std.Build) void {
     const jira_exe_name = b.fmt("mnml-jira{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
     const jira_step = b.step("jira-integration", "Build the Jira integration (zig-out/bin/mnml-jira)");
     jira_step.dependOn(&jira_install.step);
-    build_options.addOption([]const u8, "jira_integration_exe", b.getInstallPath(.bin, jira_exe_name));
+    addInstalledBinOption(b, build_options, "jira_integration_exe", jira_exe_name);
     tests_run.step.dependOn(&jira_install.step);
     e2e_run.step.dependOn(&jira_install.step);
     gate_in_test.step.dependOn(&jira_install.step);
@@ -979,7 +975,7 @@ pub fn build(b: *std.Build) void {
     const fake_jira_install = b.addInstallArtifact(fake_jira, .{});
     b.getInstallStep().dependOn(&fake_jira_install.step);
     const fake_jira_exe_name = b.fmt("mnml-fake-jira{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
-    build_options.addOption([]const u8, "fake_jira_exe", b.getInstallPath(.bin, fake_jira_exe_name));
+    addInstalledBinOption(b, build_options, "fake_jira_exe", fake_jira_exe_name);
     jira_step.dependOn(&fake_jira_install.step);
     tests_run.step.dependOn(&fake_jira_install.step);
     e2e_run.step.dependOn(&fake_jira_install.step);
@@ -1009,25 +1005,25 @@ pub fn build(b: *std.Build) void {
     const fake_dap_install = b.addInstallArtifact(fake_dap, .{});
     b.getInstallStep().dependOn(&fake_dap_install.step);
     const fake_dap_exe_name = b.fmt("mnml-fake-dap{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
-    build_options.addOption([]const u8, "fake_dap_exe", b.getInstallPath(.bin, fake_dap_exe_name));
+    addInstalledBinOption(b, build_options, "fake_dap_exe", fake_dap_exe_name);
     // `tools/shims/`: fake toolchains (`dotnet`) a `.test` puts first on
     // PATH with `# env: PATH=${MNML_SHIMS}:${PATH}`; `mnml-zig test`
     // exports the directory as `$MNML_SHIMS`.
-    build_options.addOption([]const u8, "shims_dir", b.pathFromRoot("tools/shims"));
+    addRootPathOption(b, build_options, "shims_dir", "tools/shims");
     // `launchers/`: mnml's own launcher manifests. The unit test in
     // `src/app/launchers.zig` parses every file; `mnml-zig test` exports
     // the folder as `$MNML_LAUNCHERS` so a `.test` can point
     // `MNML_MARKETPLACE_LOCAL` at it.
-    build_options.addOption([]const u8, "launchers_dir", b.pathFromRoot("launchers"));
+    addRootPathOption(b, build_options, "launchers_dir", "launchers");
     // The checkout itself: `mnml-zig test` exports it as `$MNML_REPO`, so
     // a `.test` that copies a shipped file (`lua/<example>/init.lua`)
     // finds it wherever — and in whatever environment — the runner runs.
-    build_options.addOption([]const u8, "repo_dir", b.pathFromRoot("."));
+    addRootPathOption(b, build_options, "repo_dir", ".");
     // `tests/e2e/`: the corpus itself, so a unit test can read the
     // scripts as text. `src/e2e/corpus.zig` walks every `.test` file and
     // fails the build on a fake server started at a port somebody chose
     // — the thing that stops two worktrees running the corpus at once.
-    build_options.addOption([]const u8, "e2e_corpus_dir", b.pathFromRoot("tests/e2e"));
+    addRootPathOption(b, build_options, "e2e_corpus_dir", "tests/e2e");
     // `lua/`: the curated script set, in this repo the way `integrations/`
     // and `launchers/` are. A source build lists it in the SCRIPTS section's
     // Marketplace tab with no config at all, because the folder's
@@ -1035,7 +1031,7 @@ pub fn build(b: *std.Build) void {
     // as `share/mnml/lua` beside the binary instead
     // (`src/app/scripts.zig`'s `shippedRoot`, `nfpm/mnml.yaml`,
     // `scripts/package.sh`).
-    build_options.addOption([]const u8, "scripts_dir", b.pathFromRoot("lua"));
+    addRootPathOption(b, build_options, "scripts_dir", "lua");
     // `data/marketplace.zon`: the mnml catalogue — the Marketplace
     // tab's default source, the same way `lua/` is the SCRIPTS tab's.
     // A source build reads the checkout's copy (its absolute path is baked
@@ -1043,7 +1039,7 @@ pub fn build(b: *std.Build) void {
     // beside the binary (`src/app/marketplace_catalogue.zig`'s `find`,
     // `nfpm/mnml.yaml`, `scripts/package.sh`) — which is also the
     // install below.
-    build_options.addOption([]const u8, "marketplace_catalogue", b.pathFromRoot("data/marketplace.zon"));
+    addRootPathOption(b, build_options, "marketplace_catalogue", "data/marketplace.zon");
     tests_run.step.dependOn(&fake_dap_install.step);
     e2e_run.step.dependOn(&fake_dap_install.step);
     gate_in_test.step.dependOn(&fake_dap_install.step);
@@ -1060,7 +1056,7 @@ pub fn build(b: *std.Build) void {
     const fake_lsp_install = b.addInstallArtifact(fake_lsp, .{});
     b.getInstallStep().dependOn(&fake_lsp_install.step);
     const fake_lsp_exe_name = b.fmt("mnml-fake-lsp{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
-    build_options.addOption([]const u8, "fake_lsp_exe", b.getInstallPath(.bin, fake_lsp_exe_name));
+    addInstalledBinOption(b, build_options, "fake_lsp_exe", fake_lsp_exe_name);
     tests_run.step.dependOn(&fake_lsp_install.step);
     e2e_run.step.dependOn(&fake_lsp_install.step);
     gate_in_test.step.dependOn(&fake_lsp_install.step);
@@ -1079,7 +1075,7 @@ pub fn build(b: *std.Build) void {
     const fake_copilot_install = b.addInstallArtifact(fake_copilot, .{});
     b.getInstallStep().dependOn(&fake_copilot_install.step);
     const fake_copilot_exe_name = b.fmt("mnml-fake-copilot{s}", .{if (target.result.os.tag == .windows) ".exe" else ""});
-    build_options.addOption([]const u8, "fake_copilot_exe", b.getInstallPath(.bin, fake_copilot_exe_name));
+    addInstalledBinOption(b, build_options, "fake_copilot_exe", fake_copilot_exe_name);
     tests_run.step.dependOn(&fake_copilot_install.step);
     e2e_run.step.dependOn(&fake_copilot_install.step);
     gate_in_test.step.dependOn(&fake_copilot_install.step);
@@ -1117,7 +1113,7 @@ fn windowsGnu(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.Resolve
 /// remember this. aarch64 Debug and every ReleaseSafe build are LLVM
 /// already or work as they are.
 fn llvmForX86Debug(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
-    if (optimize != .Debug or target.result.cpu.arch != .x86_64) return;
+    if (!isDebug(optimize) or target.result.cpu.arch != .x86_64) return;
     var seen: std.AutoHashMapUnmanaged(*std.Build.Step, void) = .empty;
     var it = b.top_level_steps.iterator();
     while (it.next()) |e| walkForLlvm(b, &e.value_ptr.*.step, &seen);
@@ -1213,12 +1209,13 @@ const version_git_status = [_][]const u8{ "git", "--no-optional-locks", "status"
 /// prints. The zon file is read as text (a source build should not fail because
 /// the manifest grew a field); git is optional (a tarball checkout has none).
 fn deriveVersion(b: *std.Build) []const u8 {
-    const zon = b.build_root.handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, .limited(1 << 20)) catch @panic("build.zig.zon unreadable");
+    const zon = readSourceFile(b, "build.zig.zon", 1 << 20) catch @panic("build.zig.zon unreadable");
     const key = ".version = \"";
     const start = (std.mem.indexOf(u8, zon, key) orelse @panic("build.zig.zon has no .version")) + key.len;
     const end = std.mem.indexOfScalarPos(u8, zon, start, '"') orelse @panic("build.zig.zon .version is unterminated");
     const base = zon[start..end];
 
+    observesGit(b);
     var code: u8 = undefined;
     const sha_raw = b.runAllowFail(&version_git_head, &code, .ignore) catch return base;
     const sha = std.mem.trim(u8, sha_raw, " \t\r\n");
@@ -1235,7 +1232,7 @@ fn deriveVersion(b: *std.Build) []const u8 {
 /// change both.
 fn driveSourceHash(b: *std.Build) []const u8 {
     const io = b.graph.io;
-    const root = b.build_root.handle;
+    const root = sourceDir(b, "tools/drive");
     var paths: std.ArrayListUnmanaged([]const u8) = .empty;
     paths.append(b.allocator, "src/core/key.zig") catch @panic("OOM");
     var dir = root.openDir(io, "tools/drive", .{ .iterate = true }) catch @panic("tools/drive unreadable");
@@ -1252,7 +1249,7 @@ fn driveSourceHash(b: *std.Build) []const u8 {
     }.lt);
     var h = std.crypto.hash.sha2.Sha256.init(.{});
     for (paths.items) |rel| {
-        const text = root.readFileAlloc(io, rel, b.allocator, .limited(16 << 20)) catch @panic("a mnml-drive source is unreadable");
+        const text = readSourceFile(b, rel, 16 << 20) catch @panic("a mnml-drive source is unreadable");
         h.update(rel);
         h.update(&.{0});
         h.update(text);
@@ -1300,7 +1297,7 @@ fn addLua(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin
         .windows => "-DLUA_USE_WINDOWS",
         else => "-DLUA_USE_POSIX",
     };
-    const apicheck: []const u8 = if (optimize == .Debug) "-DLUA_USE_APICHECK" else "-DLUA_COMPAT_MATHLIB=0";
+    const apicheck: []const u8 = if (isDebug(optimize)) "-DLUA_USE_APICHECK" else "-DLUA_COMPAT_MATHLIB=0";
     lib.root_module.addCSourceFiles(.{
         .root = lua_root,
         .files = &lua54_sources,
@@ -1458,7 +1455,7 @@ const TreeSitter = struct {
     highlight: *std.Build.Module,
 };
 
-fn addTreeSitter(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) TreeSitter {
+fn addTreeSitter(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk_mod: *std.Build.Module) TreeSitter {
     // Runtime.
     const ts_root: std.Build.LazyPath = b.path("vendor/tree-sitter");
     const runtime_lib = b.addLibrary(.{
@@ -1537,6 +1534,7 @@ fn addTreeSitter(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         .imports = &.{
             .{ .name = "tree_sitter", .module = runtime },
             .{ .name = "ts_queries", .module = queries },
+            .{ .name = "mnml_sdk", .module = sdk_mod },
         },
     });
 
@@ -1588,8 +1586,7 @@ fn emitQueryDecl(w: *std.Io.Writer, out: []const u8) void {
 /// build was started in. A test that means a HOME builds its own
 /// environment, as the ones that do already do.
 fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
-    const rel = b.cache_root.join(b.allocator, &.{"unit-home"}) catch @panic("OOM");
-    const home = if (std.fs.path.isAbsolute(rel)) rel else b.pathFromRoot(rel);
+    const home = unitHomePath(b);
     for (unit_step.dependencies.items) |dep| {
         const run = dep.cast(std.Build.Step.Run) orelse continue;
         run.setEnvironmentVariable("HOME", home);
@@ -1602,4 +1599,81 @@ fn hermeticUnitEnv(b: *std.Build, unit_step: *std.Build.Step) void {
             "XDG_CONFIG_HOME", "XDG_DATA_HOME",  "XDG_STATE_HOME", "MNML_SHARED_STATE_DIR", "CLAUDECODE",
         }) |name| run.removeEnvironmentVariable(name);
     }
+}
+
+// ── the Zig version seam ─────────────────────────────────────────────────
+//
+// Every build-system call whose spelling differs between Zig releases,
+// behind one name each, so moving the toolchain edits these bodies and not
+// the call sites above. (Zig 0.16 form.)
+
+fn isDebug(optimize: std.builtin.OptimizeMode) bool {
+    return optimize == .Debug;
+}
+
+/// Option `name`: the absolute path `file` is installed at under `bin/`.
+fn addInstalledBinOption(b: *std.Build, opts: *std.Build.Step.Options, name: []const u8, file: []const u8) void {
+    opts.addOption([]const u8, name, b.getInstallPath(.bin, file));
+}
+
+/// Option `name`: the source tree's `sub_path`, a directory a tool walks
+/// at run time.
+fn addSourceDirOption(b: *std.Build, opts: *std.Build.Step.Options, name: []const u8, sub_path: []const u8) void {
+    opts.addOptionPath(name, b.path(sub_path));
+}
+
+/// Option `name`: the source tree's `sub_path` as an absolute string, baked
+/// into a dev build (the scripts folder, the catalogue, the corpus).
+fn addRootPathOption(b: *std.Build, opts: *std.Build.Step.Options, name: []const u8, sub_path: []const u8) void {
+    opts.addOption([]const u8, name, rootPath(b, sub_path));
+}
+
+/// `sub_path` under the build root, absolute.
+fn rootPath(b: *std.Build, sub_path: []const u8) []const u8 {
+    return b.pathFromRoot(sub_path);
+}
+
+/// The source tree's `sub_path` as one argument of `run`.
+fn addRootPathArg(b: *std.Build, run: *std.Build.Step.Run, sub_path: []const u8) void {
+    run.addArg(rootPath(b, sub_path));
+}
+
+/// `zig build -- ARGS` handed on to `run`.
+fn addPassthruArgs(b: *std.Build, run: *std.Build.Step.Run) void {
+    if (b.args) |args| run.addArgs(args);
+}
+
+/// `flag <prefix>/<sub_path>` on `run`: a directory under the install prefix.
+fn addInstallPrefixArg(b: *std.Build, run: *std.Build.Step.Run, flag: []const u8, sub_path: []const u8) void {
+    run.addArgs(&.{ flag, b.pathJoin(&.{ b.install_path, sub_path }) });
+}
+
+/// A nested `zig build`'s `--prefix` (this build's prefix, or `sub_path`
+/// under it), `--cache-dir` and `--global-cache-dir`: this build's own.
+fn addNestedBuildDirArgs(b: *std.Build, run: *std.Build.Step.Run, sub_path: []const u8) void {
+    addInstallPrefixArg(b, run, "--prefix", sub_path);
+    run.addArgs(&.{ "--cache-dir", b.cache_root.path orelse ".zig-cache", "--global-cache-dir", b.graph.global_cache_root.path orelse "." });
+}
+
+/// The directory `sub_path` of the source tree, opened at configure time.
+fn sourceDir(b: *std.Build, sub_path: []const u8) std.Io.Dir {
+    _ = sub_path;
+    return b.build_root.handle;
+}
+
+/// A source file read at configure time.
+fn readSourceFile(b: *std.Build, sub_path: []const u8, limit: usize) ![]u8 {
+    return b.build_root.handle.readFileAlloc(b.graph.io, sub_path, b.allocator, .limited(limit));
+}
+
+/// The unit tests' private HOME: `<cache>/unit-home`.
+fn unitHomePath(b: *std.Build) []const u8 {
+    const rel = b.cache_root.join(b.allocator, &.{"unit-home"}) catch @panic("OOM");
+    return if (std.fs.path.isAbsolute(rel)) rel else b.pathFromRoot(rel);
+}
+
+/// The configure step read git: its answer can change with nothing in
+/// the build's own inputs changing.
+fn observesGit(b: *std.Build) void {
+    _ = b;
 }

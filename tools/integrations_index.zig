@@ -119,11 +119,11 @@ pub const Inputs = struct {
 
 /// The index's JSON, or an error with `why` set.
 pub fn build(arena: Allocator, in: Inputs, why: *[]const u8, warn: *std.ArrayListUnmanaged([]const u8)) ![]const u8 {
-    const index = std.zon.parse.fromSliceAlloc(IndexZon, arena, in.index_zon, null, .{ .ignore_unknown_fields = true }) catch {
+    const index = parseZon(IndexZon, arena, in.index_zon) catch {
         why.* = "integrations/index.zon does not parse";
         return error.Refused;
     };
-    const cat = std.zon.parse.fromSliceAlloc(Catalogue, arena, in.catalogue_zon, null, .{ .ignore_unknown_fields = true }) catch {
+    const cat = parseZon(Catalogue, arena, in.catalogue_zon) catch {
         why.* = "data/marketplace.zon does not parse";
         return error.Refused;
     };
@@ -212,7 +212,7 @@ pub fn main(init: std.process.Init) !u8 {
     const cwd = Io.Dir.cwd();
     const index_zon = try cwd.readFileAllocOptions(io, index_path, arena, .limited(1 << 20), .of(u8), 0);
     if (list) {
-        const rows = std.zon.parse.fromSliceAlloc(IndexZon, arena, index_zon, null, .{ .ignore_unknown_fields = true }) catch {
+        const rows = parseZon(IndexZon, arena, index_zon) catch {
             std.debug.print("integrations_index: {s} does not parse\n", .{index_path});
             return 1;
         };
@@ -232,7 +232,7 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("integrations_index: no .version in {s}\n", .{sdk_zon});
         return 1;
     };
-    const index = std.zon.parse.fromSliceAlloc(IndexZon, arena, index_zon, null, .{ .ignore_unknown_fields = true }) catch {
+    const index = parseZon(IndexZon, arena, index_zon) catch {
         std.debug.print("integrations_index: {s} does not parse\n", .{index_path});
         return 1;
     };
@@ -337,4 +337,12 @@ test "zonVersion and compatible" {
     try t.expect(compatible("0.1.0", "0.1.4"));
     try t.expect(!compatible("0.2.0", "0.1.0"));
     try t.expect(compatible("1.2.0", "1.0.0"));
+}
+
+/// ZON `src` as a `T` on `arena`, unknown fields ignored. This file is run
+/// on its own (`zig run`, release.yml), so it carries the one std spelling
+/// that differs between Zig releases itself rather than reaching the SDK's
+/// `zig_compat`. (Zig 0.16 form.)
+fn parseZon(comptime T: type, arena: std.mem.Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }!T {
+    return std.zon.parse.fromSliceAlloc(T, arena, src, null, .{ .ignore_unknown_fields = true });
 }
