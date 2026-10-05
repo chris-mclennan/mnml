@@ -204,6 +204,8 @@ the release ships one file), and one line per change a user can see.
 - The now-playing chip's Beatport mark is in the MnmlSymbols face mnml
   ships and installs. It was in the 0.2 face only, so a terminal (or the
   web demo) with the 0.3 face showed a blank where the mark goes.
+- `mnml --demo` pins the Jira and Bitbucket launchers to the activity
+  rail.
 - Right-click the statusline between its chips for *Segments ▸*: every
   segment, ticked while shown. A row hides or shows its chip at once and
   writes `.statusline.hidden` to the home config. RESTRICTED and the

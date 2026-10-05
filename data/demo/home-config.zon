@@ -1,5 +1,17 @@
 // mnml --demo's home config: the throwaway home's, deleted on exit.
 // The first-launch setup is skipped — the demo opens on its workspace.
+// The Jira and Bitbucket launchers `--demo` installs are pinned to the
+// activity rail, where a daily setup keeps them: without the pins the
+// rail shows no sign of either integration.
 .{
-    .ui = .{ .first_launch_complete = true },
+    .ui = .{
+        .first_launch_complete = true,
+        .activity_bar_pinned_integrations = .{
+            "jira_work",
+            "jira_boards",
+            "jira_fix_versions",
+            "bitbucket_prs",
+            "bitbucket_pipelines",
+        },
+    },
 }
