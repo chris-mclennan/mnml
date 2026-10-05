@@ -11,6 +11,7 @@ scripts/release.sh v0.3.0              # the same, then `git tag -a v0.3.0`
 git push origin v0.3.0                 # release.sh prints this; it never pushes
 # … watch the Release workflow …
 scripts/dist-check.sh v0.3.0           # count the assets. Green is not enough.
+node site/scripts/pin-release.mjs v0.3.0   # the site's fallback; commit it
 ```
 
 `release.sh` refuses a dirty tree (a dirty tree ships `-dirty` binaries),
@@ -42,6 +43,37 @@ Twenty-one assets when everything has run — 5 archives + 5 `.sha256`
 list by name and fails on the first missing one; `release.yml`'s own
 `verify` job runs it with `--min 17 --without-linux-packages`, because
 package-linux has not run yet at that point.
+
+## The site's release
+
+mnml.sh/download names a release and links its files. Cloudflare Pages
+builds the site on every push to `main`; `site/scripts/prepare.mjs`
+asks GitHub which release is newest — the API (with `GITHUB_TOKEN` /
+`GH_TOKEN` when the build has one), then the `releases/latest`
+redirect, which is not API-rate-limited — and only when both fail
+names the committed `site/src/data/release.json`. A build from the
+committed file still ships, so that file must be current:
+
+```sh
+node site/scripts/pin-release.mjs vX.Y.Z    # after dist-check; commit the result
+node site/scripts/pin-release.mjs --check   # exit 1 when it is behind the tags
+```
+
+Pinning reads the published release's asset names and refuses a
+draft, a prerelease, an integration tag or a release with no assets
+yet. `--check` compares the file with the newest `vX.Y.Z` tag
+reachable from HEAD, and runs in three places a release cannot pass:
+`scripts/release.sh` (the previous release must be pinned before the
+next is cut), `tools/run-sh-check.sh` (so the gate goes red from the
+tag push until the pin lands) and the site workflow's smoke, daily.
+Smoke also fails when the built page is older than GitHub's newest
+release.
+
+Each build says where its answer came from: the log line `prepare:
+release vX.Y.Z … (source: api|redirect|committed)`, and on the page
+`<meta name="mnml-release-source">` beside `mnml-release-version`.
+The weekly upstream watch reads both and says when the live site was
+built from the committed file.
 
 ## Integrations
 
