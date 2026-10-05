@@ -13,7 +13,7 @@ open a.txt
 command editor.use_vim
 command whichkey.leader
 # Group rows: the rail's SEARCH / GIT / INTEGRATIONS / SESSIONS faces.
-expect screen contains "󰍉 f → +find (8)"
+expect screen contains "󰍉 f → +find (9)"
 expect screen contains "󰊢 g → +git (22)"
 expect screen contains "󰐱 i → +integrations (5)"
 # NvChad's `<leader>b` is `:enew`, a root leaf: the neutral mark.
@@ -29,7 +29,7 @@ expect screen contains "󰘵 p → command palette"
 # Inside a group the header carries that group's row, and every leaf
 # there wears the group's face rather than the neutral one.
 type f
-expect screen contains "┌ <leader>f  +find (8) "
+expect screen contains "┌ <leader>f  +find (9) "
 expect screen contains "󰍉 g → grep"
 expect screen contains "󰍉 f → files"
 expect screen lacks "󰘵 g → grep"
