@@ -27,6 +27,7 @@ const sessions = @import("../sessions.zig");
 const terminal_glyph = @import("terminal_glyph.zig");
 const claude_mark = @import("claude_mark.zig");
 const pty_pane = @import("pty_pane.zig");
+const menu_contrib = @import("menu_contrib.zig");
 const Config = @import("../config/Config.zig");
 
 pub const table = .{
@@ -1428,11 +1429,26 @@ fn appendLinkRows(app: *App, arena: Allocator, all: *std.ArrayList(MenuItem), ur
     if (try @import("recent_items.zig").menuInfo(app, arena, url)) |info| try all.append(arena, .{ .label = info, .action = .none });
     try all.append(arena, .{ .label = "Copy link", .action = .{ .copy_link = url } });
     const cs = app.link_rules.candidates(url);
-    if (cs.len < 2) return all.append(arena, .{ .label = "Open link", .action = .{ .open_url = url } });
-    for (cs) |c| try all.append(arena, .{
+    if (cs.len < 2) {
+        try all.append(arena, .{ .label = "Open link", .action = .{ .open_url = url } });
+    } else for (cs) |c| try all.append(arena, .{
         .label = try std.fmt.allocPrint(arena, "Open in {s}", .{c.repo}),
         .action = .{ .open_url = try arena.dupe(u8, c.url) },
     });
+    // Other integrations' rows for what the link stands for — a ticket,
+    // a PR — and for any link (`menu_contrib.zig`).
+    var row: menu_contrib.Row = .{ .url = url, .link = true };
+    if (app.link_rules.meta(url)) |m| row = .{
+        .kind = try arena.dupe(u8, m.kind),
+        .id = try arena.dupe(u8, m.id),
+        .key = try arena.dupe(u8, m.key),
+        .repo = try arena.dupe(u8, m.repo),
+        .n = try arena.dupe(u8, m.n),
+        .state = try arena.dupe(u8, m.state),
+        .url = url,
+        .link = true,
+    };
+    try menu_contrib.appendInstalled(app, arena, all, row);
 }
 
 /// A link (a preview's, a detail pane's — Rust `integration_detail_links`

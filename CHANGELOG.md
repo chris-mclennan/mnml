@@ -12,6 +12,18 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### Integrations add rows to each other's menus
+
+- A manifest's `context_menu[]` rows now reach mnml's menus: a row
+  aimed at `ticket`, `pr`, `pipeline`, `link` or one pane's rows
+  (`pane:<id>:<kind>`) joins the right-click menu of a link of that
+  kind anywhere and of a Jira ticket row, under a muted header with the
+  contributing integration's name. Picking it runs that integration's
+  command with the clicked row's `{key}`, `{repo}`, `{n}`, `{id}` and
+  `{url}` filled in; a `when` (`state=OPEN`) narrows where it shows.
+  Older manifests with a plain string target still load. The sample
+  integration contributes *Echo ticket key* and *Echo pull request*.
+
 ### Integration panes: a confirm's chips click, and hover help names the key
 
 - The SDK's confirm box (`confirmBox`) let a click on its OK or Cancel

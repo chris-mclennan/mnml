@@ -225,8 +225,10 @@ pub const Mount = struct {
         return m.hoverHelp(.{ .title = title, .body = body });
     }
 
-    /// `hover` from one `pane.help.Help` entry, its `command` with it:
-    /// the host then ends the entry with that command's `Key:` chord.
+    /// `hover` from one `pane.help.Help` entry, its `command` and `row`
+    /// with it: the host ends the entry with that command's `Key:`
+    /// chord, and a right-click on a named row (`wire.RowRef`) can carry
+    /// other integrations' menu rows for its kind.
     pub fn hoverHelp(m: *Mount, help: @import("pane/help.zig").Help) SendError!void {
         if (!m.hello.capabilities.hover_help) return;
         var h = std.hash.Wyhash.init(0);
@@ -235,11 +237,18 @@ pub const Mount = struct {
         h.update(help.body);
         h.update("\x00");
         h.update(help.command orelse "");
+        if (help.row) |r| {
+            var nbuf: [24]u8 = undefined;
+            for ([_][]const u8{ r.kind, r.id, r.key, r.repo, r.state, std.fmt.bufPrint(&nbuf, "{d}", .{r.n}) catch "" }) |f| {
+                h.update("\x00");
+                h.update(f);
+            }
+        }
         const sig = h.final();
         if (m.hover_sent and sig == m.hover_sig) return;
         m.hover_sig = sig;
         m.hover_sent = true;
-        try m.sendMessage(.{ .hover = .{ .title = help.title, .body = help.body, .command = help.command } });
+        try m.sendMessage(.{ .hover = .{ .title = help.title, .body = help.body, .command = help.command, .row = help.row } });
     }
 
     pub fn command(m: *Mount, id: []const u8) SendError!void {

@@ -3919,6 +3919,7 @@ test {
     _ = @import("app/cmd_tab.zig");
     _ = @import("app/scroll.zig");
     _ = @import("app/context_menus.zig");
+    _ = @import("app/menu_contrib.zig");
     _ = @import("app/cheatsheet.zig");
     _ = @import("app/cmd_term.zig");
     _ = @import("app/mount_pane.zig");

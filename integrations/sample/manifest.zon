@@ -14,9 +14,16 @@
     .commands = .{
         .{ .id = "sample.open", .title = "Sample: open the counter pane", .keys = .{"ctrl+k s"} },
         .{ .id = "sample.hello", .title = "Sample: say hello (a toast)", .ex = "echo Hello from the sample integration" },
+        .{ .id = "sample.echo_ticket", .title = "Sample: echo a ticket key", .ex = "echo Sample saw {key}" },
+        .{ .id = "sample.echo_pr", .title = "Sample: echo a pull request", .ex = "echo Sample saw {repo}#{n}" },
     },
+    // Rows this integration adds to menus mnml builds for OTHER panes
+    // and links (docs/SDK.md, *Menu contributions*): a Jira ticket's
+    // row, a ticket link in a terminal, a Bitbucket pull request. The
+    // host fills `{key}` / `{repo}` / `{n}` from what was clicked.
     .context_menu = .{
-        .{ .target = "tree.file", .title = "Sample: hello", .command = "sample.hello" },
+        .{ .target = .{ .kind = "ticket" }, .label = "Echo ticket key", .command = "sample.echo_ticket", .hover = "The sample's reference contribution: toasts the ticket's key." },
+        .{ .target = .{ .kind = "pr" }, .label = "Echo pull request", .command = "sample.echo_pr", .when = "state!=DECLINED" },
     },
     .statusline = .{
         .{ .id = "chip", .text = "S·sample", .color = "teal", .click_command = "sample.open" },

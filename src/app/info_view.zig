@@ -571,6 +571,8 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
     // A row that only says something is its own help: the label, no
     // `no help written yet` mark.
     if (target == .menu_item) if (copy.menus.infoRowLabel(app, target.menu_item.menu, target.menu_item.idx)) |label| return .{ .title = label };
+    // A row another integration contributed: its manifest's own copy.
+    if (target == .menu_item) if (contributedRow(app, target.menu_item.menu, target.menu_item.idx)) |it| return .{ .title = it.label, .body = it.action.contribution.hover };
     if (try copy.lookup(app, arena, target)) |entry| {
         const m = try copy.materialize(app, arena, entry);
         app.info_view.links = m.actions;
@@ -584,6 +586,15 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
     if (target == .menu_item) if (try copy.menus.rowFallback(app, arena, target.menu_item.menu, target.menu_item.idx)) |f| return .{ .title = f.title, .body = f.body, .aside = no_help_aside, .aside_first = true };
     const tip = (try discovery.describe(app, arena, target)) orelse return null;
     return .{ .title = tip.title, .body = tip.detail orelse "", .aside = no_help_aside, .aside_first = true };
+}
+
+/// The open menu's row `idx` when it is a contributed one
+/// (`app/menu_contrib.zig`); only the top menu carries them.
+fn contributedRow(app: *App, menu: u32, idx: u16) ?command.MenuItem {
+    if (app.overlay != .menu or menu == 1 or menu == 3) return null;
+    if (idx >= app.overlay.menu.items.len) return null;
+    const it = app.overlay.menu.items[idx];
+    return if (it.action == .contribution) it else null;
 }
 
 /// The `Key:` line: the chord, under the active profile, of the one

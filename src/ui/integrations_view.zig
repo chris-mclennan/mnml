@@ -640,7 +640,7 @@ pub fn drawDetail(ui: Ui, pane: PaneId, area: Rect, p: DetailProps) void {
         y += 1;
     }
     if ((p.context_menu.len > 0 or p.menu_bar.len > 0) and Sect.head(ui, area, &y, "Menus")) {
-        for (p.context_menu) |c| Sect.line(ui, area, &y, .{ .k = c.target, .v = ui.fmt("{s}  {s}", .{ c.title, c.command }) });
+        for (p.context_menu) |c| Sect.line(ui, area, &y, .{ .k = c.target.kind, .v = ui.fmt("{s}  {s}", .{ c.text(), c.command }) });
         for (p.menu_bar) |m| Sect.line(ui, area, &y, .{ .k = m.path, .v = m.command });
         y += 1;
     }

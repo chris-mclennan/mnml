@@ -44,6 +44,7 @@ const integrations = @import("integrations.zig");
 pub const Span = link_span.Span;
 const ipc_command = @import("../ipc/command.zig");
 const remote_mod = @import("../git/remote.zig");
+const host = @import("../bridge/host.zig");
 
 /// A published row's high, plus this: a number created since the
 /// integration's last poll still resolves to the repo just under it.
@@ -67,6 +68,9 @@ pub const Rule = struct {
     /// `.range`: the row kind the number is looked up in, gpa-owned;
     /// empty on a literal rule.
     kind: []u8 = &.{},
+    /// A literal rule's `Link.kind` (`ticket`, `pr`, `pipeline`) — one
+    /// of the SDK's static names, never owned; empty when it named none.
+    link_kind: []const u8 = "",
 };
 
 const Entry = struct {
@@ -100,6 +104,12 @@ pub const State = struct {
     /// (the first candidate's) → every candidate, for its menu. Filled
     /// as links are found, emptied with the cache; gpa-owned.
     alts: std.StringHashMapUnmanaged([]Candidate) = .empty,
+    /// What an integration's link stands for — its address → a
+    /// `host.packRow` of kind (`ticket` for a literal rule, the `ranges`
+    /// kind for a range one), key, repo and number — for the rows other
+    /// integrations contribute to its menu (`menu_contrib.zig`). Filled
+    /// and emptied with the cache; gpa-owned.
+    metas: std.StringHashMapUnmanaged([]u8) = .empty,
     /// The workspace's own repo (`acme/widget`, off its git remote) —
     /// the candidate a `.range` link opens first. gpa-owned.
     home: []u8 = &.{},
@@ -112,6 +122,7 @@ pub const State = struct {
         self.clearCache(gpa);
         self.cache.deinit(gpa);
         self.alts.deinit(gpa);
+        self.metas.deinit(gpa);
         var it = self.tables.iterator();
         while (it.next()) |e| {
             freeRows(gpa, e.value_ptr.*);
@@ -146,6 +157,27 @@ pub const State = struct {
             gpa.free(e.key_ptr.*);
         }
         self.alts.clearRetainingCapacity();
+        var mt = self.metas.iterator();
+        while (mt.next()) |e| {
+            gpa.free(e.value_ptr.*);
+            gpa.free(e.key_ptr.*);
+        }
+        self.metas.clearRetainingCapacity();
+    }
+
+    /// What the link to `url` stands for (`metas`); null for a plain
+    /// address or one no rule produced.
+    pub fn meta(self: *const State, url: []const u8) ?host.UnpackedRow {
+        return host.unpackRow(self.metas.get(url) orelse return null);
+    }
+
+    fn noteMeta(self: *State, gpa: Allocator, url: []const u8, r: @import("../bridge/wire.zig").RowRef) Allocator.Error!void {
+        if (self.metas.contains(url)) return;
+        const v = try host.packRow(gpa, r);
+        errdefer gpa.free(v);
+        const k = try gpa.dupe(u8, url);
+        errdefer gpa.free(k);
+        try self.metas.put(gpa, k, v);
     }
 
     /// Every repo the link to `url` could mean, the one it opens first;
@@ -295,11 +327,35 @@ pub fn find(st: *State, gpa: Allocator, text: []const u8) Allocator.Error![]Span
             }
             const url = try expand(gpa, rule.url, text, m);
             errdefer gpa.free(url);
+            if (rule.link_kind.len > 0) try st.noteMeta(gpa, url, literalMeta(rule.link_kind, text[m.start..m.end]));
             try out.append(gpa, .{ .start = m.start, .end = m.end, .url = url });
         }
     }
     std.mem.sort(Span, out.items, {}, byStart);
     return out.toOwnedSlice(gpa);
+}
+
+/// What a literal rule's match stands for: the match is its key and
+/// id; a `pr` or `pipeline` match also gives its trailing digits as the
+/// number and what comes before the last `#` as the repo
+/// (`acme/widget#42`), as far as the text says.
+pub fn literalMeta(kind: []const u8, match: []const u8) @import("../bridge/wire.zig").RowRef {
+    var r: @import("../bridge/wire.zig").RowRef = .{ .kind = kind, .id = match, .key = match };
+    if (std.mem.eql(u8, kind, "ticket")) return r;
+    var end = match.len;
+    while (end > 0 and std.ascii.isDigit(match[end - 1])) end -= 1;
+    r.n = std.fmt.parseInt(u64, match[end..], 10) catch 0;
+    if (std.mem.lastIndexOfScalar(u8, match, '#')) |h| r.repo = match[0..h];
+    return r;
+}
+
+test "literalMeta: a ticket is its key; a PR ref gives its repo and number" {
+    const tk = literalMeta("ticket", "ACME-123");
+    try std.testing.expectEqualStrings("ACME-123", tk.key);
+    try std.testing.expectEqual(@as(u64, 0), tk.n);
+    const pr = literalMeta("pr", "acme/widget#42");
+    try std.testing.expectEqualStrings("acme/widget", pr.repo);
+    try std.testing.expectEqual(@as(u64, 42), pr.n);
 }
 
 /// A `.range` match's address: its number's repos (`resolveRange`), the
@@ -315,8 +371,9 @@ fn rangeUrl(st: *State, gpa: Allocator, rule: *const Rule, text: []const u8, m: 
     const expanded = try expand(gpa, rule.url, text, m);
     defer gpa.free(expanded);
     const first = try std.mem.replaceOwned(u8, gpa, expanded, "{" ++ manifest_mod.manifest.range_repo_var ++ "}", rows[got[0]].repo);
-    if (got.len == 1 or st.alts.contains(first)) return first;
     errdefer gpa.free(first);
+    try st.noteMeta(gpa, first, .{ .kind = rule.kind, .id = text[g.start..g.end], .key = text[m.start..m.end], .repo = rows[got[0]].repo, .n = n });
+    if (got.len == 1 or st.alts.contains(first)) return first;
     const cs = try gpa.alloc(Candidate, got.len);
     var made: usize = 0;
     errdefer freeCandidates(gpa, cs[0..made]);
@@ -478,7 +535,11 @@ fn addRule(st: *State, gpa: Allocator, arena: Allocator, app: *App, m: manifest_
     errdefer gpa.free(owned_url);
     const kind = try gpa.dupe(u8, if (range) l.ranges else "");
     errdefer gpa.free(kind);
-    try st.rules.append(gpa, .{ .owner = owner, .re = re, .url = owned_url, .kind = kind });
+    var link_kind: []const u8 = "";
+    for (manifest_mod.manifest.Target.generic) |g| if (std.mem.eql(u8, g, l.kind)) {
+        link_kind = g;
+    };
+    try st.rules.append(gpa, .{ .owner = owner, .re = re, .url = owned_url, .kind = kind, .link_kind = link_kind });
     return null;
 }
 

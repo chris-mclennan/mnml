@@ -322,6 +322,23 @@ pub const ToastAction = struct {
 
 pub const Cursor = struct { x: u16, y: u16 };
 
+/// What a pane row stands for — the values a `context_menu[]` row's
+/// `when` tests and its command's `{id}` `{key}` `{repo}` `{n}` fill
+/// from. `kind` is `ticket`, `pr` or `pipeline` (or a kind of the
+/// pane's own, reached by `pane:<integration id>:<kind>`).
+pub const RowRef = struct {
+    kind: []const u8,
+    /// The row's own id — a ticket's key, a PR's number as text.
+    id: []const u8 = "",
+    key: []const u8 = "",
+    /// `workspace/repo`.
+    repo: []const u8 = "",
+    /// A PR's or a pipeline's number; 0 for none.
+    n: u64 = 0,
+    /// `OPEN`, `In Progress`, …
+    state: []const u8 = "",
+};
+
 pub const SiblingMessage = union(enum) {
     /// A whole screen, `geometry.rows` rows of `geometry.cols` cells.
     /// Short rows are right-padded by the host.
@@ -353,7 +370,13 @@ pub const SiblingMessage = union(enum) {
     /// the host end the entry with that command's `Key:` chord, the
     /// way its own hover help does. Optional both ways: an older host
     /// ignores it, an older pane never sends it.
-    hover: struct { title: []const u8 = "", body: []const u8 = "", command: ?[]const u8 = null },
+    ///
+    /// `row`, when the element is a row that stands for a ticket, a
+    /// pull request or a pipeline: what it is, so a right-click on it
+    /// can carry other integrations' `context_menu[]` rows for that
+    /// kind (docs/SDK.md, *Menu contributions*). A host that has none
+    /// for the kind forwards the click as before. Optional both ways.
+    hover: struct { title: []const u8 = "", body: []const u8 = "", command: ?[]const u8 = null, row: ?RowRef = null },
     /// A clean exit.
     bye,
 };
@@ -726,4 +749,18 @@ test "hover: the element's command rides along when it has one, and is absent on
     try testing.expectEqual(@as(?[]const u8, null), old.hover.command);
     const without = try encode(arena, SiblingMessage{ .hover = .{ .title = "Refresh" } });
     try testing.expect(std.mem.indexOf(u8, without, "command") == null);
+}
+
+test "hover: command and row ride together; an older hover (neither) still decodes" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const both = try roundTrip(SiblingMessage, arena, .{ .hover = .{ .title = "Row", .command = "jira_work.open", .row = .{ .kind = "ticket", .key = "ACME-123", .state = "In Progress" } } });
+    try testing.expectEqualStrings("jira_work.open", both.hover.command.?);
+    try testing.expectEqualStrings("ACME-123", both.hover.row.?.key);
+    const old = try decode(SiblingMessage, arena, "{\"hover\":{\"title\":\"t\",\"body\":\"b\"}}");
+    try testing.expect(old.hover.command == null and old.hover.row == null);
+    // A row a newer pane fills with fields this host lacks still decodes.
+    const newer = try decode(SiblingMessage, arena, "{\"hover\":{\"title\":\"t\",\"row\":{\"kind\":\"pr\",\"n\":42,\"future\":1}}}");
+    try testing.expectEqual(@as(u64, 42), newer.hover.row.?.n);
 }

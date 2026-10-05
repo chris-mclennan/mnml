@@ -39,6 +39,6 @@
     // $JIRA_URL (the site_url field's fallback above). Only this chip
     // declares it: the other two are the same site.
     .links = .{
-        .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}" },
+        .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}", .kind = "ticket" },
     },
 }

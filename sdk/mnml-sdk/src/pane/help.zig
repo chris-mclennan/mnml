@@ -24,6 +24,10 @@ pub const Help = struct {
     title: []const u8,
     body: []const u8 = "",
     command: ?[]const u8 = null,
+    /// The row the element stands for, when it is one (`wire.RowRef`):
+    /// what lets a right-click there carry other integrations' menu
+    /// rows for its kind (docs/SDK.md, *Menu contributions*).
+    row: ?@import("../wire.zig").RowRef = null,
 
     /// The same entry, naming the command its element's click runs.
     pub fn runs(h: Help, id: []const u8) Help {

@@ -2357,6 +2357,30 @@ pub const App = struct {
     /// in every pane (`sdk.pane.help.common`); the Jira chips, the
     /// ticket buttons and the pickers say their own words. `buf` backs
     /// a title that names a key or a ticket.
+    /// The ticket a row or card under the pointer stands for, for the
+    /// host (`sdk.wire.RowRef`): what lets a right-click there carry
+    /// other integrations' menu rows for a ticket. Null off a ticket.
+    pub fn rowRefAt(a: *App, arena: Allocator, col: u16, row: u16) Allocator.Error!?sdk.wire.RowRef {
+        if (!a.hasTabs()) return null;
+        const target = a.hits.at(col, row) orelse return null;
+        const t = a.tab();
+        const idx: usize = switch (target) {
+            .card => |i| i,
+            .row => |i| if (t.cfg.isTree()) blk: {
+                const r = (try a.treeRows(arena)) orelse return null;
+                if (i >= r.rows.len) return null;
+                break :blk switch (r.rows[i]) {
+                    .ticket => |tk| tk.issue_idx,
+                    else => return null,
+                };
+            } else i,
+            else => return null,
+        };
+        if (idx >= t.issues.len) return null;
+        const is = t.issues[idx];
+        return .{ .kind = "ticket", .id = is.key, .key = is.key, .state = is.status };
+    }
+
     pub fn helpAt(a: *App, col: u16, row: u16, buf: []u8) sdk.pane.help.Help {
         const H = sdk.pane.help;
         const target = a.hits.at(col, row) orelse return .{ .title = "" };

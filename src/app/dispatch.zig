@@ -14,6 +14,7 @@ const App = app_mod.App;
 const PaneId = app_mod.PaneId;
 const EditorPane = app_mod.EditorPane;
 const command = @import("../core/command.zig");
+const menu_contrib = @import("menu_contrib.zig");
 const line_blame = @import("line_blame.zig");
 const keymap = @import("../core/keymap.zig");
 const key_mod = @import("../core/key.zig");
@@ -1396,6 +1397,10 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
         .session_focus => |f| try app.frame.allocator().dupe(u8, f.id),
         else => null,
     };
+    const contribution: ?command.MenuContribution = switch (action) {
+        .contribution => |c| try menu_contrib.dupe(app.frame.allocator(), c),
+        else => null,
+    };
     closeOverlay(app);
     app.http.quick_fix_var = quick_fix;
     switch (action) {
@@ -1537,6 +1542,7 @@ fn runMenuAction(app: *App, action: command.MenuAction) Allocator.Error!void {
             error.OutOfMemory => return error.OutOfMemory,
             else => {},
         },
+        .contribution => try toastOnFail(app, menu_contrib.run(app, contribution.?)),
         .none => {},
     }
 }

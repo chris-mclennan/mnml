@@ -804,7 +804,23 @@ pub const MenuAction = union(enum) {
     /// `id` (the menu's `mem` arena owns the bytes;
     /// `app/session_attention.zig`).
     session_focus: struct { pane: ?u32 = null, id: []const u8 = "" },
+    /// A row another integration contributed through its manifest's
+    /// `context_menu[]` (`app/menu_contrib.zig`): its command, run with
+    /// the clicked row's values in `{id}` `{key}` `{repo}` `{n}` `{url}`.
+    /// The menu's `mem` arena owns the bytes.
+    contribution: MenuContribution,
     none,
+};
+
+pub const MenuContribution = struct {
+    command: []const u8,
+    id: []const u8 = "",
+    key: []const u8 = "",
+    repo: []const u8 = "",
+    n: []const u8 = "",
+    url: []const u8 = "",
+    /// The info view's copy for the row.
+    hover: []const u8 = "",
 };
 
 /// Which session a `Color: …` row recolours: the SESSIONS row under the

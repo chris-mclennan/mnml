@@ -92,5 +92,5 @@ live figure, so it leaves those three fields null.
 `manifest.zon` beside `main.zig`, `@import`ed by the binary so the
 program and the Dev tab read one definition: the chip (a flask, `S` without a Nerd Font, teal), the
 `sample.open` command on `ctrl+k s`, a `sample.hello` ex line, a
-statusline segment, a `tree.file` context-menu row and one discrete
+statusline segment, two menu contributions (`ticket`, `pr`) and one discrete
 setting (`mood`), which reaches the binary as `MNML_SETTING_MOOD`.
