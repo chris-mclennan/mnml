@@ -8,7 +8,7 @@
     .id = "jira_boards",
     .label = "Jira Boards",
     .description = "Jira: active sprint + backlog",
-    .version = "0.2.2",
+    .version = "0.2.3",
     .binary = "mnml-jira",
     .category = "tracker",
     .chip = .{ .glyph = "\u{f1c17}", .fallback = "JB", .color = "magenta", .tooltip = "Jira Boards", .in_palette_bar = false }, // MnmlSymbols: Atlassian board

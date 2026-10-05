@@ -8,7 +8,7 @@
     .id = "jira_fix_versions",
     .label = "Jira Fix Versions",
     .description = "Jira: current release grouped by status, with linked PRs + pipelines",
-    .version = "0.2.2",
+    .version = "0.2.3",
     .binary = "mnml-jira",
     .category = "tracker",
     .chip = .{ .glyph = "\u{f1c18}", .fallback = "JV", .color = "green", .tooltip = "Jira Fix Versions", .in_palette_bar = false }, // MnmlSymbols: Atlassian release

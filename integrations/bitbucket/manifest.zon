@@ -14,7 +14,7 @@
     .id = "bitbucket_prs",
     .label = "Bitbucket PRs",
     .description = "Bitbucket: open + merged pull requests across the workspace",
-    .version = "0.2.2",
+    .version = "0.2.3",
     .binary = "mnml-bitbucket",
     .args = .{ "--only", "prs" },
     .category = "forge",
