@@ -29,6 +29,7 @@ const filters = @import("filters.zig");
 const dates = @import("dates.zig");
 const review_cache = @import("review_cache.zig");
 const link_ranges = @import("link_ranges.zig");
+const recent = @import("recent.zig");
 const sdk = @import("mnml_sdk");
 const merge = sdk.pane.merge;
 const j = @import("json.zig");
@@ -287,6 +288,10 @@ pub const Worker = struct {
     /// listing returns widens it, and each repo's pipelines are asked
     /// for when `link_ranges.pipeline_probe_secs` has passed.
     link_ranges: ?*link_ranges.Table = null,
+    /// The shared recent-items cache (`recent.zig`): every listing a
+    /// job brings back lands there too. Off by default — a test worker
+    /// writes nothing.
+    recent: recent.Sink = .{},
     scope_gen: ?u32 = null,
     scope_arena: ?std.heap.ArenaAllocator = null,
     scope_repos: []const []const u8 = &.{},
@@ -334,6 +339,7 @@ pub const Worker = struct {
                 var res = try w.refresh(a, r.tab, r.spec, r.scope, job.now_secs);
                 res.digest = h.final();
                 res.refused = w.refusedCount() != refused_before;
+                w.publishRefresh(a, r.spec, res);
                 break :blk .{ .refresh = res };
             },
             .pr_changed => |c| .{ .pr_changed = try w.prChanged(a, c.tab, c.key) },
@@ -554,6 +560,42 @@ pub const Worker = struct {
                 for (rows) |r| errored += @intFromBool(r.error_label.len > 0);
                 return .{ .tab = tab, .data = .{ .repo_tree = rows }, .repos = rows.len, .errored = errored, .status = try std.fmt.allocPrint(a, "{s} · {d} {s}", .{ spec.name, rows.len, sdk.pane.text.noun(rows.len, "repo", "repos") }), .scope_repos = try dupeList(a, repos) };
             },
+        }
+    }
+
+    /// A tab's fetch, into the recent-items cache as `tab:<name>`:
+    /// pull requests whole when no repo errored; pipeline runs never
+    /// whole; a branches tab carries neither.
+    fn publishRefresh(w: *Worker, a: Allocator, spec: tabs.TabSpec, res: RefreshResult) void {
+        if (w.recent.root == null) return;
+        const kind: sdk.cache.Kind = switch (spec.kind) {
+            .pull_requests, .workspace_open_prs, .workspace_merged_prs => .pr,
+            .pipelines, .workspace_pipelines => .pipeline,
+            .branches => return,
+        };
+        if (res.error_text.len > 0) return recent.failed(w.gpa, w.io, w.recent, kind);
+        const data = res.data orelse return;
+        const listing = std.fmt.allocPrint(a, "tab:{s}", .{spec.name}) catch return;
+        const own_repo = std.fmt.allocPrint(a, "{s}/{s}", .{ spec.workspace, spec.repo }) catch return;
+        var prs: recent.PrBatch = .{};
+        var runs: recent.PipelineBatch = .{};
+        switch (data) {
+            .pull_requests => |list| for (list) |pr| prs.add(a, pr, own_repo) catch return,
+            .repo_pr_tree => |rows| for (rows) |row| {
+                const full = std.fmt.allocPrint(a, "{s}/{s}", .{ spec.workspace, row.slug }) catch return;
+                for (row.prs) |pr| prs.add(a, pr, full) catch return;
+                if (row.fallback_merged) |pr| prs.add(a, pr, full) catch return;
+            },
+            .pipelines => |list| for (list) |p| runs.add(a, p, own_repo) catch return,
+            .repo_tree => |rows| for (rows) |row| {
+                const full = std.fmt.allocPrint(a, "{s}/{s}", .{ spec.workspace, row.slug }) catch return;
+                for (row.branches) |b| if (b.latest) |p| runs.add(a, p, full) catch return;
+            },
+            .branches => return,
+        }
+        switch (kind) {
+            .pr => _ = recent.publishPrs(w.gpa, w.io, w.recent, listing, res.errored == 0, prs.list.items),
+            else => _ = recent.publishPipelines(w.gpa, w.io, w.recent, listing, runs.list.items),
         }
     }
 
@@ -915,18 +957,30 @@ pub const Worker = struct {
     /// poll pays one request per repo an hour, not one per poll. A
     /// failed answer is left for the next poll.
     fn probePipelines(w: *Worker, a: Allocator, lr: *link_ranges.Table, workspace: []const u8, repos: []const []const u8, now_secs: i64) Allocator.Error!void {
+        var runs: recent.PipelineBatch = .{};
+        var asked: usize = 0;
+        var refused: usize = 0;
+        defer if (asked > 0 and refused == asked) {
+            recent.failed(w.gpa, w.io, w.recent, .pipeline);
+        } else if (runs.list.items.len > 0) {
+            _ = recent.publishPipelines(w.gpa, w.io, w.recent, "probe", runs.list.items);
+        };
         for (repos) |slug| {
             const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ workspace, slug });
             if (!lr.due(full, "pipeline", now_secs, link_ranges.pipeline_probe_secs)) continue;
             var reply = try w.client.listPipelines(w.gpa, workspace, slug, 10);
             defer reply.deinit(w.gpa);
+            asked += 1;
             switch (reply) {
                 .ok => |body| {
                     const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
-                    for (try model.parsePipelines(a, v)) |p| try lr.observe(full, "pipeline", @intCast(@max(p.build_number, 0)));
+                    for (try model.parsePipelines(a, v)) |p| {
+                        try lr.observe(full, "pipeline", @intCast(@max(p.build_number, 0)));
+                        try runs.add(a, p, full);
+                    }
                     try lr.probed(full, "pipeline", now_secs);
                 },
-                .failed => {},
+                .failed => refused += 1,
             }
         }
     }
@@ -984,6 +1038,10 @@ pub const Worker = struct {
         var open_items: std.ArrayList(ValuesItem) = .empty;
         var awaiting_items: std.ArrayList(ValuesItem) = .empty;
         var awaiting: usize = 0;
+        // What the listing brought back, for the recent-items cache,
+        // split the way the figures are.
+        var authored: recent.PrBatch = .{};
+        var reviewing: recent.PrBatch = .{};
         w.progress.set(0, @intCast(repos.len));
         for (repos, 0..) |slug, i| {
             defer w.progress.set(@intCast(i + 1), @intCast(repos.len));
@@ -992,8 +1050,10 @@ pub const Worker = struct {
             switch (reply) {
                 .ok => |body| {
                     const v = std.json.parseFromSliceLeaky(j.Value, a, body.bytes, .{}) catch continue;
+                    const repo_full = try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug });
                     for (try model.parsePullRequests(a, v)) |pr| {
-                        if (w.link_ranges) |lr| try lr.observe(try std.fmt.allocPrint(a, "{s}/{s}", .{ scope.workspace, slug }), "pr", @intCast(@max(pr.id, 0)));
+                        if (w.link_ranges) |lr| try lr.observe(repo_full, "pr", @intCast(@max(pr.id, 0)));
+                        try (if (std.mem.eql(u8, pr.author_id, me)) &authored else &reviewing).add(a, pr, repo_full);
                         var excluded = false;
                         for (patterns) |p| if (model.branchMatches(p, pr.source_branch)) {
                             excluded = true;
@@ -1023,7 +1083,13 @@ pub const Worker = struct {
                 .failed => failures += 1,
             }
         }
-        if (failures > 0 and failures == repos.len) return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
+        if (failures > 0 and failures == repos.len) {
+            recent.failed(w.gpa, w.io, w.recent, .pr);
+            return .{ .error_text = try std.fmt.allocPrint(a, "all {d} repo requests failed", .{failures}) };
+        }
+        // Whole when every repo answered.
+        _ = recent.publishPrs(w.gpa, w.io, w.recent, "authored", failures == 0, authored.list.items);
+        _ = recent.publishPrs(w.gpa, w.io, w.recent, "reviewing", failures == 0, reviewing.list.items);
         if (w.link_ranges) |lr| try w.probePipelines(a, lr, scope.workspace, repos, now_secs);
         var out: ValuesResult = .{
             .open_mine = open,

@@ -39,6 +39,7 @@ const ratelimit = @import("src/ratelimit.zig");
 const cache_mod = @import("src/cache.zig");
 const review_cache = @import("src/review_cache.zig");
 const link_ranges = @import("src/link_ranges.zig");
+const recent = @import("src/recent.zig");
 const fetch = @import("src/fetch.zig");
 const app_mod = @import("src/app.zig");
 const screen = @import("src/screen.zig");
@@ -419,8 +420,17 @@ const Session = struct {
     log: sdk.RequestLog,
     client: api.Client,
     base_url: []u8,
+    /// The shared recent-items cache's directory (`src/recent.zig`);
+    /// null when it is off.
+    recent_root: ?[]u8 = null,
+
+    /// Where a worker of this session hands what it fetched.
+    fn recentSink(s: *const Session) recent.Sink {
+        return .{ .root = s.recent_root, .stale_after_secs = recent.staleAfter(s.loaded.config.refresh_interval_secs) };
+    }
 
     fn deinit(s: *Session, gpa: Allocator) void {
+        if (s.recent_root) |r| gpa.free(r);
         s.client.deinit();
         s.log.deinit();
         s.limiter.deinit();
@@ -462,7 +472,11 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     errdefer log.deinit();
     var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);
     errdefer client.deinit();
-    return .{ .loaded = loaded, .tokens = tokens, .limiter = limiter, .log = log, .client = client, .base_url = base_url };
+    // Every listing a worker brings back also lands in the shared
+    // recent-items cache, so `acme/widget#45` elsewhere gets its title.
+    // Never a request of its own.
+    const recent_root = try recent.rootFor(gpa, env);
+    return .{ .loaded = loaded, .tokens = tokens, .limiter = limiter, .log = log, .client = client, .base_url = base_url, .recent_root = recent_root };
 }
 
 /// `$BITBUCKET_BASE_URL` — literally, or `@<path>` naming a file that
@@ -605,6 +619,7 @@ fn computeValues(gpa: Allocator, io: Io, s: *Session, rc: ?*review_cache.Cache, 
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
     worker.review_cache = rc;
     worker.link_ranges = lr;
+    worker.recent = s.recentSink();
     defer worker.deinit();
     const c = s.loaded.config;
     var job = try fetch.makeJob(gpa, nowSecs(io), .{ .values = .{
@@ -1068,6 +1083,7 @@ fn prefetchCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out:
     var progress: fetch.Progress = .{};
     app.progress = &progress;
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, s.loaded.config.account_id, s.loaded.config.workspace);
+    worker.recent = s.recentSink();
     defer worker.deinit();
 
     try app.startup();
@@ -1532,6 +1548,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     var progress: fetch.Progress = .{};
     app.progress = &progress;
     var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id, session.loaded.config.workspace);
+    worker.recent = session.recentSink();
     defer worker.deinit();
 
     var event_buf: [256]Event = undefined;
@@ -1785,6 +1802,7 @@ test {
     _ = @import("src/dates.zig");
     _ = @import("src/json.zig");
     _ = @import("src/link_ranges.zig");
+    _ = @import("src/recent.zig");
     _ = @import("src/os.zig");
     _ = @import("src/ratelimit.zig");
     _ = @import("src/config.zig");
