@@ -6458,7 +6458,9 @@ test "git mode: entering lists the branches and the worktree in the palette, one
     try testing.expectEqual(@as(usize, 1), st.rail_worktrees.len);
     // The sidebar snapped to a fifth of the screen; the layout is the one graph tab.
     try testing.expectEqual(@as(u16, 24), f.app.tree.width);
-    const panes = try f.app.layouts.current().allPanes(f.app.frame.allocator());
+    // Copied off the frame arena: it is compared after more frames.
+    const panes = try testing.allocator.dupe(PaneId, try f.app.layouts.current().allPanes(f.app.frame.allocator()));
+    defer testing.allocator.free(panes);
     try testing.expectEqual(@as(usize, 1), panes.len);
     try testing.expect(f.app.panes.get(panes[0]).?.* == .git_graph);
     var txt = try f.screen();
