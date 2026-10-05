@@ -1,0 +1,53 @@
+# env: HOME=home
+# env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
+# Ctrl+1…9 in the sessions view (`sessions_mode.viewing`: the sessions
+# mode on screen, or SESSIONS with the keys) are the card numbers —
+# `sessions.focus_N`, the number `Ctrl+Alt+N` reaches everywhere. Three
+# stand-in sessions, the first docked: its card still wears 1 though the
+# mode's columns skip it, so `Ctrl+2` must reach the card wearing 2,
+# not the second column. Out of the view `Ctrl+2` is tab 2 again.
+write bin/claude #!/bin/bash\nn=$(cat .n 2>/dev/null || echo 0); n=$((n+1)); echo $n > .n\nprintf '\\033]0;claude %s\\007' $n\nprintf 'fake claude %s\\n' $n\nexec sleep 600\n
+shell chmod +x bin/claude
+write a.txt "alpha alpha"
+write b.txt "bravo bravo"
+open b.txt
+open a.txt
+command sessions.sort_manual
+command ai.claude_code_new_tab
+wait 300
+command view.host_active_in_bottom_panel
+command ai.claude_code_new_tab
+wait 300
+command ai.claude_code_new_tab
+wait 300
+command view.activity_sessions
+open b.txt
+expect within 5000 screen contains "fake claude 3"
+expect screen contains "│1▌ fake claude 1"
+expect screen contains "│2▌ fake claude 2"
+expect screen contains "│3▌ fake claude 3"
+# In the sessions mode: Ctrl+2 is the card wearing 2.
+command sessions.mode
+wait 300
+key ctrl+2
+wait 300
+expect pane claude 2
+key ctrl+3
+wait 300
+expect pane claude 3
+key ctrl+2
+wait 300
+expect pane claude 2
+# Out of it: Ctrl+2 is the editor's tab 2.
+command sessions.mode
+wait 300
+open b.txt
+expect pane b.txt
+key ctrl+2
+wait 300
+expect pane a.txt
+# SESSIONS with the keys: the numbers again.
+command view.activity_sessions
+key ctrl+3
+wait 300
+expect pane claude 3

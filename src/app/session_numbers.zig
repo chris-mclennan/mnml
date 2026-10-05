@@ -16,7 +16,9 @@
 //! Chords: vim `Space a 1` … `Space a 9` (the sessions leader group,
 //! beside `Space a j` / `k`; `Space s` is the splits'), standard
 //! `Ctrl+Alt+1` … `Ctrl+Alt+9` (`Ctrl+1…9` are the tabs', `Alt+1…9`
-//! the tab pages').
+//! the tab pages'). In the sessions view — the sessions mode on screen,
+//! or the SESSIONS panel with the keys (`sessions_mode.viewing`) —
+//! plain `Ctrl+1` … `Ctrl+9` are these too, in either profile.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -177,4 +179,102 @@ test "focus_N follows the panel's order, pins first, not the pane order" {
     try command.run(app, .{ .static = .@"sessions.focus_1" });
     try testing.expectEqual(b, app.active.?);
     try testing.expectEqual(@as(?u8, 1), numberOf(app, b));
+}
+
+// ─── Ctrl+1…9 in the sessions view ─────────────────────────────────────
+
+const Key = @import("../core/key.zig").Key;
+const dispatch = @import("dispatch.zig");
+
+fn ctrlAlt(c: u21) Key {
+    return .{ .code = .{ .char = c }, .mods = .{ .ctrl = true, .alt = true } };
+}
+
+/// A docked session first (its card is 1; the mode's columns skip it),
+/// then two in the editor: `b` wears 2, `c` 3. Returns the scratch pane,
+/// tab 1 of the leaf.
+fn dockedFirst(f: *Fixture) !struct { scratch: PaneId, a: PaneId, b: PaneId, c: PaneId } {
+    const app = &f.app;
+    app.sessions.sort = .manual;
+    const scratch = app.active.?;
+    const a = try f.session();
+    try command.run(app, .{ .static = .@"view.host_active_in_bottom_panel" });
+    const b = try f.session();
+    const c = try f.session();
+    try testing.expect(@import("bottom.zig").hosts(app, a));
+    try sessions.refilter(app);
+    try testing.expectEqual(@as(?u8, 1), numberOf(app, a));
+    try testing.expectEqual(@as(?u8, 2), numberOf(app, b));
+    try testing.expectEqual(@as(?u8, 3), numberOf(app, c));
+    return .{ .scratch = scratch, .a = a, .b = b, .c = c };
+}
+
+test "sessions view: in the sessions mode Ctrl+2 is the card numbered 2, a docked session first; out of it Ctrl+1 is tab 1" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const s = try dockedFirst(&f);
+
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    try testing.expect(sessions_mode.viewing(app));
+    try dispatch.key(app, Key.ctrl('2'));
+    try testing.expectEqual(s.b, app.active.?);
+    try dispatch.key(app, Key.ctrl('3'));
+    try testing.expectEqual(s.c, app.active.?);
+    try dispatch.key(app, Key.ctrl('2'));
+    try testing.expectEqual(s.b, app.active.?);
+    try testing.expect(sessions_mode.showing(app));
+
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    try testing.expect(!sessions_mode.viewing(app));
+    try dispatch.key(app, Key.ctrl('1'));
+    try testing.expectEqual(s.scratch, app.active.?);
+    // Ctrl+Alt+N reaches the numbers outside the view.
+    try dispatch.key(app, ctrlAlt('3'));
+    try testing.expectEqual(s.c, app.active.?);
+}
+
+test "sessions view: the SESSIONS panel with the keys takes Ctrl+N as the card number, and gives the keys to that session" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const s = try dockedFirst(&f);
+    const side = @import("side.zig");
+    side.place(app, side.sectionOfPanel(.sessions), true);
+    try testing.expect(sessions_mode.viewing(app));
+    // Card 1 is the docked session; tab 1 would be the scratch.
+    try dispatch.key(app, Key.ctrl('1'));
+    try testing.expectEqual(s.a, app.active.?);
+    try testing.expect(app.focus == .pane and app.focus.pane == s.a);
+    // The keys left the panel: the view is over.
+    try testing.expect(!sessions_mode.viewing(app));
+    side.place(app, side.sectionOfPanel(.sessions), true);
+    try dispatch.key(app, Key.ctrl('3'));
+    try testing.expectEqual(s.c, app.active.?);
+}
+
+test "sessions view: vim keeps Space a N everywhere, and takes Ctrl+N as the number only in the view" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    try app.setInputStyle(.vim);
+    const s = try dockedFirst(&f);
+    // From the editor (a terminal pane types its Space).
+    app.setActive(s.scratch);
+    app.focus = .{ .pane = s.scratch };
+    const keys = try @import("../editor/buffer.zig").parseKeys(testing.allocator, "<space>a2");
+    defer testing.allocator.free(keys);
+    for (keys) |k| try dispatch.key(app, k);
+    try testing.expectEqual(s.b, app.active.?);
+
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    try dispatch.key(app, Key.ctrl('3'));
+    try testing.expectEqual(s.c, app.active.?);
+    try command.run(app, .{ .static = .@"sessions.mode" });
+    app.setActive(s.scratch);
+    app.focus = .{ .pane = s.scratch };
+    try dispatch.key(app, Key.ctrl('1'));
+    try testing.expectEqual(s.scratch, app.active.?);
+    for (keys) |k| try dispatch.key(app, k);
+    try testing.expectEqual(s.b, app.active.?);
 }

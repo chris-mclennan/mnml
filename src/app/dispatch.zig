@@ -248,8 +248,9 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         _ = try chordChain(app, k);
         return;
     }
-    // The sessions mode's chords (`Ctrl+Tab`, `Ctrl+1`…, `Ctrl+N`) are
-    // the sessions' wherever the keys are inside it.
+    // The sessions mode's chords (`Ctrl+Tab`, `Ctrl+N`) are the
+    // sessions' wherever the keys are inside it; `Ctrl+1`… are the card
+    // numbers in the sessions view (the mode, or SESSIONS with the keys).
     if (try sessions_mode.interceptKey(app, k)) return;
     // The info view with the keys (`help.focus`): its rows walk; what
     // it does not take goes on to the chords, the palette's included.
