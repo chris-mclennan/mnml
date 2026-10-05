@@ -20,6 +20,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const themes = @import("themes");
 const contrast = @import("contrast.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 pub const Style = vaxis.Style;
 pub const Color = vaxis.Color;
@@ -235,7 +236,7 @@ pub fn resolve(src: Source) Palette {
     const white = pick(src, &.{"white"}, onedark_fg);
     const black = pick(src, &.{"black"}, onedark_bg_dark);
     var base16: [16]Color = undefined;
-    inline for (std.meta.fields(themes.Base16), 0..) |f, i| {
+    inline for (compat.fields(themes.Base16), 0..) |f, i| {
         base16[i] = rgb(@field(src.base_16, f.name) orelse onedark_base16[i]);
     }
     const purple = pick(src, &.{"purple"}, white);
@@ -522,14 +523,14 @@ test "every bundled theme derives with rgb in every chrome role" {
     try testing.expect(all.len >= 94);
     for (&all) |*t| {
         try testing.expect(t.name.len > 0);
-        inline for (std.meta.fields(Theme)) |f| {
+        inline for (compat.fields(Theme)) |f| {
             if (f.type == Style) {
                 const s: Style = @field(t, f.name);
                 try testing.expect(s.bg == .rgb);
                 try testing.expect(s.fg == .rgb);
             }
         }
-        inline for (std.meta.fields(Syntax)) |f| {
+        inline for (compat.fields(Syntax)) |f| {
             try testing.expect(@field(t.syntax, f.name).fg == .rgb);
         }
     }
@@ -589,7 +590,7 @@ test "no bundled palette leans on onedark's base_16: every slot is its own" {
     // dark syntax — nano-light's selected text sat on #3e4451, 1.01:1.
     @setEvalBranchQuota(100_000);
     inline for (themes.all) |src| {
-        inline for (std.meta.fields(themes.Base16)) |f| {
+        inline for (compat.fields(themes.Base16)) |f| {
             if (@field(src.base_16, f.name) == null) {
                 std.debug.print("theme {s}: base_16.{s} is missing\n", .{ src.name, f.name });
                 return error.TestUnexpectedResult;

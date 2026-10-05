@@ -167,7 +167,7 @@ test "a closed box refuses input; compaction keeps the pending tail" {
     const t1 = box.peek(&buf);
     box.consume(8, t1.gen);
     // Growing past capacity compacts first: the two pending bytes lead.
-    const big = [_]u8{'x'} ** 64;
+    const big = @as([64]u8, @splat('x'));
     _ = try box.push(testing.allocator, &big);
     const t2 = box.peek(&buf);
     try testing.expectEqualStrings("89xxxxxx", buf[0..t2.n]);

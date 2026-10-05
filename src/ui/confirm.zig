@@ -28,6 +28,7 @@ const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
 const info_view = @import("info_view.zig");
 const key_mod = @import("../core/key.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 
@@ -272,12 +273,12 @@ test "the one style: the delete confirm wears the close prompt's row, left-align
     // // changed (one-confirm): the buttons are bracketed and start from
     // the left edge, not padded labels right-aligned; the box is six
     // rows tall like every other confirm, not five.
-    try f.expectRow(11, " " ** 31 ++ "\u{250c} Delete " ++ "\u{2500}" ** 48 ++ "\u{2510}");
-    try f.expectRow(12, " " ** 31 ++ "\u{2502}  Delete .gitignore?" ++ " " ** 36 ++ "\u{2502}");
-    try f.expectRow(13, " " ** 31 ++ "\u{2502}" ++ " " ** 56 ++ "\u{2502}");
-    try f.expectRow(14, " " ** 31 ++ "\u{2502}" ++ " " ** 56 ++ "\u{2502}");
-    try f.expectRow(15, " " ** 31 ++ "\u{2502}   [D]elete      Delete [P]ermanently      [C]ancel     \u{2502}");
-    try f.expectRow(16, " " ** 31 ++ "\u{2514}" ++ "\u{2500}" ** 56 ++ "\u{2518}");
+    try f.expectRow(11, repeat(" ", 31) ++ "\u{250c} Delete " ++ repeat("\u{2500}", 48) ++ "\u{2510}");
+    try f.expectRow(12, repeat(" ", 31) ++ "\u{2502}  Delete .gitignore?" ++ repeat(" ", 36) ++ "\u{2502}");
+    try f.expectRow(13, repeat(" ", 31) ++ "\u{2502}" ++ repeat(" ", 56) ++ "\u{2502}");
+    try f.expectRow(14, repeat(" ", 31) ++ "\u{2502}" ++ repeat(" ", 56) ++ "\u{2502}");
+    try f.expectRow(15, repeat(" ", 31) ++ "\u{2502}   [D]elete      Delete [P]ermanently      [C]ancel     \u{2502}");
+    try f.expectRow(16, repeat(" ", 31) ++ "\u{2514}" ++ repeat("\u{2500}", 56) ++ "\u{2518}");
     try testing.expectEqual(@as(usize, 3), f.hits.items.items.len);
     try testing.expectEqual(@as(u32, 0), f.hits.at(33, 15).?.overlay_item);
     try testing.expectEqual(@as(u32, 1), f.hits.at(47, 15).?.overlay_item);
@@ -322,8 +323,8 @@ test "the one row: two-space gaps from the left edge, six rows, centred on the s
     var s = closeState();
     s.message = "main.rs has unsaved changes.";
     draw(f.ui(), f.full(), &s);
-    try f.expectRow(11, " " ** 37 ++ "┌ Unsaved changes ──────────────────────────┐");
-    try f.expectRow(12, " " ** 37 ++ "│  main.rs has unsaved changes.             │");
-    try f.expectRow(15, " " ** 37 ++ "│   [S]ave      [D]iscard      [C]ancel     │");
-    try f.expectRow(16, " " ** 37 ++ "└───────────────────────────────────────────┘");
+    try f.expectRow(11, repeat(" ", 37) ++ "┌ Unsaved changes ──────────────────────────┐");
+    try f.expectRow(12, repeat(" ", 37) ++ "│  main.rs has unsaved changes.             │");
+    try f.expectRow(15, repeat(" ", 37) ++ "│   [S]ave      [D]iscard      [C]ancel     │");
+    try f.expectRow(16, repeat(" ", 37) ++ "└───────────────────────────────────────────┘");
 }

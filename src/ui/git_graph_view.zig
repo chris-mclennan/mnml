@@ -39,6 +39,7 @@ const text_field = @import("text_field.zig");
 const parse = @import("../git/parse.zig");
 const ids = @import("../core/ids.zig");
 const localtime = @import("../core/localtime.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -315,7 +316,7 @@ pub fn wipButtonId(b: WipButton) u32 {
 }
 
 pub fn wipButtonOf(id: u32) ?WipButton {
-    const n: u32 = @typeInfo(WipButton).@"enum".fields.len;
+    const n: u32 = compat.enumFields(WipButton).len;
     if (id < wip_btn_base or id >= wip_btn_base + n) return null;
     return @enumFromInt(id - wip_btn_base);
 }

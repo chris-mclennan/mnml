@@ -29,6 +29,7 @@ const Theme = @import("theme.zig");
 const chip = @import("chip.zig");
 const hit = @import("hit.zig");
 const focus_cue = @import("focus_cue.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 
@@ -263,7 +264,7 @@ test "the ladder at the shipped default and around it: 26, 30, 34" {
         try testing.expect(l.mode_is_icon);
         try testing.expect(l.mode.?.eql(Rect.init(w - 3 - 1 - 3, 0, 3, 1)));
         try testing.expect(l.refresh.?.eql(Rect.init(w - 3, 0, 3, 1)));
-        try f.expectRow(0, " TODOS" ++ " " ** (w - 6 - 7) ++ " \u{f0dc}   \u{eb37}");
+        try f.expectRow(0, " TODOS" ++ repeat(" ", (w - 6 - 7)) ++ " \u{f0dc}   \u{eb37}");
         try testing.expectEqual(ChipKind.sort, f.hits.at(w - 6, 0).?.chip.kind);
         try testing.expectEqual(ChipKind.refresh, f.hits.at(w - 2, 0).?.chip.kind);
         try testing.expectEqual(hit.PanelId.todos, f.hits.at(w - 2, 0).?.chip.panel);

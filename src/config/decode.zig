@@ -14,6 +14,7 @@
 //! struct rejects unknown keys.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
 const Zoir = std.zig.Zoir;
@@ -32,7 +33,7 @@ pub const Context = struct {
 
     /// Record a diagnostic at the value `node`.
     pub fn fail(ctx: *Context, node: Zoir.Node.Index, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
-        const tok = ctx.ast.nodeMainToken(node.getAstNode(ctx.zoir));
+        const tok = ctx.ast.nodeMainToken(compat.zoirAstNode(node, &ctx.zoir));
         try ctx.diags.addAt(ctx.file, ctx.ast, tok, fmt, args);
     }
 
@@ -44,7 +45,7 @@ pub const Context = struct {
     /// The identifier token of the `.name = value` pair whose value is
     /// `value_node`: two tokens back from the value (`.`, `name`, `=`).
     pub fn nameToken(ctx: *Context, value_node: Zoir.Node.Index) Ast.TokenIndex {
-        const first = ctx.ast.firstToken(value_node.getAstNode(ctx.zoir));
+        const first = ctx.ast.firstToken(compat.zoirAstNode(value_node, &ctx.zoir));
         return if (first >= 2) first - 2 else first;
     }
 };
@@ -56,10 +57,10 @@ pub fn needsWalk(comptime T: type) bool {
     if (T == Dynamic) return true;
     if (map.isMap(T)) return true;
     return switch (@typeInfo(T)) {
-        .@"struct" => |s| inline for (s.fields) |f| {
+        .@"struct" => inline for (compat.structFields(T)) |f| {
             if (needsWalk(f.type)) break true;
         } else false,
-        .@"union" => |u| inline for (u.fields) |f| {
+        .@"union" => inline for (compat.unionFields(T)) |f| {
             if (f.type != void and needsWalk(f.type)) break true;
         } else false,
         .optional => |o| needsWalk(o.child),
@@ -81,7 +82,7 @@ pub fn decode(comptime T: type, ctx: *Context, node: Zoir.Node.Index) Error!T {
     if (T == Dynamic) return decodeDynamic(ctx, node);
     if (comptime map.isMap(T)) return decodeMap(T, ctx, node);
     return switch (@typeInfo(T)) {
-        .optional => |o| if (node.get(ctx.zoir) == .null) null else try decode(o.child, ctx, node),
+        .optional => |o| if (compat.zoirGet(node, &ctx.zoir) == .null) null else try decode(o.child, ctx, node),
         .@"struct" => decodeStruct(T, ctx, node),
         else => @compileError("decode: no walker for " ++ @typeName(T)),
     };
@@ -89,15 +90,13 @@ pub fn decode(comptime T: type, ctx: *Context, node: Zoir.Node.Index) Error!T {
 
 fn decodeStd(comptime T: type, ctx: *Context, node: Zoir.Node.Index) Error!T {
     @setEvalBranchQuota(100_000);
-    var d: std.zon.parse.Diagnostics = .{};
-    return std.zon.parse.fromZoirNodeAlloc(T, ctx.arena, ctx.ast, ctx.zoir, node, &d, .{ .free_on_error = false }) catch |e| switch (e) {
+    var problem: ?compat.ZonProblem = null;
+    return compat.zonParseNode(T, ctx.arena, &ctx.ast, &ctx.zoir, node, &problem) catch |e| switch (e) {
         error.OutOfMemory => error.OutOfMemory,
         error.ParseZon => {
-            // `d` borrows our ast/zoir and its message lives on the
-            // arena — nothing to free, so no `d.deinit`.
-            if (d.type_check) |tc| {
-                const loc = ctx.ast.tokenLocation(0, tc.token);
-                try ctx.diags.add(ctx.file, @intCast(loc.line + 1), @intCast(loc.column + 1 + tc.offset), tc.message);
+            // The message lives on the arena — nothing to free.
+            if (problem) |p| {
+                try ctx.diags.add(ctx.file, p.line, p.column, p.message);
             } else {
                 try ctx.fail(node, "invalid value", .{});
             }
@@ -122,7 +121,7 @@ fn decodeDynamic(ctx: *Context, node: Zoir.Node.Index) Error!Dynamic {
 /// the rest of the map survives.
 fn decodeMap(comptime M: type, ctx: *Context, node: Zoir.Node.Index) Error!M {
     var out: M = .empty;
-    const lit = switch (node.get(ctx.zoir)) {
+    const lit = switch (compat.zoirGet(node, &ctx.zoir)) {
         .empty_literal => return out,
         .struct_literal => |l| l,
         else => {
@@ -136,7 +135,7 @@ fn decodeMap(comptime M: type, ctx: *Context, node: Zoir.Node.Index) Error!M {
             error.OutOfMemory => return e,
             error.Bad => continue,
         };
-        try out.put(ctx.arena, try ctx.arena.dupe(u8, name.get(ctx.zoir)), v);
+        try out.put(ctx.arena, try ctx.arena.dupe(u8, compat.zoirGet(name, &ctx.zoir)), v);
     }
     return out;
 }
@@ -146,7 +145,7 @@ fn decodeMap(comptime M: type, ctx: *Context, node: Zoir.Node.Index) Error!M {
 fn decodeStruct(comptime T: type, ctx: *Context, node: Zoir.Node.Index) Error!T {
     @setEvalBranchQuota(100_000);
     var out: T = .{};
-    const lit = switch (node.get(ctx.zoir)) {
+    const lit = switch (compat.zoirGet(node, &ctx.zoir)) {
         .empty_literal => return out,
         .struct_literal => |l| l,
         else => {
@@ -157,10 +156,10 @@ fn decodeStruct(comptime T: type, ctx: *Context, node: Zoir.Node.Index) Error!T 
     const collects_extra = comptime hasExtraField(T);
     var extra: std.ArrayList(Dynamic.Field) = .empty;
     for (lit.names, 0..) |name, i| {
-        const key = name.get(ctx.zoir);
+        const key = compat.zoirGet(name, &ctx.zoir);
         const val = lit.vals.at(@intCast(i));
         var matched = false;
-        inline for (@typeInfo(T).@"struct".fields) |f| {
+        inline for (compat.structFields(T)) |f| {
             if (!matched and std.mem.eql(u8, f.name, key)) {
                 matched = true;
                 @field(out, f.name) = try decode(f.type, ctx, val);
@@ -202,7 +201,7 @@ const Fixture = struct {
         errdefer std.testing.allocator.destroy(f);
         f.arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
         const arena = f.arena_state.allocator();
-        f.ast = try Ast.parse(arena, src, .zon);
+        f.ast = try compat.parseZonAst(arena, src);
         f.zoir = try std.zig.ZonGen.generate(arena, f.ast, .{});
         try std.testing.expect(!f.zoir.hasCompileErrors());
         f.diags = Diagnostics.init(arena);
@@ -292,7 +291,7 @@ test "keys are a map form: chord → command, dupes rejected by ZonGen" {
     try std.testing.expectEqual(@as(usize, 0), k.vim.count());
 
     const src: [:0]const u8 = ".{ .global = .{ .a = \"x\", .a = \"y\" } }";
-    var ast = try Ast.parse(std.testing.allocator, src, .zon);
+    var ast = try compat.parseZonAst(std.testing.allocator, src);
     defer ast.deinit(std.testing.allocator);
     var zoir = try std.zig.ZonGen.generate(std.testing.allocator, ast, .{});
     defer zoir.deinit(std.testing.allocator);

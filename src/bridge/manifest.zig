@@ -4,6 +4,7 @@
 //! the host and adds the parse the host does.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
 
@@ -33,12 +34,11 @@ pub fn unknownFields(arena: Allocator, text: [:0]const u8) Allocator.Error![]con
 /// are ignored so a newer SDK's manifest still loads. A diagnostic, when
 /// there is one, is rendered onto `arena` for the toast.
 pub fn parse(arena: Allocator, text: [:0]const u8, why: *[]const u8) ParseError!Manifest {
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(arena);
-    const m = std.zon.parse.fromSliceAlloc(Manifest, arena, text, &diag, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch |err| switch (err) {
+    var diag: []const u8 = "";
+    const m = compat.zonParse(Manifest, arena, text, &diag, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => legacy(arena, text) orelse {
-            why.* = std.fmt.allocPrint(arena, "{f}", .{diag}) catch "parse error";
+            why.* = (if (diag.len == 0) "parse error" else diag);
             return error.BadManifest;
         },
     };
@@ -71,7 +71,7 @@ const LegacyManifest = blk: {
 /// `Manifest`, so a manifest an older SDK wrote still loads; null when
 /// it does not parse that way either.
 fn legacy(arena: Allocator, text: [:0]const u8) ?Manifest {
-    const old = std.zon.parse.fromSliceAlloc(LegacyManifest, arena, text, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch return null;
+    const old = compat.zonParse(LegacyManifest, arena, text, null, .{ .ignore_unknown_fields = true }) catch return null;
     var m: Manifest = undefined;
     inline for (@typeInfo(Manifest).@"struct".fields) |f| {
         if (comptime !std.mem.eql(u8, f.name, "context_menu")) @field(m, f.name) = @field(old, f.name);

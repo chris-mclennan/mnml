@@ -35,6 +35,7 @@ const empty_state = @import("empty_state.zig");
 const text_field = @import("text_field.zig");
 const hit = @import("hit.zig");
 const key_mod = @import("../core/key.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -693,11 +694,11 @@ test "header, filter, rows, scrollbar: the shape at the shipped width" {
     const caret = Todos.draw(&st, f.ui(), f.full(), props(rows));
     try testing.expect(caret == null);
     // Row 0: the header with the icon rung (30 wide). Row 1: the pill.
-    try f.expectRow(0, " TODOS" ++ " " ** 18 ++ "\u{f0dc}   \u{eb37}");
+    try f.expectRow(0, " TODOS" ++ repeat(" ", 18) ++ "\u{f0dc}   \u{eb37}");
     try f.expectRow(1, "  \u{F0349} / filter");
-    try f.expectRow(2, "\u{258c}[x] todo 1" ++ " " ** 18 ++ "█");
-    try f.expectRow(3, " [ ] todo 2" ++ " " ** 18 ++ "█");
-    try f.expectRow(11, " [x] todo 10" ++ " " ** 17 ++ "█");
+    try f.expectRow(2, "\u{258c}[x] todo 1" ++ repeat(" ", 18) ++ "█");
+    try f.expectRow(3, " [ ] todo 2" ++ repeat(" ", 18) ++ "█");
+    try f.expectRow(11, " [x] todo 10" ++ repeat(" ", 17) ++ "█");
     try testing.expectEqual(@as(usize, 10), st.visible);
     try testing.expectEqual(@as(usize, 40), st.total);
     // Hits: rows, the bar, the chips, the pill.
@@ -931,7 +932,7 @@ test "the + New row: under the filter with a blank row after it, in the empty an
     try f.expectRow(2, "");
     try f.expectRow(3, "  + New todo");
     try f.expectRow(4, "");
-    try f.expectRow(5, "\u{258c}[x] todo 1" ++ " " ** 18 ++ "█");
+    try f.expectRow(5, "\u{258c}[x] todo 1" ++ repeat(" ", 18) ++ "█");
     try testing.expectEqual(@as(usize, 7), st.visible);
     // The chip: ` + New todo ` at x + 1 on the green fill, the hit over it alone.
     try testing.expect(vaxis.Color.eql(f.style(1, 3).bg, f.theme.palette.green));
@@ -948,7 +949,7 @@ test "the + New row: under the filter with a blank row after it, in the empty an
     try testing.expect(st.on_new);
     _ = Todos.draw(&st, f.ui(), f.full(), p);
     try f.expectRow(3, "\u{258c} + New todo");
-    try f.expectRow(5, " [x] todo 1" ++ " " ** 18 ++ "█");
+    try f.expectRow(5, " [x] todo 1" ++ repeat(" ", 18) ++ "█");
     try testing.expect(f.bgEql(20, 3, f.theme.cursor_line));
     try testing.expect(f.bgEql(20, 5, f.theme.panel_bg));
     try testing.expectEqual(Todos.Outcome.new_activate, try Todos.handleKey(&st, gpa, Key.named(.enter)));
@@ -999,7 +1000,7 @@ test "the + New row: under the filter with a blank row after it, in the empty an
     // Without a label there is no row and the flag clears.
     _ = Todos.draw(&st, f.ui(), f.full(), props(rows));
     try testing.expect(!st.on_new and !st.has_new);
-    try f.expectRow(2, "\u{258c}[x] todo 1" ++ " " ** 18 ++ "█");
+    try f.expectRow(2, "\u{258c}[x] todo 1" ++ repeat(" ", 18) ++ "█");
     // Narrow: the chip clips to the row, nothing off-screen.
     var g = try Fixture.init(6, 6);
     defer g.deinit();

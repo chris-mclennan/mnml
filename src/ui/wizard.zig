@@ -20,6 +20,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
 const key_mod = @import("../core/key.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Style = vaxis.Style;
 
@@ -35,7 +36,7 @@ pub const Section = enum(u8) {
     vscode_shim,
     integrations,
 
-    pub const count = @typeInfo(Section).@"enum".fields.len;
+    pub const count = compat.enumFields(Section).len;
 
     pub fn title(s: Section) []const u8 {
         return switch (s) {
@@ -107,7 +108,7 @@ pub const route_labels = [_][]const u8{ "Auto", "Sub", "API", "Off" };
 pub const Model = struct {
     /// null = not answered yet.
     nerd_font_icons: ?bool = null,
-    keys_seen: [probes.len]bool = .{false} ** probes.len,
+    keys_seen: [probes.len]bool = @splat(false),
     vim: bool = false,
     claude_installed: bool = false,
     codex_installed: bool = false,

@@ -64,8 +64,8 @@ pub fn detectTerminalFrom(term_program: ?[]const u8, term: ?[]const u8, kitty_wi
     if (kitty_window) return .kitty;
     if (wt_session) return .windows_terminal;
     const tn = term orelse "";
-    if (std.ascii.indexOfIgnoreCase(tn, "kitty") != null) return .kitty;
-    if (std.ascii.indexOfIgnoreCase(tn, "alacritty") != null) return .alacritty;
+    if (std.ascii.findIgnoreCase(tn, "kitty") != null) return .kitty;
+    if (std.ascii.findIgnoreCase(tn, "alacritty") != null) return .alacritty;
     return .unknown;
 }
 

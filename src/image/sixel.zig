@@ -133,7 +133,7 @@ pub fn encode(arena: Allocator, px: *const Pixels) Allocator.Error![]u8 {
     var band: u32 = 0;
     while (band * 6 < px.h) : (band += 1) {
         const y0 = band * 6;
-        var used = [_]bool{false} ** 216;
+        var used = @as([216]bool, @splat(false));
         var y: u32 = y0;
         while (y < @min(y0 + 6, px.h)) : (y += 1) {
             var x: u32 = 0;

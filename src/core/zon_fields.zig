@@ -9,12 +9,13 @@
 //! parse that loads the manifest owns that error.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Zoir = std.zig.Zoir;
 
 /// The unknown field paths in `text` read as a `T`, on `arena`.
 pub fn unknown(comptime T: type, arena: Allocator, text: [:0]const u8) Allocator.Error![]const []const u8 {
-    const ast = try std.zig.Ast.parse(arena, text, .zon);
+    const ast = try compat.parseZonAst(arena, text);
     if (ast.errors.len > 0) return &.{};
     const zoir = try std.zig.ZonGen.generate(arena, ast, .{ .parse_str_lits = false });
     if (zoir.hasCompileErrors()) return &.{};
@@ -35,17 +36,17 @@ fn walk(comptime T: type, arena: Allocator, zoir: Zoir, node: Zoir.Node.Index, p
             return walkElems(a.child, arena, zoir, node, path, out);
         },
         .@"struct", .@"union" => {
-            const lit = switch (node.get(zoir)) {
+            const lit = switch (compat.zoirGet(node, &zoir)) {
                 .struct_literal => |l| l,
                 else => return,
             };
             const fields = switch (@typeInfo(T)) {
-                .@"struct" => |s| s.fields,
-                .@"union" => |u| u.fields,
+                .@"struct" => compat.structFields(T),
+                .@"union" => compat.unionFields(T),
                 else => unreachable,
             };
             for (lit.names, 0..) |name_idx, i| {
-                const name = name_idx.get(zoir);
+                const name = compat.zoirGet(name_idx, &zoir);
                 const val = lit.vals.at(@intCast(i));
                 const sub = if (path.len == 0) name else try std.fmt.allocPrint(arena, "{s}.{s}", .{ path, name });
                 const known = inline for (fields) |f| {
@@ -62,7 +63,7 @@ fn walk(comptime T: type, arena: Allocator, zoir: Zoir, node: Zoir.Node.Index, p
 }
 
 fn walkElems(comptime E: type, arena: Allocator, zoir: Zoir, node: Zoir.Node.Index, path: []const u8, out: *std.ArrayList([]const u8)) Allocator.Error!void {
-    const range = switch (node.get(zoir)) {
+    const range = switch (compat.zoirGet(node, &zoir)) {
         .array_literal => |r| r,
         else => return,
     };

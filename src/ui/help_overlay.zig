@@ -26,6 +26,7 @@ const overlay = @import("overlay.zig");
 const scrollbar = @import("scrollbar.zig");
 const key_mod = @import("../core/key.zig");
 const ids = @import("../core/ids.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -142,7 +143,7 @@ pub fn place(screen: Rect) Rect {
 const Line = struct { row: ?usize, text_a: []const u8, text_b: []const u8, header: bool };
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+    return std.ascii.findIgnoreCase(hay, needle) != null;
 }
 
 /// Paints the box; registers a header row's `.overlay_item` with its
@@ -289,14 +290,14 @@ test "the box is Rust's: 84×32 at 120×40, the filter row, headers with counts,
     defer s.deinit(testing.allocator);
     draw(f.ui(), f.full(), &s, &sample);
     try testing.expect(place(f.full()).eql(Rect.init(18, 4, 84, 32)));
-    try f.expectRow(4, " " ** 18 ++ "┌ Help " ++ "─" ** 76 ++ "┐");
-    try f.expectRow(5, " " ** 18 ++ "│ / filter…" ++ " " ** 72 ++ "│");
-    try f.expectRow(6, " " ** 18 ++ "│▾ ── modes ── (2)" ++ " " ** 65 ++ "│");
-    try f.expectRow(7, " " ** 18 ++ "│  NORMAL    vim normal mode (red)" ++ " " ** 49 ++ "│");
-    try f.expectRow(10, " " ** 18 ++ "│  ctrl+q    Quit mnml" ++ " " ** 61 ++ "│");
-    try f.expectRow(11, " " ** 18 ++ "│  ·         Restart mnml (rebuild + relaunch via run.sh)" ++ " " ** 26 ++ "│");
-    try f.expectRow(34, " " ** 18 ++ "│" ++ hint_rest ++ " " ** 6 ++ "│");
-    try f.expectRow(35, " " ** 18 ++ "└" ++ "─" ** 82 ++ "┘");
+    try f.expectRow(4, repeat(" ", 18) ++ "┌ Help " ++ repeat("─", 76) ++ "┐");
+    try f.expectRow(5, repeat(" ", 18) ++ "│ / filter…" ++ repeat(" ", 72) ++ "│");
+    try f.expectRow(6, repeat(" ", 18) ++ "│▾ ── modes ── (2)" ++ repeat(" ", 65) ++ "│");
+    try f.expectRow(7, repeat(" ", 18) ++ "│  NORMAL    vim normal mode (red)" ++ repeat(" ", 49) ++ "│");
+    try f.expectRow(10, repeat(" ", 18) ++ "│  ctrl+q    Quit mnml" ++ repeat(" ", 61) ++ "│");
+    try f.expectRow(11, repeat(" ", 18) ++ "│  ·         Restart mnml (rebuild + relaunch via run.sh)" ++ repeat(" ", 26) ++ "│");
+    try f.expectRow(34, repeat(" ", 18) ++ "│" ++ hint_rest ++ repeat(" ", 6) ++ "│");
+    try f.expectRow(35, repeat(" ", 18) ++ "└" ++ repeat("─", 82) ++ "┘");
     // The headers are the hits, by their row index; a chord is the accent.
     try testing.expectEqual(@as(u32, 0), f.hits.at(30, 6).?.overlay_item);
     try testing.expectEqual(@as(u32, 3), f.hits.at(30, 9).?.overlay_item);
@@ -393,7 +394,7 @@ test "a cell of air before the bar: a long title is cut a cell short of it on ev
     const arena = f.arena_state.allocator();
     const many = try arena.alloc(Row, 40);
     many[0] = .{ .section = "big" };
-    for (many[1..], 1..) |*r, i| r.* = .{ .binding = .{ .keys = try std.fmt.allocPrint(arena, "f{d}", .{i}), .title = "a" ** 100 } };
+    for (many[1..], 1..) |*r, i| r.* = .{ .binding = .{ .keys = try std.fmt.allocPrint(arena, "f{d}", .{i}), .title = repeat("a", 100) } };
     var s: State = .{};
     defer s.deinit(testing.allocator);
     draw(f.ui(), f.full(), &s, many);

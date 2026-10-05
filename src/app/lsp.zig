@@ -4053,7 +4053,7 @@ pub const TestRig = struct {
         };
         const pid: i64 = if (builtin.os.tag == .windows) 0 else @intCast(std.c.getpid());
         var dbuf: [64]u8 = undefined;
-        const d = std.fmt.bufPrintZ(&dbuf, "/tmp/mnml-zig-lsp-{d}", .{pid}) catch unreachable;
+        const d = std.fmt.bufPrintSentinel(&dbuf, "/tmp/mnml-zig-lsp-{d}", .{pid}, 0) catch unreachable;
         // Every call, not once: `stop` takes the directory away when the
         // test is done with it, and the next test asks again.
         if (builtin.os.tag != .windows) _ = std.c.mkdir(d.ptr, 0o755);
@@ -4066,7 +4066,7 @@ pub const TestRig = struct {
     fn removeDirIfEmpty() void {
         if (builtin.os.tag == .windows) return;
         var b: [80]u8 = undefined;
-        const z = std.fmt.bufPrintZ(&b, "{s}", .{dir()}) catch return;
+        const z = std.fmt.bufPrintSentinel(&b, "{s}", .{dir()}, 0) catch return;
         _ = std.c.rmdir(z.ptr);
     }
 

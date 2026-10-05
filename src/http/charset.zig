@@ -12,7 +12,7 @@ pub const Single = enum { latin1, cp1252 };
 /// The single-byte charset `content_type` names, if it is one this knows.
 pub fn singleByte(content_type: ?[]const u8) ?Single {
     const ct = content_type orelse return null;
-    const at = std.ascii.indexOfIgnoreCase(ct, "charset=") orelse return null;
+    const at = std.ascii.findIgnoreCase(ct, "charset=") orelse return null;
     var name = ct[at + "charset=".len ..];
     name = std.mem.sliceTo(name, ';');
     name = std.mem.trim(u8, name, " \t\"'");

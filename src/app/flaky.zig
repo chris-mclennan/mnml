@@ -14,6 +14,7 @@
 //!       the pane's items live on its snapshot arena, replaced on refresh.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const app_mod = @import("../app.zig");
@@ -157,7 +158,7 @@ pub fn render(arena: Allocator, h: *const History) Allocator.Error![]u8 {
 /// Parse ZON text into `h` (gpa-owned keys). Unknown outcome letters
 /// are dropped; a newer format is ignored.
 pub fn parseInto(gpa: Allocator, arena: Allocator, h: *History, src: [:0]const u8) Allocator.Error!void {
-    const saved = std.zon.parse.fromSliceAlloc(Saved, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch return;
+    const saved = compat.zonParse(Saved, arena, src, null, .{ .ignore_unknown_fields = true }) catch return;
     if (saved.version > format_version) return;
     for (saved.tests) |st| {
         for (st.outcomes) |c| {
@@ -434,7 +435,7 @@ test "the ZON file round-trips and unknown letters are dropped" {
     try t.expect(std.mem.indexOf(u8, text, ".version = 1") != null);
     var h2: History = .{};
     defer h2.deinit(t.allocator);
-    try parseInto(t.allocator, a, &h2, try a.dupeZ(u8, text));
+    try parseInto(t.allocator, a, &h2, try a.dupeSentinel(u8, text, 0));
     try t.expectEqual(@as(usize, 2), h2.entries.count());
     try t.expect(h2.get("b.spec.ts\t\tbeta").?.wobbly());
     try t.expectEqual(@as(u32, 11), h2.get("a.spec.ts\tS\talpha").?.line);

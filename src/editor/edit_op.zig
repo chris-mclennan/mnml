@@ -8,6 +8,7 @@
 //! `dupe(gpa)` / `free(gpa)`.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 
 pub const CaseTransform = enum { lower, upper, toggle };
@@ -309,7 +310,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(@typeInfo(EditOp).@"union".fields.len == 172);
+        std.debug.assert(compat.unionFields(EditOp).len == 172);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

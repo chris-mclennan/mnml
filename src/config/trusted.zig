@@ -15,6 +15,7 @@
 //! user adds and is backed up like the config is.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
@@ -53,7 +54,7 @@ pub fn remember(gpa: Allocator, io: Io, path: []const u8, workspace: []const u8,
 }
 
 fn parse(arena: Allocator, src: [:0]const u8) Allocator.Error!?Map([]const u8) {
-    const ast = try Ast.parse(arena, src, .zon);
+    const ast = try compat.parseZonAst(arena, src);
     if (ast.errors.len != 0) return null;
     const zoir = try std.zig.ZonGen.generate(arena, ast, .{});
     if (zoir.hasCompileErrors()) return null;

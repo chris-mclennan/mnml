@@ -14,6 +14,7 @@
 //! `Widget` is the table the pane draws from: one row shape per kind.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const map = @import("map.zig");
@@ -125,7 +126,7 @@ pub fn detect(path: []const u8, root_names: []const []const u8) Schema {
     if (hasAll(root_names, &.{ "version", "panes", "tabs" })) return .session;
     var config_hits: usize = 0;
     for (root_names) |n| {
-        inline for (@typeInfo(Config).@"struct".fields) |f| if (std.mem.eql(u8, f.name, n)) {
+        inline for (compat.structFields(Config)) |f| if (std.mem.eql(u8, f.name, n)) {
             config_hits += 1;
         };
     }
@@ -206,14 +207,14 @@ fn lookupIn(comptime T: type, key_path: []const []const u8) ?Field {
         return lookupIn(ElemOf(U), key_path[1..]);
     }
     switch (@typeInfo(U)) {
-        .@"struct" => |s| {
-            inline for (s.fields) |f| {
+        .@"struct" => {
+            inline for (compat.structFields(U)) |f| {
                 if (std.mem.eql(u8, f.name, key_path[0])) return lookupIn(f.type, key_path[1..]);
             }
             return null;
         },
-        .@"union" => |u| {
-            inline for (u.fields) |f| {
+        .@"union" => {
+            inline for (compat.unionFields(U)) |f| {
                 if (std.mem.eql(u8, f.name, key_path[0])) return lookupIn(f.type, key_path[1..]);
             }
             return null;
@@ -248,17 +249,17 @@ fn describe(comptime T: type) ?Field {
             .elem_default = "0",
         },
         .float => .{ .widget = .float, .optional = optional, .type_name = @typeName(U), .default_literal = "0.0" },
-        .@"enum" => |e| .{
+        .@"enum" => .{
             .widget = .@"enum",
             .optional = optional,
-            .tags = comptime fieldNames(e.fields),
+            .tags = comptime fieldNames(compat.enumFields(U)),
             .type_name = "enum",
-            .default_literal = "." ++ e.fields[0].name,
+            .default_literal = "." ++ compat.enumFields(U)[0].name,
         },
-        .@"union" => |u| .{
+        .@"union" => .{
             .widget = .@"union",
             .optional = optional,
-            .tags = comptime fieldNames(u.fields),
+            .tags = comptime fieldNames(compat.unionFields(U)),
             .tag_literals = comptime unionLiterals(U),
             .type_name = "union",
             .default_literal = comptime defaultLiteral(U),
@@ -303,15 +304,15 @@ fn defaultLiteral(comptime T: type) []const u8 {
     return switch (@typeInfo(U)) {
         .int => "0",
         .float => "0.0",
-        .@"enum" => |e| "." ++ e.fields[0].name,
-        .@"union" => |u| if (u.fields[0].type == void) "." ++ u.fields[0].name else ".{ ." ++ u.fields[0].name ++ " = " ++ defaultLiteral(u.fields[0].type) ++ " }",
+        .@"enum" => "." ++ compat.enumFields(U)[0].name,
+        .@"union" => if (compat.unionFields(U)[0].type == void) "." ++ compat.unionFields(U)[0].name else ".{ ." ++ compat.unionFields(U)[0].name ++ " = " ++ defaultLiteral(compat.unionFields(U)[0].type) ++ " }",
         .@"struct" => ".{}",
         else => "null",
     };
 }
 
 fn unionLiterals(comptime U: type) []const []const u8 {
-    const fields = @typeInfo(U).@"union".fields;
+    const fields = compat.unionFields(U);
     var out: [fields.len][]const u8 = undefined;
     for (fields, 0..) |f, i| out[i] = if (f.type == void) "." ++ f.name else ".{ ." ++ f.name ++ " = " ++ defaultLiteral(f.type) ++ " }";
     const frozen = out;

@@ -21,6 +21,7 @@
 //! can produce and fails on a new one without an entry.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -487,9 +488,9 @@ fn configHas(comptime T: type, path: []const u8) bool {
     const rest: ?[]const u8 = if (head.len == path.len) null else path[head.len + 1 ..];
     switch (@typeInfo(T)) {
         .optional => |o| return configHas(o.child, path),
-        .@"struct" => |st| {
+        .@"struct" => {
             if (@hasDecl(T, "get") and @hasDecl(T, "put")) return true;
-            inline for (st.fields) |f| if (std.mem.eql(u8, f.name, head)) {
+            inline for (compat.structFields(T)) |f| if (std.mem.eql(u8, f.name, head)) {
                 const r = rest orelse return true;
                 return configHas(f.type, r);
             };

@@ -292,7 +292,7 @@ test "run: two steps over a local server, the first's extract feeds the second" 
     try testing.expect(out.ok);
     try testing.expect(std.mem.indexOf(u8, out.trace, "TOKEN = tok9") != null);
     try testing.expectEqualStrings("TOKEN=tok9\n", out.captured);
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer tok9") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "authorization: Bearer tok9") != null);
     try testing.expect(std.mem.indexOf(u8, out.trace, "warn:") == null);
     // A variable nothing defines is named in the trace, not sent silently.
     try tmp.dir.writeFile(io, .{ .sub_path = ".mnml/chains/un.chain.json", .data = "[{\"request\":\"list.curl\"}]" });
@@ -337,7 +337,7 @@ test "run: a step's directives — @set-var feeds its headers, @assert gates the
     try testing.expect(std.mem.indexOf(u8, out.trace, "✓ status == 200") != null);
     try testing.expect(std.mem.indexOf(u8, out.trace, "SESSION = s-42") != null);
     try testing.expectEqualStrings("SESSION=s-42\n", out.captured);
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "cookie: sid=s-42") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "cookie: sid=s-42") != null);
     // A failing assert stops the chain before the next step.
     const failing = try std.fmt.allocPrint(testing.allocator, "# @assert status == 201\ncurl 'http://127.0.0.1:{d}/one'\n", .{server.port});
     defer testing.allocator.free(failing);

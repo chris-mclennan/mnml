@@ -259,7 +259,7 @@ pub const Session = struct {
         var exe: [:0]const u8 = undefined;
         if (opts.argv) |argv| {
             if (argv.len == 0) return error.ArgvEmpty;
-            for (argv) |a| try argv_buf.append(gpa, try gpa.dupeZ(u8, a));
+            for (argv) |a| try argv_buf.append(gpa, try gpa.dupeSentinel(u8, a, 0));
             exe = std.mem.span(argv_buf.items[0].?);
         } else {
             const shell = env.get("SHELL") orelse defaultShell();
@@ -267,16 +267,16 @@ pub const Session = struct {
             const base = std.fs.path.basename(shell);
             const argv0 = try std.fmt.allocPrintSentinel(gpa, "{s}{s}", .{ if (opts.shell_login) "-" else "", base }, 0);
             try argv_buf.append(gpa, argv0);
-            for (opts.shell_args) |a| try argv_buf.append(gpa, try gpa.dupeZ(u8, a));
-            exe = try gpa.dupeZ(u8, shell);
+            for (opts.shell_args) |a| try argv_buf.append(gpa, try gpa.dupeSentinel(u8, a, 0));
+            exe = try gpa.dupeSentinel(u8, shell, 0);
         }
         defer if (opts.argv == null) gpa.free(exe);
         try argv_buf.append(gpa, null);
         const argvp: [*:null]const ?[*:0]const u8 = @ptrCast(argv_buf.items.ptr);
 
-        const cwd_z: ?[:0]const u8 = if (opts.cwd) |d| try gpa.dupeZ(u8, d) else null;
+        const cwd_z: ?[:0]const u8 = if (opts.cwd) |d| try gpa.dupeSentinel(u8, d, 0) else null;
         defer if (cwd_z) |d| gpa.free(d);
-        const path_z: ?[:0]const u8 = if (env.get("PATH")) |p| try gpa.dupeZ(u8, p) else null;
+        const path_z: ?[:0]const u8 = if (env.get("PATH")) |p| try gpa.dupeSentinel(u8, p, 0) else null;
         defer if (path_z) |p| gpa.free(p);
 
         const self = try gpa.create(Session);
@@ -685,7 +685,7 @@ fn childExec(
             var it = std.mem.splitScalar(u8, p, ':');
             while (it.next()) |dir| {
                 if (dir.len == 0) continue;
-                const full = std.fmt.bufPrintZ(&buf, "{s}/{s}", .{ dir, exe }) catch continue;
+                const full = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ dir, exe }, 0) catch continue;
                 _ = c.execve(full.ptr, argv, env_ptr);
                 // ENOENT / ENOTDIR / EACCES: try the next directory.
             }
@@ -784,7 +784,7 @@ fn hasGhosttyEntry(dir: []const u8) bool {
     // the hex code of that letter ("78" for 'x'). Check both.
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     for ([_][]const u8{ "x", "78" }) |sub| {
-        const p = std.fmt.bufPrintZ(&buf, "{s}/{s}/xterm-ghostty", .{ dir, sub }) catch continue;
+        const p = std.fmt.bufPrintSentinel(&buf, "{s}/{s}/xterm-ghostty", .{ dir, sub }, 0) catch continue;
         if (c.access(p.ptr, c.F_OK) == 0) return true;
     }
     return false;

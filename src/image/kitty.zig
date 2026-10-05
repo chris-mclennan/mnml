@@ -66,7 +66,7 @@ test "transmit: one chunk carries the header and m=0; a big payload is chunked a
     const arena = arena_state.allocator();
     const small = try encodeTransmit(arena, 7, "hi");
     try testing.expectEqualStrings("\x1b_Ga=t,f=100,i=7,q=2,m=0;aGk=\x1b\\", small);
-    const big = try encodeTransmit(arena, 9, &[_]u8{'x'} ** 5000);
+    const big = try encodeTransmit(arena, 9, &@as([5000]u8, @splat('x')));
     // 5000 bytes → 6668 base64 chars → 4096 + 2572.
     try testing.expect(std.mem.startsWith(u8, big, "\x1b_Ga=t,f=100,i=9,q=2,m=1;"));
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, big, "\x1b_Gm=0;"));

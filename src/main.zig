@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
@@ -746,9 +747,9 @@ fn fenceProcess(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, tmp
 }
 
 fn setenvOwned(gpa: Allocator, name: []const u8, value: []const u8) !void {
-    const n = try gpa.dupeZ(u8, name);
+    const n = try gpa.dupeSentinel(u8, name, 0);
     defer gpa.free(n);
-    const v = try gpa.dupeZ(u8, value);
+    const v = try gpa.dupeSentinel(u8, value, 0);
     defer gpa.free(v);
     if (setenv(n.ptr, v.ptr, 1) != 0) return error.SetEnvFailed;
 }
@@ -784,7 +785,7 @@ fn reportHarness(env: *const std.process.Environ.Map, w: *Io.Writer) !void {
             .{ h.name, h.step },
         );
     }
-    if (@import("builtin").mode == .Debug) {
+    if (compat.is_debug) {
         try w.print(
             "mnml test: this is a DEBUG build. The corpus's timings assume the shipped one; the deadlines are scaled {d}× here, but a script's own `wait <ms>` is not, so the heaviest files (an integration pane mounting, a live Lua picker) can still fail on time alone. Re-run a timing failure with `zig build e2e -Doptimize=ReleaseSafe` before believing it.\n",
             .{e2e.runner.debug_slowdown},
@@ -1146,7 +1147,7 @@ test "the harness report names the build step for every helper binary that is mi
     try std.testing.expect(std.mem.indexOf(u8, said, "`zig build bitbucket-integration`") != null);
     // And a Debug build says so, because the corpus's timings are the
     // shipped build's (`src/e2e/runner.zig`'s `debug_slowdown`).
-    try std.testing.expectEqual(@import("builtin").mode == .Debug, std.mem.indexOf(u8, said, "DEBUG build") != null);
+    try std.testing.expectEqual(compat.is_debug, std.mem.indexOf(u8, said, "DEBUG build") != null);
 }
 
 test "--no-session is the flag run.sh fresh passes; --input's value is never a workspace" {

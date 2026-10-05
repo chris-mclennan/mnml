@@ -33,6 +33,8 @@
 //! back.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -232,7 +234,7 @@ pub fn render(arena: Allocator, file: File) Allocator.Error![]u8 {
 
 pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }!File {
     @setEvalBranchQuota(8000);
-    return std.zon.parse.fromSliceAlloc(File, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
+    return compat.zonParse(File, arena, src, null, .{ .ignore_unknown_fields = true });
 }
 
 /// Save this tab page as `raw_name`. Over a layout that exists it asks
@@ -744,7 +746,7 @@ test "named layouts: names are file names; save / list / delete through the `:` 
     try t.expect(!validName("a/b"));
     try t.expect(!validName("../up"));
     try t.expect(!validName("with space"));
-    try t.expect(!validName("x" ** (max_name + 1)));
+    try t.expect(!validName(repeat("x", (max_name + 1))));
     try f.tmp.dir.writeFile(t.io, .{ .sub_path = "a.txt", .data = "alpha\n" });
     const a = try f.abs("a.txt");
     defer t.allocator.free(a);
@@ -1055,7 +1057,7 @@ test "named layouts: a browser pane rides in the file by URL; with no Chrome the
     defer arena_state.deinit();
     const text = try render(arena_state.allocator(), file);
     try t.expect(std.mem.indexOf(u8, text, "http://127.0.0.1:9/page") != null);
-    const back = try parse(arena_state.allocator(), try arena_state.allocator().dupeZ(u8, text));
+    const back = try parse(arena_state.allocator(), try arena_state.allocator().dupeSentinel(u8, text, 0));
     try t.expectEqual(session.PaneKind.browser, back.panes[1].kind);
     try t.expectEqualStrings("http://127.0.0.1:9/page", back.panes[1].url.?);
     try f.tmp.dir.createDirPath(t.io, rel_dir);

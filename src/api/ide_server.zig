@@ -17,6 +17,7 @@
 //! at zero — the number the loop test holds.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const event = @import("../core/event.zig");
@@ -332,7 +333,7 @@ test "the listener refuses an upgrade without the token, takes one with it, and 
 
     // No header, and a wrong one: refused at the upgrade, nothing posted.
     try t.expectError(error.BadStatus, ws.Conn.connect(t.allocator, t.io, url, .{}));
-    try t.expectError(error.BadStatus, ws.Conn.connect(t.allocator, t.io, url, .{ .headers = &.{.{ auth_header, "b" ** token_len }} }));
+    try t.expectError(error.BadStatus, ws.Conn.connect(t.allocator, t.io, url, .{ .headers = &.{.{ auth_header, repeat("b", token_len) }} }));
     try t.expectEqual(@as(u64, 0), l.posted.load(.monotonic));
 
     const c = try ws.Conn.connect(t.allocator, t.io, url, .{ .headers = &.{.{ auth_header, &tok }} });

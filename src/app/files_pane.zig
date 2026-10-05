@@ -16,6 +16,7 @@
 //! "gather from several directories, then act" works.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
@@ -1304,7 +1305,7 @@ fn seed(tmp: *std.testing.TmpDir) !void {
     try tmp.dir.writeFile(t.io, .{ .sub_path = "src/main.zig", .data = "const x = 1;\n" });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "src/deep/z.zig", .data = "z" });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "README.md", .data = "# hi\nsecond line\n" });
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "big.bin", .data = "x" ** 5000 });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "big.bin", .data = repeat("x", 5000) });
     try tmp.dir.writeFile(t.io, .{ .sub_path = ".hidden", .data = "h" });
 }
 

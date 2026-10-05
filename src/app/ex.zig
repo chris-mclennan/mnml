@@ -11,6 +11,7 @@
 //! caller (`dispatch.runExLine`, the dyn registry) toasts it.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -1474,14 +1475,14 @@ const skipped_sections = [_][]const u8{ "lsp", "tasks", "snippets", "abbr", "for
 pub const option_paths: []const []const u8 = blk: {
     @setEvalBranchQuota(200_000);
     var out: []const []const u8 = &.{};
-    for (std.meta.fields(Config)) |sec| {
+    for (compat.fields(Config)) |sec| {
         if (@typeInfo(sec.type) != .@"struct") continue;
         var skip = false;
         for (skipped_sections) |s| if (std.mem.eql(u8, s, sec.name)) {
             skip = true;
         };
         if (skip) continue;
-        for (std.meta.fields(sec.type)) |f| {
+        for (compat.fields(sec.type)) |f| {
             switch (@typeInfo(f.type)) {
                 .bool, .@"enum" => out = out ++ &[_][]const u8{sec.name ++ "." ++ f.name},
                 else => {},

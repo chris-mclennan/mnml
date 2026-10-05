@@ -29,6 +29,7 @@
 //! frame.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const app_mod = @import("../app.zig");
@@ -762,7 +763,7 @@ test "registry: record is a begin and an end at once; long labels are cut on a b
     try r.record(gpa, 10, 25, .{ .kind = .format, .key = 99, .label = "prettier a.ts" }, Outcome.fail("prettier failed"));
     try testing.expectEqual(@as(usize, 0), r.running.items.len);
     try testing.expectEqual(@as(i64, 15), r.finished.items[0].elapsedMs(0));
-    const long = "é" ** 100;
+    const long = repeat("é", 100);
     const id = try r.begin(gpa, 0, .{ .kind = .search, .label = long });
     const got = r.get(id).?.label;
     try testing.expect(got.len <= label_max);

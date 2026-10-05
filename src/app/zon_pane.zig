@@ -238,7 +238,7 @@ pub const ZonPane = struct {
             @memset(shown, false);
             for (0..n) |i| {
                 if (i == 0) continue;
-                if (std.ascii.indexOfIgnoreCase(paths[i], filter) == null) continue;
+                if (std.ascii.findIgnoreCase(paths[i], filter) == null) continue;
                 var cur: ?u32 = @intCast(i);
                 while (cur) |c| : (cur = tree.nodes[c].parent) shown[c] = true;
             }
@@ -328,7 +328,7 @@ pub fn open(app: *App, path: []const u8) Allocator.Error!PaneId {
     const gpa = app.gpa;
     const text: [:0]u8 = Io.Dir.cwd().readFileAllocOptions(app.io, path, gpa, .limited(config.load.max_file_bytes), .of(u8), 0) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => try gpa.dupeZ(u8, ".{}\n"),
+        else => try gpa.dupeSentinel(u8, ".{}\n", 0),
     };
     errdefer gpa.free(text);
     const owned_path = try gpa.dupe(u8, path);
@@ -396,7 +396,7 @@ fn applyLiteral(app: *App, z: *ZonPane, key_path: []const []const u8, literal: [
     } orelse return false;
     defer app.gpa.free(spliced);
     var why: []const u8 = "";
-    var check = zon_tree.parse(app.gpa, try app.frame.allocator().dupeZ(u8, spliced), &why) catch |err| switch (err) {
+    var check = zon_tree.parse(app.gpa, try app.frame.allocator().dupeSentinel(u8, spliced, 0), &why) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseFailed => {
             app.toast("zon: {s}", .{why});
@@ -405,7 +405,7 @@ fn applyLiteral(app: *App, z: *ZonPane, key_path: []const []const u8, literal: [
         },
     };
     check.deinit();
-    const fresh = try app.gpa.dupeZ(u8, spliced);
+    const fresh = try app.gpa.dupeSentinel(u8, spliced, 0);
     app.gpa.free(z.text);
     z.text = fresh;
     z.changed = true;

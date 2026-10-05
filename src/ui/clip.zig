@@ -9,6 +9,7 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Method = vaxis.gwidth.Method;
@@ -243,7 +244,7 @@ test "fitCells: the prefix that fits, in bytes, never past the text" {
     try std.testing.expectEqual(@as(usize, 6), fitCells("漢字", 4, .unicode));
     // The case that panicked the commit detail: 41 cells at width 40 is
     // 40 bytes, where the "…"-clipped form is 42.
-    const line = "x" ** 41;
+    const line = repeat("x", 41);
     try std.testing.expectEqual(@as(usize, 40), fitCells(line, 40, .unicode));
 }
 

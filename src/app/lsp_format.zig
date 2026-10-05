@@ -29,6 +29,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const app_mod = @import("../app.zig");
@@ -1180,7 +1181,7 @@ test "lintFailed: a non-zero exit with words and no finding is a failure; findin
 test "summarize joins a tool's first non-blank lines and fits its buffer" {
     var buf: [40]u8 = undefined;
     try testing.expectEqualStrings("ruff failed · Cause: bad toml · x", summarize(&buf, "ruff failed\n  Cause: bad toml\n\n x\n y\n"));
-    try testing.expectEqual(@as(usize, 40), summarize(&buf, "a" ** 100).len);
+    try testing.expectEqual(@as(usize, 40), summarize(&buf, repeat("a", 100)).len);
 }
 
 test "the builtin Python linter's argv is one current ruff accepts" {

@@ -36,6 +36,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -656,7 +657,7 @@ test "the label: mixr's track as written, `artist - title` for a macOS player, w
     try testing.expectEqualStrings("   abcdefghijklmnopqrstuvwxy", try shownLabel(a, long, true, 36));
     try testing.expectEqualStrings("short", try shownLabel(a, "short", true, 7));
     // Cut at a codepoint boundary, never inside one.
-    const cut = Track.init(.mixr, true, "é" ** 200, "");
+    const cut = Track.init(.mixr, true, repeat("é", 200), "");
     try testing.expect(std.unicode.utf8ValidateSlice(cut.track()));
 }
 

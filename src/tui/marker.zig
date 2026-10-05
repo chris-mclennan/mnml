@@ -15,6 +15,7 @@
 //! instance (`docs/DESIGN.md`, "Side-by-side mechanics").
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
@@ -99,7 +100,7 @@ pub fn listInstances(arena: Allocator, io: Io, dir_path: []const u8) Allocator.E
     while (it.next(io) catch null) |e| {
         if (e.kind != .file or !std.mem.endsWith(u8, e.name, instance_suffix)) continue;
         const text = dir.readFileAllocOptions(io, e.name, arena, .limited(64 * 1024), .of(u8), 0) catch continue;
-        const inst = std.zon.parse.fromSliceAlloc(Instance, arena, text, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
+        const inst = compat.zonParse(Instance, arena, text, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => continue,
         };

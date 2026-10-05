@@ -17,6 +17,7 @@
 //! built for a draw lives until the next frame, the hit map included.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const app_mod = @import("../app.zig");
@@ -4046,7 +4047,7 @@ test "the chrome row is the Rust dump's, cell for cell, at 120 and 80 columns; e
     const wide = try screenText(&app);
     defer t.allocator.free(wide);
     const row0 = wide[0..std.mem.indexOfScalar(u8, wide, '\n').?];
-    const gap = " " ** 25;
+    const gap = repeat(" ", 25);
     try t.expectEqualStrings(ui_menu_bar.rust_row_120 ++ "  \u{EB01}" ++ gap ++ "\u{F0415}  \u{25CF}\u{2501}  \u{F0156}", std.mem.trimEnd(u8, row0, " "));
     // Every element registers: the words, the », the nav cluster, the
     // chip, the globe, the right cluster.

@@ -37,6 +37,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const bufferline = @import("bufferline.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -453,7 +454,7 @@ test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand th
     var f = try Fixture.init(120, 1);
     defer f.deinit();
     draw(f.ui(), f.full(), .{ .left = &spec_left, .right = &spec_right });
-    try f.expectRow(0, row_left ++ " " ** 45 ++ row_right);
+    try f.expectRow(0, row_left ++ repeat(" ", 45) ++ row_right);
     // The arrow after TREE is blue on bg2; after the branch, bg2 on the ground.
     try testing.expect(Color.eql(f.style(6, 0).fg, P.blue));
     try testing.expect(Color.eql(f.style(6, 0).bg, P.bg2));
@@ -471,7 +472,7 @@ test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand th
     defer g.deinit();
     const ui = g.ui();
     draw(ui, g.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
-    try g.expectRow(0, row_left ++ " " ** 39 ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
+    try g.expectRow(0, row_left ++ repeat(" ", 39) ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
 }
 
 test "a right lane cut at the edge never ends on an arrow: the arrow goes with the chip it leads into" {
@@ -651,7 +652,7 @@ test "--ascii: no arrows, the chips meet edge to edge, the ellipsis is dots" {
     defer f.deinit();
     f.ascii = true;
     draw(f.ui(), f.full(), .{ .left = &spec_left, .right = &spec_right });
-    try f.expectRow(0, " TREE  " ++ branch_glyph ++ " main  " ++ added_glyph ++ " 1  [no file]" ++ " " ** 52 ++ " " ++ coverage_glyph ++ " F 57% ▲1.0  WRAP  " ++ bell_glyph ++ "  23:58 " ++ folder_glyph ++ " ws   —");
+    try f.expectRow(0, " TREE  " ++ branch_glyph ++ " main  " ++ added_glyph ++ " 1  [no file]" ++ repeat(" ", 52) ++ " " ++ coverage_glyph ++ " F 57% ▲1.0  WRAP  " ++ bell_glyph ++ "  23:58 " ++ folder_glyph ++ " ws   —");
     var g = try Fixture.init(70, 1);
     defer g.deinit();
     g.ascii = true;

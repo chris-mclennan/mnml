@@ -19,7 +19,7 @@ pub const Set = std.EnumSet(PanelId);
 
 /// `ui.auto_refresh_off` → the runtime set. Unknown names are skipped.
 pub fn seed(app: *App) void {
-    app.auto_refresh_off = Set.initEmpty();
+    app.auto_refresh_off = Set.empty;
     for (app.cfg.ui.auto_refresh_off) |name| {
         if (std.meta.stringToEnum(PanelId, name)) |p| app.auto_refresh_off.insert(p);
     }

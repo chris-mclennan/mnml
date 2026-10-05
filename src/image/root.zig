@@ -67,7 +67,7 @@ pub fn detect(env: *const std.process.Environ.Map, kitty_probe: bool) Transport 
 }
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+    return std.ascii.findIgnoreCase(hay, needle) != null;
 }
 
 pub const Format = enum {

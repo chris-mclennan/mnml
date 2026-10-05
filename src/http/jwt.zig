@@ -95,7 +95,7 @@ pub fn decode(gpa: Allocator, token_in: []const u8) DecodeError!Claims {
 /// The bare token out of `Authorization: Bearer x`, `Bearer x`, or a
 /// quoted / bare token in free text.
 pub fn extractBearer(text: []const u8) ?[]const u8 {
-    if (std.ascii.indexOfIgnoreCase(text, "bearer")) |i| {
+    if (std.ascii.findIgnoreCase(text, "bearer")) |i| {
         const rest = std.mem.trim(u8, text[i + "bearer".len ..], " \t\r\n\"'");
         const end = std.mem.indexOfAny(u8, rest, " \t\r\n\"'") orelse rest.len;
         if (end > 0) return rest[0..end];

@@ -1620,7 +1620,7 @@ fn runCmd(app: *App, cmd: command.CommandId) Allocator.Error!void {
 /// Case-insensitive substring; an empty needle matches everything.
 fn matches(needle: []const u8, hay: []const u8) bool {
     if (needle.len == 0) return true;
-    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+    return std.ascii.findIgnoreCase(hay, needle) != null;
 }
 
 /// The unfiltered indices of the current panel's rows that pass the

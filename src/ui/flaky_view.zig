@@ -14,6 +14,7 @@ const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const ids = @import("../core/ids.zig");
 const flaky = @import("../app/flaky.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 const PaneId = ids.PaneId;
@@ -74,7 +75,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *flaky.FlakyPane, focused: bool
                     bl += g.len;
                 }
                 const pad = flaky.keep -| it.outcomes.len;
-                x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}{s}  ", .{ bar[0..bl], " " ** flaky.keep }), Theme.onBg(t.accent, bg));
+                x += ui.putStr(x, r.y, r.right() -| x, ui.fmt("{s}{s}  ", .{ bar[0..bl], repeat(" ", flaky.keep) }), Theme.onBg(t.accent, bg));
                 x -= @intCast(flaky.keep - pad);
                 var title = Theme.onBg(t.fg, bg);
                 title.bold = on_cursor;

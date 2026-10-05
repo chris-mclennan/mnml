@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const jsonrpc = @import("../rpc/jsonrpc.zig");
@@ -734,7 +735,7 @@ fn envelopeInto(js: *std.json.Stringify, seq: i64, command: []const u8, args: an
 /// the wire.
 fn isEmptyStruct(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .@"struct" => |st| st.fields.len == 0,
+        .@"struct" => compat.structFields(T).len == 0,
         else => false,
     };
 }

@@ -63,6 +63,7 @@ const ids = @import("../core/ids.zig");
 const focus_cue = @import("focus_cue.zig");
 const stepper = @import("stepper.zig");
 const list_panel = @import("list_panel.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -1082,11 +1083,11 @@ fn hasTab(f: *Fixture, idx: u16) bool {
 const split_cluster = " " ++ ghost_glyph ++ "  " ++ split_right_glyph ++ "  " ++ split_down_glyph ++ "  " ++ maximize_glyph ++ " ";
 /// The strip columns of `docs/ui-spec/rust-editor-120x40.txt` row 1
 /// (31..120): one rust file, the `+`, the split cluster.
-const spec_editor_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 61 ++ split_cluster;
+const spec_editor_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ plus_glyph ++ repeat(" ", 61) ++ split_cluster;
 /// `rust-diff-120x40.txt` row 1: two tabs and the `+` — the Rust strip's
 /// dim chevrons are gone: two tabs that fit have nothing to page, and
 /// the pager is not painted (`stepper.zig`).
-const spec_diff_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ diff_glyph ++ " diff: worktree " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 40 ++ split_cluster;
+const spec_diff_strip = " " ++ rust_glyph ++ " main.rs " ++ close_glyph ++ "   " ++ diff_glyph ++ " diff: worktree " ++ close_glyph ++ "   " ++ plus_glyph ++ repeat(" ", 40) ++ split_cluster;
 /// `rust-request-120x40.txt` row 1: the method pill, no glyph.
 const spec_request_strip = "  GET  httpbin.org/get " ++ close_glyph ++ "   " ++ plus_glyph;
 
@@ -1169,7 +1170,7 @@ test "a request tab has no glyph and a method pill; a dirty tab a dot the pointe
     defer h.deinit();
     h.ascii = true;
     _ = draw(h.ui(), h.full(), &tabs, .{ .new_tab = 9, .split = split_ids });
-    try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ " " ** 21 ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
+    try h.expectRow(0, " x a.txt " ++ dirty_dot ++ "   x b.txt " ++ pin_ascii ++ "   " ++ plus_ascii ++ repeat(" ", 21) ++ "  " ++ term_ascii ++ "  " ++ split_right_ascii ++ "  " ++ split_down_ascii ++ "  " ++ maximize_ascii);
     try testing.expectEqual(@as(u32, 9), h.hits.at(25, 0).?.button);
 }
 
@@ -1412,7 +1413,7 @@ test "the mode chip sits before the cluster; AI chips drop first" {
         .mode_chip = .{ .label = " " ++ preview_glyph ++ " Preview ", .button = 5, .kind = .edit_md },
         .split = .{ .term = 1, .right = 2, .down = 3, .max = 4, .ai = &ai },
     });
-    try f.expectRow(0, std.mem.trimEnd(u8, " x a.md " ++ close_glyph ++ "   " ++ plus_glyph ++ " " ** 15 ++ preview_glyph ++ " Preview  ✳  ❯ " ++ split_cluster, " "));
+    try f.expectRow(0, std.mem.trimEnd(u8, " x a.md " ++ close_glyph ++ "   " ++ plus_glyph ++ repeat(" ", 15) ++ preview_glyph ++ " Preview  ✳  ❯ " ++ split_cluster, " "));
     try testing.expect(f.hits.at(15, 0) == null);
     try testing.expectEqual(@as(u32, 5), f.hits.at(30, 0).?.button);
     try testing.expect(f.bgEql(30, 0, .{ .bg = f.theme.palette.purple }));

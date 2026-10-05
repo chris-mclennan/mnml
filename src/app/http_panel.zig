@@ -113,7 +113,7 @@ pub const State = struct {
     /// Rows as displayed: the filter and the collapse state applied.
     rows: std.ArrayListUnmanaged(Row) = .empty,
     list: Panel.State = .{},
-    collapsed: std.enums.EnumSet(Section) = .initEmpty(),
+    collapsed: std.enums.EnumSet(Section) = .empty,
     /// Folded collection folders, by relative directory (keys on the gpa).
     collapsed_dirs: std.StringArrayHashMapUnmanaged(void) = .empty,
     scanned_once: bool = false,
@@ -870,7 +870,7 @@ fn toggleCollapseAllCmd(app: *App) CommandError!void {
     for (Section.all) |s| if (!st.collapsed.contains(s)) {
         all_closed = false;
     };
-    st.collapsed = if (all_closed) .initEmpty() else .initFull();
+    st.collapsed = if (all_closed) .empty else .full;
     try rebuild(app);
     app.toast("http panel: {s}", .{if (all_closed) "expanded" else "collapsed"});
 }

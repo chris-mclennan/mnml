@@ -33,6 +33,7 @@ const text_field = @import("text_field.zig");
 const ids = @import("../core/ids.zig");
 const manifest = @import("../bridge/manifest.zig");
 const fonts_section = @import("fonts_section.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 pub const PaneId = ids.PaneId;
 pub const Caret = text_field.Caret;
@@ -723,7 +724,7 @@ test "the section: header with the sort chip in its ladder, the three tabs at th
     // The sort chip is the header's, at the icon rung the 26-cell
     // shipped width leaves — never on the filter row, where no other
     // section keeps it.
-    try f.expectRow(0, " INTEGRATIONS" ++ " " ** 7 ++ "\u{f0dc}   \u{eb37}");
+    try f.expectRow(0, " INTEGRATIONS" ++ repeat(" ", 7) ++ "\u{f0dc}   \u{eb37}");
     try f.expectLacks("A-Z");
     try f.expectRow(2, "  \u{F0349} / filter");
     // The selected entry's gutter runs BOTH its rows.

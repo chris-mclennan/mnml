@@ -31,6 +31,7 @@
 
 const std = @import("std");
 const app_mod = @import("../app.zig");
+const compat = @import("mnml_sdk").zig_compat;
 const App = app_mod.App;
 const PanelId = app_mod.PanelId;
 const FocusId = app_mod.FocusId;
@@ -181,7 +182,7 @@ pub fn column(c: Config.ColumnSide) Side {
 }
 
 pub fn overrideOf(ss: *const Config.SectionSide, s: Section) ?Side {
-    inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
+    inline for (compat.structFields(Config.SectionSide)) |f| {
         if (std.mem.eql(u8, f.name, @tagName(s))) return @field(ss, f.name);
     }
     return null;

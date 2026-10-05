@@ -17,6 +17,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const text_field = @import("text_field.zig");
 const key_mod = @import("../core/key.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -265,7 +266,7 @@ test "the gate's literals: Find, match N/M, no matches" {
     var caret = draw(f.ui(), f.full(), &s, .{ .current = 0, .total = 3 });
     try f.expectContains("Find");
     try f.expectContains("match 1/3");
-    try f.expectRow(0, " Find  alpha" ++ " " ** 23 ++ " .*   Aa   \\b  match 1/3");
+    try f.expectRow(0, " Find  alpha" ++ repeat(" ", 23) ++ " .*   Aa   \\b  match 1/3");
     try testing.expectEqual(Caret{ .x = 12, .y = 0 }, caret.?);
     try testing.expect(f.bgEql(1, 0, f.theme.chip_active));
     try testing.expect(f.bgEql(7, 0, f.theme.chip));

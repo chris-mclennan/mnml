@@ -112,7 +112,7 @@ pub const State = struct {
     /// not reopened on re-entry until `reopen`.
     closed: std.ArrayListUnmanaged([]u8) = .empty,
     /// The folded sections, kept for the run.
-    collapsed: std.enums.EnumSet(Section) = .initEmpty(),
+    collapsed: std.enums.EnumSet(Section) = .empty,
     /// All repos: every open repo's rows at once, grouped per repo.
     /// Saved with the session.
     all: bool = false,

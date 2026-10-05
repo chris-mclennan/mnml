@@ -1304,7 +1304,7 @@ pub fn refilter(app: *App) Allocator.Error!void {
         };
         if (mine) continue;
         if (!st.all_workspaces and !(if (r.cwd) |c| pathWithin(c, app.workspace) else false)) continue;
-        if (q.len > 0 and std.ascii.indexOfIgnoreCase(r.title(), q) == null) continue;
+        if (q.len > 0 and std.ascii.findIgnoreCase(r.title(), q) == null) continue;
         try st.registry_only.append(gpa, r);
     };
     // The cards through the filters.
@@ -3318,7 +3318,7 @@ pub fn detectTicket(prefixes: []const []const u8, candidates: []const []const u8
         for (prefixes) |p| {
             if (p.len == 0) continue;
             var from: usize = 0;
-            while (std.ascii.indexOfIgnoreCasePos(cand, from, p)) |start| {
+            while (std.ascii.findIgnoreCasePos(cand, from, p)) |start| {
                 const after = start + p.len;
                 var end = after;
                 while (end < cand.len and std.ascii.isDigit(cand[end])) : (end += 1) {}

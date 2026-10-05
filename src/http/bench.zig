@@ -62,7 +62,7 @@ pub fn report(arena: Allocator, url: []const u8, samples: []const Sample, errors
     try appendFmt(arena, &out, "bench {s}\n  {d} request(s) in {d} ms wall\n", .{ url, samples.len, wall_ms });
     try appendFmt(arena, &out, "  latency ms — min {d} · p50 {d} · p95 {d} · p99 {d} · max {d} · mean {d}\n", .{ st.min, st.p50, st.p95, st.p99, st.max, st.mean });
     try out.appendSlice(arena, "  status:");
-    var classes = [_]usize{0} ** 6;
+    var classes = @as([6]usize, @splat(0));
     for (samples) |s| classes[@min(s.status / 100, 5)] += 1;
     for (classes, 0..) |count, class| {
         if (count == 0) continue;
@@ -71,7 +71,7 @@ pub fn report(arena: Allocator, url: []const u8, samples: []const Sample, errors
     try out.append(arena, '\n');
     if (samples.len > 0 and st.max > 0) {
         const buckets: usize = 6;
-        var counts = [_]usize{0} ** 6;
+        var counts = @as([6]usize, @splat(0));
         const span = st.max - st.min + 1;
         for (samples) |s| counts[@min((s.ms - st.min) * buckets / span, buckets - 1)] += 1;
         var b: usize = 0;

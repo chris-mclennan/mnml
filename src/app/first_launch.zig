@@ -76,7 +76,7 @@ pub const State = struct {
     ai_row: u1 = 0,
     ghost_text: bool,
     ghost_touched: bool = false,
-    keys_seen: [wizard.probes.len]bool = .{false} ** wizard.probes.len,
+    keys_seen: [wizard.probes.len]bool = @splat(false),
     claude_installed: bool = false,
     codex_installed: bool = false,
     code_shim_ok: bool = false,
@@ -85,7 +85,7 @@ pub const State = struct {
     kb_note_len: u8 = 0,
     /// The Integrations section: which boxes are checked (none to
     /// start), and which row ←→ / y / n / Tab act on.
-    integ_checked: [first_party_integrations.len]bool = .{false} ** first_party_integrations.len,
+    integ_checked: [first_party_integrations.len]bool = @splat(false),
     integ_row: u8 = 0,
     /// Under the Private integrations row (`private_row`): what the
     /// last add said, and whether it added.

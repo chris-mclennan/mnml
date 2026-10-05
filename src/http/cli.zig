@@ -417,7 +417,7 @@ test "run: env resolution, the request line on stderr, the response on stdout; a
     try testing.expect(std.mem.startsWith(u8, err.written(), "env: dev\nwarn: unresolved {{MISSING}} \u{2014} not defined in env dev; add it to .mnml/env/dev.env or pick an env\nGET http://127.0.0.1:"));
     try testing.expect(std.mem.startsWith(u8, out.written(), "HTTP 200 OK · "));
     try testing.expect(std.mem.endsWith(u8, out.written(), "\n\npong\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "x-env: {{MISSING}}") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "x-env: {{MISSING}}") != null);
     var err2: Io.Writer.Allocating = .init(testing.allocator);
     defer err2.deinit();
     try testing.expectEqual(@as(u8, 1), try run(testing.allocator, testing.io, &env, &.{"/nope.curl"}, .{ .out = &out.writer, .err = &err2.writer }));
@@ -453,7 +453,7 @@ test "run: a GET with trailing directives goes out without a body; a POST's body
     const seen_get = server.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen_get, "GET /get HTTP/1.1\r\n"));
     try testing.expect(std.mem.indexOf(u8, seen_get, "@assert") == null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen_get, "content-length:") == null);
+    try testing.expect(std.ascii.findIgnoreCase(seen_get, "content-length:") == null);
     try testing.expect(std.mem.endsWith(u8, seen_get, "\r\n\r\n"));
     const post_path = try std.fs.path.join(testing.allocator, &.{ ws, "post.http" });
     defer testing.allocator.free(post_path);
@@ -462,7 +462,7 @@ test "run: a GET with trailing directives goes out without a body; a POST's body
     try testing.expect(std.mem.endsWith(u8, seen_post, "\r\n\r\n" ++ json));
     const want_len = try std.fmt.allocPrint(testing.allocator, "content-length: {d}\r\n", .{json.len});
     defer testing.allocator.free(want_len);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen_post, want_len) != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen_post, want_len) != null);
 }
 
 test "run: `# @body-type form-urlencoded` / `multipart` put the pane's bytes on the wire" {
@@ -489,12 +489,12 @@ test "run: `# @body-type form-urlencoded` / `multipart` put the pane's bytes on 
     const form_path = try std.fs.path.join(testing.allocator, &.{ ws, "form.http" });
     defer testing.allocator.free(form_path);
     try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{form_path}, .{ .out = &out.writer, .err = &err.writer }));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-type: application/x-www-form-urlencoded\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "content-type: application/x-www-form-urlencoded\r\n") != null);
     try testing.expect(std.mem.endsWith(u8, server.lastRequest(), "\r\n\r\nname=alice&city=new+york"));
     const up_path = try std.fs.path.join(testing.allocator, &.{ ws, "up.http" });
     defer testing.allocator.free(up_path);
     try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{up_path}, .{ .out = &out.writer, .err = &err.writer }));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-type: multipart/form-data; boundary=") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "content-type: multipart/form-data; boundary=") != null);
     try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "filename=\"data.txt\"") != null);
     try testing.expect(std.mem.indexOf(u8, server.lastRequest(), "hello file") != null);
 }
@@ -529,7 +529,7 @@ test "run: the config's `.http.default_env` picks the env, as it does in the app
     defer err.deinit();
     try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{file}, .{ .out = &out.writer, .err = &err.writer }));
     try testing.expect(std.mem.startsWith(u8, err.written(), "env: staging\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "x-who: staging\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "x-who: staging\r\n") != null);
     var err2: Io.Writer.Allocating = .init(testing.allocator);
     defer err2.deinit();
     try testing.expectEqual(@as(u8, 0), try run(testing.allocator, testing.io, &env, &.{ file, "--env", "qa" }, .{ .out = &out.writer, .err = &err2.writer }));

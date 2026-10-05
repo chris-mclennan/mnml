@@ -162,7 +162,7 @@ pub const Request = struct {
 pub const State = struct {
     pending: std.ArrayListUnmanaged(Request) = .empty,
     /// The classes the person allowed the file channel for this run.
-    granted: std.EnumSet(Effect) = .initEmpty(),
+    granted: std.EnumSet(Effect) = .empty,
     next_id: u32 = 1,
     /// Lines the loop writes: to `audit.jsonl` and to `events.jsonl`.
     audit: std.ArrayListUnmanaged([]u8) = .empty,
@@ -239,7 +239,7 @@ fn grants(app: *App, caller: Caller) Allocator.Error!?*std.EnumSet(Effect) {
         .file_channel => &app.ipc_gate.granted,
         .pane => |id| blk: {
             const gop = try app.api.grants.getOrPut(app.gpa, id);
-            if (!gop.found_existing) gop.value_ptr.* = .initEmpty();
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
             break :blk gop.value_ptr;
         },
         .unknown => null,
