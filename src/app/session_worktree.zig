@@ -801,20 +801,41 @@ test "rootFor: <parent>/.worktrees/<repo> by default; the override with ~ expand
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const sep = std.fs.path.sep_str;
+    // Paths as the platform hands them over — git's `--show-toplevel`
+    // and a home directory are drive-qualified on Windows — and every
+    // expectation spelled exactly, so `resolve` (drive-less `/p/…` is a
+    // rooted path to `resolveWindows`, which keeps it rooted) and `join`
+    // are checked, not normalised away.
+    const windows = @import("builtin").os.tag == .windows;
+    const p = if (windows) "C:\\p" else "/p";
+    const repo = p ++ sep ++ "mnml-zig";
+    const home = if (windows) "C:\\Users\\x" else "/home/x";
+    const abs = if (windows) "D:\\trees" else "/srv/trees";
     // The default: the repo's parent, the shared folder, the repo's name.
-    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
-    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
-    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig" ++ sep ++ "feat", try pathFor(a, try rootFor(a, "/p/mnml-zig", null, null), "feat"));
+    try t.expectEqualStrings(p ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, repo, null, home));
+    try t.expectEqualStrings(p ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, repo ++ sep, "  ", home));
+    try t.expectEqualStrings(p ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig" ++ sep ++ "feat", try pathFor(a, try rootFor(a, repo, null, null), "feat"));
     // Two repos beside each other share the folder, one sub-folder each.
-    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "other", try rootFor(a, "/p/other", null, "/home/x"));
+    try t.expectEqualStrings(p ++ sep ++ ".worktrees" ++ sep ++ "other", try rootFor(a, p ++ sep ++ "other", null, home));
     // The override.
-    try t.expectEqualStrings("/home/x" ++ sep ++ "wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
-    try sdk_testing.expectPath("/home/x", try rootFor(a, "/p/mnml-zig", "~", "/home/x"));
-    try sdk_testing.expectPath("/srv/trees", try rootFor(a, "/p/mnml-zig", "/srv/trees", "/home/x"));
+    try t.expectEqualStrings(home ++ sep ++ "wt", try rootFor(a, repo, "~/wt", home));
+    try t.expectEqualStrings(home, try rootFor(a, repo, "~", home));
+    try t.expectEqualStrings(abs, try rootFor(a, repo, abs, home));
     // Relative from the repo, resolved: `../<repo>-worktrees` is the
     // layout before this one, beside the repository.
-    try sdk_testing.expectPath("/p/mnml-zig/.trees", try rootFor(a, "/p/mnml-zig", ".trees", "/home/x"));
-    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", "../mnml-zig-worktrees", "/home/x"));
+    try t.expectEqualStrings(repo ++ sep ++ ".trees", try rootFor(a, repo, ".trees", home));
+    try t.expectEqualStrings(p ++ sep ++ "mnml-zig-worktrees", try rootFor(a, repo, "../mnml-zig-worktrees", home));
+}
+
+test "rootFor's relative override on Windows: resolveWindows keeps a drive-less rooted repo rooted and adds no drive" {
+    // What `resolve` does on a Windows host, checked from any host: the
+    // function `resolve` calls there is pure (no cwd, no syscalls).
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try t.expectEqualStrings("\\p\\mnml-zig\\.trees", try std.fs.path.resolveWindows(a, &.{ "/p/mnml-zig", ".trees" }));
+    try t.expectEqualStrings("\\p\\mnml-zig-worktrees", try std.fs.path.resolveWindows(a, &.{ "/p/mnml-zig", "../mnml-zig-worktrees" }));
+    try t.expectEqualStrings("C:\\p\\mnml-zig-worktrees", try std.fs.path.resolveWindows(a, &.{ "C:\\p\\mnml-zig", "../mnml-zig-worktrees" }));
 }
 
 test "rootFor: a repo whose parent is a filesystem root, or that is one, goes under home — never a .worktrees at the top of the disk" {
