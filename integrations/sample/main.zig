@@ -124,6 +124,10 @@ pub fn main(init: std.process.Init) !u8 {
                     // One lookup on the toolkit's map: a click lands on
                     // what the eye sees, including the hint row.
                     switch (state.hits.at(c.col, c.row) orelse .counter) {
+                        // The header runs the pane's own published
+                        // command, through the host: it focuses this
+                        // pane, the one it would open.
+                        .title => try mount.command("sample.open"),
                         .click_row => state.counter += 1,
                         .counter => if (c.button == .right) {
                             state.counter = 0;
@@ -140,7 +144,10 @@ pub fn main(init: std.process.Init) !u8 {
                     state.events += 1;
                     if (s.dy > 0) state.counter += 1 else state.counter -|= 1;
                 },
-                .hover, .paste => {},
+                // Name the element under the pointer for the host's
+                // info view; `hoverHelp` sends only on a change.
+                .hover => |h| try mount.hoverHelp(helpAt(&state, h.col, h.row)),
+                .paste => {},
             },
         }
         paint(gpa, msg_arena.allocator(), &frame, &state);
@@ -151,7 +158,24 @@ pub fn main(init: std.process.Init) !u8 {
 
 /// What a click can land on. The toolkit's hit map is generic over this,
 /// so the pane keeps its own vocabulary.
-pub const Target = union(enum) { counter, click_row, reset, toast, quit };
+pub const Target = union(enum) { title, counter, click_row, reset, toast, quit };
+
+/// What the info view says about each element. The header's click
+/// runs a command, so its entry names it (`Help.runs`) and the host
+/// ends the entry with that command's chord — the one place a pane
+/// says "this click is that command".
+fn helpAt(st: *const State, col: u16, row: u16) sdk.pane.help.Help {
+    const H = sdk.pane.help;
+    const tg = st.hits.at(col, row) orelse return .{ .title = "" };
+    return switch (tg) {
+        .title => (H.Help{ .title = "Sample pane", .body = "The sample integration's counter. Click runs Sample: open, which focuses this pane." }).runs("sample.open"),
+        .counter => .{ .title = "Counter", .body = "How many times the pane was counted up, and every input it saw. Right-click sets it back to 0." },
+        .click_row => .{ .title = "Count row", .body = "Click counts up by one; so do up, k, + and space." },
+        .reset => .{ .title = "r — reset", .body = "Click runs what the key runs: the counter back to 0." },
+        .toast => .{ .title = "h — toast", .body = "Click runs what the key runs: a toast from the pane." },
+        .quit => .{ .title = "q — quit", .body = "Click runs what the key runs: the pane says bye and closes." },
+    };
+}
 
 const State = struct {
     theme: []const u8,
@@ -178,6 +202,7 @@ fn paint(gpa: std.mem.Allocator, arena: std.mem.Allocator, f: *sdk.Frame, st: *S
     // mnml told us about, the setting and the geometry.
     const sub = p.fmt(" \u{b7} theme {s} \u{b7} mood {s} \u{b7} {d}\u{d7}{d}", .{ st.theme, st.mood, f.cols, f.rows });
     _ = p.capsTitle(1, 0, "SAMPLE", sub);
+    p.mark(.{ .x = 1, .y = 0, .w = f.cols -| 1, .h = 1 }, .title) catch {};
     if (f.rows > counter_row) {
         const line = p.fmt("counter: {d}", .{st.counter});
         const used = p.put(1, counter_row, f.cols -| 1, line, st.th.bright());
@@ -225,6 +250,18 @@ test "the manifest renders and parses back to the same shape" {
     try std.testing.expectEqualStrings(spec.commands[1].ex.?, back.commands[1].ex.?);
     try std.testing.expectEqualStrings("chip", back.statusline[0].id);
     try std.testing.expectEqualStrings("tree.file", back.context_menu[0].target);
+}
+
+test "the header's hover names the command its click runs; the counter's names none" {
+    var r = try Probe.init(std.testing.allocator, .{ .cols = 80, .rows = 24 });
+    defer r.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try r.paint(arena.allocator());
+    const head = helpAt(&r.st, 3, 0);
+    try std.testing.expectEqualStrings("Sample pane", head.title);
+    try std.testing.expectEqualStrings("sample.open", head.command.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), helpAt(&r.st, 3, counter_row).command);
 }
 
 const paintPane = paint;

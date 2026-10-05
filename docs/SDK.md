@@ -932,6 +932,18 @@ hint-row entry, so the same element reads the same in every pane; your
 own chips and pages get your own words. Both first-party integrations
 do this (`App.helpAt`).
 
+When the element's click runs a command, say which: give the entry its
+id with `Help.runs("<integration>.<verb>")` (or set `.command`) and send
+it with `mount.hoverHelp(help)`. The host then ends your words with a
+`Key: <chord>` line, the same line its own controls carry: a command
+your manifest published reads its first `keys` entry, a host id reads
+the chord under the user's profile, and nothing is printed when the
+command has no chord or the id is unknown. The pane never spells a
+chord itself, so it cannot disagree with the user's keymap. The field
+is optional both ways: an older host ignores it, and an entry without
+it is title and body as before. The sample's header is the reference
+(`integrations/sample/main.zig`, `helpAt`).
+
 ### A figure's hover lists what it counts
 
 **The design-language rule: a statusline figure's hover lists what the

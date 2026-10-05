@@ -215,7 +215,7 @@ are mnml's — the same rule as a terminal pane.
 | `command` | `{id}` | run an mnml command by id (a built-in, or one you registered) |
 | `toast` | `{level, text, action?}` | `level` ∈ `info`, `warn`, `error`; `action` since protocol 3 |
 | `watch_session` | `{key, selector}` | "I started this session; tell me what it does" |
-| `hover` | `{title, body}` | what the element under the pointer is and does, for the info view; `title:""` clears. Only to a host with `capabilities.hover_help` |
+| `hover` | `{title, body, command?}` | what the element under the pointer is and does, for the info view; `title:""` clears. `command`, optional, is the id the element's click runs (the pane's own `<integration>.<verb>` or a host id); the host ends the entry with its `Key:` chord. Only to a host with `capabilities.hover_help` |
 | `bye` | `{}` | a clean exit |
 
 ```json
@@ -226,6 +226,7 @@ are mnml's — the same rule as a terminal pane.
 {"toast":{"level":"info","text":"merged #1234","action":{"label":"Open PR","url":"https://bitbucket.org/acme/api/pull-requests/1234"}}}
 {"toast":{"level":"error","text":"refresh failed: 503","action":{"label":"Retry","command":"integrations.retry_refresh"}}}
 {"hover":{"title":"assignee:","body":"Whose tickets show. Click opens a picker of the people on the tab."}}
+{"hover":{"title":"Sample pane","body":"The sample's counter.","command":"sample.open"}}
 {"watch_session":{"key":"ENG-2\u001ftriage",
                   "selector":{"cwd":"/Users/me/proj","prompt_line":"/agents:developer ENG-2"}}}
 ```
