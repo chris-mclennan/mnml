@@ -1287,10 +1287,12 @@ otherwise. Copy what you need; leave the rest out.
     // What the integrations last polled — a ticket's summary and status
     // — kept under the shared state dir's recent/ (docs/SDK.md, "Cache")
     // so a link to ACME-123 shows its title on hover and as the first
-    // row of its right-click menu. Off: mnml reads none of it and the
-    // integrations it starts write none (MNML_RECENT_ITEMS=0).
+    // row of its right-click menu, and picker.recent_items lists them.
+    // Off: mnml reads none of it and the integrations it starts write
+    // none (MNML_RECENT_ITEMS=0).
     .recent_items = .{
         .enabled = true,
+        .current_release = "", // a release Jira marks current whatever its dates say, e.g. "ACME/2026.10"; empty lets the nearest unreleased release date decide
     },
 }
 ```

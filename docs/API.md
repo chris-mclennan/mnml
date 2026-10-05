@@ -125,6 +125,21 @@ removed by whoever finds it.
 
 `tools/api-bench.sh` times 200 `ping`s through `mnml remote`.
 
+## `mnml cache`
+
+The shared recent-items cache (`docs/SDK.md`, *The recent-items cache*)
+from a shell. No running mnml is needed; it reads the files directly.
+
+```
+mnml cache get <kind> <id>                     # the record as JSON
+mnml cache ls <kind> [--source S] [--limit N]  # newest first, tab-separated
+mnml cache clear [kind] [--yes]                # asks first unless --yes
+```
+
+`<kind>` is `ticket`, `pr`, `pipeline` or `release`. `get` exits 1 when
+the cache has no such record, `clear` exits 1 when you answer no; 2 is
+usage.
+
 ## Agent face: Claude Code's IDE protocol
 
 A Claude Code session started in an mnml pane links to mnml as its IDE

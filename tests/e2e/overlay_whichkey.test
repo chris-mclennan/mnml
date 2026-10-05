@@ -1,7 +1,7 @@
 # The which-key popup as Rust paints it: the leader on the top edge —
 # the ACTIVE profile's — group labels with their `+`, the keys typed so
 # far in the title of a sub-popup (which since 2026-09-14 carries that
-# group's own row, `<leader>f  +find (8)`), and `esc to cancel` at the
+# group's own row, `<leader>f  +find (9)`), and `esc to cancel` at the
 # bottom.
 # Since 2026-09-24 the standard profile's popup is its own `Ctrl+K`
 # chords (`whichkey_standard_ctrl_k.test`): the same box, `Ctrl+K` on
@@ -31,7 +31,7 @@ expect screen lacks "w → write/save"
 expect screen contains "P → +pr"
 expect screen contains "esc to cancel"
 type f
-expect screen contains "┌ <leader>f  +find (8) "
+expect screen contains "┌ <leader>f  +find (9) "
 expect screen contains "f → files"
 expect screen contains "g → grep"
 key esc

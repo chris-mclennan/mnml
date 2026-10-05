@@ -503,6 +503,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     });
     // When to ask again, and what an event file says changed.
     app.recent_root = try recent.rootFor(arena, env);
+    app.recent_current_release = env.get(recent.current_release_env) orelse "";
     app.watch = .init(io, .issue, rd.cfg.refresh_interval_secs, rd.cfg.poll_max_secs, rd.cfg.feed, try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.feed.file));
     client.budget = &app.budget;
     // What the last run learned about each ticket's linked PRs, keyed

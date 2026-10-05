@@ -529,7 +529,8 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     }
     // The numbers the popup paints today, so a chord added or dropped
     // shows up here rather than silently on screen.
-    try t.expectEqual(@as(u16, 8), chordCount(lookup("f").?, true));
+    // (+1: `space f i`, `picker.recent_items` — cache-phase2)
+    try t.expectEqual(@as(u16, 9), chordCount(lookup("f").?, true));
     try t.expectEqual(@as(u16, 4), chordCount(lookup("f").?, false));
     try t.expectEqual(@as(u16, 13), chordCount(lookup("s").?, true));
     try t.expectEqual(@as(u16, 12), chordCount(lookup("s").?, false));
@@ -547,7 +548,9 @@ test "every group in both profiles has a glyph with an ascii twin, and the count
     // keyboard route — hoverpin)
     // (+9: `space a 1` … `space a 9`, `sessions.focus_N` — the standard
     // profile's are `ctrl+alt+1` … `9`, off the leader — session-numbers)
-    try t.expectEqual(@as(u16, 55), vim_only);
+    // (+1: `space f i`, `picker.recent_items`; standard's is
+    // `ctrl+k ctrl+e`, off the leader — cache-phase2)
+    try t.expectEqual(@as(u16, 56), vim_only);
     try t.expectEqual(chordCount(&root, false) + vim_only, chordCount(&root, true));
     // NvChad's `<leader>ds` / `<leader>rn`, vim-only like their groups.
     try t.expectEqual(CommandId.@"lsp.diagnostics", lookup("ds").?.cmd.id);

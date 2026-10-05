@@ -173,6 +173,10 @@ the integration has not polled for a while, or its last poll failed,
 the title stays and adds how old it is — `as of 3h ago`. A key the
 cache has not seen links as before, with no title. Set
 `recent_items.enabled = false` in the config to turn it off.
+A Bitbucket pull request works the same way — `widget#45` shows
+`acme/widget#45 · Redesign the empty state · OPEN · Max Orr` — and
+*Recent tickets and pull requests* (`Space f i` in vim, `Ctrl+K Ctrl+E`
+in standard) lists everything the cache holds, newest first.
 
 ## Which link a menu is for
 
