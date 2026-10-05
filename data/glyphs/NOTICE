@@ -23,4 +23,10 @@ Atlassian, Jira and Bitbucket are trademarks of Atlassian. The marks
 are used to label the Jira and Bitbucket integrations' chips; no
 endorsement is implied.
 
+beatport.svg
+    The round "B" from Beatport's logo, its wordmark removed, as one
+    monochrome path. Beatport is a trademark of Beatport LLC. The mark
+    labels the statusline's now-playing chip when mixr (which plays from
+    Beatport) is the preferred player; no endorsement is implied.
+
 The other SVGs here are described in data/root.zig.

@@ -1275,6 +1275,20 @@ test "SegId.of covers the app's ids and nothing else" {
     try testing.expect(SegId.of(sl.seg_dyn_base) == null);
 }
 
+test "the now-playing cluster's Beatport mark is baked into the shipped MnmlSymbols — a glyph in mnml's block the face lacks paints as nothing, on the web demo and in any terminal without the Rust-era face" {
+    const builder = @import("../glyph/builder.zig");
+    const font_scan = @import("font_scan.zig");
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const face = try builder.buildDefault(arena_state.allocator());
+    var cps = (try font_scan.cmapOfBytes(testing.allocator, face)) orelse return error.TestUnexpectedResult;
+    defer cps.deinit(testing.allocator);
+    const brand = try std.unicode.utf8Decode(sl.cluster_brand_glyph);
+    // In mnml's own block, so no other font can stand in for it.
+    try testing.expect(brand >= 0xF1B00 and brand <= 0xF20FF);
+    try testing.expect(cps.contains(brand));
+}
+
 test "a --sandbox run paints ` sandbox ` beside the mode, a `?` on red when the home or data root is not throwaway; the click names them; the session is not autosaved" {
     var b = try Bench.init(120, 40);
     defer b.deinit();

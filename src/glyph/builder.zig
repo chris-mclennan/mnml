@@ -4,8 +4,9 @@
 //! mnml paints six marks that exist in no font anywhere — the Claude
 //! and Codex product marks, the two tree connectors, the terminal icon
 //! and the unfocused pane's hollow cursor; and the five Atlassian marks
-//! the Bitbucket and Jira chips wear, which no font carries either — so
-//! it carries them itself,
+//! the Bitbucket and Jira chips wear and the Beatport mark the
+//! now-playing chip wears, which no font carries either — so it
+//! carries them itself,
 //! at codepoints in the private plane nothing else claims
 //! (`U+F1B00–U+F20FF`). A terminal renders them by
 //! routing that range at a font named `MnmlSymbols`; ghostty spells
@@ -54,6 +55,11 @@ pub const codex: u21 = 0xF1E01;
 /// repaint rather than a re-bake (`ui/bufferline.zig`'s `spark_cp`,
 /// which is the chrome's copy of this number).
 pub const claude_spark: u21 = 0xF1E02;
+/// The Beatport mark the statusline's now-playing cluster wears for mixr
+/// (`ui/statusline.zig`'s `cluster_brand_glyph`, the chrome's copy of
+/// this number). The Rust editor's face had it here, so a terminal that
+/// still has that face installed paints the same mark.
+pub const beatport: u21 = 0xF1F00;
 pub const tree_vertical: u21 = 0xF1F04;
 pub const tree_corner: u21 = 0xF1F05;
 /// The terminal mark — Ghostty's ghost by default, whatever SVG the
@@ -101,6 +107,7 @@ pub const atl_pipeline_svg = data.atlassian_pipeline_svg;
 pub const atl_board_svg = data.atlassian_board_svg;
 pub const atl_release_svg = data.atlassian_release_svg;
 pub const atl_work_items_svg = data.atlassian_work_items_svg;
+pub const beatport_svg = data.beatport_svg;
 
 /// How the two marks the user sized by eye are placed. `place` scales
 /// each SVG uniformly — aspect kept, always — to the tighter of a
@@ -129,6 +136,11 @@ pub const atl_work_items_svg = data.atlassian_work_items_svg;
 /// placed the same way. The placed-box test below prints every box
 /// and pins each one to ±3 %.
 pub const ghost_fit: ttf.Fit = .{ .height = 0.72 };
+/// The Beatport mark is taller than wide (its stem rises above the
+/// disc), so it is height-bound: 0.744 em is the band the Rust editor's
+/// face drew it in, which makes it exactly one advance across — the
+/// size the now-playing chip was laid out around.
+pub const beatport_fit: ttf.Fit = .{ .height = 0.744 };
 pub const figure_fit: ttf.Fit = .{ .width = 1.45 };
 
 /// The Atlassian marks are drawn on one 16-unit grid, and on Atlassian's
@@ -173,7 +185,7 @@ pub const Sources = struct {
 /// one would turn the other into tofu. The spark is not replaceable —
 /// it is Anthropic's mark, offered as the alternate rather than as a
 /// slot.
-pub fn defaultSpecs(src: Sources) [9]Spec {
+pub fn defaultSpecs(src: Sources) [10]Spec {
     return .{
         .{ .codepoint = atl_pull_request, .name = "atlassian-pull-request", .source = atl_pull_request_svg, .fit = atl_pull_request_fit },
         .{ .codepoint = atl_pipeline, .name = "atlassian-pipeline", .source = atl_pipeline_svg, .fit = atl_pipeline_fit },
@@ -183,6 +195,7 @@ pub fn defaultSpecs(src: Sources) [9]Spec {
         .{ .codepoint = claude, .name = "claude-mark", .source = src.claude, .fit = figure_fit },
         .{ .codepoint = codex, .name = "codex-mark", .source = codex_svg },
         .{ .codepoint = claude_spark, .name = "claude-spark", .source = claude_spark_svg },
+        .{ .codepoint = beatport, .name = "beatport-mark", .source = beatport_svg, .fit = beatport_fit },
         .{ .codepoint = terminal, .name = "terminal-mark", .source = src.terminal, .fit = ghost_fit },
     };
 }
@@ -381,7 +394,7 @@ pub const MergeReport = struct {
 ///
 /// The installed MnmlSymbols may carry codepoints this repo has no
 /// source for — the Rust-era integration chips, spinners and marks
-/// around `U+F1C03…F1F00` — and overwriting the file would silently
+/// around `U+F1C03…F1E14` — and overwriting the file would silently
 /// take them away. So every codepoint the installed face maps is
 /// lifted back out and kept; the ones this build bakes replace theirs;
 /// the ones it bakes and they lack are added; and an outline the
@@ -462,7 +475,7 @@ test "the shipped face carries every codepoint mnml's own block needs, and nothi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const bytes = try buildDefault(arena);
-    for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal, cursor_hollow, atl_pull_request, atl_pipeline, atl_board, atl_release, atl_work_items, ' ' }) |cp| {
+    for ([_]u21{ claude, claude_spark, codex, beatport, tree_vertical, tree_corner, terminal, cursor_hollow, atl_pull_request, atl_pipeline, atl_board, atl_release, atl_work_items, ' ' }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(bytes, cp));
     }
@@ -600,19 +613,20 @@ test "merge: the installed face keeps its own codepoints, this build replaces an
     var report: MergeReport = .{};
     const merged = try merge(arena, installed, .{}, &report);
     // Kept: the two chips. Replaced: space, claude, terminal — and
-    // nothing else of this build's was in there, the spark and the five
-    // Atlassian marks included, which is why they count as added.
+    // nothing else of this build's was in there, the spark, the Beatport
+    // mark and the five Atlassian marks included, which is why they
+    // count as added.
     try t.expectEqual(@as(usize, 2), report.kept);
     try t.expectEqual(@as(usize, 3), report.replaced);
-    try t.expectEqual(@as(usize, 10), report.added);
-    try t.expectEqual(@as(usize, 15), report.total);
+    try t.expectEqual(@as(usize, 11), report.added);
+    try t.expectEqual(@as(usize, 16), report.total);
     // Everything the installed face had is still addressable…
     for ([_]u21{ ' ', 0xF1C03, 0xF1C04, claude, terminal }) |cp| {
         errdefer std.debug.print("lost U+{X}\n", .{cp});
         try t.expect(cmapHas(merged, cp));
     }
     // …and everything this build bakes is too, the new one included.
-    for ([_]u21{ claude, claude_spark, codex, tree_vertical, tree_corner, terminal, cursor_hollow, atl_pull_request, atl_pipeline, atl_board, atl_release, atl_work_items }) |cp| {
+    for ([_]u21{ claude, claude_spark, codex, beatport, tree_vertical, tree_corner, terminal, cursor_hollow, atl_pull_request, atl_pipeline, atl_board, atl_release, atl_work_items }) |cp| {
         errdefer std.debug.print("missing U+{X}\n", .{cp});
         try t.expect(cmapHas(merged, cp));
     }
@@ -780,6 +794,8 @@ const pins = [_]Pin{
     .{ .cp = codex, .w = 0.750, .h = 0.750 },
     .{ .cp = claude_spark, .w = 0.750, .h = 0.750 },
     .{ .cp = terminal, .w = 0.6014, .h = 0.720 },
+    // The Beatport mark on its own 0.744 em band: one advance across.
+    .{ .cp = beatport, .w = 0.6006, .h = 0.744 },
     // The Atlassian five, each its own height on the 16-unit grid at
     // 0.75 em a grid (`atl_grid_em`): 12 × 14, 16 × 10, 16 × 12, 16 × 12,
     // 16 × 13 grid units.

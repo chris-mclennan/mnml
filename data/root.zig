@@ -46,6 +46,14 @@ pub const atlassian_release_svg = @embedFile("glyphs/atlassian-release.svg");
 /// (a card with a check, a second card's edge behind it).
 pub const atlassian_work_items_svg = @embedFile("glyphs/atlassian-work-items.svg");
 
+/// The Beatport "B" — the round mark beside the wordmark in Beatport's
+/// own logo, the wordmark's letters dropped — that the statusline's
+/// now-playing cluster wears for mixr (`ui/statusline.zig`,
+/// `cluster_brand_glyph`). One filled path; the disc's counter is a
+/// hole by nesting. The mnml Rust editor carried it in its own face at
+/// the same codepoint; this is that drawing.
+pub const beatport_svg = @embedFile("glyphs/beatport.svg");
+
 /// The shell integration a shell pane's shell loads
 /// (`src/app/shell_integration.zig`): the files mnml writes into its
 /// data root, per shell, by the name each is installed under.
