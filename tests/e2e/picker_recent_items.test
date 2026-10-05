@@ -1,0 +1,41 @@
+# env: HOME=home
+# env: ACME_SITE=https://tracker.example.com
+# env: MNML_SHARED_STATE_DIR=${MNML_E2E_WORKSPACE}/shared
+# `picker.recent_items` lists the tickets and pull requests the
+# integrations last polled, newest first, each with its title and
+# status, a stale one marked. Enter opens the item where a click on its
+# link would: the link rules' address for its id. Pipeline runs and
+# releases are not listed.
+write acme.zon ".{ .id = \"acme\", .label = \"Acme\", .commands = .{ .{ .id = \"acme.hello\", .title = \"Acme: hello\", .run = \":echo hi\" } }, .auth = .{ .{ .key = \"site_url\", .label = \"Site\", .kind = .url, .env_fallback = \"ACME_SITE\" } }, .links = .{ .{ .pattern = \"[A-Z][A-Z0-9]+-[0-9]+\", .url = \"{site_url}/browse/{0}\" }, .{ .pattern = \"(acme)/([a-z]+)#([0-9]+)\", .url = \"https://bitbucket.org/{1}/{2}/pull-requests/{3}\" } } }"
+shell mkdir -p "$MNML_DATA_ROOT/integrations" && cp acme.zon "$MNML_DATA_ROOT/integrations/acme.zon"
+command integrations.refresh
+# The ticket's file is past its stale_after_secs; the pull requests'
+# is not. The pull requests were seen after the ticket.
+write shared/recent/jira/ticket.json {"version":1,"source":"jira","kind":"ticket","fresh_at":1791000000,"error_at":0,"stale_after_secs":60,"records":[{"id":"ACME-123","seen_at":1791000000,"stale":false,"listings":["assigned_open"],"summary":"Fix the login redirect","status":"In Review","assignee":"Pat Example"}]}
+write shared/recent/bitbucket/pr.json {"version":1,"source":"bitbucket","kind":"pr","fresh_at":1791100000,"error_at":0,"stale_after_secs":2000000000,"records":[{"id":"acme/widget#44","seen_at":1791100000,"stale":false,"title":"Bump the client timeout","state":"MERGED","author":"Max Orr","updated":"2026-09-30T09:00:00Z"},{"id":"acme/widget#45","seen_at":1791100000,"stale":false,"title":"Redesign the empty state","state":"OPEN","author":"Max Orr","updated":"2026-10-01T09:00:00Z"}]}
+write shared/recent/bitbucket/pipeline.json {"version":1,"source":"bitbucket","kind":"pipeline","fresh_at":1791100000,"error_at":0,"stale_after_secs":2000000000,"records":[{"id":"acme/widget!1234","seen_at":1791100000,"stale":false,"state":"COMPLETED","result":"FAILED","ref_name":"main"}]}
+
+command picker.recent_items
+expect within 3000 screen contains "Recent items"
+expect screen contains "acme/widget#45 · Redesign the empty state · OPEN · Max Orr"
+expect screen contains "acme/widget#44 · Bump the client timeout · MERGED · Max Orr"
+expect screen contains "ACME-123 · Fix the login redirect · In Review · stale"
+expect screen lacks "acme/widget!1234"
+# The top row is the newest: the pull request updated last.
+key enter
+expect within 2000 file opened-urls.log contains "https://bitbucket.org/acme/widget/pull-requests/45"
+expect screen lacks "Recent items"
+# The ticket is the last row; its address is its link's.
+command picker.recent_items
+expect within 3000 screen contains "Recent items"
+key down
+key down
+key enter
+expect within 2000 file opened-urls.log contains "https://tracker.example.com/browse/ACME-123"
+# The filter narrows by what the row says.
+command picker.recent_items
+expect within 3000 screen contains "Recent items"
+type login
+expect screen contains "ACME-123 · Fix the login redirect"
+expect screen lacks "acme/widget#45"
+key esc

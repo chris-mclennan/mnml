@@ -5,12 +5,18 @@
 # env: JIRA_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/jira-bucket.json
 # env: JIRA_API_TOKEN=fake-token
 # env: JIRA_BASE_URL=@${MNML_E2E_WORKSPACE}/jira.url
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bb-bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
 # A key in a terminal line says what it names on hover. The Jira
 # integration's `--values` poll (against the fake site) writes the
 # tickets it listed into the shared recent-items cache; mnml reads the
 # file on its stat tick, and hovering `ENG-5` shows the ticket's
 # summary and status. The right-click menu's first row says the same.
-write bin/claude #!/bin/bash\nprintf 'fix ENG-5 now\\n'\nexec sleep 600
+# The Bitbucket integration's poll does the same for pull requests: a
+# `web#820` says its title, state and author.
+write bin/claude #!/bin/bash\nprintf 'fix ENG-5 now\\nsee web#820 next\\n'\nexec sleep 600
 shell chmod +x bin/claude
 write acme.zon ".{ .id = \"acme\", .label = \"Acme\", .commands = .{ .{ .id = \"acme.hello\", .title = \"Acme: hello\", .run = \":echo hi\" } }, .auth = .{ .{ .key = \"site_url\", .label = \"Site\", .kind = .url, .env_fallback = \"ACME_SITE\" } }, .links = .{ .{ .pattern = \"[A-Z][A-Z0-9]+-[0-9]+\", .url = \"{site_url}/browse/{0}\" } } }"
 shell mkdir -p "$MNML_DATA_ROOT/integrations" && cp acme.zon "$MNML_DATA_ROOT/integrations/acme.zon"
@@ -18,11 +24,20 @@ command integrations.refresh
 
 # ── the poll fills the cache ──────────────────────────────────────────
 shell "$MNML_FAKE_JIRA" --port 0 --url-file jira.url --life-secs 120 --quiet --pid-file fake-jira.pid >/dev/null 2>&1 &
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --lifetime-secs 120 >/dev/null 2>&1 &
 wait 600
 write .mnml/integrations/jira/config.zon ".{ .jira_url = \"https://jira.invalid\", .email = \"fake@acme.com\", .refresh_interval_secs = 0, .rate = .{ .per_sec = 1000, .burst = 1000 } }"
 shell "$MNML_JIRA" --values --only work --workspace "$MNML_E2E_WORKSPACE" > values.json
 expect file shared/recent/jira/ticket.json contains "\"assigned_open\""
 expect file shared/recent/jira/ticket.json contains "Basket total wrong with a voucher"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 0, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }"
+# `--install` writes the manifest whose `<repo>#<n>` link names acme.
+shell "$MNML_BITBUCKET_INTEGRATION" --install > install.log
+command integrations.refresh
+shell "$MNML_BITBUCKET_INTEGRATION" --values > bb-values.json
+expect file shared/recent/bitbucket/pr.json contains "\"acme/web#820\""
+expect file shared/recent/bitbucket/pr.json contains "\"authored\""
+expect file shared/recent/bitbucket/pr.json lacks "acct-max"
 
 # ── the hover ─────────────────────────────────────────────────────────
 command ai.claude_code_new
@@ -39,5 +54,14 @@ expect screen lacks "Basket total wrong with a voucher"
 rightclick 38 2
 expect screen contains "ENG-5 · Basket total wrong with a voucher · To Do"
 expect screen contains "Copy link"
+key escape
+
+# ── a pull request ────────────────────────────────────────────────────
+# `web#820` is at columns 36..42 of row 3; its link is the Bitbucket
+# pull request's address, which names `acme/web#820` in the cache.
+hover 39 3
+expect within 3000 screen contains "acme/web#820 · Redesign the empty state · OPEN · Max Orr"
+rightclick 39 3
+expect screen contains "acme/web#820 · Redesign the empty state · OPEN · Max Orr"
 key escape
 shell kill "$(cat fake-jira.pid)" 2>/dev/null || true

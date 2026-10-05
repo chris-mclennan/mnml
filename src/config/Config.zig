@@ -66,6 +66,9 @@ recent_items: RecentItems = .{},
 /// `recent_items` — the shared recent-items cache, read for link titles.
 pub const RecentItems = struct {
     enabled: bool = true,
+    /// A release id (`ACME/2026.10`) Jira marks `current` whatever the
+    /// release dates say; empty lets the dates decide.
+    current_release: []const u8 = "",
 };
 
 pub const Statusline = struct {
