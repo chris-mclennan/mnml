@@ -14,6 +14,7 @@ pub const Capabilities = wire.Capabilities;
 pub const Hello = wire.Hello;
 pub const Palette = wire.Palette;
 pub const Button = wire.Button;
+pub const RowRef = wire.RowRef;
 pub const InputEvent = wire.InputEvent;
 pub const HostMessage = wire.HostMessage;
 pub const Color = wire.Color;

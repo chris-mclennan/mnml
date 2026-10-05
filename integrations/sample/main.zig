@@ -226,7 +226,7 @@ fn paint(gpa: std.mem.Allocator, arena: std.mem.Allocator, f: *sdk.Frame, st: *S
     }
 }
 
-test "the manifest names the pane command first, with a chip, a segment, a setting and a context-menu row" {
+test "the manifest names the pane command first, with a chip, a segment, a setting and two menu contributions" {
     try std.testing.expectEqualStrings("sample", spec.id);
     try std.testing.expectEqualStrings("mnml-sample", spec.binary);
     try std.testing.expectEqualStrings("sample.open", spec.commands[0].id);
@@ -234,7 +234,7 @@ test "the manifest names the pane command first, with a chip, a segment, a setti
     try std.testing.expect(spec.commands[1].ex != null);
     try std.testing.expect(spec.chip != null);
     try std.testing.expectEqual(@as(usize, 1), spec.statusline.len);
-    try std.testing.expectEqual(@as(usize, 1), spec.context_menu.len);
+    try std.testing.expectEqual(@as(usize, 2), spec.context_menu.len);
     try std.testing.expectEqualStrings("mood", spec.settings[0].key);
     try sdk.manifest.validateId(spec.id);
 }
@@ -249,7 +249,11 @@ test "the manifest renders and parses back to the same shape" {
     try std.testing.expectEqualStrings(spec.id, back.id);
     try std.testing.expectEqualStrings(spec.commands[1].ex.?, back.commands[1].ex.?);
     try std.testing.expectEqualStrings("chip", back.statusline[0].id);
-    try std.testing.expectEqualStrings("tree.file", back.context_menu[0].target);
+    try std.testing.expectEqualStrings("ticket", back.context_menu[0].target.kind);
+    try std.testing.expectEqualStrings("sample.echo_ticket", back.context_menu[0].command);
+    try std.testing.expectEqualStrings("state!=DECLINED", back.context_menu[1].when.?);
+    var why: []const u8 = "";
+    try sdk.manifest.validate(back, &why);
 }
 
 test "the header's hover names the command its click runs; the counter's names none" {

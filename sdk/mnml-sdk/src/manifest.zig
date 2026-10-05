@@ -138,11 +138,91 @@ pub const Command = struct {
     }
 };
 
+/// A row this integration adds to a menu mnml builds — another
+/// integration's pane rows, a ticket or PR link anywhere — without the
+/// owner of that menu knowing about it. The host appends every
+/// installed integration's matching rows under a muted header with the
+/// contributor's `label`, and a click runs `command` (one of this
+/// integration's own) with `{id}` `{key}` `{repo}` `{n}` `{url}` in its
+/// `run` line or `args` filled from what was clicked.
 pub const ContextMenuEntry = struct {
-    /// `tree.file` | `tree.dir` | `tab` | `pane`.
-    target: []const u8,
-    title: []const u8,
+    target: Target,
+    /// The row's text. `title` is the older spelling of the same field.
+    label: []const u8 = "",
+    title: []const u8 = "",
+    /// A command id this integration registers (`commands[]`).
     command: []const u8,
+    /// Shown only when the clicked row's field has this value:
+    /// `state=OPEN`, `state!=MERGED`; the value compares ignoring case.
+    /// Fields: `kind` `id` `key` `repo` `n` `state`.
+    when: ?[]const u8 = null,
+    /// The info view's copy for the row; the label when left out.
+    hover: ?[]const u8 = null,
+
+    pub fn text(e: ContextMenuEntry) []const u8 {
+        return if (e.label.len > 0) e.label else e.title;
+    }
+};
+
+/// What a `context_menu[]` row attaches to. `kind`:
+/// `ticket` | `pr` | `pipeline` — a row or link of that kind anywhere;
+/// `link` — any link; `pane:<integration id>:<row kind>` — that
+/// integration's pane rows of that kind only. `tree.file` `tree.dir`
+/// `tab` `pane` are the older host-surface targets: they still load
+/// and show in the detail pane, and are not wired into a menu.
+pub const Target = struct {
+    kind: []const u8,
+
+    pub const Parsed = union(enum) {
+        /// `ticket`, `pr`, `pipeline`, `link`.
+        any: []const u8,
+        pane: struct { integration: []const u8, row: []const u8 },
+        /// An older host-surface target.
+        legacy: []const u8,
+    };
+
+    pub const generic = [_][]const u8{ "ticket", "pr", "pipeline", "link" };
+    pub const legacy_kinds = [_][]const u8{ "tree.file", "tree.dir", "tab", "pane" };
+
+    /// The kind, read; null for one no host knows.
+    pub fn parse(t: Target) ?Parsed {
+        for (generic) |g| if (std.mem.eql(u8, t.kind, g)) return .{ .any = t.kind };
+        for (legacy_kinds) |g| if (std.mem.eql(u8, t.kind, g)) return .{ .legacy = t.kind };
+        if (!std.mem.startsWith(u8, t.kind, "pane:")) return null;
+        const rest = t.kind["pane:".len..];
+        const colon = std.mem.indexOfScalar(u8, rest, ':') orelse return null;
+        const id = rest[0..colon];
+        const row = rest[colon + 1 ..];
+        validateId(id) catch return null;
+        if (row.len == 0 or row.len > 32) return null;
+        for (row) |c| switch (c) {
+            'a'...'z', '0'...'9', '_' => {},
+            else => return null,
+        };
+        return .{ .pane = .{ .integration = id, .row = row } };
+    }
+};
+
+/// The placeholders a `context_menu[]` command's line or args may name.
+pub const menu_placeholders = [_][]const u8{ "id", "key", "repo", "n", "url" };
+
+/// The fields a `when` may test.
+pub const when_fields = [_][]const u8{ "kind", "id", "key", "repo", "n", "state" };
+
+/// A `when`, read: `field=value` or `field!=value`; null when malformed.
+pub const When = struct {
+    field: []const u8,
+    value: []const u8,
+    negate: bool,
+
+    pub fn parse(s: []const u8) ?When {
+        const eq = std.mem.indexOfScalar(u8, s, '=') orelse return null;
+        const negate = eq > 0 and s[eq - 1] == '!';
+        const field = std.mem.trim(u8, s[0..if (negate) eq - 1 else eq], " ");
+        const value = std.mem.trim(u8, s[eq + 1 ..], " ");
+        for (when_fields) |f| if (std.mem.eql(u8, f, field)) return .{ .field = f, .value = value, .negate = negate };
+        return null;
+    }
 };
 
 pub const MenuBarEntry = struct {
@@ -242,6 +322,11 @@ pub const Link = struct {
     /// `resolve = .range`: the kind of row the number is looked up in
     /// (`"pr"`, `"pipeline"`) — a kind the integration publishes.
     ranges: []const u8 = "",
+    /// What a match stands for — `ticket`, `pr` or `pipeline` — so
+    /// other integrations' `context_menu[]` rows for that kind join the
+    /// link's menu. A `.range` link's is its `ranges`; left out, the
+    /// link takes only the rows aimed at every `link`.
+    kind: []const u8 = "",
 };
 
 /// How a link's address is found: `.literal`, the template alone;
@@ -355,7 +440,17 @@ const sdk_root = @import("root.zig");
 
 pub const IdError = error{InvalidId};
 
-pub const ValidateError = error{ InvalidId, NoBinaryNoCommand, LauncherCommandWithoutRun };
+pub const ValidateError = error{ InvalidId, NoBinaryNoCommand, LauncherCommandWithoutRun, BadContextMenu };
+
+/// A `context_menu[]` row's problem, for `validate`'s `why`; null when
+/// the row is fine.
+pub fn contextMenuProblem(e: ContextMenuEntry) ?[]const u8 {
+    if (e.target.parse() == null) return "context_menu: unknown target kind (ticket, pr, pipeline, link, or pane:<integration id>:<row kind>)";
+    if (e.text().len == 0) return "context_menu: a row needs a label";
+    if (e.command.len == 0) return "context_menu: a row needs a command";
+    if (e.when) |w| if (When.parse(w) == null) return "context_menu: `when` is field=value or field!=value over kind, id, key, repo, n, state";
+    return null;
+}
 
 /// The rule both readers apply after the id: a manifest with no
 /// `binary` needs at least one command, and every command of such a
@@ -365,6 +460,10 @@ pub fn validate(m: Manifest, why: *[]const u8) ValidateError!void {
     validateId(m.id) catch {
         why.* = "id must be a file name ([A-Za-z0-9_.-])";
         return error.InvalidId;
+    };
+    for (m.context_menu) |e| if (contextMenuProblem(e)) |p| {
+        why.* = p;
+        return error.BadContextMenu;
     };
     if (!m.isLauncher()) return;
     if (m.commands.len == 0) {
@@ -523,6 +622,34 @@ test "validate: a binary needs nothing more; a launcher needs commands, each wit
     // `run` wins over `ex` when a manifest carries both.
     try testing.expectEqualStrings("term a", (Command{ .id = "c", .title = "c", .run = "term a", .ex = "term b" }).line().?);
     try testing.expect((Command{ .id = "c", .title = "c" }).line() == null);
+}
+
+test "context_menu: targets parse; a bad kind, an empty label and a malformed when are refused by validate" {
+    var why: []const u8 = "";
+    const ok: Manifest = .{ .id = "loops", .label = "Loops", .binary = "mnml-loops", .context_menu = &.{
+        .{ .target = .{ .kind = "ticket" }, .label = "Triage", .command = "loops.triage" },
+        .{ .target = .{ .kind = "pane:bitbucket:pr" }, .label = "Watch", .command = "loops.watch", .when = "state=OPEN" },
+        .{ .target = .{ .kind = "tree.file" }, .title = "Older row", .command = "loops.x" },
+    } };
+    try validate(ok, &why);
+    try testing.expectEqualStrings("ticket", ok.context_menu[0].target.parse().?.any);
+    const pane = ok.context_menu[1].target.parse().?.pane;
+    try testing.expectEqualStrings("bitbucket", pane.integration);
+    try testing.expectEqualStrings("pr", pane.row);
+    try testing.expectEqualStrings("tree.file", ok.context_menu[2].target.parse().?.legacy);
+    try testing.expectEqualStrings("Older row", ok.context_menu[2].text());
+    const w = When.parse("state != merged").?;
+    try testing.expect(w.negate);
+    try testing.expectEqualStrings("state", w.field);
+    try testing.expectEqualStrings("merged", w.value);
+    for ([_][]const u8{ "issue", "pane:bitbucket", "pane:a/b:pr", "pane:jira:", "pane:jira:PR" }) |kind| {
+        const bad: Manifest = .{ .id = "x", .label = "x", .binary = "y", .context_menu = &.{.{ .target = .{ .kind = kind }, .label = "l", .command = "x.c" }} };
+        try testing.expectError(error.BadContextMenu, validate(bad, &why));
+        try testing.expect(std.mem.indexOf(u8, why, "target kind") != null);
+    }
+    try testing.expectError(error.BadContextMenu, validate(.{ .id = "x", .label = "x", .binary = "y", .context_menu = &.{.{ .target = .{ .kind = "pr" }, .command = "x.c" }} }, &why));
+    try testing.expectError(error.BadContextMenu, validate(.{ .id = "x", .label = "x", .binary = "y", .context_menu = &.{.{ .target = .{ .kind = "pr" }, .label = "l", .command = "x.c", .when = "colour=red" }} }, &why));
+    try testing.expect(std.mem.indexOf(u8, why, "when") != null);
 }
 
 test "a chip's glyph: the literal first, else the pinned codepoint decoded, else nothing" {
