@@ -591,10 +591,32 @@ fn hoverCopy(app: *App, arena: Allocator, target: HitTarget) Allocator.Error!?Co
 /// table the click reads too). Null when the click runs none, the
 /// profile binds it to nothing, or one of the entry's `[chord]` rows
 /// (`rows`, the materialized shortcuts' commands) already names it.
+///
+/// A mounted integration's cell names its own command, by id, in its
+/// `hover` message (`MountPane.hover_command`): a host id reads the
+/// same resolver and the same no-repeat rule, a command the pane
+/// published reads its first registered key, as a menu row does.
 pub fn keyLine(app: *App, arena: Allocator, target: HitTarget, rows: [copy.max_keys]?command.CommandId) Allocator.Error!?[]const u8 {
-    const id = (try primary_command.of(app, arena, target)) orelse return null;
-    for (rows) |r| if (r == id) return null;
-    return copy.chordOf(app, arena, id);
+    const ref: command.CommandRef = if (try primary_command.of(app, arena, target)) |id| .{ .static = id } else (paneCommand(app, target) orelse return null);
+    switch (ref) {
+        .static => |id| {
+            for (rows) |r| if (r == id) return null;
+            return copy.chordOf(app, arena, id);
+        },
+        .dyn => |slot| {
+            const d = app.dyn_commands.at(slot) orelse return null;
+            return if (d.keys.len > 0) try copy.chordDisplay(arena, d.keys[0]) else null;
+        },
+    }
+}
+
+/// The command a mounted pane said its hovered cell runs, resolved.
+fn paneCommand(app: *App, target: HitTarget) ?command.CommandRef {
+    if (target != .script_hit) return null;
+    const p = app.panes.get(target.script_hit.pane) orelse return null;
+    const mp = p.asMount() orelse return null;
+    if (mp.hover_title.len == 0 or mp.hover_command.len == 0) return null;
+    return command.resolve(app, mp.hover_command);
 }
 
 /// Whether `target` resolves to a curated entry, the tooltip's fallback,

@@ -12,6 +12,17 @@ the release ships one file), and one line per change a user can see.
 
 ## v0.3.3 (unreleased)
 
+### Integration panes: a confirm's chips click, and hover help names the key
+
+- The SDK's confirm box (`confirmBox`) let a click on its OK or Cancel
+  chip land on the box behind them, so neither did anything. Jira's
+  and Bitbucket's merge confirms both had it. The chips now win.
+- A mounted pane's hover can name the command its element's click
+  runs, and the info view then ends with that command's `Key:` chord,
+  as the host's own controls do. Panes set it with `Help.runs(id)` and
+  `Mount.hoverHelp`; older panes and hosts are unaffected. The sample
+  integration's header shows it.
+
 ### Claude tokens renew on every system
 
 - A Claude account whose token is turned down renews it with the

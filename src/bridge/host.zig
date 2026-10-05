@@ -181,7 +181,7 @@ pub const Event = struct {
         watch_session: struct { key: []u8, id: []u8, cwd: []u8, prompt_line: []u8 },
         /// The element under the pointer, named by the pane for the
         /// info view. Owned.
-        hover: struct { title: []u8, body: []u8 },
+        hover: struct { title: []u8, body: []u8, command: []u8 = &.{} },
         /// The sibling said goodbye.
         bye,
         /// The stream ended without one; the reason is for the banner.
@@ -220,6 +220,7 @@ pub const Event = struct {
             .hover => |h| {
                 gpa.free(h.title);
                 gpa.free(h.body);
+                if (h.command.len > 0) gpa.free(h.command);
             },
             .connected, .frame, .cursor, .bye => {},
         }
@@ -548,7 +549,16 @@ fn readLoop(events: *event.EventQueue, io: Io, gpa: Allocator, shared: *Shared, 
                     gpa.free(title);
                     continue;
                 };
-                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .hover = .{ .title = title, .body = body } } });
+                // The command the element's click runs, by id; the
+                // host spells its chord. An id is short — a longer one
+                // is not an id, and is dropped rather than cut.
+                const cmd_in = h.command orelse "";
+                const cmd: []u8 = if (cmd_in.len == 0 or cmd_in.len > 120) &.{} else gpa.dupe(u8, cmd_in) catch {
+                    gpa.free(title);
+                    gpa.free(body);
+                    continue;
+                };
+                post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .{ .hover = .{ .title = title, .body = body, .command = cmd } } });
             },
             .bye => {
                 post(events, io, gpa, .{ .pane = pane, .generation = generation, .kind = .bye });

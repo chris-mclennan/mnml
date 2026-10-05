@@ -1,0 +1,39 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# A mounted pane's hover can name the command its element's click runs
+# (`wire.SiblingMessage.hover.command`), and the info view then ends
+# the pane's own words with that command's `Key:` chord, the same line
+# the host's own controls carry. The sample's header runs its published
+# `sample.open`; the counter row names no command and gets no line.
+write market/sample.zon ".{ .id = \"sample\", .label = \"Sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\", .description = \"The sample, from a private folder\", .commands = .{ .{ .id = \"sample.open\", .title = \"Sample: open\", .keys = .{\"ctrl+k s\"} } } }"
+command integrations.show_marketplace
+drag 30 5 60 5
+key i
+expect screen contains "installed sample"
+ex set input=standard
+command sample.open
+command view.focus_pane
+expect screen contains "counter: 0"
+# The header row: the pane's words, then the chord of `sample.open`.
+hover 80 2
+expect within 5000 screen contains "Sample pane"
+expect screen contains "Key: Ctrl+K s"
+# The counter row names no command: its words, no Key line.
+hover 80 4
+expect within 5000 screen contains "How many times the pane was counted up"
+expect screen lacks "Key:"
+key q
+wait 500
+key x
+# Uninstall, so the size sweep (one data root for every size) starts
+# clean. The four first-party rows sit above the manifest: walk down.
+command integrations.show_installed
+key down
+key down
+key down
+key down
+key x
+expect screen contains "Remove Sample?"
+key r
+expect screen contains "removed sample"
