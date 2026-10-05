@@ -1,0 +1,37 @@
+{
+ "data": {
+  "repository": {
+   "discussion": {
+    "title": "Invented: a resize leaves a row behind",
+    "closed": false,
+    "isAnswered": false,
+    "updatedAt": "2026-03-04T05:06:07Z",
+    "url": "https://example.invalid/7",
+    "labels": {
+     "nodes": [
+      {
+       "name": "needs-confirmation"
+      }
+     ]
+    },
+    "comments": {
+     "totalCount": 2,
+     "nodes": [
+      {
+       "authorAssociation": "NONE",
+       "replies": {
+        "nodes": []
+       }
+      },
+      {
+       "authorAssociation": "MEMBER",
+       "replies": {
+        "nodes": []
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

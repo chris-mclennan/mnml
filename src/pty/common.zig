@@ -93,26 +93,40 @@ pub fn deviceAttributes(_: *vt.TerminalStream.Handler) DeviceAttributes {
 ///
 /// On SIGWINCH zsh (and readline) redraws its prompt by moving the
 /// cursor UP the number of rows the prompt took *before* the resize,
-/// clearing to the end of the screen, and printing it again. That only
-/// works if the cursor is still that many rows below the prompt's first
-/// row. Reflow breaks it: narrowed, a prompt row that wraps pushes the
-/// cursor a row down, the climb stops a row short, and the row it
-/// should have cleared stays behind as a blank one — one more with
-/// every resize. The ghostty people run (1.3.1) does not do that: it
-/// keeps the cursor on its row. The library here (1.3.2-dev) moved the
-/// prompt clear after the reflow and lets a cursor sitting past the
-/// row's text drag the blanks along with it, and both walk the cursor
-/// down. `keepCursorRow` puts the older order back before the reflow.
+/// clearing to the end of the screen, and printing it again. With the
+/// library as pinned, narrowing a pane at a prompt marked OSC 133
+/// `redraw=1` leaves a stale copy of the prompt's first row — its text,
+/// not a blank row — above the redrawn prompt; successive narrowings add
+/// blank rows under it; a narrow-then-widen cycle does not accumulate.
+///
+/// The cause is upstream commit dde3d4d6b (PR #13367, 2026-07-17), which
+/// moved the prompt clear to after the reflow so a failed reflow leaves
+/// the prompt intact. The reflow copies the prompt mark onto the wrapped
+/// tail of the prompt's first row, so the clear starts at that tail and
+/// misses the first row itself.
+///
+/// Putting the clear back before the reflow is not enough. The cleared
+/// rows' soft-wrap flags must go too — that part is mnml's: 1.3.1's
+/// order kept them, and on widening the blank rows rejoin and the
+/// shell's climb erases a line of output above the prompt. And the
+/// cursor must stay on its row, which upstream c44afa625 (PR #12598)
+/// changed by reflowing a cursor that sits after trailing blanks.
+/// `keepCursorRow` does all three before the reflow.
+///
+/// Upstream: ghostty discussions #13629 and #13460. A standalone repro,
+/// with a check mode the weekly upstream watch runs against ghostty
+/// main, is in `tools/upstream/ghostty-resize-repro/`.
 pub fn resizeGrid(handler: *vt.TerminalStream.Handler, cols: u16, rows: u16) !void {
     keepCursorRow(handler.terminal, cols);
     try handler.resize(.{ .cols = cols, .rows = rows });
 }
 
 /// Before a reflow to `new_cols`: a prompt the shell will redraw
-/// (OSC 133 marked it, and did not say `redraw=0`) is cleared now, so
-/// it reflows as the blank rows it is about to become and keeps its row
-/// count; and a cursor in the blanks past the end of its row's text is
-/// pulled back onto the row it is on. Only the primary screen reflows.
+/// (OSC 133 marked it, and did not say `redraw=0`) is cleared now, its
+/// rows unwrapped, so it reflows as the blank rows it is about to become
+/// and keeps its row count; and a cursor in the blanks past the end of
+/// its row's text is pulled back onto the row it is on. Only the
+/// primary screen reflows.
 fn keepCursorRow(term: *vt.Terminal, new_cols: u16) void {
     if (term.screens.active_key != .primary) return;
     const screen = term.screens.active;

@@ -196,6 +196,81 @@ A tag that shipped short cannot be reused safely (`releases/latest/download`
 already pointed at it; Homebrew and winget may have read it). Bump the patch
 and re-cut — v0.2.9 → v0.2.10, v0.2.18 → v0.2.19.
 
+## Dependencies
+
+What mnml builds against is pinned, and nothing moves it automatically.
+`.github/workflows/upstream-watch.yml` (Mondays 07:00 UTC, or by hand)
+says each week what is behind and whether moving looks safe;
+`tools/upstream-watch.sh` writes its report:
+
+- **Pins** in `build.zig.zon`: ghostty (commits behind main, the pin's
+  date), vaxis (the commit ghostty's own main pins for it), the
+  tree-sitter grammars (crates.io's newest stable), Lua (the newest 5.4.x).
+- **Zig**: the newest stable release against `minimum_zig_version` and
+  the version `ci.yml` installs.
+- **Actions** pinned by sha whose major tag has moved.
+- **npm** in `site/` and `demo/cloudflare/`: outdated by major/minor/patch,
+  `npm audit` by severity.
+- **Upstream threads** mnml follows (the list is at the top of the
+  script; discussions, issues and pull requests): ghostty discussions
+  #13629 and #13460, the resize-redraw regression; issue #14518, ghostty's
+  Zig 0.17 checklist (tasks done/total); and PR #14519, "Update to Zig
+  0.17". mnml cannot move to a newer Zig before ghostty does — ghostty's
+  build calls `requireZig(minimum_zig_version)` inside ours — so that PR
+  merging is the signal: the report's "Zig 0.17" line and the issue
+  comment then say mnml can move. Until ghostty main requires the newer
+  Zig, the weekly zig-next build is expected to fail and is reported as
+  such without turning the run red.
+- **Release channels**: the latest release against the Homebrew tap, the
+  newest winget manifest, the version mnml.sh/download prints, and
+  mnml.sh/demo answering — after a release, a disagreement here is a
+  publish step that did not land.
+- **This run's jobs**: mnml built against ghostty main, its terminal tests
+  there (`pty-test`, and the app's `pty_*` tests), the resize repro
+  (`tools/upstream/ghostty-resize-repro/`) against main — "FIXED
+  upstream" means `keepCursorRow` in `src/pty/common.zig` can go — and,
+  when a newer stable Zig exists, a build with it.
+
+It writes to one issue here, labelled `upstream-watch`: the body is the
+latest report, and a comment (the notification) is added only when
+something that matters changed — a new version, a moved tag, a thread
+that moved, a channel that disagrees, a job result. A pin falling further
+behind main is not news by itself; the job results are. Nothing else is
+written: no push, no pull request, no pin bump. `tools/upstream-watch.sh
+--dry-run` prints the same report locally (read-only; npm is skipped
+without `node_modules`), and `tools/upstream-watch-check.sh` tests its
+parsing and its comment decision offline against
+`tools/upstream/fixtures/`.
+
+**A pin moves only by a deliberate branch** in a worktree, merged
+through `tools/gate/` (`merge-batch.sh`) like any other change — never
+a direct edit on `main`, never "just the zon".
+
+- **ghostty** — `zig fetch --save=ghostty
+  https://github.com/ghostty-org/ghostty/archive/<sha>.tar.gz`, then
+  `zig build pty-test -Dtest-trace=true -Dtest-trace-live=true`, the
+  app's terminal tests (`MNML_TEST_FILTER=.pty_ zig build unit
+  -Dtest-trace=true`) and
+  `tools/upstream/ghostty-resize-repro/check.sh main --main-sha <sha>`.
+  If the repro says FIXED, drop `keepCursorRow` in the same branch and
+  keep its tests. Move `ghostty_main` in the repro's own zon too.
+- **vaxis** — take the `deps.files.ghostty.org/vaxis-<commit>` URL ghostty
+  main pins (its `build.zig.zon`) and `zig fetch --save=vaxis <url>`; the
+  TUI's tests (`zig build unit`) and a look at the real window.
+- **a tree-sitter grammar** — `zig fetch --save=ts_<name>
+  https://static.crates.io/crates/tree-sitter-<name>/tree-sitter-<name>-<version>.crate`,
+  then `zig build highlight-test`; a grammar's node names change between
+  versions, so read the highlight queries' failures, not just the count.
+- **Lua** — `zig fetch --save=lua https://www.lua.org/ftp/lua-5.4.<n>.tar.gz`
+  and `zig build unit`.
+- **Zig** — one branch moves every place that names the version:
+  `minimum_zig_version` in `build.zig.zon` (and the integrations' and the
+  SDK's zons), `ZIG_VERSION` in `ci.yml`, `release.yml` and
+  `release-integration.yml`, `tools/linux/Dockerfile`, `demo/Dockerfile`
+  and `tools/shims/zig` (`git grep -F` the old version). The weekly
+  zig-next job only says whether a plain `zig build` compiles; the gate
+  is the whole chain.
+
 ## Versions
 
 - `build.zig.zon`'s `.version` is the dev baseline (`0.3.2-dev`). It is not

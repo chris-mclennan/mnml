@@ -1,0 +1,11 @@
+# Invented: the offline check's tap workflow.
+name: Bump
+on: workflow_dispatch
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: example-org/homebrew-tap
+      - run: cp app.rb tap/Formula/app.rb

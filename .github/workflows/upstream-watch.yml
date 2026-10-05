@@ -1,0 +1,228 @@
+name: Upstream watch
+
+# Once a week: how far mnml's pins are behind upstream, and whether moving
+# them is safe. tools/upstream-watch.sh writes the report (pins, Zig,
+# actions, npm, the ghostty threads mnml follows, the release channels);
+# the jobs here add what only a build can say — does mnml build and pass
+# its terminal tests against ghostty main, is ghostty's resize-redraw
+# regression still there (tools/upstream/ghostty-resize-repro/), does it
+# build with the newest Zig.
+#
+# What it writes: ONE issue in this repository, labelled upstream-watch.
+# Its body is the latest report with the state in a hidden comment; a
+# comment — the notification — is added only when the state changed
+# (docs/RELEASE.md, "Dependencies"). It never pushes, never opens a pull
+# request and never moves a pin: the ghostty and Zig jobs rewrite the pin
+# in the runner's checkout only. Pins move by a branch through tools/gate/.
+#
+# A job that fails here fails honestly — a red ghostty-main is news, not
+# noise — and `report` still runs (`if: always()`) and says which. The one
+# exception is zig-next while ghostty itself still requires the older Zig:
+# that failure is expected, reported, and does not turn the run red.
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Monday 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+# Read the code; write only this repository's issues (the report).
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  # What the other jobs need to agree on: the ghostty main commit they all
+  # build against, the Zig ci.yml installs (read, not repeated here), and
+  # the newer stable Zig if there is one.
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ghostty_sha: ${{ steps.p.outputs.ghostty_sha }}
+      zig_ci: ${{ steps.p.outputs.zig_ci }}
+      zig_next: ${{ steps.p.outputs.zig_next }}
+      zig_ghostty: ${{ steps.p.outputs.zig_ghostty }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sha=$(gh api repos/ghostty-org/ghostty/commits/main --jq .sha)
+          echo "ghostty_sha=$sha" >> "$GITHUB_OUTPUT"
+          # The Zig ci.yml installs, and the newest stable one when newer.
+          zig=$(tools/upstream-watch.sh --dry-run --json --only zig)
+          ci=$(jq -r '.zig.ci' <<< "$zig")
+          next=$(jq -r 'if .zig.latest_stable != "" and .zig.latest_stable != .zig.ci then .zig.latest_stable else "" end' <<< "$zig")
+          # ghostty main's minimum_zig_version: until it is the newer Zig,
+          # mnml cannot build with that Zig (ghostty's build calls
+          # requireZig), and zig-next's failure is expected.
+          gz=$(jq -r '.zig.ghostty_main_minimum // empty' <<< "$zig")
+          [ -n "$ci" ] || { echo "::error::no Zig version found in ci.yml"; exit 1; }
+          echo "zig_ci=$ci" >> "$GITHUB_OUTPUT"
+          echo "zig_next=$next" >> "$GITHUB_OUTPUT"
+          echo "zig_ghostty=$gz" >> "$GITHUB_OUTPUT"
+          echo "ghostty main $sha (requires Zig ${gz:-?}); CI's Zig $ci; newer Zig: ${next:-none}"
+
+  # mnml against ghostty main: the pin is rewritten in this runner's
+  # checkout only (`zig fetch --save=ghostty`), never committed. ubuntu
+  # only: the runner gives a real pty, which is all the pty tests need
+  # (ci.yml runs the same suites there).
+  ghostty-main:
+    needs: probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      build: ${{ steps.build.outcome }}
+      tests: ${{ steps.tests.outcome }}
+      failed: ${{ steps.tests.outputs.failed }}
+      resize: ${{ steps.repro.outputs.resize }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # setup-zig caches the global cache dir itself (`use-cache`, on by
+      # default); the key keeps this job's ghostty-main objects apart from
+      # ci.yml's.
+      - name: Install zig ${{ needs.probe.outputs.zig_ci }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ needs.probe.outputs.zig_ci }}
+          cache-key: upstream-ghostty-main
+
+      # Fetch retried, as ci.yml does: one dropped connection once failed
+      # a whole run there.
+      - name: zig build against ghostty main
+        id: build
+        env:
+          SHA: ${{ needs.probe.outputs.ghostty_sha }}
+        run: |
+          set -u
+          url="https://github.com/ghostty-org/ghostty/archive/$SHA.tar.gz"
+          for i in 1 2 3; do
+            zig fetch --save=ghostty "$url" && zig build -l > /dev/null && break
+            [ "$i" = 3 ] && exit 1
+            echo "::warning::fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          git diff --stat -- build.zig.zon
+          zig build -j2 --summary failures
+
+      # The terminal tests: the pty module whole (the session, the grid,
+      # keepCursorRow's resize tests), then the app's terminal-pane tests
+      # by name — every test in a src/**/pty_*.zig file is named
+      # `<dir>.pty_<file>.test.…`, which `.pty_` picks out (a bare `pty`
+      # would also match "empty"). Each runner prints
+      # `N passed; S skipped; F failed; K FLAKY.`; the failures are summed.
+      - name: terminal tests against ghostty main
+        id: tests
+        run: |
+          set -u
+          set -o pipefail
+          status=0
+          zig build -j2 pty-test -Dtest-trace=true -Dtest-trace-live=true 2>&1 | tee tests.log || status=1
+          MNML_TEST_FILTER=.pty_ zig build -j2 unit -Dtest-trace=true -Dtest-trace-live=true 2>&1 | tee -a tests.log || status=1
+          failed=$(grep -oE '[0-9]+ failed;' tests.log | awk '{ n += $1 } END { print n + 0 }')
+          crashed=$(grep -cE '^  (CRASH|WEDGED) ' tests.log || true)
+          echo "failed=$((failed + crashed))" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      # Independent of mnml's own build: the repro builds libghostty-vt
+      # alone. `--expect broken` exits 1 the day the regression is fixed,
+      # which turns this job red on purpose — the workaround can go.
+      - name: resize-redraw repro against ghostty main
+        id: repro
+        if: ${{ !cancelled() }}
+        env:
+          SHA: ${{ needs.probe.outputs.ghostty_sha }}
+        run: |
+          set -u
+          set +e
+          verdict=$(tools/upstream/ghostty-resize-repro/check.sh main --main-sha "$SHA" --expect broken)
+          status=$?
+          case "$verdict" in
+            "RESIZE-REDRAW: still broken") echo "resize=broken" >> "$GITHUB_OUTPUT" ;;
+            "RESIZE-REDRAW: FIXED upstream") echo "resize=fixed" >> "$GITHUB_OUTPUT" ;;
+            *) echo "resize=unknown" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "${verdict:-no verdict (exit $status)}"
+          exit "$status"
+
+  # Only when a newer stable Zig exists: does mnml build with it? While
+  # ghostty main still requires an older Zig this must fail (mnml builds
+  # ghostty's module, and ghostty's build calls requireZig), so the build
+  # step's failure is informational then — continue-on-error, the outcome
+  # still reported — and red once ghostty main requires the newer Zig.
+  zig-next:
+    needs: probe
+    if: ${{ needs.probe.outputs.zig_next != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      build: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install zig ${{ needs.probe.outputs.zig_next }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ needs.probe.outputs.zig_next }}
+          cache-key: upstream-zig-next
+      - name: zig build
+        id: build
+        continue-on-error: ${{ needs.probe.outputs.zig_ghostty != needs.probe.outputs.zig_next }}
+        run: |
+          for i in 1 2 3; do
+            zig build -l > /dev/null && break
+            [ "$i" = 3 ] && exit 1
+            echo "::warning::dependency fetch attempt $i failed; retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          zig build -j2 --summary failures
+
+  # The report and the one tracking issue. Runs whatever the jobs above
+  # did, and puts one line each of their results into the report.
+  report:
+    needs: [probe, ghostty-main, zig-next]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # npm 10 (Node 22) wrote both lockfiles; see site.yml. --ignore-scripts:
+      # `npm outdated` and `npm audit` read the tree, they need no builds.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+      - name: npm ci (site, demo/cloudflare)
+        run: |
+          for d in site demo/cloudflare; do
+            (cd "$d" && npm ci --no-audit --no-fund --ignore-scripts) \
+              || echo "::warning::npm ci failed in $d; the report says it was skipped"
+          done
+
+      - name: tools/upstream-watch.sh --publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UW_REPO: ${{ github.repository }}
+          UW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          UW_CI_GHOSTTY_SHA: ${{ needs.probe.outputs.ghostty_sha }}
+          UW_CI_GHOSTTY_BUILD: ${{ needs.ghostty-main.outputs.build || needs.ghostty-main.result }}
+          UW_CI_TERMINAL_TESTS: ${{ needs.ghostty-main.outputs.tests || 'skipped' }}
+          UW_CI_TERMINAL_FAILED: ${{ needs.ghostty-main.outputs.failed }}
+          UW_CI_RESIZE: ${{ needs.ghostty-main.outputs.resize || 'unknown' }}
+          UW_CI_ZIG_NEXT: ${{ needs.zig-next.outputs.build || needs.zig-next.result }}
+          UW_CI_ZIG_NEXT_VERSION: ${{ needs.probe.outputs.zig_next }}
+          UW_CI_ZIG_GHOSTTY: ${{ needs.probe.outputs.zig_ghostty }}
+        run: tools/upstream-watch.sh --publish
