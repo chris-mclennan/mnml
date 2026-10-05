@@ -950,10 +950,13 @@ test "ids round-trip through by_name and @tagName" {
     try std.testing.expectEqual(CommandId.@"app.quit", by_name.get("app.quit").?);
     try std.testing.expectEqualStrings("git.commit", name(.@"git.commit"));
     try std.testing.expect(by_name.get("nope.nope") == null);
-    try std.testing.expectEqual(@as(usize, 1196), count);
+    try std.testing.expectEqual(@as(usize, 1187), count);
     // + `sessions.focus_1` … `focus_9` (session-numbers)
     // + `picker.recent_items` (cache-phase2)
-    try std.testing.expectEqual(@as(usize, 1196), count);
+    try std.testing.expectEqual(@as(usize, 1187), count);
+    // + `sessions.focus_1` … `focus_9` (session-numbers)
+    // - `sessions.show_1` … `show_9`, folded into `focus_N` (sessions-ctrl-n)
+    try std.testing.expectEqual(@as(usize, 1187), count);
     try std.testing.expectEqualStrings("Quit mnml", title(.@"app.quit"));
 }
 

@@ -7,8 +7,8 @@
 # sessions in `ai.session_columns` = 2 columns, dealt round-robin in the
 # rail's order: 1 3 5 | 2 4. Each strip's ` ‹ n/m › ` is the session's
 # place in its column. Ctrl+Tab / Ctrl+Shift+Tab step the focused
-# column's stack and the keys stay; Ctrl+N shows the rail's Nth session
-# in the focused column, trading places with the one there. Closing a
+# column's stack and the keys stay; Ctrl+N shows the session whose card
+# wears N in the focused column, trading places with the one there. Closing a
 # column's last session keeps two columns: the next session stacked
 # behind another column fills it. Leaving puts the split back, the
 # surviving sessions as tabs behind b.txt. Both profiles' chords.

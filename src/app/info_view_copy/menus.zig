@@ -132,7 +132,7 @@ const phase_one = [_]Row{
     .{ .parent = "Show side by side", .label = "4 side by side", .entry = columns(4) },
     .{ .label = "Sessions side by side (the sessions mode)", .entry = .{
         .title = "The sessions mode",
-        .body = "Puts the editor layout aside and shows only the Claude Code and Codex sessions, `ai.session_columns` of them side by side, the rest stacked behind as tabs. Ctrl+Tab steps the focused column's stack, Ctrl+1…9 shows the rail's Nth session there, Ctrl+N starts a new one in it. Run it again — or click the Sessions row — and the layout comes back exactly as it was.",
+        .body = "Puts the editor layout aside and shows only the Claude Code and Codex sessions, `ai.session_columns` of them side by side, the rest stacked behind as tabs. Ctrl+Tab steps the focused column's stack, Ctrl+1…9 shows the session whose card wears that number there, Ctrl+N starts a new one in it. Run it again — or click the Sessions row — and the layout comes back exactly as it was.",
         .links = &.{ .{ .command = .{ .id = .@"sessions.mode", .label = "Enter or leave it" } }, .{ .settings = .{ .row = copy.settingsRow("ai.session_columns"), .label = "Sessions side by side" } } },
     } },
     .{ .label = "Bake AI glyphs into MnmlSymbols", .entry = .{

@@ -15,10 +15,13 @@
 //!
 //! Inside the mode the chords are the sessions' (`interceptKey`):
 //! `Ctrl+Tab` / `Ctrl+Shift+Tab` swap the focused column's visible
-//! session for the next / previous one stacked behind it, `Ctrl+1` …
-//! `Ctrl+9` show session N of the rail in the focused column, and
-//! `Ctrl+N` starts a new Claude Code session as the focused column's
-//! visible one. Everywhere else those chords keep their meaning.
+//! session for the next / previous one stacked behind it, and `Ctrl+N`
+//! starts a new Claude Code session as the focused column's visible
+//! one. In the sessions view (`viewing`: the mode on screen, or the
+//! SESSIONS panel with the keys) `Ctrl+1` … `Ctrl+9` are
+//! `sessions.focus_N` — the session whose card wears N, the number
+//! `Ctrl+Alt+N` / `Space a N` reach everywhere. Everywhere else those
+//! chords keep their meaning (`Ctrl+1…9` the tabs').
 //!
 //! The shape holds (`reconcile`, run after every command and event): a
 //! session started in the mode by any other way joins the emptiest
@@ -50,15 +53,6 @@ pub const table = .{
     .@"sessions.mode_new" = &newCmd,
     .@"sessions.column_next" = &columnNextCmd,
     .@"sessions.column_prev" = &columnPrevCmd,
-    .@"sessions.show_1" = showRunner(1),
-    .@"sessions.show_2" = showRunner(2),
-    .@"sessions.show_3" = showRunner(3),
-    .@"sessions.show_4" = showRunner(4),
-    .@"sessions.show_5" = showRunner(5),
-    .@"sessions.show_6" = showRunner(6),
-    .@"sessions.show_7" = showRunner(7),
-    .@"sessions.show_8" = showRunner(8),
-    .@"sessions.show_9" = showRunner(9),
     .@"sessions.columns_1" = columnsRunner(1),
     .@"sessions.columns_2" = columnsRunner(2),
     .@"sessions.columns_3" = columnsRunner(3),
@@ -494,42 +488,62 @@ pub fn takeZoom(app: *App, next: PaneId) void {
 
 // ─── the chords ─────────────────────────────────────────────────────────
 
-const Intercept = struct { chord: []const Chord, id: command.CommandId };
+/// Where a chord is the sessions': `.mode` while the mode shows,
+/// `.view` in the wider sessions view (`viewing`).
+const Scope = enum { mode, view };
+
+const Intercept = struct { chord: []const Chord, id: command.CommandId, scope: Scope };
 
 const intercept_specs = [_][]const u8{ "ctrl+tab", "ctrl+shift+tab", "ctrl+n", "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9" };
 
 const intercepts = blk: {
     @setEvalBranchQuota(100_000);
     break :blk [_]Intercept{
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+tab").?, .id = .@"sessions.column_next" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+shift+tab").?, .id = .@"sessions.column_prev" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+n").?, .id = .@"sessions.mode_new" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+1").?, .id = .@"sessions.show_1" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+2").?, .id = .@"sessions.show_2" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+3").?, .id = .@"sessions.show_3" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+4").?, .id = .@"sessions.show_4" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+5").?, .id = .@"sessions.show_5" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+6").?, .id = .@"sessions.show_6" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+7").?, .id = .@"sessions.show_7" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+8").?, .id = .@"sessions.show_8" },
-        .{ .chord = keymap.parseKeySeqComptime("ctrl+9").?, .id = .@"sessions.show_9" },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+tab").?, .id = .@"sessions.column_next", .scope = .mode },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+shift+tab").?, .id = .@"sessions.column_prev", .scope = .mode },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+n").?, .id = .@"sessions.mode_new", .scope = .mode },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+1").?, .id = .@"sessions.focus_1", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+2").?, .id = .@"sessions.focus_2", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+3").?, .id = .@"sessions.focus_3", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+4").?, .id = .@"sessions.focus_4", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+5").?, .id = .@"sessions.focus_5", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+6").?, .id = .@"sessions.focus_6", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+7").?, .id = .@"sessions.focus_7", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+8").?, .id = .@"sessions.focus_8", .scope = .view },
+        .{ .chord = keymap.parseKeySeqComptime("ctrl+9").?, .id = .@"sessions.focus_9", .scope = .view },
     };
 };
 
-/// The command a chord means in the mode, or null — outside it, or a
-/// chord the mode leaves alone.
+/// The sessions view: the sessions mode on screen, or the SESSIONS
+/// panel with the keys (shown, in a sidebar or the dock). There
+/// `Ctrl+1` … `Ctrl+9` are the card numbers (`sessions.focus_N`), in
+/// either profile; anywhere else they are the tabs'
+/// (`view.focus_tab_N`) and the numbers are `Ctrl+Alt+N` / `Space a N`.
+pub fn viewing(app: *const App) bool {
+    if (showing(app)) return true;
+    return app.focus == .panel and app.focus.panel == .sessions and side.isShown(app, side.sectionOfPanel(.sessions));
+}
+
+fn inScope(app: *const App, scope: Scope) bool {
+    return switch (scope) {
+        .mode => showing(app),
+        .view => viewing(app),
+    };
+}
+
+/// The command a chord means here, or null — outside the mode and the
+/// view, or a chord they leave alone.
 pub fn chordCommand(app: *const App, k: Key) ?command.CommandId {
-    if (!showing(app)) return null;
     const c = Chord.of(k);
-    for (intercepts) |ic| if (ic.chord[0].eql(c)) return ic.id;
+    for (intercepts) |ic| if (inScope(app, ic.scope) and ic.chord[0].eql(c)) return ic.id;
     return null;
 }
 
-/// The chord a sessions-mode verb answers to while the mode shows —
-/// what a menu row or the hover copy prints for it — or null.
+/// The chord a sessions verb answers to here (the mode's while it
+/// shows, the numbers' in the sessions view) — what a menu row or the
+/// hover copy prints for it — or null.
 pub fn contextualSpec(app: *const App, id: command.CommandId) ?[]const u8 {
-    if (!showing(app)) return null;
-    for (intercepts, 0..) |ic, i| if (ic.id == id) return intercept_specs[i];
+    for (intercepts, 0..) |ic, i| if (ic.id == id and inScope(app, ic.scope)) return intercept_specs[i];
     return null;
 }
 
@@ -537,16 +551,16 @@ pub fn contextualSpec(app: *const App, id: command.CommandId) ?[]const u8 {
 /// menu row must not print `Ctrl+N` beside *New file* while Ctrl+N
 /// starts a session.
 pub fn takesSpec(app: *const App, spec: []const u8) bool {
-    if (!showing(app)) return false;
     var buf: [keymap.max_seq]Chord = undefined;
     const seq = keymap.parseKeySeqBuf(spec, &buf) orelse return false;
     if (seq.len != 1) return false;
-    for (intercepts) |ic| if (ic.chord[0].eql(seq[0])) return true;
+    for (intercepts) |ic| if (inScope(app, ic.scope) and ic.chord[0].eql(seq[0])) return true;
     return false;
 }
 
 /// `dispatch.keyInner`'s hook, ahead of every pane and panel: in the
-/// mode the session chords run their session commands. True when taken.
+/// mode and the sessions view the session chords run their session
+/// commands. True when taken.
 pub fn interceptKey(app: *App, k: Key) Allocator.Error!bool {
     const id = chordCommand(app, k) orelse return false;
     command.run(app, .{ .static = id }) catch |err| switch (err) {
@@ -615,18 +629,6 @@ pub fn stackPosition(app: *App, id: PaneId) Allocator.Error!?session_cycle.Posit
         n += 1;
     };
     return .{ .index = at orelse return null, .count = n };
-}
-
-/// `sessions.show_N`: the rail's Nth session in the focused column. One
-/// in another column trades places with the focused column's visible
-/// session, so no column is emptied.
-pub fn showNth(app: *App, n: usize) CommandError!void {
-    try requireMode(app);
-    const arena = app.frame.allocator();
-    const order = try railOrder(app, arena);
-    if (n == 0 or n > order.len) return app.diag.fail(arena, "sessions: there is no session {d} — {d} open", .{ n, order.len });
-    try placeInFocused(app, order[n - 1]);
-    announce(app, order[n - 1]);
 }
 
 /// `target` becomes the focused column's visible session and gets the
@@ -698,7 +700,7 @@ fn intoZoom(app: *App, id: PaneId) Allocator.Error!void {
 
 /// The ready ring's step (`app/session_ready.zig`): `id` on show with
 /// the keys, by the same rule a card's click uses — in the mode,
-/// swapped into the focused column (`Ctrl+1..9`'s primitive), so the
+/// swapped into the focused column (`sessions.focus_N`'s step), so the
 /// mode stays; on a zoomed page, into the zoom; else wherever
 /// `showPane` puts it. A docked session is shown in the dock.
 pub fn showReady(app: *App, id: PaneId) Allocator.Error!void {
@@ -709,14 +711,6 @@ pub fn showReady(app: *App, id: PaneId) Allocator.Error!void {
         if (app.zoomedPane()) |z| if (z != id) return intoZoom(app, id);
     }
     app.showPane(id);
-}
-
-fn showRunner(comptime n: usize) command.CommandFn {
-    return &struct {
-        fn run(app: *App) CommandError!void {
-            return showNth(app, n);
-        }
-    }.run;
 }
 
 /// `sessions.mode_new` (`Ctrl+N` in the mode): a new Claude Code session

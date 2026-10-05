@@ -214,7 +214,7 @@ fn sessionKeys(arena: Allocator, idx: usize) Allocator.Error![]const copy.Key {
     const base = session_card_keys;
     const keys = try arena.alloc(copy.Key, base.len + 1);
     @memcpy(keys[0..base.len], &base);
-    keys[base.len] = .{ .command = session_card_keys_ids[idx], .label = try std.fmt.allocPrint(arena, "Focus session {d} from anywhere", .{idx + 1}) };
+    keys[base.len] = .{ .command = session_card_keys_ids[idx], .label = try std.fmt.allocPrint(arena, "Focus session {d} (Ctrl+{d} while SESSIONS has the keys)", .{ idx + 1, idx + 1 }) };
     return keys;
 }
 

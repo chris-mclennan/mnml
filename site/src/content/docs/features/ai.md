@@ -74,6 +74,17 @@ In the vim profile, `] a` and `[ a` (typed `]a` and `[a`) take a count:
 from inside one use the `ctrl+alt` chord, which works everywhere in
 both profiles.
 
+To go straight to a session, use its number. Each of the first nine
+cards in the **SESSIONS** section shows a small digit to its left, and
+`sessions.focus_1` … `sessions.focus_9` focus the session whose card
+shows that number: `space a 1` … `space a 9` in the vim profile,
+`ctrl+alt+1` … `ctrl+alt+9` in the standard profile. In the *sessions
+view* — while the sessions mode is on screen, or while the SESSIONS
+section has the keys — plain `ctrl+1` … `ctrl+9` do the same in both
+profiles. Anywhere else `ctrl+1` … `ctrl+9` keep their usual meaning
+and focus the current split's tabs. A docked session keeps its number
+too, so the digit on a card is always the key that reaches it.
+
 Two places show your position in the ring:
 
 - **The session's own tab strip** shows ` ‹ 3/7 › ` beside its mode

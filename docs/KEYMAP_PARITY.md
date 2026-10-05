@@ -945,8 +945,11 @@ prose rather than in a table the checker holds to the specs:
 - Ctrl+Tab → `sessions.column_next` (elsewhere `buffer.last`): the focused
   column's visible session gives way to the next one stacked behind it.
 - Ctrl+Shift+Tab → `sessions.column_prev` (elsewhere `buffer.prev`).
-- Ctrl+1 … Ctrl+9 → `sessions.show_1` … `sessions.show_9` (elsewhere
-  `view.focus_tab_N`): the rail's Nth session in the focused column.
+- Ctrl+1 … Ctrl+9 → `sessions.focus_1` … `sessions.focus_9` (elsewhere
+  `view.focus_tab_N`): the session whose SESSIONS card wears N — the
+  number `Ctrl+Alt+N` / `Space a N` reach everywhere — in the focused
+  column. These nine hold in the wider *sessions view* too: the mode on
+  screen, or the SESSIONS panel with the keys (`sessions_mode.viewing`).
 - Ctrl+N → `sessions.mode_new` (elsewhere `file.new` in the standard
   profile, `view.toggle_tree` in the vim profile): a new Claude Code session
   as the focused column's visible one; on a zoomed page it takes the zoom.
