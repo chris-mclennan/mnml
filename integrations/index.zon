@@ -15,8 +15,8 @@
 // ship with a stale row.
 .{
     .integrations = .{
-        .{ .id = "jira", .version = "0.2.2" },
-        .{ .id = "bitbucket", .version = "0.2.2" },
+        .{ .id = "jira", .version = "0.2.3" },
+        .{ .id = "bitbucket", .version = "0.2.3" },
         .{ .id = "sample", .version = "0.1.0" },
     },
 }
