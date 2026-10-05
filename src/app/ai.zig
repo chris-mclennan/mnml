@@ -204,9 +204,14 @@ pub const State = struct {
         self.spend_group.cancel(io);
         self.ghost.deinit(gpa);
         self.usage.deinit(gpa, io);
+        if (self.owned_default) |d| gpa.free(d);
+    }
+
+    /// The jobs themselves, freed after the panes: an AI pane holds its
+    /// job's cancel flag and sets it as it closes (`AiPane.deinit`).
+    pub fn deinitJobs(self: *State, gpa: Allocator) void {
         for (self.jobs.items) |j| gpa.destroy(j);
         self.jobs.deinit(gpa);
-        if (self.owned_default) |d| gpa.free(d);
     }
 
     pub fn job(self: *State, id: u64) ?*Job {
