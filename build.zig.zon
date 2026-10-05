@@ -113,8 +113,8 @@
             .hash = "N-V-__8AAIgSCAC6jyPnBERIVxQ2h5BVmOgGwDlVOKDJdBuT",
         },
         .ts_scala = .{
-            .url = "https://static.crates.io/crates/tree-sitter-scala/tree-sitter-scala-0.26.0.crate",
-            .hash = "N-V-__8AABVGIAKyeM4nhWbfMjWvsTOD2yuJR2i7HqZ1b_33",
+            .url = "https://static.crates.io/crates/tree-sitter-scala/tree-sitter-scala-0.26.2.crate",
+            .hash = "N-V-__8AAFNNqQECw0_-ltcnQYKHuJjTFqA4EuXUSjPMrX46",
         },
         .ts_elixir = .{
             .url = "https://static.crates.io/crates/tree-sitter-elixir/tree-sitter-elixir-0.3.5.crate",
@@ -133,8 +133,8 @@
             .hash = "N-V-__8AAKHGEQAwE9zfDcayJN0Nyh0eq6_sCFXUyKUjdXKG",
         },
         .ts_swift = .{
-            .url = "https://static.crates.io/crates/tree-sitter-swift/tree-sitter-swift-0.7.2.crate",
-            .hash = "N-V-__8AAHb4KQG-G43gP2VasD5L8Kxf-G5Y6nChu9tn0DKK",
+            .url = "https://static.crates.io/crates/tree-sitter-swift/tree-sitter-swift-0.7.4.crate",
+            .hash = "N-V-__8AAAVWcQFS1gx72yDEFj4QTDiMxkaqd7Rz07-C952A",
         },
         .ts_zig = .{
             .url = "https://static.crates.io/crates/tree-sitter-zig/tree-sitter-zig-1.1.2.crate",
@@ -161,20 +161,20 @@
             .hash = "N-V-__8AAF7lCQJlkWvzz1u2QlCQPF9azS6L07WVrSyv3wsD",
         },
         .ts_regex = .{
-            .url = "https://static.crates.io/crates/tree-sitter-regex/tree-sitter-regex-0.24.3.crate",
-            .hash = "N-V-__8AAKReAwAAnQySB-X9gJpGolqrojxGHkMyc1RDtnil",
+            .url = "https://static.crates.io/crates/tree-sitter-regex/tree-sitter-regex-0.25.0.crate",
+            .hash = "N-V-__8AAKZ9AwDDxe-IPgPE57JUtGdT4kRl7_8B1HJEy49_",
         },
         .ts_containerfile = .{
-            .url = "https://static.crates.io/crates/tree-sitter-containerfile/tree-sitter-containerfile-0.8.0.crate",
-            .hash = "N-V-__8AAPwtCADpkGQyVpQpKzRqlCv8UMhHkZwLwErTPz1A",
+            .url = "https://static.crates.io/crates/tree-sitter-containerfile/tree-sitter-containerfile-0.9.2.crate",
+            .hash = "N-V-__8AABzMCgCC6-9yohSOBCItJ5LrqKn45rcvvnhxkVTV",
         },
         .ts_hcl = .{
             .url = "https://static.crates.io/crates/tree-sitter-hcl/tree-sitter-hcl-1.1.0.crate",
             .hash = "N-V-__8AAAMzCwDcfDAti94HVMFyGk56GfpdHI_1lCzXFaty",
         },
         .ts_proto = .{
-            .url = "https://static.crates.io/crates/tree-sitter-proto/tree-sitter-proto-0.4.0.crate",
-            .hash = "N-V-__8AACSoBQC-buUisY0dqh745t60dnnRocEWegErBCcs",
+            .url = "https://static.crates.io/crates/tree-sitter-proto/tree-sitter-proto-0.6.0.crate",
+            .hash = "N-V-__8AAA6WBgBA0dNtt2pKEaT3IERR_6FrZzJG_eDmHnm9",
         },
         .ts_diff = .{
             .url = "https://static.crates.io/crates/tree-sitter-diff/tree-sitter-diff-0.1.0.crate",
