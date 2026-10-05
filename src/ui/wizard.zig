@@ -84,7 +84,7 @@ pub const IntegrationRow = struct {
         installing,
         /// The marketplace is still fetching its listing.
         checking,
-        /// Not in the marketplace this mnml reads (a dev build without
+        /// Not in the marketplace this mnml reads (a source build without
         /// the catalogue, or no release for this platform).
         unavailable,
 

@@ -197,7 +197,7 @@ pub fn devRoots(app: *App, arena: Allocator) Allocator.Error![]const []const u8 
 /// own — tried in order:
 ///
 ///   1. `build_dir` — `build_options.scripts_dir`, the checkout's own
-///      `lua/` baked in at build time, so a dev build lists the set
+///      `lua/` baked in at build time, so a source build lists the set
 ///      with no config and no install step;
 ///   2. `<exe dir>/../share/mnml/lua` — the system layout the `.deb`
 ///      and the `.rpm` lay down (`/usr/bin/mnml` + `/usr/share/…`);
