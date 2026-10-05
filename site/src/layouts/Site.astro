@@ -40,6 +40,7 @@ const og = built("og.png") ? new URL("/og.png", Astro.site ?? Astro.url).href : 
     {og && <meta property="og:image:height" content="630" />}
     {og && <meta property="og:image:alt" content="A frame from a recording of mnml, the terminal IDE, in NvChad's chrome." />}
     <meta name="twitter:card" content={og ? "summary_large_image" : "summary"} />
+    <slot name="head" />
     <script is:inline>
       try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
     </script>
