@@ -64,20 +64,16 @@ def forbidden_patterns():
 
 
 class SiteWindow(Window):
-    """The tour's window, launched as the stable profile: the harness
-    passes `--profile dev` (a statusline chip no visitor has), and the
-    wrapper drops it. The harness writes its config to both data roots
-    and the IPC dir is set through MNML_IPC_DIR, so nothing else moves;
-    the running-instance marker lives under the run's private TMPDIR."""
+    """The tour's window with the data root written relative: the IPC
+    dir is set through MNML_IPC_DIR and the running-instance marker lives
+    under the run's private TMPDIR."""
 
     def _write_wrapper(self):
         path = super()._write_wrapper()
         with open(path, encoding="utf-8") as f:
             head, body = f.read().split("\n", 1)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(head + "\n" + 'if [ "$1" = --profile ]; then shift 2; fi\n'
-                    + "MNML_PROFILE=stable; export MNML_PROFILE\n"
-                    + self.relative_root_lines() + body)
+            f.write(head + "\n" + self.relative_root_lines() + body)
         return path
 
     relative_root = False

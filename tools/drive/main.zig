@@ -431,7 +431,6 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
 
         var child_env = try envWith(gpa, io, init_env, &.{
             .{ "MNML_DATA_ROOT", data_root },
-            .{ "MNML_PROFILE", "dev" },
             .{ "MNML_IPC_DIR", ipc_dir },
             // A driven window never asks GitHub for releases: the day
             // v0.3.0 existed, every tour shot grew a notification chip

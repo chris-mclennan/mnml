@@ -26,7 +26,7 @@ CURRENT = os.path.join(LOOK, "current")
 
 # What keeps the window off the person's own files and the network: an
 # `--env` never replaces these (docs/LOOK.md, *Own data root*).
-PROTECTED_ENV = ("HOME", "TMPDIR", "MNML_DATA_ROOT", "MNML_IPC_DIR", "MNML_PROFILE",
+PROTECTED_ENV = ("HOME", "TMPDIR", "MNML_DATA_ROOT", "MNML_IPC_DIR",
                  "MNML_ARTIFACTS_HOME", "MNML_SESSIONS_HOME",
                  "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY")
 

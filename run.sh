@@ -48,10 +48,10 @@
 #                                 the shipped integrations to PREFIX/bin
 #                                 (default ~/.local), zig-out/share to
 #                                 PREFIX/share, and each integration's manifest
-#                                 into the STABLE profile's data root pointing
+#                                 into the data root pointing
 #                                 at PREFIX/bin — so a rebuild in this repo
 #                                 never moves the binaries under the running
-#                                 stable copy.
+#                                 installed copy.
 #                                   --prefix DIR   where to install (or $PREFIX)
 #                                   --dry-run      print every step, change nothing
 #                                   --allow-dirty  install from a dirty tree / a
@@ -69,9 +69,9 @@
 #                                   --dry-run      print every step, change nothing
 #   ./run.sh installed-status     The installed mnml's version and prefix
 #                                 against this tree's HEAD, and where the
-#                                 stable profile's integration links point.
+#                                 data root's integration links point.
 #
-#   On Windows these three verbs are run.ps1's (plus `profile`) — the
+#   On Windows these three verbs are run.ps1's (plus `paths`) — the
 #   same semantics, the same refusals, the same --dry-run plan, spelled
 #   for PowerShell. docs/WINDOWS.md and docs/INSTALL-CHECKLIST.md.
 #
@@ -95,16 +95,10 @@
 #   MNML_OPTIMIZE     Optimize mode for the launch build (default ReleaseSafe;
 #                     `Debug` for a debug binary — same output path).
 #   MNML_BIN          The binary to run (default zig-out/bin/mnml-zig).
-#   MNML_IPC_SUBDIR   IPC dir name under <ws>/.mnml/ (default ipc-zig — a dev
+#   MNML_IPC_SUBDIR   IPC dir name under <ws>/.mnml/ (default ipc-zig — a source
 #                     build's `-Dipc-subdir`; the Rust editor owns `ipc`).
 #   MNML_IPC_DIR      An absolute IPC dir instead (the app honors it too).
 #   MNML_ZIG          The zig to build with (default: `zig` on PATH).
-#   MNML_PROFILE      Which mnml this is (default dev for a launch from here:
-#                     its own data root ~/.config/mnml-dev, session-dev.zon,
-#                     the ipc-zig mailbox and a `dev` chip on the statusline).
-#                     `stable` runs this build against the installed mnml's
-#                     state. The build / test / check / install verbs never
-#                     set it — only a launch does (docs/CONFIG.md, Profiles).
 #   PREFIX            Where `install` puts things (default ~/.local).
 #   MNML_E2E_ALLOW_SHELL  `check` runs the corpus with it set to 1 unless you
 #                     export another value.
@@ -238,17 +232,17 @@ demo_fakes() {
   printf '%s\n' mnml-fake-jira mnml-fake-bitbucket
 }
 
-# Is `$1` an mnml-zig? (`--version` says so; the Rust mnml and anything
-# else on the machine do not.)
+# Is `$1` an mnml-zig? `--version` is `mnml 0.3.x` or later; the Rust
+# mnml (frozen at 0.2) and anything else on the machine are not.
 is_ours() {
   [ -x "$1" ] || return 1
-  "$1" --version 2>/dev/null | grep -qE '^mnml(-zig)? .*\((stable|dev) profile\)'
+  "$1" --version 2>/dev/null | grep -qE '^mnml(-zig)? (0\.([3-9]|[1-9][0-9]+)|[1-9][0-9]*)\.'
 }
 
-# The installed mnml's stable data root — asked of the binary itself, so
-# the ladder is never duplicated here.
+# The installed mnml's data root — asked of the binary itself
+# (`mnml paths`), so the ladder is never duplicated here.
 installed_data_root() {
-  "$1" profile 2>/dev/null | sed -n 's/^data: *//p' | head -n 1
+  "$1" paths 2>/dev/null | sed -n 's/^data: *//p' | head -n 1
 }
 
 do_install() {
@@ -300,14 +294,14 @@ do_install() {
   else
     log "building ReleaseSafe with the shipped names (-Dinstall-names)…"
     (cd "$REPO" && "$ZIG" build -Doptimize=ReleaseSafe -Dinstall-names=true) || { log "$say: the build failed"; return 1; }
-    # 4. Verified: it runs, it says what it is, and it says it defaults
-    #    to the stable profile — the whole point of -Dinstall-names.
+    # 4. Verified: it runs and it says what it is.
     local ver
     ver=$("$built" --version 2>/dev/null)
-    case "$ver" in
-      "mnml-zig "*"(stable profile)"|"mnml "*"(stable profile)") log "verified: $ver" ;;
-      *) log "$say: $built --version said \"$ver\" — refusing to install an unverified build"; return 1 ;;
-    esac
+    if is_ours "$built"; then
+      log "verified: $ver"
+    else
+      log "$say: $built --version said \"$ver\" — refusing to install an unverified build"; return 1
+    fi
   fi
 
   # 5. The files.
@@ -339,19 +333,19 @@ EOF2
     log "  (no zig-out/share yet — the build makes it)"
   fi
 
-  # 6. The manifests, in the STABLE profile's data root, pointing at the
+  # 6. The manifests, in the data root, pointing at the
   #    binaries just installed. Each integration writes its own
   #    (`<binary> --install`), so the manifest and the binary cannot
   #    drift; `<root>/bin/<name>` is then relinked from this repo's
   #    zig-out to PREFIX/bin, which is the bug this verb exists to fix:
   #    a rebuild here used to move the integrations under the running
-  #    stable mnml.
+  #    installed mnml.
   local root
   if [ "$dry" = 1 ]; then
-    root=$(MNML_PROFILE=stable installed_data_root "$built" 2>/dev/null)
-    [ -n "$root" ] || root="(the stable data root)"
+    root=$(installed_data_root "$built" 2>/dev/null)
+    [ -n "$root" ] || root="(the data root)"
   else
-    root=$(MNML_PROFILE=stable installed_data_root "$prefix/bin/mnml")
+    root=$(installed_data_root "$prefix/bin/mnml")
     [ -n "$root" ] || { log "$say: could not ask $prefix/bin/mnml for its data root"; return 1; }
   fi
   log "$say: manifests → $root/integrations, links → $root/bin"
@@ -362,10 +356,10 @@ EOF2
       continue
     fi
     if [ "$dry" = 1 ]; then
-      echo "  would run    MNML_PROFILE=stable MNML_DATA_ROOT=$root $prefix/bin/$bin --install" >&2
+      echo "  would run    MNML_DATA_ROOT=$root $prefix/bin/$bin --install" >&2
       echo "  would link   $root/bin/$bin → $prefix/bin/$bin" >&2
     else
-      MNML_PROFILE=stable MNML_DATA_ROOT="$root" "$prefix/bin/$bin" --install >/dev/null 2>&1 ||
+      MNML_DATA_ROOT="$root" "$prefix/bin/$bin" --install >/dev/null 2>&1 ||
         log "  warning: $bin --install failed (the binary is installed; its manifest is not)"
       mkdir -p "$root/bin"
       rm -f "$root/bin/$bin"
@@ -397,7 +391,7 @@ EOF2
   if [ "$dry" = 1 ]; then
     log "$say: nothing was changed"
   else
-    log "installed. \`$prefix/bin/mnml\` is the stable profile; \`./run.sh\` here is the dev one."
+    log "installed. \`$prefix/bin/mnml\` and \`./run.sh\` here share one data root ($root)."
     case ":$PATH:" in
       *":$prefix/bin:"*) ;;
       *) log "note: $prefix/bin is not on your PATH" ;;
@@ -515,7 +509,7 @@ do_installed_status() {
     echo "installed: $("$dest" --version)"
     echo "here:      $here  (HEAD $head)"
     local root
-    root=$(MNML_PROFILE=stable installed_data_root "$dest")
+    root=$(installed_data_root "$dest")
     echo "data:      ${root:-?}"
     if [ -n "$root" ] && [ -d "$root/bin" ]; then
       local l t
@@ -725,14 +719,6 @@ cleanup_marker() {
   [ -f "$MARKER" ] && [ "$(cat "$MARKER")" = "$ws_dir" ] && rm -f "$MARKER"
 }
 trap cleanup_marker EXIT
-
-# A launch from this repo is the dev profile unless you say otherwise:
-# its own data root, session file, IPC mailbox, marker and a `dev` chip
-# on the statusline, so it never touches the mnml you live in
-# (docs/CONFIG.md, "Profiles"). Only a LAUNCH — build / test / check /
-# install run in the stable profile, where the corpus and the installed
-# binary live.
-export MNML_PROFILE="${MNML_PROFILE:-dev}"
 
 EXTRA=()
 [ "$HEADLESS" = 1 ] && EXTRA+=(--headless)

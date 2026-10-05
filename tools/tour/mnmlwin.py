@@ -39,7 +39,7 @@ DRIVE = os.path.join(REPO, "zig-out", "bin", "mnml-drive")
 # to know what it is running in, and they describe the harness window,
 # not the developer.
 TERMINAL_VARS = ("TERM", "TERMINFO", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM",
-                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_PROFILE", "MNML_IPC_DIR")
+                 "GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR", "MNML_DATA_ROOT", "MNML_IPC_DIR")
 
 CLEAN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
