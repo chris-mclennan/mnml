@@ -15,7 +15,7 @@ shell chmod +x bin/claude
 command ai.new_session_worktree
 key enter
 wait 1500
-shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt
+shell test -f ../.worktrees/$(basename "$PWD")/session-1/draft.txt
 command view.activity_sessions
 wait 500
 command sessions.remove_worktree
@@ -33,7 +33,7 @@ expect screen contains "[R]emove anyway"
 key k
 wait 800
 expect screen contains "kept worktree session-1"
-shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt
+shell test -f ../.worktrees/$(basename "$PWD")/session-1/draft.txt
 shell git rev-parse --verify -q refs/heads/session-1
 # Remove anyway: the branch is unmerged, and the second box says the
 # files go as well. Cancel there: still nothing lost.
@@ -45,4 +45,4 @@ expect screen contains "not merged"
 expect screen contains "has 2 uncommitted files — throw both away?"
 key c
 wait 300
-shell test -f ../$(basename "$PWD")-worktrees/session-1/draft.txt
+shell test -f ../.worktrees/$(basename "$PWD")/session-1/draft.txt

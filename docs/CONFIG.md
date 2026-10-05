@@ -718,8 +718,9 @@ otherwise. Copy what you need; leave the rest out.
             },
         },
         .default_profile = .{ .claude = null, .codex = null }, // a profile name per product; null = the built-in
-        // Where a session worktree goes. null = `<repo>-worktrees` beside the
-        // repository; `~` expands, a relative path sits under the repository.
+        // Where a session worktree goes. null = `<parent>/.worktrees/<repo>`,
+        // a shared folder beside the repository; `~` expands, a relative path
+        // is taken from the repository (`"../<repo>-worktrees"`: the old layout).
         .default_worktree_root = null,
         .inline_suggestions = true,
         // Which backend answers a ghost-text request. Not a typed field —
@@ -1717,6 +1718,32 @@ in the tree with `MNML_WORKSPACE` pointing at it.
 path sits under the repository, an absolute one is taken as is. The
 name is validated as a branch name; an existing directory or branch is
 refused with the reason.
+`<root>` is `<parent>/.worktrees/<repo>`: the directory that holds the
+repository, a `.worktrees` folder there that the repositories beside
+each other share, and a folder per repository named after it — so
+`~/Projects/app` puts its trees in `~/Projects/.worktrees/app/<name>`,
+outside every repository. The folders are made on the first launch
+that needs them; one that cannot be made fails the launch with the
+reason, in the diag line and the git command log. A repository whose
+parent is the top of a disk (`/app`, `C:\app`) has no such folder to
+share: its trees go in `~/.worktrees/<repo>/<name>` (and beside it, as
+`<repo>-worktrees`, when no home directory is known).
+
+`.ai.default_worktree_root` names another root — `~` expands, a
+relative path is taken from the repository, an absolute one is taken
+as is. Before v0.3.3 the default was `<repo>-worktrees` beside the
+repository; to keep that layout set
+`.default_worktree_root = "../<repo>-worktrees"` with your
+repository's directory name (it is resolved, so the recorded path is
+the one `git worktree list` prints). Trees made under an earlier
+default or override stay where they are: every verb below finds a
+tree by the path recorded when it was made, never by working the root
+out again.
+
+The name is one folder name and a branch name at once — letters,
+digits, `-`, `_` and `.`, not starting with `-` or `.`, no `..`, and no
+`/` (since v0.3.3: a `feat/login` would have nested a folder nothing
+recorded). An existing directory or branch is refused with the reason.
 
 The SESSIONS row tags the session `⑂ <name>`; its menu offers *Open
 worktree in tree*, *Merge into <branch>…* (`--no-ff`, refused while

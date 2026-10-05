@@ -212,8 +212,14 @@ Two agents editing the same checkout will trip over each other.
 `ai.new_session_worktree` asks for a branch name, runs
 `git worktree add -b <name>`, and starts the session inside that new
 worktree, with its tab labelled `@ <name>`. By default the worktrees go
-in a `<repo>-worktrees` folder beside your repository;
-`ai.default_worktree_root` moves them.
+in a shared `.worktrees` folder beside your repository, one folder per
+repository: a repository at `~/Projects/app` gets
+`~/Projects/.worktrees/app/<name>`, outside every repository.
+`ai.default_worktree_root` moves them; set it to
+`"../app-worktrees"` (your repository's name) to keep the
+`<repo>-worktrees` folder earlier versions used. Worktrees you already
+have stay where they are and keep working. The name is one folder name
+— letters, digits, `-`, `_` and `.`, no `/`.
 
 To make it the rule rather than a one-off, set `worktree = true` on a
 launch profile (`ai.launch_profiles`): every session of that profile

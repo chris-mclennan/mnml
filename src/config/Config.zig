@@ -1183,9 +1183,12 @@ pub const Ai = struct {
     // changed: launch profiles and their per-product default.
     launch_profiles: []const LaunchProfile = &.{},
     default_profile: DefaultProfile = .{},
-    /// Where a session worktree goes: null is `<repo>-worktrees` beside
-    /// the repository; a path (`~` expanded, a relative one under the
-    /// repository) overrides it. The worktree itself is `<root>/<name>`.
+    /// Where a session worktree goes: null is `<parent>/.worktrees/<repo>`
+    /// — the folder holding the repository, a `.worktrees` folder there,
+    /// the repository's own name (`~/.worktrees/<repo>` for a repository
+    /// at the top of a disk); a path (`~` expanded, a relative one taken
+    /// from the repository) overrides it — `../<repo>-worktrees` is the
+    /// earlier layout. The worktree itself is `<root>/<name>`.
     default_worktree_root: ?[]const u8 = null,
     inline_suggestions: bool = true,
     /// Idle time after the last edit before a suggestion is asked for.
