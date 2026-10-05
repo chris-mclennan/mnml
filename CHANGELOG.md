@@ -276,6 +276,17 @@ the release ships one file), and one line per change a user can see.
   (`.editor`, the default, `.beside` or `.tab`, the old placement) and a
   row in Settings ▸ AI choose.
 
+### Dependencies
+
+- The terminal library behind every shell pane (ghostty) moved 366
+  commits on, to its current main. Nothing changed that we could see:
+  colour, scrollback, selection and a long prompt redrawn through
+  narrowing and widening behave as before.
+- Syntax grammars updated: Scala, Swift, Regex, Dockerfile/Containerfile,
+  Protobuf, OCaml and Haskell. OCaml gains the OxCaml keywords and types
+  and no longer paints a `#!` first line as a comment; Haskell paints
+  `cases` as a keyword.
+
 ## v0.3.2
 
 mnml 0.3.2 is the week after the cutover. Sessions get a mode of their own
