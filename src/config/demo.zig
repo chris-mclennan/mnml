@@ -576,6 +576,26 @@ pub fn setup(gpa: Allocator, io: Io, env: *const Map, exe_dir: ?[]const u8) !?Se
 const t = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;
 
+test "demo: the home config parses clean and pins the five Jira and Bitbucket launchers --demo installs to the activity rail" {
+    const load = @import("load.zig");
+    var arena_state: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diags = @import("diag.zig").Diagnostics.init(arena);
+    const p = try load.parseLayer(arena, data.home_config, "home-config.zon", &diags);
+    try t.expectEqual(@as(usize, 0), diags.count());
+    try t.expect(p.ui.?.first_launch_complete.?);
+    // The manifest ids `mnml-jira --install` and `mnml-bitbucket
+    // --install` write: without the pins the rail shows neither.
+    const pins = p.ui.?.activity_bar_pinned_integrations.?;
+    for ([_][]const u8{ "jira_work", "jira_boards", "jira_fix_versions", "bitbucket_prs", "bitbucket_pipelines" }) |id| {
+        var found = false;
+        for (pins) |pin| found = found or std.mem.eql(u8, pin, id);
+        errdefer std.debug.print("not pinned: {s}\n", .{id});
+        try t.expect(found);
+    }
+}
+
 test "demo: the re-exec's variables: the workspace, the shims first on PATH, the fakes' URL files and tokens, no update check, no browser, a private agents group" {
     // `--demo` rides on `--sandbox`, which Windows has not got; the paths
     // this test spells with `/` would not match a Windows re-exec anyway.

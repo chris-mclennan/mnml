@@ -30,12 +30,35 @@ sandbox, nothing shared with any other run. Reloading the page (or
 its sandbox is new too, but the container is reused; the per-visitor
 container is the broker's job (`broker/README.md`).
 
+## Self-test
+
+```bash
+demo/selftest.sh [IMAGE]     # default mnml-demo:local; demo/build.sh runs it after every build
+```
+
+A throwaway container from the image (no network) runs
+`attract/selftest.py`: a headless `mnml --demo` at the page's 200x60
+grid, driven through the file channel. It fails when the Jira or
+Bitbucket integration is missing — the five manifests in the sandbox's
+data root, the Jira Work and Bitbucket PRs chips on the statusline,
+the five launchers on the activity rail, either pane not opening
+against its fake — or when a private-use glyph on screen is in none of
+the fonts the page serves. That last check resolves the page's
+`@font-face` rules the way the browser does against `fonts/coverage.json`
+(each served file's cmap, written in the image build by
+`font-coverage.py`): a private-use codepoint no served font carries
+paints as nothing, which is how the statusline's Beatport mark went
+missing (U+F1F00 was in the Rust-era face only, never in the one this
+repo bakes). `demo/build.sh --no-check` skips it.
+
 ## What's in here
 
 | path | what |
 | --- | --- |
 | `Dockerfile` | three stages: build mnml + the two fakes + the two integrations + MnmlSymbols with Zig 0.16 (ReleaseSafe, any arch); fetch the web fonts; a Debian runtime with git, zsh, bash, vim-tiny, ttyd, python3, a non-root `demo` user |
-| `build.sh` | builds the image from the repo's tracked files (the checkout's `zig-pkg/` rides along when present); `--cross` compiles the Linux binaries on the host instead |
+| `build.sh` | builds the image from the repo's tracked files (the checkout's `zig-pkg/` rides along when present); `--cross` compiles the Linux binaries on the host instead; then runs the self-test |
+| `selftest.sh`, `attract/selftest.py` | the self-test (above) |
+| `font-coverage.py` | the image build's `fonts/coverage.json`: each served font's cmap |
 | `run-local.sh` | the trial: one fresh container, `--network none`, plus a relay |
 | `attract/attract.py` | the one process in the container: starts ttyd, serves the page + fonts + xterm.js + `/api/*`, proxies ttyd's websocket (the newest page wins), plays the flows, watches for the visitor |
 | `attract/session.sh` | what ttyd runs per connection: `mnml --demo --config kiosk.zon`, then the "session over" screen |

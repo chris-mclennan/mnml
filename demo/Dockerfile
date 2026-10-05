@@ -74,7 +74,7 @@ ARG NERD_FONTS_VERSION=v3.2.1
 ARG JETBRAINS_MONO_VERSION=2.304
 ARG TTYD_VERSION=1.7.7
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        binutils ca-certificates curl unzip woff2 \
+        binutils ca-certificates curl unzip woff2 python3-fonttools python3-brotli \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /fonts
 RUN set -eux; \
@@ -104,8 +104,12 @@ COPY --from=build /out/bin/mnml-zig /out/bin/mnml-jira /out/bin/mnml-bitbucket \
      /out/bin/mnml-fake-jira /out/bin/mnml-fake-bitbucket /bin-stripped/
 RUN strip --strip-debug /bin-stripped/* && ls -la /bin-stripped
 COPY --from=build /out/share/mnml/fonts/MnmlSymbols.ttf /fonts/
+# coverage.json: each served file's cmap, read back from the woff2 the
+# page serves, for the self-test (attract/selftest.py), which checks that
+# every private-use glyph the app puts on screen is in one of them.
+COPY demo/font-coverage.py /font-coverage.py
 RUN woff2_compress SymbolsNerdFontMono-Regular.ttf && woff2_compress MnmlSymbols.ttf \
-    && rm -f *.ttf && ls -la
+    && rm -f *.ttf && python3 /font-coverage.py /fonts && ls -la
 
 # ── 3. the runtime ───────────────────────────────────────────────────────
 FROM ${DEBIAN}
