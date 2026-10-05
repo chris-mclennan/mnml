@@ -40,7 +40,7 @@
    │                                    │                                                                                   Ctrl+N         new file
    │                                    │                                                                                   Ctrl+Q         quit
    │                                    │
-   │                                    │                                                                   mnml 0.3.1-dev+gafb0650b
+   │                                    │                                                                    mnml 0.3.3 · 1a9bc2c7
    │                                    │
    │                                    │
    │                                    │
@@ -56,5 +56,5 @@
    │                                    │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  03:16  ws   —
+ TREE   main  󰐙 1  󰛕 1  [no file]                                                                                                                   󱸀 95% 52%  󱼀 󰐎  LSP?   1  18:37  ws   —
 

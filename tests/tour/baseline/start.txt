@@ -40,7 +40,7 @@
    │                                    │                                                                                   Ctrl+N         new file
    │                                    │                                                                                   Ctrl+Q         quit
    │                                    │
-   │                                    │                                                                   mnml 0.3.1-dev+g4fe8b14e
+   │                                    │                                                                    mnml 0.3.3 · 1a9bc2c7
    │                                    │
    │                                    │
    │                                    │
@@ -56,5 +56,5 @@
    │ opens the palette.                 │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                                       󱸀 95% 52%  󱼀 󰐎    19:51  ws   —
+ TREE   main  󰐙 1  󰛕 1  [no file]                                                                                                                             󱸀 95% 52%  󱼀 󰐎    18:36  ws   —
 

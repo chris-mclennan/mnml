@@ -56,5 +56,5 @@
    │ opens the palette.                 │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                           󱸀 P 95%! →W  󱼀 󰐎  LSP?   1  19:29  ws   —
+ TREE   main  󰐙 1  󰛕 1  [no file]                                                                                                                 󱸀 P 95%! →W  󱼀 󰐎  LSP?   1  18:38  ws   —
 

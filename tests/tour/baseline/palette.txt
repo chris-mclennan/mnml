@@ -18,7 +18,7 @@
    │                                    │                                                               _ __ ___    _ __    _ __ ___   | |
   │                                    │                                                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
    │                                    │              ┌ Command palette ───────────────────────────────────────────────────────────────────────┐
- 󱘣 │                                    │              │  git                                                                       500 of 1182 │
+ 󱘣 │                                    │              │  git                                                                       503 of 1187 │
    │                                    │              │▌★ git  ·  Git: status / staging view  ·  git.status_pane                    space g s █│
  󰢱 │                                    │              │ ★ view  ·  Activity: open git graph  ·  view.activity_git                ctrl+shift+g █│
    │                                    │              │ git  ·  Git: diff the worktree  ·  git.diff                     space g D / space g d █│
@@ -40,7 +40,7 @@
    │                                    │              │ git  ·  Graph: filter by author…  ·  git.graph_filter_author                          █│le
    │                                    │              └────────────────────────────────────────────────────────────────────────────────────────┘
    │                                    │
-   │                                    │                                                                   mnml 0.3.2-dev+gc0bfedb5
+   │                                    │                                                                    mnml 0.3.3 · 1a9bc2c7
    │                                    │
    │                                    │
    │                                    │
@@ -56,5 +56,5 @@
    │ opens the palette.                 │
   │                                    │
    │                                    │                                                          ⋯
- TREE  dev   main  󰐙 1  󰛕 1  [no file]                                                                                                             󱸀 95% 52%  󱼀 󰐎  LSP?   1  20:19  ws   —
+ TREE   main  󰐙 1  󰛕 1  [no file]                                                                                                                   󱸀 95% 52%  󱼀 󰐎  LSP?   1  18:37  ws   —
 
