@@ -127,12 +127,17 @@ pub const MountPane = struct {
     /// pane's cells. Owned; empty when the pane named nothing.
     hover_title: []u8 = &.{},
     hover_body: []u8 = &.{},
+    /// The command id the named element's click runs, when the pane
+    /// said one — the info view's `Key:` line spells its chord.
+    hover_command: []u8 = &.{},
 
     pub fn clearHover(self: *MountPane) void {
         if (self.hover_title.len > 0) self.gpa.free(self.hover_title);
         if (self.hover_body.len > 0) self.gpa.free(self.hover_body);
+        if (self.hover_command.len > 0) self.gpa.free(self.hover_command);
         self.hover_title = &.{};
         self.hover_body = &.{};
+        self.hover_command = &.{};
     }
 
     pub fn deinit(self: *MountPane, gpa: Allocator) void {
@@ -496,9 +501,12 @@ pub fn handle(app: *App, ev: *host.Event) Allocator.Error!void {
             const title = try gpa.dupe(u8, h.title);
             errdefer gpa.free(title);
             const body = try gpa.dupe(u8, h.body);
+            errdefer gpa.free(body);
+            const cmd: []u8 = if (h.command.len > 0) try gpa.dupe(u8, h.command) else &.{};
             p.clearHover();
             p.hover_title = title;
             p.hover_body = body;
+            p.hover_command = cmd;
         },
         .bye => try p.setExit("exited"),
         .closed => |reason| try p.setExit(reason),
@@ -1173,4 +1181,45 @@ test "a pane's `hover` is the info view's entry for its cells; with none, the en
     const after = (try copy.lookup(&app, arena.allocator(), .{ .script_hit = .{ .pane = id, .id = 3 } })).?;
     try testing.expectEqualStrings("assignee:", after.title);
     try testing.expectEqualStrings("Whose tickets show.", after.body);
+}
+
+test "a pane's hover that names a command ends with its Key line; one that names none, or an unknown id, has none" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = "/w/acme", .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.tree.visible = false;
+    try app.setInputStyle(.standard);
+    const p = try paneOnly(&app, "Sample");
+    const id: PaneId = @intCast(for (app.panes.slots.items, 0..) |*slot, i| {
+        if (slot.*) |*sp| if (sp.asMount() == p) break i;
+    } else unreachable);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const info_view = @import("info_view.zig");
+    const copy = @import("info_view_copy.zig");
+    const target: @import("../ui/hit.zig").HitTarget = .{ .script_hit = .{ .pane = id, .id = 1 } };
+    const send = struct {
+        fn hover(ap: *App, pane: PaneId, cmd: []const u8) !void {
+            const ev = try testing.allocator.create(host.Event);
+            ev.* = .{ .pane = pane, .generation = 0, .kind = .{ .hover = .{
+                .title = try testing.allocator.dupe(u8, "Palette"),
+                .body = try testing.allocator.dupe(u8, "Every command."),
+                .command = if (cmd.len > 0) try testing.allocator.dupe(u8, cmd) else &.{},
+            } } };
+            try handle(ap, ev);
+        }
+    };
+
+    try send.hover(&app, id, command.name(.palette));
+    const want = (try copy.chordOf(&app, a, .palette)).?;
+    try testing.expectEqualStrings(want, (try info_view.keyLine(&app, a, target, @splat(null))).?);
+    // The same no-repeat rule as the host's own entries.
+    var rows: [copy.max_keys]?command.CommandId = @splat(null);
+    rows[0] = .palette;
+    try testing.expectEqual(@as(?[]const u8, null), try info_view.keyLine(&app, a, target, rows));
+
+    try send.hover(&app, id, "");
+    try testing.expectEqual(@as(?[]const u8, null), try info_view.keyLine(&app, a, target, @splat(null)));
+    try send.hover(&app, id, "sample.no_such_command");
+    try testing.expectEqual(@as(?[]const u8, null), try info_view.keyLine(&app, a, target, @splat(null)));
 }
