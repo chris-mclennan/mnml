@@ -378,10 +378,12 @@ pub fn linkSpec(arena: Allocator, m: sdk.Manifest, workspace: []const u8, repos:
     links[0] = .{
         .pattern = try std.fmt.allocPrint(arena, "(?<![/\\w.-])({s})/({s})#(\\d+)", .{ ws_re.items, slug }),
         .url = "https://bitbucket.org/{1}/{2}/pull-requests/{3}",
+        .kind = "pr",
     };
     links[1] = .{
         .pattern = try std.fmt.allocPrint(arena, "(?<![/\\w.-])({s})#(\\d+)", .{slug}),
         .url = try sdk.manifest.bindLinkVar(arena, "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", "workspace", ws),
+        .kind = "pr",
     };
     var copy = m;
     copy.links = links;

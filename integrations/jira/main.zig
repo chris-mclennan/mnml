@@ -614,7 +614,11 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
                         // Room for the budget chip's hover, the longest.
                         var hb: [1024]u8 = undefined;
                         const help = app.helpAt(h.col, h.row, &hb);
-                        mount.hoverHelp(help) catch {};
+                        var ra = std.heap.ArenaAllocator.init(gpa);
+                        defer ra.deinit();
+                        var with_row = help;
+                        with_row.row = try app.rowRefAt(ra.allocator(), h.col, h.row);
+                        mount.hoverHelp(with_row) catch {};
                     },
                 },
             }

@@ -68,7 +68,7 @@
     // whose range holds the number. Several repos: the link opens the
     // workspace's own first and its menu lists each. None: no link.
     .links = .{
-        .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}" },
+        .{ .pattern = "(?<![/\\w.-])([A-Za-z0-9_.-]+)#(\\d+)", .url = "https://bitbucket.org/{workspace}/{1}/pull-requests/{2}", .kind = "pr" },
         .{ .pattern = "(?i)\\bpull request #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
         .{ .pattern = "(?i)\\bPR #?(\\d+)", .url = "https://bitbucket.org/{repo}/pull-requests/{1}", .resolve = .range, .ranges = "pr" },
         .{ .pattern = "(?i)\\bpipeline #?(\\d+)", .url = "https://bitbucket.org/{repo}/pipelines/results/{1}", .resolve = .range, .ranges = "pipeline" },
