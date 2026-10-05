@@ -16,6 +16,7 @@
 //! cap cut the list.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
@@ -208,7 +209,7 @@ pub fn searchInto(io: Io, gpa: Allocator, r: *Result) SearchError!void {
             // The cheap test first: a line whose bytes do not hold the
             // words cannot hold them once decoded (a query with a
             // character JSON escapes is decoded every time).
-            if (!needsDecode(r.query) and std.ascii.indexOfIgnoreCase(raw, r.query) == null) continue;
+            if (!needsDecode(r.query) and std.ascii.findIgnoreCase(raw, r.query) == null) continue;
             _ = scratch.reset(.retain_capacity);
             const found = try matchLine(scratch.allocator(), raw, r.query) orelse continue;
             if (per >= max_per_session or hits.items.len >= max_hits) {
@@ -248,7 +249,7 @@ pub fn matchLine(arena: Allocator, raw: []const u8, query: []const u8) Allocator
     for (texts.items) |t| {
         var it = std.mem.splitScalar(u8, t, '\n');
         while (it.next()) |l| {
-            const at = std.ascii.indexOfIgnoreCase(l, query) orelse continue;
+            const at = std.ascii.findIgnoreCase(l, query) orelse continue;
             return .{ .text = snippet(std.mem.trim(u8, l, " \t\r"), at, query.len), .date = dateOf(arena, v) };
         }
     }
@@ -384,7 +385,7 @@ test "matchLine finds what was said, not the JSON around it: a user string, an a
     try testing.expect(try matchLine(a, "{\"type\":\"user\",\"message\":{\"content\":\"<system-reminder>secret words</system-reminder>\"}}", "secret") == null);
     try testing.expect(try matchLine(a, "not json at all secret", "secret") == null);
     // A long line is cut around the match.
-    const long = try std.fmt.allocPrint(a, "{{\"text\":\"{s}needle{s}\"}}", .{ "a" ** 300, "b" ** 300 });
+    const long = try std.fmt.allocPrint(a, "{{\"text\":\"{s}needle{s}\"}}", .{ repeat("a", 300), repeat("b", 300) });
     const cut = (try matchLine(a, long, "needle")).?;
     try testing.expect(cut.text.len <= snippet_cap + 6);
     try testing.expect(std.mem.indexOf(u8, cut.text, "needle") != null);

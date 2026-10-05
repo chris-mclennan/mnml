@@ -44,7 +44,7 @@ const double_click_ms: i64 = 400;
 
 pub const State = struct {
     list: Panel.State = .{},
-    collapsed: std.EnumSet(Sub) = std.EnumSet(Sub).initEmpty(),
+    collapsed: std.EnumSet(Sub) = std.EnumSet(Sub).empty,
     /// `Locals/p.a` → its value at the last stop (owned). A row whose
     /// value differs from this is "changed" until the next resume.
     prev: std.StringHashMapUnmanaged([]u8) = .empty,

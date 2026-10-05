@@ -369,7 +369,7 @@ fn stringOrigin(sc: *const Scope, expr_in: []const u8) Origin {
     if (std.mem.indexOf(u8, expr, ".clipStr(") != null) return .frame;
 
     // `std.fmt.bufPrint(&buf, …)` — the buffer decides.
-    inline for (.{ "bufPrint(", "bufPrintZ(", "bufPrintIntToSlice(" }) |call| {
+    inline for (.{ "bufPrint(", "bufPrintZ(", "bufPrintSentinel(", "bufPrintIntToSlice(" }) |call| {
         if (std.mem.indexOf(u8, expr, call)) |at| {
             const arg = firstArg(expr[at + call.len - 1 ..]);
             const name = std.mem.trim(u8, arg, " \t&");
@@ -379,10 +379,10 @@ fn stringOrigin(sc: *const Scope, expr_in: []const u8) Origin {
     }
 
     // The allocating builders: their first argument is the allocator.
-    inline for (.{ "allocPrint(", "allocPrintZ(", "allocPrintSentinel(", "join(", "concat(", "dupe(", "dupeZ(", "alloc(", "allocSentinel(" }) |call| {
+    inline for (.{ "allocPrint(", "allocPrintZ(", "allocPrintSentinel(", "join(", "concat(", "dupe(", "dupeZ(", "dupeSentinel(", "alloc(", "allocSentinel(" }) |call| {
         if (std.mem.indexOf(u8, expr, call)) |at| {
             const o = allocOrigin(sc, firstArg(expr[at + call.len - 1 ..]));
-            if (call.len >= 6 and (std.mem.eql(u8, call, "dupe(") or std.mem.eql(u8, call, "dupeZ(") or std.mem.eql(u8, call, "alloc(") or std.mem.eql(u8, call, "allocSentinel("))) {
+            if (call.len >= 6 and (std.mem.eql(u8, call, "dupe(") or std.mem.eql(u8, call, "dupeZ(") or std.mem.eql(u8, call, "dupeSentinel(") or std.mem.eql(u8, call, "alloc(") or std.mem.eql(u8, call, "allocSentinel("))) {
                 // `a.dupe(u8, s)` — the allocator is the receiver.
                 const recv = receiverBefore(expr, at -| 1);
                 const ro = allocOrigin(sc, recv);
@@ -676,13 +676,13 @@ fn valueAfter(line: []const u8, at: usize) []const u8 {
 /// into it, measuring it, comparing it, or copying it somewhere that
 /// outlives it.
 const stack_sinks = [_][]const u8{
-    "bufPrint",           "bufPrintZ",    "realPath",  "realpath",   "dupe(",       "dupeZ(",
-    "eql(",               "startsWith(",  "endsWith(", "indexOf",    "lastIndexOf", "parseInt",
-    "@memcpy",            "undefined",    "readFile",  "readAll",    "cwd()",       "formatInt",
-    "bufPrintIntToSlice", "join(",        "concat(",   "allocPrint", "print(",      "writeAll(",
-    "append(",            "appendSlice(", "trim",      "fmtSlice",   "hash(",       "fill(",
-    "toOwnedSlice",       "splitScalar",  "tokenize",  "openDir",    "openFile",    "statFile",
-    "makePath",           "access(",      "= .{",      "@splat",     "@memset",     ".fmt(",
+    "bufPrint",  "bufPrintZ",   "realPath",  "realpath",     "dupe(",       "dupeZ(",             "dupeSentinel(",
+    "eql(",      "startsWith(", "endsWith(", "indexOf",      "lastIndexOf", "parseInt",           "@memcpy",
+    "undefined", "readFile",    "readAll",   "cwd()",        "formatInt",   "bufPrintIntToSlice", "join(",
+    "concat(",   "allocPrint",  "print(",    "writeAll(",    "append(",     "appendSlice(",       "trim",
+    "fmtSlice",  "hash(",       "fill(",     "toOwnedSlice", "splitScalar", "tokenize",           "openDir",
+    "openFile",  "statFile",    "makePath",  "access(",      "= .{",        "@splat",             "@memset",
+    ".fmt(",
 };
 
 /// A line in a draw that lets a local `[N]u8` escape into something that
@@ -845,7 +845,7 @@ fn prongKeeps(line: []const u8, res: []const u8) bool {
 
 /// A store answered on its own line: `x.y = try gpa.dupe(…)`.
 fn rhsCopies(rhs: []const u8) bool {
-    inline for (.{ "dupe(", "dupeZ(", "allocPrint", "setText", "join(", "concat(", "toOwnedSlice" }) |k| {
+    inline for (.{ "dupe(", "dupeZ(", "dupeSentinel(", "allocPrint", "setText", "join(", "concat(", "toOwnedSlice" }) |k| {
         if (std.mem.indexOf(u8, rhs, k) != null) return true;
     }
     return false;

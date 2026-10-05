@@ -27,6 +27,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const ts = @import("tree_sitter");
 const table = @import("table.zig");
@@ -189,7 +190,7 @@ const InjectedTree = struct { entry: usize, start: u32, end: u32, tree: *ts.Tree
 
 pub const Highlighter = struct {
     gpa: Allocator,
-    langs: [table.entries.len]?*Lang = [_]?*Lang{null} ** table.entries.len,
+    langs: [table.entries.len]?*Lang = @as([table.entries.len]?*Lang, @splat(null)),
     /// The root grammar (a `table.entries` index), or null for plain text.
     root: ?usize = null,
     tree: ?*ts.Tree = null,
@@ -200,7 +201,7 @@ pub const Highlighter = struct {
     /// Counts the trees this highlighter has rendered from — a window
     /// belongs to one of them.
     generation: u64 = 0,
-    windows: [max_windows]Window = [_]Window{.{}} ** max_windows,
+    windows: [max_windows]Window = @as([max_windows]Window, @splat(.{})),
     injected: std.ArrayListUnmanaged(InjectedTree) = .empty,
     clock: u64 = 0,
     /// Per-byte role of the window being built; reused across windows.
@@ -452,7 +453,7 @@ pub const Highlighter = struct {
             self.dropped_matches = true;
             self.drops += 1;
             // Never silent: a debug build says which grammar, and where.
-            if (builtin.mode == .Debug) std.log.warn("highlight: {s} ran into the query cursor's match cap over bytes [{d}, {d}); some matches were dropped", .{ table.entries[self.root.?].key, lo, hi });
+            if (compat.is_debug) std.log.warn("highlight: {s} ran into the query cursor's match cap over bytes [{d}, {d}); some matches were dropped", .{ table.entries[self.root.?].key, lo, hi });
         }
         if (depth + 1 >= max_depth) return;
         const inj = l.injections orelse return;
@@ -1044,7 +1045,7 @@ test "a window paints its bytes exactly as the whole file does: every grammar, i
     // grammars at 128 KB 23-36 s — which still leaves the windows well
     // inside the file; the 128 KB cap check runs in the optimized
     // builds, the unit suite's ReleaseSafe run among them.
-    const text_len: usize = if (builtin.mode == .Debug) 8 * window_margin else 16 * window_margin;
+    const text_len: usize = if (compat.is_debug) 8 * window_margin else 16 * window_margin;
     for (table.entries, 0..) |e, i| {
         const text = try repeated(gpa, e.fixture, text_len);
         defer gpa.free(text);
@@ -1241,7 +1242,7 @@ test "the match cap is a crash guard: a query that fans out past the cursor's 16
     // cursor still comes from `QueryCursor.init`, and the cap it sets is
     // asserted first, so the shipped figure stays under test in both
     // modes; optimized builds run the full text against it.
-    const scale: u32 = if (builtin.mode == .Debug) 16 else 1;
+    const scale: u32 = if (compat.is_debug) 16 else 1;
     const e = table.entries[table.find("hs").?];
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(gpa);

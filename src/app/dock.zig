@@ -22,6 +22,7 @@
 //! `ui/dock_view.zig`; the mouse prongs are routed here by `dispatch`.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
@@ -1323,7 +1324,7 @@ test "a translucent widget keeps the editor's text under its body; a solid one c
     var f = try Fixture.init(80, 24);
     defer f.deinit();
     f.app.tree.visible = false;
-    try f.tmp.dir.writeFile(testing.io, .{ .sub_path = "x.txt", .data = "0123456789012345678901234567890123456789\n" ** 20 });
+    try f.tmp.dir.writeFile(testing.io, .{ .sub_path = "x.txt", .data = repeat("0123456789012345678901234567890123456789\n", 20) });
     const abs = try std.fs.path.join(testing.allocator, &.{ f.root, "x.txt" });
     defer testing.allocator.free(abs);
     _ = try f.app.openPath(abs);
@@ -1359,7 +1360,7 @@ test "session round-trip: widgets, corners, sizes, placement, opacity and the hi
     const saved = try session.capture(&f.app, arena);
     try testing.expectEqual(@as(usize, 3), saved.dock.len);
     const text = try session.render(arena, saved);
-    const back = try session.parse(arena, try arena.dupeZ(u8, text));
+    const back = try session.parse(arena, try arena.dupeSentinel(u8, text, 0));
     var g = try Fixture.init(80, 24);
     defer g.deinit();
     try session.apply(&g.app, arena, back);

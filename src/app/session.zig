@@ -40,6 +40,7 @@
 //! onto the gpa by the owner that keeps it.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -547,7 +548,7 @@ pub fn capture(app: *App, arena: Allocator) Allocator.Error!Saved {
     saved.left = app.side.open.get(.left);
     saved.right = app.side.open.get(.right);
     saved.bottom = app.side.open.get(.bottom);
-    inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
+    inline for (compat.structFields(Config.SectionSide)) |f| {
         @field(saved.sides, f.name) = app.side.of.get(@field(Section, f.name));
     }
     saved.zen = app.zen;
@@ -704,7 +705,7 @@ pub fn parse(arena: Allocator, src: [:0]const u8) error{ OutOfMemory, ParseZon }
     // The parser is instantiated per field of `Saved`; the default quota
     // ran out when the SESSIONS lists joined the file.
     @setEvalBranchQuota(8000);
-    return std.zon.parse.fromSliceAlloc(Saved, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false });
+    return compat.zonParse(Saved, arena, src, null, .{ .ignore_unknown_fields = true });
 }
 
 /// Close every open pane but a dirty editor — its unsaved work is not
@@ -808,7 +809,7 @@ pub fn apply(app: *App, arena: Allocator, saved: Saved) RestoreError!void {
     app.tree.loaded = false; // re-listed on the next frame with the expansions applied
     app.side.right_width = @max(saved.right_panel_width, 8);
     app.side.bottom_height = std.math.clamp(saved.bottom_panel_height, Config.bottom_panel_height_min, Config.bottom_panel_height_max);
-    inline for (@typeInfo(Config.SectionSide).@"struct".fields) |f| {
+    inline for (compat.structFields(Config.SectionSide)) |f| {
         if (@field(saved.sides, f.name)) |s| app.side.of.set(@field(Section, f.name), s);
     }
     // A column shows a section only if the section lives there (a
@@ -2379,7 +2380,7 @@ test "session: an integration pane is written as its manifest and command line, 
         .panes = &.{.{ .kind = .mount, .integration = "jira_work", .argv = &.{ "/bin/mnml-jira", "--only", "work" }, .label = "Jira Work" }},
     });
     try t.expect(std.mem.indexOf(u8, text, ".kind = .mount") != null);
-    const back = try parse(arena, try arena.dupeZ(u8, text));
+    const back = try parse(arena, try arena.dupeSentinel(u8, text, 0));
     try t.expectEqual(PaneKind.mount, back.panes[0].kind);
     try t.expectEqualStrings("jira_work", back.panes[0].integration.?);
     try t.expectEqualStrings("--only", back.panes[0].argv[1]);

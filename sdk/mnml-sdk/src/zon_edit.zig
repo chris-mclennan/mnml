@@ -32,6 +32,7 @@
 //! appended to.
 
 const std = @import("std");
+const compat = @import("zig_compat.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
@@ -70,12 +71,12 @@ pub fn splice(gpa: Allocator, text: [:0]const u8, key_path: []const []const u8, 
         if (!try pathExists(gpa, text, list_path)) {
             const with_list = (try splice(gpa, text, list_path, ".{}")).?;
             defer gpa.free(with_list);
-            const z = try gpa.dupeZ(u8, with_list);
+            const z = try gpa.dupeSentinel(u8, with_list, 0);
             defer gpa.free(z);
             return splice(gpa, z, key_path, literal);
         }
     }
-    var ast = try Ast.parse(gpa, text, .zon);
+    var ast = try compat.parseZonAst(gpa, text);
     defer ast.deinit(gpa);
     if (ast.errors.len != 0) return error.ParseFailed;
     const root = ast.rootDecls()[0];
@@ -95,7 +96,7 @@ const Edit = struct { start: usize, end: usize, text: []const u8 };
 /// Whether every struct key of `keys` names a field that is there
 /// (`[i]` keys are not followed — an append path never holds one).
 fn pathExists(gpa: Allocator, text: [:0]const u8, keys: []const []const u8) SpliceError!bool {
-    var ast = try Ast.parse(gpa, text, .zon);
+    var ast = try compat.parseZonAst(gpa, text);
     defer ast.deinit(gpa);
     if (ast.errors.len != 0) return error.ParseFailed;
     var node = ast.rootDecls()[0];
@@ -389,7 +390,7 @@ pub fn persistScalar(gpa: Allocator, io: Io, path: []const u8, key_path: []const
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => blk: {
             existed = false;
-            break :blk try gpa.dupeZ(u8, ".{}\n");
+            break :blk try gpa.dupeSentinel(u8, ".{}\n", 0);
         },
         else => return error.ReadFailed,
     };
@@ -927,7 +928,7 @@ test "a key with a backslash is written escaped and found again: a Windows path 
     const first = (try splice(t.allocator, ".{}\n", &.{key}, "\"00ff\"")) orelse return error.TestExpectedChange;
     defer t.allocator.free(first);
     try t.expect(std.mem.indexOf(u8, first, ".@\"D:\\\\a\\\\ws\" = \"00ff\"") != null);
-    const first_z = try t.allocator.dupeZ(u8, first);
+    const first_z = try t.allocator.dupeSentinel(u8, first, 0);
     defer t.allocator.free(first_z);
     // The same key again replaces the value in place, not a second field.
     const second = (try splice(t.allocator, first_z, &.{key}, "\"0aaa\"")) orelse return error.TestExpectedChange;

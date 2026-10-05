@@ -34,6 +34,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const zlua = @import("zlua");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const app_mod = @import("../app.zig");
@@ -90,7 +91,7 @@ pub const runaway_budget_ms: i64 = frame_budget_ms * build_options.debug_slowdow
 /// How long one outermost call may run. The frame guarantee is a
 /// shipped-build guarantee; `zig build check`'s Debug leg is not where
 /// it is measured.
-pub const budget_ms: i64 = if (builtin.mode == .Debug) runaway_budget_ms else frame_budget_ms;
+pub const budget_ms: i64 = if (compat.is_debug) runaway_budget_ms else frame_budget_ms;
 /// How often a statusline segment's function is asked again.
 pub const segment_poll_ms: i64 = 250;
 pub const max_init_bytes = 4 * 1024 * 1024;
@@ -367,7 +368,7 @@ pub const Lua = struct {
         const name = L.checkString(1);
         const root = self.root orelse L.raiseErrorStr("require: only an installed script may require its own files", .{});
         if (!validModuleName(name)) {
-            const shown: [:0]const u8 = self.app.frame.allocator().dupeZ(u8, name) catch "?";
+            const shown: [:0]const u8 = self.app.frame.allocator().dupeSentinel(u8, name, 0) catch "?";
             L.raiseErrorStr("require: `%s` is not a module under this script (letters, digits, `_`, `-`, and `.` between parts)", .{shown.ptr});
         }
         const arena = self.app.frame.allocator();
@@ -387,16 +388,16 @@ pub const Lua = struct {
         };
         const path = std.fmt.allocPrint(arena, "{s}{c}{s}.lua", .{ root, std.fs.path.sep, rel }) catch L.raiseErrorStr("require: out of memory", .{});
         const src = Io.Dir.cwd().readFileAllocOptions(self.io, path, arena, .limited(max_init_bytes), .of(u8), 0) catch {
-            const shown: [:0]const u8 = arena.dupeZ(u8, name) catch "?";
+            const shown: [:0]const u8 = arena.dupeSentinel(u8, name, 0) catch "?";
             L.raiseErrorStr("require: no `%s` under this script", .{shown.ptr});
         };
         const chunk = std.fmt.allocPrintSentinel(arena, "@{s}", .{path}, 0) catch L.raiseErrorStr("require: out of memory", .{});
         L.loadBuffer(src, chunk, .text) catch {
-            const msg: [:0]const u8 = arena.dupeZ(u8, L.toStringEx(-1)) catch "load error";
+            const msg: [:0]const u8 = arena.dupeSentinel(u8, L.toStringEx(-1), 0) catch "load error";
             L.raiseErrorStr("require: %s", .{msg.ptr});
         };
         L.protectedCall(.{ .args = 0, .results = 1 }) catch {
-            const msg: [:0]const u8 = arena.dupeZ(u8, L.toStringEx(-1)) catch "run error";
+            const msg: [:0]const u8 = arena.dupeSentinel(u8, L.toStringEx(-1), 0) catch "run error";
             L.raiseErrorStr("require: %s", .{msg.ptr});
         };
         // A module that returns nothing caches `true`, as Lua's does.
@@ -545,7 +546,7 @@ pub const Lua = struct {
 
     // ── budget ──
 
-    const DebugPtr = @typeInfo(@typeInfo(zlua.CHookFn).pointer.child).@"fn".params[1].type.?;
+    const DebugPtr = compat.fnParamTypes(@typeInfo(zlua.CHookFn).pointer.child)[1].?;
 
     fn countHook(state: ?*zlua.LuaState, _: DebugPtr) callconv(.c) void {
         const L: *State = @ptrCast(state.?);
@@ -1805,7 +1806,7 @@ test "the frame budget is a shipped-build promise; Debug gets a runaway budget d
     // `lua_example_recent_commands.test` against the built binary, and
     // the failure mode by the picker test in `api.zig`.
     try testing.expectEqual(@as(i64, 20), frame_budget_ms);
-    if (builtin.mode == .Debug) {
+    if (compat.is_debug) {
         // At least the slowdown the `.test` runner measured, or the
         // budget is again a figure that fits whichever script was
         // measured last.

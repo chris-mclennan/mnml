@@ -33,6 +33,7 @@ const list_panel = @import("list_panel.zig");
 const script_view = @import("script_view.zig");
 const key_mod = @import("../core/key.zig");
 const ids = @import("../core/ids.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -701,11 +702,11 @@ test "the palette row is Rust's: marker, label, gap, the chord with air on both 
     try s.query.appendSlice(testing.allocator, "git");
     s.caret = 3;
     _ = draw(f.ui(), f.full(), &s, many);
-    try f.expectRow(9, " " ** 15 ++ "┌ Command palette " ++ "─" ** 71 ++ "┐");
-    try f.expectRow(10, " " ** 15 ++ "│  git" ++ " " ** 72 ++ " 30 of 796 │");
-    try f.expectRow(11, " " ** 15 ++ "│▌git  ·  Git: row 0  ·  git.row_0" ++ " " ** 54 ++ "█│");
-    try f.expectRow(12, " " ** 15 ++ "│ git  ·  Git: row 1  ·  git.row_1" ++ " " ** 45 ++ "ctrl+k b █│");
-    try f.expectRow(30, " " ** 15 ++ "└" ++ "─" ** 88 ++ "┘");
+    try f.expectRow(9, repeat(" ", 15) ++ "┌ Command palette " ++ repeat("─", 71) ++ "┐");
+    try f.expectRow(10, repeat(" ", 15) ++ "│  git" ++ repeat(" ", 72) ++ " 30 of 796 │");
+    try f.expectRow(11, repeat(" ", 15) ++ "│▌git  ·  Git: row 0  ·  git.row_0" ++ repeat(" ", 54) ++ "█│");
+    try f.expectRow(12, repeat(" ", 15) ++ "│ git  ·  Git: row 1  ·  git.row_1" ++ repeat(" ", 45) ++ "ctrl+k b █│");
+    try f.expectRow(30, repeat(" ", 15) ++ "└" ++ repeat("─", 88) ++ "┘");
     // The three `git` cells of every row are the hit; the rest is not.
     try testing.expect(f.fgEql(17, 11, f.theme.accent));
     try testing.expect(f.fgEql(19, 11, f.theme.accent));

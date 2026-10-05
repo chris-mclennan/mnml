@@ -244,8 +244,8 @@ test "the manifest renders and parses back to the same shape" {
     defer std.testing.allocator.free(text);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const z = try arena_state.allocator().dupeZ(u8, text);
-    const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
+    const z = try arena_state.allocator().dupeSentinel(u8, text, 0);
+    const back = try sdk.zig_compat.zonParse(sdk.Manifest, arena_state.allocator(), z, null, .{});
     try std.testing.expectEqualStrings(spec.id, back.id);
     try std.testing.expectEqualStrings(spec.commands[1].ex.?, back.commands[1].ex.?);
     try std.testing.expectEqualStrings("chip", back.statusline[0].id);

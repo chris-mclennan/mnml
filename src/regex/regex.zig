@@ -45,7 +45,7 @@ pub const max_groups = 9;
 pub const Match = struct {
     start: usize,
     end: usize,
-    groups: [max_groups]?Range = .{null} ** max_groups,
+    groups: [max_groups]?Range = @splat(null),
 
     pub fn group(m: Match, n: usize) ?Range {
         if (n == 0) return .{ .start = m.start, .end = m.end };

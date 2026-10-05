@@ -33,6 +33,7 @@ const ui = @import("ui/ui.zig");
 const key_mod = @import("core/key.zig");
 const panel_mod = @import("core/panel.zig");
 const text = @import("ui/text.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Io = std.Io;
 const Rect = ui.Rect;
@@ -83,7 +84,7 @@ const Screen = enum(u8) {
     picker,
     find,
 
-    const count = @typeInfo(Screen).@"enum".fields.len;
+    const count = compat.enumFields(Screen).len;
 
     fn name(s: Screen) []const u8 {
         return switch (s) {

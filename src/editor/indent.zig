@@ -22,7 +22,7 @@ pub fn detect(text: []const u8) ?Indent {
     var space_lines: usize = 0;
     // Positive steps between an indented line and the last non-blank
     // line before it, by width; the most frequent is the unit.
-    var steps = [_]usize{0} ** (max_unit + 1);
+    var steps = @as([max_unit + 1]usize, @splat(0));
     var min_indent: usize = 0;
     var prev: usize = 0;
     var it = std.mem.splitScalar(u8, text, '\n');

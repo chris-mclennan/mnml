@@ -38,7 +38,7 @@ pub const Role = enum(u8) {
     /// A link target — base0C underlined.
     uri,
 
-    pub const count = @typeInfo(Role).@"enum".fields.len;
+    pub const count = std.meta.tags(Role).len;
 };
 
 const Entry = struct { []const u8, Role };

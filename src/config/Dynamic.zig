@@ -8,6 +8,7 @@
 //! like. Values are borrowed from the arena the tree was built on.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
 const Zoir = std.zig.Zoir;
@@ -35,7 +36,7 @@ pub const Dynamic = union(enum) {
     /// `load.zig`). An integer that does not fit `i64` is the one
     /// failure that is not OOM.
     pub fn fromZoir(arena: Allocator, ast: Ast, zoir: Zoir, node: Zoir.Node.Index) FromZoirError!Dynamic {
-        return switch (node.get(zoir)) {
+        return switch (compat.zoirGet(node, &zoir)) {
             .true => .{ .bool = true },
             .false => .{ .bool = false },
             .null => .null,
@@ -48,7 +49,7 @@ pub const Dynamic = union(enum) {
             },
             .float_literal => |f| .{ .float = @floatCast(f) },
             .char_literal => |c| .{ .int = c },
-            .enum_literal => |s| .{ .enum_literal = s.get(zoir) },
+            .enum_literal => |s| .{ .enum_literal = compat.zoirGet(s, &zoir) },
             .string_literal => |s| .{ .string = s },
             .empty_literal => empty_object,
             .array_literal => |range| blk: {
@@ -59,7 +60,7 @@ pub const Dynamic = union(enum) {
             .struct_literal => |lit| blk: {
                 const fields = try arena.alloc(Field, lit.names.len);
                 for (fields, lit.names, 0..) |*f, name, i| {
-                    f.* = .{ .name = name.get(zoir), .value = try fromZoir(arena, ast, zoir, lit.vals.at(@intCast(i))) };
+                    f.* = .{ .name = compat.zoirGet(name, &zoir), .value = try fromZoir(arena, ast, zoir, lit.vals.at(@intCast(i))) };
                 }
                 break :blk .{ .object = fields };
             },
@@ -136,7 +137,7 @@ pub const Dynamic = union(enum) {
 // ─── tests ───────────────────────────────────────────────────────────────
 
 fn parseToDynamic(arena: Allocator, src: [:0]const u8) !Dynamic {
-    var ast = try Ast.parse(arena, src, .zon);
+    var ast = try compat.parseZonAst(arena, src);
     defer ast.deinit(arena);
     var zoir = try std.zig.ZonGen.generate(arena, ast, .{});
     defer zoir.deinit(arena);

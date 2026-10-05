@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const vaxis = @import("vaxis");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
@@ -285,7 +286,7 @@ pub fn renderWith(arena: Allocator, t: *const Theme, src: []const u8, ascii: boo
             continue;
         }
         if (isRule(trimmed)) {
-            const rule = try arena.dupe(Segment, &.{.{ .text = if (ascii) "-" ** 40 else "─" ** 40, .style = t.border }});
+            const rule = try arena.dupe(Segment, &.{.{ .text = if (ascii) repeat("-", 40) else repeat("─", 40), .style = t.border }});
             try out.append(arena, .{ .segs = rule });
             continue;
         }

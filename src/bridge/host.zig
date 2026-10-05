@@ -22,6 +22,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const wire = @import("wire.zig");
@@ -37,7 +38,7 @@ pub const max_symbol = 24;
 
 /// One painted cell of a sibling's frame.
 pub const Cell = struct {
-    sym: [max_symbol]u8 = [_]u8{' '} ++ [_]u8{0} ** (max_symbol - 1),
+    sym: [max_symbol]u8 = [_]u8{' '} ++ @as([max_symbol - 1]u8, @splat(0)),
     len: u8 = 1,
     fg: ?wire.Color = null,
     bg: ?wire.Color = null,
@@ -705,7 +706,7 @@ test "envFor carries the mount contract; socketPath stays short enough for socka
     defer gpa.free(short);
     try testing.expect(std.mem.endsWith(u8, short, "-3.sock"));
     try testing.expect(sdk_testing.pathStartsWith(short, "/ws/.mnml/ipc-zig/mounts/"));
-    const deep = "/" ++ "d" ** 120;
+    const deep = "/" ++ repeat("d", 120);
     const fallback = try socketPath(gpa, deep, 4);
     defer gpa.free(fallback);
     try testing.expect(fallback.len < Io.net.UnixAddress.max_len);

@@ -22,6 +22,7 @@
 //! A malformed file is skipped, not fatal — a typo must not stop mnml.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -82,7 +83,7 @@ pub fn load(app: *App, arena: Allocator) Allocator.Error![]const Bookmark {
             error.OutOfMemory => return error.OutOfMemory,
             else => continue,
         };
-        const stored = std.zon.parse.fromSliceAlloc(Stored, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch |err| switch (err) {
+        const stored = compat.zonParse(Stored, arena, src, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.ParseZon => continue,
         };

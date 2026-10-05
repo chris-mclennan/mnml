@@ -316,9 +316,9 @@ test "a pipelines tab binds and offers only what does something there" {
 }
 
 test "every action in the table is reachable and the hint row is a subset of it" {
-    var seen = std.enums.EnumSet(Action).initEmpty();
+    var seen = std.enums.EnumSet(Action).empty;
     for (&table) |b| seen.insert(b.action);
-    inline for (@typeInfo(Action).@"enum".fields) |f| {
+    inline for (sdk.zig_compat.enumFields(Action)) |f| {
         try t.expect(seen.contains(@field(Action, f.name)));
     }
     var buf: [table.len]Binding = undefined;

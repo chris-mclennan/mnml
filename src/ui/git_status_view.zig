@@ -39,6 +39,7 @@ const scrollbar = @import("scrollbar.zig");
 const empty_state = @import("empty_state.zig");
 const ids = @import("../core/ids.zig");
 const parse = @import("../git/parse.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -100,7 +101,7 @@ pub const Action = enum(u8) { stage, unstage, toggle, stage_all, unstage_all, di
 
 /// Hint ids sit above any flat row index.
 pub const hint_base: u32 = 0xF000_0100;
-const action_count: u32 = @typeInfo(Action).@"enum".fields.len;
+const action_count: u32 = compat.enumFields(Action).len;
 
 pub fn hintId(a: Action) u32 {
     return hint_base + @intFromEnum(a);

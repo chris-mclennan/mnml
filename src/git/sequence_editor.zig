@@ -282,7 +282,7 @@ test "the sequence editor on a real todo file: git's todo is replaced by the pla
     const after = try tmp.dir.readFileAlloc(testing.io, "git-rebase-todo", arena, .unlimited);
     try testing.expectEqualStrings(plan, after);
     // The child mode itself, on the same files (idempotent).
-    const argv = [_][:0]const u8{ try arena.dupeZ(u8, plan_path), try arena.dupeZ(u8, todo_path) };
+    const argv = [_][:0]const u8{ try arena.dupeSentinel(u8, plan_path, 0), try arena.dupeSentinel(u8, todo_path, 0) };
     var err_buf: [256]u8 = undefined;
     var err_w: Io.Writer = .fixed(&err_buf);
     try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .todo, &argv, &err_w));
@@ -323,7 +323,7 @@ test "the message editor: the record for the file's subject replaces it and leav
     try testing.expectEqualStrings(squash, try tmp.dir.readFileAlloc(testing.io, "COMMIT_EDITMSG", arena, .unlimited));
     // The reword: the old message with git's comment block.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "COMMIT_EDITMSG", .data = "second one\n\n# Please enter the commit message for your changes.\n" });
-    const argv = [_][:0]const u8{ try arena.dupeZ(u8, queue_path), try arena.dupeZ(u8, target_path) };
+    const argv = [_][:0]const u8{ try arena.dupeSentinel(u8, queue_path, 0), try arena.dupeSentinel(u8, target_path, 0) };
     var err_buf: [256]u8 = undefined;
     var err_w: Io.Writer = .fixed(&err_buf);
     try testing.expectEqual(@as(u8, 0), childMain(testing.io, testing.allocator, .commit_msg, &argv, &err_w));

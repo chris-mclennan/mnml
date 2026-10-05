@@ -1721,8 +1721,8 @@ test "hooks: http_request rewrites the wire after the directives; http_response 
     // directive's header (which the hook saw — directives run first).
     const seen = server.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen, "POST /users/7?hooked=1 HTTP/1.1\r\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-hook: lua\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "x-hook: lua\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "x-probe: yes\r\n") != null);
     try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\nfrom-lua"));
     try testing.expect(std.mem.startsWith(u8, rp.sent_line.?, "POST http://127.0.0.1:"));
     try testing.expect(std.mem.endsWith(u8, rp.sent_line.?, "/users/7?hooked=1"));
@@ -1793,7 +1793,7 @@ test "hooks: mnml.http.send inside http_response re-fires once the hook returns;
     const seen = server.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen, "POST /x HTTP/1.1\r\n"));
     try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-length: 7") == null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "content-length: 7") == null);
     try testing.expectEqualStrings("{\"a\":1}", rp.body.items);
     try testing.expectEqual(@as(i32, 0), lua.L.getTop());
 }

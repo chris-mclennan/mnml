@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const jsonrpc = @import("../rpc/jsonrpc.zig");
@@ -25,7 +26,7 @@ pub const Encoding = types.Encoding;
 /// A `Pending.kind` back as words, for a message about a reply that
 /// never arrived.
 pub fn reqKindName(kind: u16) ?[]const u8 {
-    inline for (@typeInfo(ReqKind).@"enum".fields) |f| {
+    inline for (compat.enumFields(ReqKind)) |f| {
         if (f.value == kind) return "the " ++ f.name ++ " reply";
     }
     return null;

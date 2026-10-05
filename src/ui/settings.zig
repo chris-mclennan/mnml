@@ -418,7 +418,7 @@ pub fn focusableCount(items: []const Item) usize {
 }
 
 fn has(haystack: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(haystack, needle) != null;
+    return std.ascii.findIgnoreCase(haystack, needle) != null;
 }
 
 /// The word a row's current value reads as — the bracketed option, or

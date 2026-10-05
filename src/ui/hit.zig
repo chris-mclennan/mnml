@@ -21,6 +21,7 @@ const tree_view = @import("tree_view.zig");
 const git_palette = @import("git_palette.zig");
 const http_panel = @import("http_panel.zig");
 const search_section_view = @import("search_section_view.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Allocator = std.mem.Allocator;
 
@@ -54,7 +55,7 @@ pub const ListHit = struct {
     }
     /// The chip an id names, if it is one.
     pub fn chipOf(id: u32) ?ChipKind {
-        if (id < chip_base or id >= chip_base + @typeInfo(ChipKind).@"enum".fields.len) return null;
+        if (id < chip_base or id >= chip_base + compat.enumFields(ChipKind).len) return null;
         return @enumFromInt(id - chip_base);
     }
 };

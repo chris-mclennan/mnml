@@ -11,6 +11,7 @@
 //! replace-wholesale dataset). `Loaded.deinit` frees it all.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
@@ -98,7 +99,7 @@ pub const Loaded = struct {
 pub fn parseLayer(arena: Allocator, src: [:0]const u8, file: []const u8, diags: *Diagnostics) Allocator.Error!Patch(Config) {
     var out: Patch(Config) = .{};
 
-    var ast = try Ast.parse(arena, src, .zon);
+    var ast = try compat.parseZonAst(arena, src);
     defer ast.deinit(arena);
     if (ast.errors.len != 0) {
         for (ast.errors) |e| {
@@ -114,14 +115,14 @@ pub fn parseLayer(arena: Allocator, src: [:0]const u8, file: []const u8, diags: 
     if (zoir.hasCompileErrors()) {
         for (zoir.compile_errors) |e| {
             const tok: Ast.TokenIndex = if (e.token.unwrap()) |tk| tk else ast.nodeMainToken(@enumFromInt(e.node_or_offset));
-            try diags.addAt(file, ast, tok, "{s}", .{e.msg.get(zoir)});
+            try diags.addAt(file, ast, tok, "{s}", .{compat.zoirGet(e.msg, &zoir)});
         }
         return out;
     }
 
     var ctx: decode_mod.Context = .{ .arena = arena, .ast = ast, .zoir = zoir, .diags = diags, .file = file };
     const root: Zoir.Node.Index = .root;
-    const lit = switch (root.get(zoir)) {
+    const lit = switch (compat.zoirGet(root, &zoir)) {
         .empty_literal => return out,
         .struct_literal => |l| l,
         else => {
@@ -133,10 +134,10 @@ pub fn parseLayer(arena: Allocator, src: [:0]const u8, file: []const u8, diags: 
     // Section by section, so a typo in `.ui` drops `.ui` for this layer
     // and `.editor` still applies.
     for (lit.names, 0..) |name, i| {
-        const key = name.get(zoir);
+        const key = compat.zoirGet(name, &zoir);
         const val = lit.vals.at(@intCast(i));
         var matched = false;
-        inline for (@typeInfo(Patch(Config)).@"struct".fields) |f| {
+        inline for (compat.structFields(Patch(Config))) |f| {
             if (!matched and std.mem.eql(u8, f.name, key)) {
                 matched = true;
                 if (decode_mod.decode(f.type, &ctx, val)) |v| {
@@ -669,7 +670,7 @@ test "docs config example parses clean" {
     const open = std.mem.indexOf(u8, md, "```zon\n") orelse return error.TestUnexpectedResult;
     const body_start = open + "```zon\n".len;
     const close = std.mem.indexOfPos(u8, md, body_start, "\n```") orelse return error.TestUnexpectedResult;
-    const src = try t.allocator.dupeZ(u8, md[body_start..close]);
+    const src = try t.allocator.dupeSentinel(u8, md[body_start..close], 0);
     defer t.allocator.free(src);
 
     const f = try Fixture.init();
@@ -682,7 +683,7 @@ test "docs config example parses clean" {
         return error.TestUnexpectedResult;
     }
     // every section is present in the example
-    inline for (@typeInfo(Patch(Config)).@"struct".fields) |fld| {
+    inline for (compat.structFields(Patch(Config))) |fld| {
         const v = @field(p, fld.name);
         if (comptime patch_mod.isMap(fld.type)) {
             if (v.count() == 0) {

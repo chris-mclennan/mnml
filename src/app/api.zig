@@ -485,7 +485,7 @@ test "a pane's grant and token go when it closes, and what it was waiting on is 
     try feed(app, 1, init_line);
     try feed(app, 1, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"commands.run\",\"params\":{\"id\":\"scratch.new\"}}");
     try t.expectEqual(@as(usize, 1), app.ipc_gate.pending.items.len);
-    (try app.api.grants.getOrPut(t.allocator, 4)).value_ptr.* = .initFull();
+    (try app.api.grants.getOrPut(t.allocator, 4)).value_ptr.* = .full;
 
     forgetPane(app, 4);
     try t.expectEqual(@as(usize, 0), app.ipc_gate.pending.items.len);

@@ -26,6 +26,7 @@ const overlay = @import("overlay.zig");
 const list_panel = @import("list_panel.zig");
 const scrollbar = @import("scrollbar.zig");
 const ids = @import("../core/ids.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 pub const PaneId = ids.PaneId;
 pub const Style = vaxis.Style;
@@ -210,12 +211,12 @@ test "header, the hint, kinds right-aligned in ten cells, depth indents, the arr
     defer f.deinit();
     var scroll: usize = 0;
     draw(f.ui(), 2, f.full(), &scroll, props(&three, 1, 2));
-    try f.expectRow(0, "  ⌥ code.rs   3 symbols" ++ " " ** 20 ++ "█");
-    try f.expectRow(1, "  ⏎ jump · / filter · esc back" ++ " " ** 13 ++ "█");
-    try f.expectRow(2, " " ** 43 ++ "█");
-    try f.expectRow(3, "          fn alpha:1" ++ " " ** 23 ++ "█");
-    try f.expectRow(4, "▶     struct Gamma:9" ++ " " ** 23 ++ "█");
-    try f.expectRow(5, "●      field   x:10" ++ " " ** 24 ++ "█");
+    try f.expectRow(0, "  ⌥ code.rs   3 symbols" ++ repeat(" ", 20) ++ "█");
+    try f.expectRow(1, "  ⏎ jump · / filter · esc back" ++ repeat(" ", 13) ++ "█");
+    try f.expectRow(2, repeat(" ", 43) ++ "█");
+    try f.expectRow(3, "          fn alpha:1" ++ repeat(" ", 23) ++ "█");
+    try f.expectRow(4, "▶     struct Gamma:9" ++ repeat(" ", 23) ++ "█");
+    try f.expectRow(5, "●      field   x:10" ++ repeat(" ", 24) ++ "█");
     try testing.expectEqual(@as(u32, 8), f.hits.at(5, 4).?.editor_cell.line);
     try testing.expectEqual(@as(u32, 7), f.hits.at(5, 4).?.editor_cell.col);
     try testing.expectEqual(@as(u32, 2), f.hits.at(5, 4).?.editor_cell.pane);
@@ -256,34 +257,34 @@ test "the hint's three tiers, and the query line with its caret" {
     const one = three[1..2];
     p.rows = one;
     draw(f.ui(), 2, f.full(), &scroll, p);
-    try f.expectRow(0, "  ⌥ code.rs   1/3 symbol(s)" ++ " " ** 12 ++ "█");
-    try f.expectRow(1, "  type · ⏎ apply · esc clear" ++ " " ** 11 ++ "█");
-    try f.expectRow(2, "  / ga█" ++ " " ** 32 ++ "█");
-    try f.expectRow(3, " " ** 39 ++ "█");
-    try f.expectRow(4, "▶     struct Gamma:9" ++ " " ** 19 ++ "█");
+    try f.expectRow(0, "  ⌥ code.rs   1/3 symbol(s)" ++ repeat(" ", 12) ++ "█");
+    try f.expectRow(1, "  type · ⏎ apply · esc clear" ++ repeat(" ", 11) ++ "█");
+    try f.expectRow(2, "  / ga█" ++ repeat(" ", 32) ++ "█");
+    try f.expectRow(3, repeat(" ", 39) ++ "█");
+    try f.expectRow(4, "▶     struct Gamma:9" ++ repeat(" ", 19) ++ "█");
     try testing.expectEqual(@as(u16, 4), headerRows(p));
     // A held filter (mode left) keeps the line, without the caret.
     p.filter_mode = false;
     draw(f.ui(), 2, f.full(), &scroll, p);
-    try f.expectRow(1, "  ⏎ jump · / filter · esc back" ++ " " ** 9 ++ "█");
-    try f.expectRow(2, "  / ga" ++ " " ** 33 ++ "█");
+    try f.expectRow(1, "  ⏎ jump · / filter · esc back" ++ repeat(" ", 9) ++ "█");
+    try f.expectRow(2, "  / ga" ++ repeat(" ", 33) ++ "█");
     // No matches keeps the header and says so.
     f.hits.reset();
     p.rows = &.{};
     draw(f.ui(), 2, f.full(), &scroll, p);
-    try f.expectRow(4, "  (no matches)" ++ " " ** 25 ++ "█");
+    try f.expectRow(4, "  (no matches)" ++ repeat(" ", 25) ++ "█");
     try testing.expect(f.hits.at(5, 4) == null);
     // No symbols at all.
     draw(f.ui(), 2, f.full(), &scroll, props(&.{}, 0, null));
-    try f.expectRow(0, "  ⌥ code.rs   0 symbols" ++ " " ** 16 ++ "█");
-    try f.expectRow(3, "  (no symbols)" ++ " " ** 25 ++ "█");
+    try f.expectRow(0, "  ⌥ code.rs   0 symbols" ++ repeat(" ", 16) ++ "█");
+    try f.expectRow(3, "  (no symbols)" ++ repeat(" ", 25) ++ "█");
     try testing.expectEqual(@as(u16, 3), headerRows(props(&.{}, 0, null)));
     // Over the highlight ceiling the row says so, with the size — never
     // "(no symbols)" for a file that has 200 001 of them.
     var off = props(&.{}, 0, null);
     off.off_label = "8.0 MB";
     draw(f.ui(), 2, f.full(), &scroll, off);
-    try f.expectRow(3, "  (outline off · 8.0 MB)" ++ " " ** 15 ++ "█");
+    try f.expectRow(3, "  (outline off · 8.0 MB)" ++ repeat(" ", 15) ++ "█");
 }
 
 test "a 100k-char symbol name paints clipped without overflowing the cell sum" {
@@ -335,7 +336,7 @@ test "a cell of air before the bar: the header, the hint and every row stop a ce
     for (&rows, 0..) |*r, i| r.* = .{ .name = "a_symbol_name_that_is_long", .kind = "fn", .line = @intCast(i), .col = 0, .depth = 0 };
     draw(f.ui(), 0, f.full(), &scroll, .{ .title = "a-file-name-that-is-long.zig", .rows = &rows, .total = 12, .cursor = 0, .current = null, .focused = true });
     try f.expectRow(0, "  ⌥ a-file-name-that-is-lon… █");
-    try f.expectRow(1, "  ⏎ / r / esc" ++ " " ** 16 ++ "█");
+    try f.expectRow(1, "  ⏎ / r / esc" ++ repeat(" ", 16) ++ "█");
     try f.expectRow(3, "▶         fn a_symbol_name_… █");
     try f.expectRow(4, "          fn a_symbol_name_… █");
     try f.expectAirBeforeBar(1, 8, 29);

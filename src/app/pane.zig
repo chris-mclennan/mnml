@@ -165,7 +165,7 @@ pub const ListPane = struct {
     pub fn shown(self: *const ListPane, arena: Allocator) Allocator.Error![]u32 {
         var out: std.ArrayListUnmanaged(u32) = .empty;
         for (self.entries.items, 0..) |e, i| {
-            if (self.filter.items.len == 0 or std.ascii.indexOfIgnoreCase(e.text, self.filter.items) != null) try out.append(arena, @intCast(i));
+            if (self.filter.items.len == 0 or std.ascii.findIgnoreCase(e.text, self.filter.items) != null) try out.append(arena, @intCast(i));
         }
         return out.items;
     }

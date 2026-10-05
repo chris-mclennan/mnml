@@ -23,6 +23,7 @@ const ids = @import("../core/ids.zig");
 const requests = @import("../app/requests.zig");
 const columns = @import("mnml_sdk").pane.columns;
 const cellWidth = @import("mnml_sdk").pane.width;
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 const PaneId = ids.PaneId;
@@ -222,7 +223,7 @@ fn clock(ui: Ui, ts: f64) []const u8 {
 /// columns move with their content cannot be read down.
 fn pad(ui: Ui, s: []const u8, w: u16) []const u8 {
     const cut = ui.clipStr(s, w);
-    const spaces = " " ** 64;
+    const spaces = repeat(" ", 64);
     const n = @min(@as(usize, w) -| cut.len, spaces.len);
     return ui.fmt("{s}{s}", .{ cut, spaces[0..n] });
 }

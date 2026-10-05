@@ -272,10 +272,10 @@ test "accel table: the Rust function's line counts, per setting, for the same ev
     // A single slow notch is 1:1 at every setting; a slow scroll stays 1:1.
     for (all) |s| {
         try testing.expectEqual(@as(u32, 4), total(s, .{ .gaps = &.{ 400, 400, 400, 400 } }));
-        try testing.expectEqual(@as(u32, 10), total(s, .{ .gaps = &([_]i64{120} ** 10) }));
+        try testing.expectEqual(@as(u32, 10), total(s, .{ .gaps = &(@as([10]i64, @splat(120))) }));
     }
     // A hard spin (8 ms gaps ≈ 125/s) travels further as the setting rises.
-    const spin: Run = .{ .gaps = &([_]i64{8} ** 10) };
+    const spin: Run = .{ .gaps = &(@as([10]i64, @splat(8))) };
     try testing.expectEqual(@as(u32, 10), total(.off, spin));
     try testing.expectEqual(@as(u32, 14), total(.gentle, spin));
     try testing.expectEqual(@as(u32, 23), total(.normal, spin));
@@ -286,7 +286,7 @@ test "accel table: the Rust function's line counts, per setting, for the same ev
     perEvent(.fast, spin, &per);
     try testing.expectEqualSlices(u16, &.{ 1, 4, 4, 4, 4, 4, 4, 4, 4, 4 }, &per);
     // Mid-ramp (10 ms ≈ 100/s).
-    const mid: Run = .{ .gaps = &([_]i64{10} ** 10) };
+    const mid: Run = .{ .gaps = &(@as([10]i64, @splat(10))) };
     try testing.expectEqual(@as(u32, 10), total(.off, mid));
     try testing.expectEqual(@as(u32, 13), total(.gentle, mid));
     try testing.expectEqual(@as(u32, 19), total(.normal, mid));

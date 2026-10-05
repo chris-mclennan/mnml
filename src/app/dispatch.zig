@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const highlight = @import("highlight");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -5719,7 +5720,7 @@ test "right-click: every HitTarget's mouse arm reads the right button, hands it 
     const src = @embedFile("dispatch.zig");
     const start = std.mem.indexOf(u8, src, "\npub fn mouse(").?;
     const body = src[start..];
-    inline for (std.meta.fields(HitTag)) |f| {
+    inline for (compat.enumFields(HitTag)) |f| {
         const arm = armSource(body, f.name) orelse {
             std.debug.print("no `.{s} =>` arm in dispatch.mouse\n", .{f.name});
             return error.TestUnexpectedResult;

@@ -34,6 +34,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const sdk = @import("mnml_sdk");
@@ -601,7 +602,7 @@ pub const FakeFetcher = struct {
     routes: []const Route,
     calls: usize = 0,
     /// How many times each route was fetched, by its index in `routes`.
-    hits: [16]u32 = .{0} ** 16,
+    hits: [16]u32 = @splat(0),
     mutex: std.atomic.Mutex = .unlocked,
 
     pub fn fetcher(self: *FakeFetcher) Fetcher {
@@ -707,7 +708,7 @@ test "the SDK version is build.zig.zon's, and index.zon holds every integration 
     const Row = struct { id: []const u8, version: []const u8 };
     const IndexZon = struct { integrations: []const Row };
     const text = try Io.Dir.cwd().readFileAllocOptions(io, try std.fs.path.join(a, &.{ repo, "integrations", "index.zon" }), a, .limited(1 << 20), .of(u8), 0);
-    const index = try std.zon.parse.fromSliceAlloc(IndexZon, a, text, null, .{});
+    const index = try compat.zonParse(IndexZon, a, text, null, .{});
     try testing.expect(index.integrations.len >= 2);
     const manifest_mod = @import("../bridge/manifest.zig");
     for (index.integrations) |row| {

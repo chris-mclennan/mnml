@@ -76,10 +76,10 @@ pub fn providerOf(remote: []const u8) Provider {
 }
 
 fn providerOfHost(host: []const u8) Provider {
-    if (std.ascii.indexOfIgnoreCase(host, "github") != null) return .github;
-    if (std.ascii.indexOfIgnoreCase(host, "gitlab") != null) return .gitlab;
-    if (std.ascii.indexOfIgnoreCase(host, "bitbucket") != null) return .bitbucket;
-    if (std.ascii.indexOfIgnoreCase(host, "dev.azure.com") != null or std.ascii.indexOfIgnoreCase(host, "visualstudio.com") != null) return .azure;
+    if (std.ascii.findIgnoreCase(host, "github") != null) return .github;
+    if (std.ascii.findIgnoreCase(host, "gitlab") != null) return .gitlab;
+    if (std.ascii.findIgnoreCase(host, "bitbucket") != null) return .bitbucket;
+    if (std.ascii.findIgnoreCase(host, "dev.azure.com") != null or std.ascii.findIgnoreCase(host, "visualstudio.com") != null) return .azure;
     return .other;
 }
 
@@ -87,7 +87,7 @@ fn providerOfHost(host: []const u8) Provider {
 /// address is `dev.azure.com/org/proj/_git/repo`. Everything else keeps
 /// its host and path.
 fn webBase(arena: Allocator, r: Remote) Allocator.Error!struct { host: []const u8, path: []const u8 } {
-    if (std.mem.startsWith(u8, r.path, "v3/") and std.ascii.indexOfIgnoreCase(r.host, "dev.azure.com") != null) {
+    if (std.mem.startsWith(u8, r.path, "v3/") and std.ascii.findIgnoreCase(r.host, "dev.azure.com") != null) {
         var it = std.mem.splitScalar(u8, r.path[3..], '/');
         const org = it.next() orelse "";
         const proj = it.next() orelse "";

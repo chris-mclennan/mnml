@@ -41,6 +41,7 @@ const Ui = @import("context.zig");
 const hit_mod = @import("hit.zig");
 const Theme = @import("theme.zig");
 const list_panel = @import("list_panel.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 
@@ -1061,5 +1062,5 @@ test "start surface: a list's detail goes before its text is cut to nothing" {
     defer g.deinit();
     paintEntry(g.ui(), g.full(), .{ .text = "fix", .detail = "claude · 2d" }, false);
     // The detail ends on the row's last cell.
-    try g.expectRow(0, " fix" ++ " " ** 25 ++ "claude · 2d");
+    try g.expectRow(0, " fix" ++ repeat(" ", 25) ++ "claude · 2d");
 }

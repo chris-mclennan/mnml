@@ -1881,8 +1881,8 @@ test "the filter narrows the rows to the ones that match, clamps the cursor to o
             .section => headers += 1,
             .row => |r| {
                 var vb: [24]u8 = undefined;
-                try t.expect(std.ascii.indexOfIgnoreCase(r.label, "dock") != null or
-                    std.ascii.indexOfIgnoreCase(ui_settings.valueWord(r, &vb), "dock") != null);
+                try t.expect(std.ascii.findIgnoreCase(r.label, "dock") != null or
+                    std.ascii.findIgnoreCase(ui_settings.valueWord(r, &vb), "dock") != null);
             },
             .action => try t.expect(false),
         };

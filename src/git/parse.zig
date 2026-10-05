@@ -21,6 +21,7 @@
 
 const std = @import("std");
 const remote_mod = @import("remote.zig");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 
 // ─── status ─────────────────────────────────────────────────────────────
@@ -269,12 +270,12 @@ pub const TodoAction = enum {
     }
 
     pub fn next(a: TodoAction) TodoAction {
-        const n = @typeInfo(TodoAction).@"enum".fields.len;
+        const n = compat.enumFields(TodoAction).len;
         return @enumFromInt((@intFromEnum(a) + 1) % n);
     }
 
     pub fn prev(a: TodoAction) TodoAction {
-        const n = @typeInfo(TodoAction).@"enum".fields.len;
+        const n = compat.enumFields(TodoAction).len;
         return @enumFromInt((@intFromEnum(a) + n - 1) % n);
     }
 };

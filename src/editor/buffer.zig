@@ -12,6 +12,7 @@
 //! (`clipboard.zig`), so a macro recorded here replays in any buffer.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const editorconfig = @import("editorconfig.zig");
 const Io = std.Io;
@@ -2056,9 +2057,9 @@ test "vim ctrl+a / ctrl+x, gA align, gq reflow" {
     try vim("vjgA=", "|a = 1\nbb = 2", "|a  = 1\nbb = 2");
     try vim("gAip<esc>x", "|a = 1\nbb = 2", "| = 1\nbb = 2"); // Esc drops the range
     try vim("gAip=", "|a = 1\nb = 2", "|a = 1\nb = 2"); // already aligned
-    const long = "word " ** 19 ++ "word";
-    try vim("gqq", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
-    try vim("gqip", "|" ++ long, "|" ++ "word " ** 15 ++ "word\n" ++ "word " ** 3 ++ "word");
+    const long = repeat("word ", 19) ++ "word";
+    try vim("gqq", "|" ++ long, "|" ++ repeat("word ", 15) ++ "word\n" ++ repeat("word ", 3) ++ "word");
+    try vim("gqip", "|" ++ long, "|" ++ repeat("word ", 15) ++ "word\n" ++ repeat("word ", 3) ++ "word");
     try vim("gqj", "|a\nb\n\nc", "|a b\n\nc");
     try vim("gqq", "|a b", "|a b");
 }

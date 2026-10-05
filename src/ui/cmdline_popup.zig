@@ -33,6 +33,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 
@@ -204,7 +205,7 @@ test "past max_visible rows the last row says how many more, and the window foll
 test "width is the widest label plus four, capped at max_width and at the screen" {
     var f = try Fixture.init(100, 12);
     defer f.deinit();
-    const long = "a" ** 70;
+    const long = repeat("a", 70);
     const wide = [_][]const u8{ long, "b" };
     const r = draw(f.ui(), Rect.init(0, 11, 100, 1), 2, .{ .labels = &wide, .selected = 0 }).?;
     try testing.expectEqual(max_width, r.w);

@@ -14,6 +14,7 @@
 //! without teaching both is a compile error.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const patch_mod = @import("patch.zig");
@@ -183,7 +184,7 @@ pub fn manifestNames(arena: Allocator, io: std.Io, workspace: []const u8) Alloca
 
 comptime {
     // Every sink has a row, every row a sink.
-    for (@typeInfo(Sink).@"enum".fields) |f| {
+    for (compat.enumFields(Sink)) |f| {
         const sink = @field(Sink, f.name);
         var found = false;
         for (exec_bearing) |r| found = found or r.sink == sink;
@@ -944,14 +945,14 @@ fn walk(comptime T: type, comptime prefix: []const u8, arena: Allocator, out: *s
     if (T == Dynamic) return;
     if (comptime patch_mod.isMap(T)) return walk(T.Value, prefix ++ ".<name>", arena, out);
     switch (@typeInfo(T)) {
-        .@"struct" => |s| inline for (s.fields) |f| {
+        .@"struct" => inline for (compat.structFields(T)) |f| {
             const p = if (prefix.len == 0) f.name else prefix ++ "." ++ f.name;
             try out.append(arena, .{ .path = p, .shaped = comptime execShaped(f.name) });
             try walk(f.type, p, arena, out);
         },
         .optional => |o| try walk(o.child, prefix, arena, out),
         .pointer => |ptr| if (ptr.size == .slice and ptr.child != u8) try walk(ptr.child, prefix ++ "[]", arena, out),
-        .@"union" => |u| inline for (u.fields) |f| {
+        .@"union" => inline for (compat.unionFields(T)) |f| {
             const p = prefix ++ "." ++ f.name;
             try out.append(arena, .{ .path = p, .shaped = comptime execShaped(f.name) });
             try walk(f.type, p, arena, out);

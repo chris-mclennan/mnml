@@ -16,6 +16,7 @@
 //! `$XDG_CONFIG_HOME/mnml`, else `$HOME/.config/mnml`.
 
 const std = @import("std");
+const compat = @import("zig_compat.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -734,9 +735,7 @@ test "write renders ZON that parses back with the same shape" {
     // literal a defaulted field points at.
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(arena_state.allocator());
-    const back = try std.zon.parse.fromSliceAlloc(Manifest, arena_state.allocator(), text, &diag, .{ .free_on_error = false });
+    const back = try compat.zonParse(Manifest, arena_state.allocator(), text, null, .{});
     try testing.expectEqualStrings("hello", back.id);
     try testing.expectEqual(Mode.mount, back.mode);
     try testing.expectEqualStrings("cyan", back.chip.?.color);
@@ -769,9 +768,7 @@ test "write renders ZON that parses back with the same shape" {
     try testing.expect(!launcher.staleAgainst("9.9.9"));
     try testing.expect(std.mem.indexOf(u8, ltext, ".run = \":term htop\"") != null);
     try testing.expect(std.mem.indexOf(u8, ltext, ".glyph_codepoint = \"F1D00\"") != null);
-    var ldiag: std.zon.parse.Diagnostics = .{};
-    defer ldiag.deinit(arena_state.allocator());
-    const lback = try std.zon.parse.fromSliceAlloc(Manifest, arena_state.allocator(), ltext, &ldiag, .{ .free_on_error = false });
+    const lback = try compat.zonParse(Manifest, arena_state.allocator(), ltext, null, .{});
     try testing.expect(lback.isLauncher());
     try testing.expectEqualStrings(":term htop", lback.commands[0].line().?);
 }
@@ -784,9 +781,7 @@ test "links: the field parses and renders back; bindLinkVar fills a configured v
         \\.{ .id = "acme", .label = "Acme", .binary = "mnml-acme",
         \\   .links = .{ .{ .pattern = "[A-Z][A-Z0-9]+-\\d+", .url = "{site_url}/browse/{0}" } } }
     ;
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(a);
-    const m = try std.zon.parse.fromSliceAlloc(Manifest, a, text, &diag, .{ .free_on_error = false });
+    const m = try compat.zonParse(Manifest, a, text, null, .{});
     try testing.expectEqual(@as(usize, 1), m.links.len);
     try testing.expectEqualStrings("[A-Z][A-Z0-9]+-\\d+", m.links[0].pattern);
     try testing.expectEqualStrings("site_url", unboundLinkVar(m.links[0].url).?);
@@ -815,9 +810,7 @@ test "links: a range link parses, keeps its resolve and kind through bindLinks a
         \\.{ .id = "forge", .label = "Forge", .binary = "mnml-forge",
         \\   .links = .{ .{ .pattern = "(?i)\\bpipeline #?(\\d+)", .url = "{site}/{repo}/pipelines/results/{1}", .resolve = .range, .ranges = "pipeline" } } }
     ;
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(a);
-    const m = try std.zon.parse.fromSliceAlloc(Manifest, a, text, &diag, .{ .free_on_error = false });
+    const m = try compat.zonParse(Manifest, a, text, null, .{});
     try testing.expectEqual(Resolve.range, m.links[0].resolve);
     try testing.expectEqualStrings("pipeline", m.links[0].ranges);
     // `{repo}` is the match's: only `{site}` is left to bind.

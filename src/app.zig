@@ -14,6 +14,7 @@
 //! mouse event, which arrives at the top of the following iteration.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
@@ -1484,7 +1485,7 @@ pub const App = struct {
     /// under the pointer before it is handled.
     debug_click_inspector: bool = false,
     /// The panels whose automatic rescan is off (`app/auto_refresh.zig`).
-    auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).initEmpty(),
+    auto_refresh_off: std.EnumSet(PanelId) = std.EnumSet(PanelId).empty,
     /// The `+` menu's curation, seeded from `ui.plus_menu_pinned` /
     /// `plus_menu_hidden` and written back there (owned ids).
     plus_pinned: std.ArrayListUnmanaged([]u8) = .empty,
@@ -3455,7 +3456,7 @@ pub const App = struct {
     /// the leaves. A test that builds a broken shape on purpose turns
     /// `layout_check` off.
     pub fn checkLayoutInvariant(self: *App, after: []const u8) void {
-        if (builtin.mode != .Debug or !self.layout_check) return;
+        if (!compat.is_debug or !self.layout_check) return;
         if (self.layoutFault()) |f| std.debug.panic("{f} (after {s})", .{ f, after });
     }
 

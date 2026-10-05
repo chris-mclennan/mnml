@@ -10,6 +10,7 @@
 //! for everywhere — so one file per data root serves every workspace.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -159,7 +160,7 @@ pub fn load(app: *App) Allocator.Error!usize {
         error.OutOfMemory => return error.OutOfMemory,
         else => return 0,
     };
-    const stored = std.zon.parse.fromSliceAlloc(Stored, arena, src, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch |err| switch (err) {
+    const stored = compat.zonParse(Stored, arena, src, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => return 0,
     };

@@ -28,6 +28,7 @@
 //! owned by the event, adopted or destroyed by the handler.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
@@ -400,7 +401,7 @@ fn describe(gpa: Allocator, err: anyerror, url: []const u8) Allocator.Error![]u8
     return std.fmt.allocPrint(gpa, "{s}{s}", .{ prefix, name });
 }
 
-const SendError = Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.Uri.ParseError || std.Uri.ResolveInPlaceError || std.Uri.GetHostError || Io.Writer.Error || Io.Reader.StreamError || insecure_mod.ProxyError || Io.net.HostName.ValidateError || error{ InvalidMethod, UnsupportedCompressionMethod, WriteFailed, TlsInitializationFailed };
+const SendError = Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.Uri.ParseError || std.Uri.ResolveInPlaceError || compat.UriHostError || Io.Writer.Error || Io.Reader.StreamError || insecure_mod.ProxyError || Io.net.HostName.ValidateError || error{ InvalidMethod, UnsupportedCompressionMethod, WriteFailed, TlsInitializationFailed };
 
 /// Whether the request's socket read or write was cancelled. std's
 /// readers answer a cancel with a bare `ReadFailed` (or `WriteFailed`)
@@ -513,7 +514,7 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
         var shim_host: ?[]const u8 = null;
         if (t.insecure and std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
             var hbuf: [Io.net.HostName.max_len]u8 = undefined;
-            const hn = try uri.getHost(&hbuf);
+            const hn = try compat.uriHost(uri, &hbuf);
             const port: u16 = uri.port orelse 443;
             shim = insecure_mod.Shim.start(gpa, io, hn.bytes, port, t.proxy) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -674,7 +675,7 @@ fn sendInner(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions, t: 
         const final_url = try gpa.dupe(u8, url);
         errdefer gpa.free(final_url);
         const is_sse = blk: {
-            for (headers.items) |h| if (std.ascii.eqlIgnoreCase(h.name, "content-type") and std.ascii.indexOfIgnoreCase(h.value, "text/event-stream") != null) break :blk true;
+            for (headers.items) |h| if (std.ascii.eqlIgnoreCase(h.name, "content-type") and std.ascii.findIgnoreCase(h.value, "text/event-stream") != null) break :blk true;
             break :blk false;
         };
         const chunked = response.head.transfer_encoding == .chunked or (response.head.transfer_encoding == .none and response.head.content_length == null and response.head.status.class() == .success);
@@ -909,9 +910,9 @@ test "send: a real round trip over a local socket — status, headers, body, tim
     // The server saw what we sent.
     const seen = server.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen, "POST /brew?x=1 HTTP/1.1\r\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: a=b\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-type: text/plain\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "cookie: a=b\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "content-type: text/plain\r\n") != null);
     try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\nhello"));
     var cloned = try resp.clone(testing.allocator);
     defer cloned.deinit(testing.allocator);
@@ -961,7 +962,7 @@ test "send: a body on a bodyless method never reaches std's assert — it goes o
         try testing.expect(outcome == .ok);
         const seen = server.lastRequest();
         try testing.expect(std.mem.startsWith(u8, seen, m));
-        try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-length: 7\r\n") != null);
+        try testing.expect(std.ascii.findIgnoreCase(seen, "content-length: 7\r\n") != null);
         try testing.expect(std.mem.endsWith(u8, seen, "\r\n\r\n{\"q\":1}"));
     }
     // The mirror: a POST with no body is `content-length: 0`, not an
@@ -973,7 +974,7 @@ test "send: a body on a bodyless method never reaches std's assert — it goes o
     var o2 = try send(testing.allocator, io, &post, .{});
     defer o2.deinit(testing.allocator);
     try testing.expect(o2 == .ok);
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "content-length: 0\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "content-length: 0\r\n") != null);
 }
 
 test "send: redirects are followed by hand, so a 302's Set-Cookie reaches the jar and the hop's cookie rides to the same host" {
@@ -1001,7 +1002,7 @@ test "send: redirects are followed by hand, so a 302's Set-Cookie reaches the ja
     try testing.expectEqualStrings("127.0.0.1", resp.hop_cookies[0].host);
     try testing.expectEqualStrings("session=abc123; Path=/", resp.hop_cookies[0].value);
     // The second hop carried the jar's line plus what the first hop set.
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "cookie: seed=1; session=abc123; user=chris\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "cookie: seed=1; session=abc123; user=chris\r\n") != null);
     // Into the jar, keyed by the host that set them.
     var jar = @import("cookies.zig").Jar.init(testing.allocator);
     defer jar.deinit();
@@ -1048,7 +1049,7 @@ test "send: 303 and a 301/302 on POST rewrite to GET without the body; 307 keeps
         defer testing.allocator.free(want_line);
         try testing.expectEqualStrings(want_line, seen[0..line_end]);
         try testing.expectEqual(c.want_body, std.mem.endsWith(u8, seen, "\r\n\r\npayload"));
-        try testing.expectEqual(c.want_body, std.ascii.indexOfIgnoreCase(seen, "content-type: text/plain") != null);
+        try testing.expectEqual(c.want_body, std.ascii.findIgnoreCase(seen, "content-type: text/plain") != null);
     }
     // A loop: every answer redirects to itself.
     var loop = try mock.Server.start(testing.allocator, io, .{ .status = 302, .status_text = "Found", .headers = &.{.{ .name = "location", .value = "/again" }} });
@@ -1087,14 +1088,14 @@ test "send: a redirect to another host drops the jar's cookie and the Authorizat
     try testing.expectEqual(@as(usize, 1), resp.hop_cookies.len);
     try testing.expectEqualStrings("127.0.0.1", resp.hop_cookies[0].host);
     const first = server.lastRequest();
-    try testing.expect(std.ascii.indexOfIgnoreCase(first, "authorization: Bearer t\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(first, "cookie: seed=1\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(first, "authorization: Bearer t\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(first, "cookie: seed=1\r\n") != null);
     const second = target.lastRequest();
     try testing.expect(std.mem.startsWith(u8, second, "GET /landed HTTP/1.1\r\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(second, "authorization:") == null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(second, "cookie:") == null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(second, "x-keep: yes\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(second, "host: localhost:") != null);
+    try testing.expect(std.ascii.findIgnoreCase(second, "authorization:") == null);
+    try testing.expect(std.ascii.findIgnoreCase(second, "cookie:") == null);
+    try testing.expect(std.ascii.findIgnoreCase(second, "x-keep: yes\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(second, "host: localhost:") != null);
 }
 
 test "send: thirty malformed blocks parse and go out (or fail soft); none aborts" {
@@ -1245,8 +1246,8 @@ test "send: @proxy sends a plain origin's request to the proxy in absolute form,
     try testing.expectEqualStrings("via proxy", outcome.ok.body);
     const seen = proxy.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen, "GET http://origin.invalid/path?q=1 HTTP/1.1\r\n"));
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "proxy-authorization: Basic bWU6cHc=\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "host: origin.invalid\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "proxy-authorization: Basic bWU6cHc=\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "host: origin.invalid\r\n") != null);
     // A proxy spec that does not parse is a named failure, not a hang.
     var bad = try Request.init(testing.allocator);
     defer bad.deinit(testing.allocator);

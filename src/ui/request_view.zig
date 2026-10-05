@@ -35,6 +35,7 @@
 
 const std = @import("std");
 const mnml_sdk = @import("mnml_sdk");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
@@ -185,7 +186,7 @@ pub const OptionsModel = struct {
     follow_redirects: bool = true,
     max_redirects: u8 = 10,
     proxy: ?[]const u8 = null,
-    set: [option_rows.len]bool = .{false} ** option_rows.len,
+    set: [option_rows.len]bool = @splat(false),
 };
 
 pub const VarRow = struct { name: []const u8, value: ?[]const u8 };
@@ -1404,7 +1405,7 @@ pub fn typeLabel(m: Model) []const u8 {
         const v = h.value;
         const has = struct {
             fn f(hay: []const u8, needle: []const u8) bool {
-                return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+                return std.ascii.findIgnoreCase(hay, needle) != null;
             }
         }.f;
         if (has(v, "json")) return "JSON";
@@ -1938,24 +1939,24 @@ test "the spec's request pane, cell for cell: the top bar, the Request box with 
     const ui = fx.ui();
     const caret = draw(ui, 3, ui.canvas.full(), m);
     try fx.expectRow(0, "");
-    try fx.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ "\u{2500}" ** 58 ++ "\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}");
-    try fx.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ " " ** 39 ++ "\u{2502}\u{2502} \u{25B6} Send \u{2502}");
-    try fx.expectRow(3, "\u{2514}" ++ "\u{2500}" ** 12 ++ "\u{2518}\u{2514}" ++ "\u{2500}" ** 63 ++ "\u{2518}\u{2514}" ++ "\u{2500}" ** 8 ++ "\u{2518}");
-    try fx.expectRow(4, "\u{250C}" ++ "\u{2500}" ** 75 ++ "[\u{21D4}]\u{2500}[A \u{25A5} \u{25A4}]\u{2500}\u{2510}");
-    try fx.expectRow(5, "\u{2502}  Params  Body  Headers  Auth  Vars  Script" ++ " " ** 44 ++ "\u{2502}");
-    try fx.expectRow(6, "\u{2502}          \u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 73 ++ "\u{2502}");
-    try fx.expectRow(7, "\u{2502} 1" ++ " " ** 85 ++ "\u{2502}");
-    try fx.expectRow(17, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
-    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 87 ++ "\u{2510}");
+    try fx.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ repeat("\u{2500}", 58) ++ "\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}");
+    try fx.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ repeat(" ", 39) ++ "\u{2502}\u{2502} \u{25B6} Send \u{2502}");
+    try fx.expectRow(3, "\u{2514}" ++ repeat("\u{2500}", 12) ++ "\u{2518}\u{2514}" ++ repeat("\u{2500}", 63) ++ "\u{2518}\u{2514}" ++ repeat("\u{2500}", 8) ++ "\u{2518}");
+    try fx.expectRow(4, "\u{250C}" ++ repeat("\u{2500}", 75) ++ "[\u{21D4}]\u{2500}[A \u{25A5} \u{25A4}]\u{2500}\u{2510}");
+    try fx.expectRow(5, "\u{2502}  Params  Body  Headers  Auth  Vars  Script" ++ repeat(" ", 44) ++ "\u{2502}");
+    try fx.expectRow(6, "\u{2502}          \u{2501}\u{2501}\u{2501}\u{2501}" ++ repeat(" ", 73) ++ "\u{2502}");
+    try fx.expectRow(7, "\u{2502} 1" ++ repeat(" ", 85) ++ "\u{2502}");
+    try fx.expectRow(17, "\u{2514}" ++ repeat("\u{2500}", 87) ++ "\u{2518}");
+    try fx.expectRow(18, "\u{250C}" ++ repeat("\u{2500}", 87) ++ "\u{2510}");
     // The fixture's row reader prints the wide `⚡` once (the headless
     // dump shows its second cell as a space).
     try fx.expectRow(19, "\u{2502}  Body  Headers  Cookies  Timeline  Tests                    \u{26A1} AI  wrap   copy   \u{2014} \u{25BC}  \u{2502}");
-    try fx.expectRow(20, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 81 ++ "\u{2502}");
-    try fx.expectRow(21, "\u{2502}  not sent yet \u{00B7} press `r` to fire" ++ " " ** 53 ++ "\u{2502}");
-    try fx.expectRow(32, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
-    try fx.expectRow(33, "\u{250C} AI " ++ "\u{2500}" ** 83 ++ "\u{2510}");
-    try fx.expectRow(34, "\u{2502} click here to ask a custom question   \u{00B7} `a` quick debug" ++ " " ** 31 ++ "\u{2502}");
-    try fx.expectRow(35, "\u{2514}" ++ "\u{2500}" ** 87 ++ "\u{2518}");
+    try fx.expectRow(20, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}" ++ repeat(" ", 81) ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}  not sent yet \u{00B7} press `r` to fire" ++ repeat(" ", 53) ++ "\u{2502}");
+    try fx.expectRow(32, "\u{2514}" ++ repeat("\u{2500}", 87) ++ "\u{2518}");
+    try fx.expectRow(33, "\u{250C} AI " ++ repeat("\u{2500}", 83) ++ "\u{2510}");
+    try fx.expectRow(34, "\u{2502} click here to ask a custom question   \u{00B7} `a` quick debug" ++ repeat(" ", 31) ++ "\u{2502}");
+    try fx.expectRow(35, "\u{2514}" ++ repeat("\u{2500}", 87) ++ "\u{2518}");
     // The caret sits at the URL's start; the hits.
     try testing.expectEqual(@as(u16, 16), caret.?.x);
     try testing.expectEqual(@as(u16, 2), caret.?.y);
@@ -2004,7 +2005,7 @@ test "after a send: the status title on the Response border, the Headers count, 
     m.field = .content;
     const ui = fx.ui();
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 65 ++ " 200 OK  \u{00B7} 2ms \u{00B7} 49 B \u{2510}");
+    try fx.expectRow(18, "\u{250C}" ++ repeat("\u{2500}", 65) ++ " 200 OK  \u{00B7} 2ms \u{00B7} 49 B \u{2510}");
     // A reason phrase longer than the edge is cut; the code, the time
     // and the size stay.
     {
@@ -2017,15 +2018,15 @@ test "after a send: the status title on the Response border, the Headers count, 
         _ = draw(ui, 3, ui.canvas.full(), m);
     }
     try fx.expectRow(19, "\u{2502}  Body  Headers 5  Cookies  Timeline  Tests                      wrap   copy   JSON \u{25BC}  \u{2502}");
-    try fx.expectRow(21, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
-    try fx.expectRow(22, "\u{2502} 1 {" ++ " " ** 83 ++ "\u{2502}");
-    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ " " ** 71 ++ "\u{2502}");
-    try fx.expectRow(30, "\u{2502} 9 }" ++ " " ** 83 ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}" ++ repeat(" ", 87) ++ "\u{2502}");
+    try fx.expectRow(22, "\u{2502} 1 {" ++ repeat(" ", 83) ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ repeat(" ", 71) ++ "\u{2502}");
+    try fx.expectRow(30, "\u{2502} 9 }" ++ repeat(" ", 83) ++ "\u{2502}");
     try testing.expect(fx.fgEql(70, 18, .{ .fg = fx.theme.palette.green }));
     // The Headers tab lists `key: value`.
     m.response_tab = .headers;
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ " " ** 55 ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ repeat(" ", 55) ++ "\u{2502}");
     // Scrolling a long body: twenty lines, the window from the third
     // row; the gutter is right-aligned to two digits.
     m.response_tab = .body;
@@ -2033,8 +2034,8 @@ test "after a send: the status title on the Response border, the Headers count, 
     view.scroll_line = 2;
     _ = draw(ui, 3, ui.canvas.full(), m);
     // Twenty-one rows in eleven: the shared bar takes the last column.
-    try fx.expectRow(21, "\u{2502}  2 l2" ++ " " ** 80 ++ "\u{2588}\u{2502}");
-    try fx.expectRow(29, "\u{2502} 10 l10" ++ " " ** 79 ++ "\u{2588}\u{2502}");
+    try fx.expectRow(21, "\u{2502}  2 l2" ++ repeat(" ", 80) ++ "\u{2588}\u{2502}");
+    try fx.expectRow(29, "\u{2502} 10 l10" ++ repeat(" ", 79) ++ "\u{2588}\u{2502}");
     // Past the end the window is pulled back.
     view.scroll_line = 40;
     _ = draw(ui, 3, ui.canvas.full(), m);
@@ -2045,38 +2046,38 @@ test "after a send: the status title on the Response border, the Headers count, 
     // clipped at the border).
     view.scroll_line = 0;
     m.body_wrap = true;
-    m.response.?.body = "a" ** 100;
+    m.response.?.body = repeat("a", 100);
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(22, "\u{2502} 1 " ++ "a" ** 84 ++ "\u{2502}");
-    try fx.expectRow(23, "\u{2502}   " ++ "a" ** 15 ++ " " ** 69 ++ "\u{2502}");
+    try fx.expectRow(22, "\u{2502} 1 " ++ repeat("a", 84) ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502}   " ++ repeat("a", 15) ++ repeat(" ", 69) ++ "\u{2502}");
     // A failure: the title and the AI chip.
     m.response = null;
     m.failed = "connection refused";
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 77 ++ " \u{2717} failed \u{2510}");
-    try fx.expectRow(21, "\u{2502}  \u{2717} connection refused" ++ " " ** 65 ++ "\u{2502}");
+    try fx.expectRow(18, "\u{250C}" ++ repeat("\u{2500}", 77) ++ " \u{2717} failed \u{2510}");
+    try fx.expectRow(21, "\u{2502}  \u{2717} connection refused" ++ repeat(" ", 65) ++ "\u{2502}");
     // Rust `draw_edit`'s tail under the request body: a blank row, then
     // the failure in red; while sending, the spinner line.
-    try fx.expectRow(8, "\u{2502}" ++ " " ** 87 ++ "\u{2502}");
-    try fx.expectRow(9, "\u{2502}  \u{2717} last send: connection refused" ++ " " ** 54 ++ "\u{2502}");
+    try fx.expectRow(8, "\u{2502}" ++ repeat(" ", 87) ++ "\u{2502}");
+    try fx.expectRow(9, "\u{2502}  \u{2717} last send: connection refused" ++ repeat(" ", 54) ++ "\u{2502}");
     try testing.expect(fx.fgEql(4, 9, .{ .fg = fx.theme.palette.red }));
     // A refusal before the wire (an unresolved `{{VAR}}`) is titled
     // `not sent`, and never claims a last send.
     m.failed = "unresolved {{jira}}";
     m.not_sent = true;
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(18, "\u{250C}" ++ "\u{2500}" ** 75 ++ " \u{2717} not sent \u{2510}");
-    try fx.expectRow(9, "\u{2502}  \u{2717} not sent: unresolved {{jira}}" ++ " " ** 54 ++ "\u{2502}");
+    try fx.expectRow(18, "\u{250C}" ++ repeat("\u{2500}", 75) ++ " \u{2717} not sent \u{2510}");
+    try fx.expectRow(9, "\u{2502}  \u{2717} not sent: unresolved {{jira}}" ++ repeat(" ", 54) ++ "\u{2502}");
     // A long refusal wraps under the `✗` instead of running off the box.
     m.failed = "unresolved {{jira}} {{jira_basic}} \u{2014} no env defines them; add them to .mnml/env/<env>.env or pick an env";
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(21, "\u{2502}  \u{2717} unresolved {{jira}} {{jira_basic}} \u{2014} no env defines them; add them to" ++ " " ** 14 ++ "\u{2502}");
-    try fx.expectRow(22, "\u{2502}    .mnml/env/<env>.env or pick an env" ++ " " ** 49 ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}  \u{2717} unresolved {{jira}} {{jira_basic}} \u{2014} no env defines them; add them to" ++ repeat(" ", 14) ++ "\u{2502}");
+    try fx.expectRow(22, "\u{2502}    .mnml/env/<env>.env or pick an env" ++ repeat(" ", 49) ++ "\u{2502}");
     m.not_sent = false;
     m.failed = null;
     m.sending = true;
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(9, "\u{2502}  \u{27F3}  sending\u{2026}" ++ " " ** 74 ++ "\u{2502}");
+    try fx.expectRow(9, "\u{2502}  \u{27F3}  sending\u{2026}" ++ repeat(" ", 74) ++ "\u{2502}");
     m.sending = false;
     try testing.expectEqual(hit_ai_chip, fx.hits.at(64, 19).?.script_hit.id);
 }
@@ -2108,14 +2109,14 @@ test "response search: matches paint the match ground on the body and the header
     m.field = .content;
     const ui = fx.ui();
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ " " ** 71 ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502} 2   \"ok\": true," ++ repeat(" ", 71) ++ "\u{2502}");
     // Row 23 is line 2: `│ 2   "ok": true,` — the `o` at x 7.
     try testing.expect(!fx.bgEql(6, 23, fx.theme.match));
     try testing.expect(fx.bgEql(7, 23, fx.theme.match));
     try testing.expect(fx.bgEql(8, 23, fx.theme.match));
     try testing.expect(!fx.bgEql(9, 23, fx.theme.match));
     // Line 3 holds the current match (the first `ok`) and a plain one.
-    try fx.expectRow(24, "\u{2502} 3   \"name\": \"ok ok\"" ++ " " ** 67 ++ "\u{2502}");
+    try fx.expectRow(24, "\u{2502} 3   \"name\": \"ok ok\"" ++ repeat(" ", 67) ++ "\u{2502}");
     try testing.expect(fx.bgEql(15, 24, fx.theme.current_match));
     try testing.expect(fx.fgEql(15, 24, fx.theme.current_match));
     try testing.expect(fx.bgEql(18, 24, fx.theme.match));
@@ -2126,7 +2127,7 @@ test "response search: matches paint the match ground on the body and the header
     m.response.?.matches = &header_matches;
     m.response.?.current_match = null;
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ " " ** 55 ++ "\u{2502}");
+    try fx.expectRow(21, "\u{2502}  Content-Type: application/json" ++ repeat(" ", 55) ++ "\u{2502}");
     try testing.expect(fx.bgEql(29, 21, fx.theme.match));
     try testing.expect(fx.bgEql(32, 21, fx.theme.match));
     try testing.expect(!fx.bgEql(28, 21, fx.theme.match));
@@ -2134,12 +2135,12 @@ test "response search: matches paint the match ground on the body and the header
     // Wrapped: a long line's second chunk keeps a match that falls in it.
     m.response_tab = .body;
     m.body_wrap = true;
-    m.response.?.body = "a" ** 90 ++ "zz" ++ "a" ** 5;
+    m.response.?.body = repeat("a", 90) ++ "zz" ++ repeat("a", 5);
     const wrap_matches = [_]find_mod.Range{.{ .start = 90, .end = 92 }};
     m.response.?.matches = &wrap_matches;
     _ = draw(ui, 3, ui.canvas.full(), m);
     // (The first chunk is 85 cells, clipped at the border, as Rust's.)
-    try fx.expectRow(23, "\u{2502}   " ++ "a" ** 5 ++ "zz" ++ "a" ** 5 ++ " " ** 72 ++ "\u{2502}");
+    try fx.expectRow(23, "\u{2502}   " ++ repeat("a", 5) ++ "zz" ++ repeat("a", 5) ++ repeat(" ", 72) ++ "\u{2502}");
     try testing.expect(fx.bgEql(9, 23, fx.theme.match));
     try testing.expect(fx.bgEql(10, 23, fx.theme.match));
     try testing.expect(!fx.bgEql(8, 23, fx.theme.match));
@@ -2160,14 +2161,14 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     const ui = fx.ui();
     _ = draw(ui, 3, ui.canvas.full(), m);
     // table_w = clamp(87 - 5, 20, 100) = 82; name 26, value 49.
-    try fx.expectRow(6, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}" ++ " " ** 79 ++ "\u{2502}");
+    try fx.expectRow(6, "\u{2502}  \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}" ++ repeat(" ", 79) ++ "\u{2502}");
     // Rust's table is a cell wider than the box (its own right edge is
     // clipped away), so the last column is the box border.
-    try fx.expectRow(7, "\u{2502}  \u{250C}" ++ "\u{2500}" ** 28 ++ "\u{252C}" ++ "\u{2500}" ** 51 ++ "\u{252C}\u{2500}\u{2500}\u{2500}\u{2502}");
-    try fx.expectRow(8, "\u{2502}  \u{2502} Name" ++ " " ** 22 ++ " \u{2502} Value" ++ " " ** 44 ++ " \u{2502}   \u{2502}");
-    try fx.expectRow(10, "\u{2502}  \u{2502} a" ++ " " ** 25 ++ " \u{2502} 1" ++ " " ** 48 ++ " \u{2502} \u{2715} \u{2502}");
-    try fx.expectRow(11, "\u{2502}  \u{2514}" ++ "\u{2500}" ** 28 ++ "\u{2534}" ++ "\u{2500}" ** 51 ++ "\u{2534}\u{2500}\u{2500}\u{2500}\u{2502}");
-    try fx.expectRow(12, "\u{2502}  + Add row" ++ " " ** 76 ++ "\u{2502}");
+    try fx.expectRow(7, "\u{2502}  \u{250C}" ++ repeat("\u{2500}", 28) ++ "\u{252C}" ++ repeat("\u{2500}", 51) ++ "\u{252C}\u{2500}\u{2500}\u{2500}\u{2502}");
+    try fx.expectRow(8, "\u{2502}  \u{2502} Name" ++ repeat(" ", 22) ++ " \u{2502} Value" ++ repeat(" ", 44) ++ " \u{2502}   \u{2502}");
+    try fx.expectRow(10, "\u{2502}  \u{2502} a" ++ repeat(" ", 25) ++ " \u{2502} 1" ++ repeat(" ", 48) ++ " \u{2502} \u{2715} \u{2502}");
+    try fx.expectRow(11, "\u{2502}  \u{2514}" ++ repeat("\u{2500}", 28) ++ "\u{2534}" ++ repeat("\u{2500}", 51) ++ "\u{2534}\u{2500}\u{2500}\u{2500}\u{2502}");
+    try fx.expectRow(12, "\u{2502}  + Add row" ++ repeat(" ", 76) ++ "\u{2502}");
     try testing.expectEqual(hit_param_row, fx.hits.at(10, 10).?.script_hit.id);
     try testing.expectEqual(hit_param_del, fx.hits.at(85, 10).?.script_hit.id);
     try testing.expectEqual(hit_add_row, fx.hits.at(5, 12).?.script_hit.id);
@@ -2176,7 +2177,7 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     // placeholder, `✓` dim until both cells hold text.
     m.draft = .{ .key = "", .value = "", .key_caret = 0, .value_caret = 0, .on_value = false };
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(12, "\u{2502}  \u{2502} " ++ " " ** 26 ++ " \u{2502} (value)" ++ " " ** 42 ++ " \u{2502} \u{2713} \u{2502}");
+    try fx.expectRow(12, "\u{2502}  \u{2502} " ++ repeat(" ", 26) ++ " \u{2502} (value)" ++ repeat(" ", 42) ++ " \u{2502} \u{2713} \u{2502}");
     try testing.expectEqual(hit_draft_commit, fx.hits.at(85, 12).?.script_hit.id);
     try testing.expectEqual(hit_draft_value, fx.hits.at(40, 12).?.script_hit.id);
     try testing.expect(fx.fgEql(85, 12, .{ .fg = fx.theme.palette.comment }));
@@ -2197,8 +2198,8 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     m.env_name = "dev";
     const wui = wide.ui();
     _ = draw(wui, 3, wui.canvas.full(), m);
-    try wide.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ "\u{2500}" ** 38 ++ "\u{2510}\u{250C} Env \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}\u{250C} Save \u{2500}\u{2500}\u{2510}\u{250C} Clear \u{2500}\u{2500}\u{2510}\u{250C} Copy as\u{2026} \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
-    try wide.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ " " ** 19 ++ "\u{2502}\u{2502}   dev \u{25BE}    \u{2502}\u{2502} \u{25B6} Send \u{2502}\u{2502} \u{2398} Save \u{2502}\u{2502} \u{2715} Clear \u{2502}\u{2502} </> Copy as\u{2026} \u{2502}");
+    try wide.expectRow(1, "\u{250C} Method \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} URL " ++ repeat("\u{2500}", 38) ++ "\u{2510}\u{250C} Env \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\u{250C} Send \u{2500}\u{2500}\u{2510}\u{250C} Save \u{2500}\u{2500}\u{2510}\u{250C} Clear \u{2500}\u{2500}\u{2510}\u{250C} Copy as\u{2026} \u{2500}\u{2500}\u{2500}\u{2500}\u{2510}");
+    try wide.expectRow(2, "\u{2502}  GET     \u{25BC} \u{2502}\u{2502} https://httpbin.org/get" ++ repeat(" ", 19) ++ "\u{2502}\u{2502}   dev \u{25BE}    \u{2502}\u{2502} \u{25B6} Send \u{2502}\u{2502} \u{2398} Save \u{2502}\u{2502} \u{2715} Clear \u{2502}\u{2502} </> Copy as\u{2026} \u{2502}");
     try testing.expectEqual(hit_env, wide.hits.at(60, 2).?.script_hit.id);
     // No env file in the workspace: the chip says so, dim, and claims none.
     m.env_name = null;
@@ -2214,7 +2215,7 @@ test "the Params table, the draft row and Add row; the split halves; a wide pane
     try testing.expectEqual(hit_clear, wide.hits.at(96, 2).?.script_hit.id);
     try testing.expectEqual(hit_code, wide.hits.at(108, 2).?.script_hit.id);
     const wt = try wide.text();
-    try testing.expect(std.mem.indexOf(u8, wt, "\u{2510}\u{250C}" ++ "\u{2500}" ** 3) != null);
+    try testing.expect(std.mem.indexOf(u8, wt, "\u{2510}\u{250C}" ++ repeat("\u{2500}", 3)) != null);
     try testing.expect(std.mem.indexOf(u8, wt, "not sent yet") != null);
     const z = zones(wui.canvas.full(), m);
     try testing.expectEqual(@as(u16, 60), z.request.w);
@@ -2400,7 +2401,7 @@ test "the description row: under the top bar when the block has a description or
     try testing.expectEqual(bare.ai.y, z.ai.y);
     try testing.expectEqual(bare.request.h + bare.response.h - 1, z.request.h + z.response.h);
     _ = draw(ui, 3, ui.canvas.full(), m);
-    try fx.expectRow(4, "  \u{25B8} List the users, paged" ++ " " ** 50 ++ "#users  #smoke");
+    try fx.expectRow(4, "  \u{25B8} List the users, paged" ++ repeat(" ", 50) ++ "#users  #smoke");
     try testing.expect(fx.fgEql(76, 4, .{ .fg = fx.theme.palette.cyan }));
     // Tags alone still take the row; a short pane drops it.
     m.description = null;
@@ -2464,7 +2465,7 @@ test "the Response box's shared bar: on its own column under the strip, the thum
     // The report's shape: a 44-line JSON body, one line wider than the box.
     var body: std.ArrayListUnmanaged(u8) = .empty;
     defer body.deinit(testing.allocator);
-    try body.appendSlice(testing.allocator, "a" ** 120);
+    try body.appendSlice(testing.allocator, repeat("a", 120));
     var k: usize = 1;
     while (k < 44) : (k += 1) try body.print(testing.allocator, "\n  \"k{d}\": {d},", .{ k, k });
     m.response = .{ .status = 200, .status_text = "OK", .headers = &.{}, .body = body.items, .body_bytes = body.items.len, .truncated = false, .timing = .{ .wait_ms = 1, .receive_ms = 1, .total_ms = 2 }, .cookies = &.{} };
@@ -2528,7 +2529,7 @@ test "the request Body editor scrolls with the shared bar beside its text" {
     var body: std.ArrayListUnmanaged(u8) = .empty;
     defer body.deinit(testing.allocator);
     var k: usize = 0;
-    while (k < 40) : (k += 1) try body.appendSlice(testing.allocator, if (k == 0) "b" ** 120 else "\nline");
+    while (k < 40) : (k += 1) try body.appendSlice(testing.allocator, if (k == 0) repeat("b", 120) else "\nline");
     m.body = body.items;
     m.field = .content;
     m.block = .request;

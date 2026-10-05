@@ -11,6 +11,7 @@
 //! the banner and any key closes it.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
@@ -995,7 +996,7 @@ test "the six states the scan derives become the four a button can wear; a line 
     try testing.expectEqual(wire.SessionState.failed, stateOf(.failed));
     try testing.expectEqualStrings("first", firstLine("first\nsecond\nthird"));
     try testing.expectEqualStrings("", firstLine(""));
-    try testing.expectEqual(@as(usize, 200), firstLine("x" ** 400).len);
+    try testing.expectEqual(@as(usize, 200), firstLine(repeat("x", 400)).len);
 }
 
 test "a binary that does not exist fails at open with a diag, not a pane" {

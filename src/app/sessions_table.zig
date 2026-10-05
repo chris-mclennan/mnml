@@ -18,6 +18,7 @@
 //! commands (`sessions.zig`'s table).
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const Allocator = std.mem.Allocator;
@@ -784,7 +785,7 @@ fn openRowMenu(app: *App, tp: *TablePane, x: u16, y: u16) Allocator.Error!void {
 fn openSortMenu(app: *App, tp: *TablePane, x: u16, y: u16) Allocator.Error!void {
     var items: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer items.deinit(app.gpa);
-    inline for (@typeInfo(Sort).@"enum".fields) |f| {
+    inline for (compat.enumFields(Sort)) |f| {
         const s: Sort = @enumFromInt(f.value);
         try items.append(app.gpa, .{ .label = s.label(), .action = .{ .command = .@"sessions.table_sort" }, .checked = tp.sort == s });
     }

@@ -34,7 +34,7 @@ pub const Style = struct {
 
 /// One cell of the grid; `sym[0..len]` is the grapheme.
 pub const Slot = struct {
-    sym: [max_symbol]u8 = [_]u8{' '} ++ [_]u8{0} ** (max_symbol - 1),
+    sym: [max_symbol]u8 = [_]u8{' '} ++ @as([max_symbol - 1]u8, @splat(0)),
     len: u8 = 1,
     style: Style = .{},
 

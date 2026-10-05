@@ -27,6 +27,7 @@ const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const pin_chip = @import("pin_chip.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Style = vaxis.Style;
 
@@ -291,7 +292,7 @@ const Fixture = @import("test_fixture.zig");
 const test_labels = [_][]const u8{ "❯_  mnml", "File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Window", "Help" };
 const test_ids: Ids = .{ .word_base = 100, .overflow = 200, .sidebar = 1, .back = 2, .forward = 3, .chip = 4, .dropdown = 5, .right_panel = 6 };
 
-const spaces = " " ** 32;
+const spaces = repeat(" ", 32);
 /// Row 0 of `docs/ui-spec/rust-120x40.txt` up to the gap (the browser
 /// chip and the right cluster are the caller's), and of the 80×24 dump.
 const nav_cells = sidebar_glyph ++ "  " ++ back_glyph ++ "  " ++ forward_glyph ++ "    " ++ search_glyph ++ "  ws" ++ spaces[0..25] ++ dropdown_glyph ++ "   " ++ right_panel_glyph;

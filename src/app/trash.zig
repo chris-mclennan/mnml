@@ -18,6 +18,8 @@
 //! permanent form is offered and the row menu says so.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -93,8 +95,8 @@ pub fn isTrashEntry(app: *App, path: []const u8) bool {
 fn readIndex(app: *App, arena: Allocator) Allocator.Error![]const Rec {
     const path = try indexPath(app, arena);
     const text = Io.Dir.cwd().readFileAlloc(app.io, path, arena, .limited(1 << 24)) catch return &.{};
-    const z = try arena.dupeZ(u8, text);
-    const idx = std.zon.parse.fromSliceAlloc(Index, arena, z, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch return &.{};
+    const z = try arena.dupeSentinel(u8, text, 0);
+    const idx = compat.zonParse(Index, arena, z, null, .{ .ignore_unknown_fields = true }) catch return &.{};
     return idx.entries;
 }
 
@@ -823,7 +825,7 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
         try std.fmt.allocPrint(arena, "{d}-mid.txt", .{mid_at}),
         try std.fmt.allocPrint(arena, "{d}-new.txt", .{new_at}),
     };
-    for (names) |nm| try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(arena, &.{ td, nm }), .data = "x" ** 100 });
+    for (names) |nm| try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(arena, &.{ td, nm }), .data = repeat("x", 100) });
     // Something without a stamp is not ours and is left alone.
     try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(arena, &.{ td, "notes" }), .data = "keep" });
     prune(&app, now, .{});
@@ -840,7 +842,7 @@ test "bounds: age prunes by the stamp, the size cap evicts oldest first, an over
     // a trash delete that meets it anyway (it grew, or the confirm was
     // skipped) removes nothing and asks again.
     app.trash.bounds.skip_above_bytes = 50;
-    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/huge.bin", .data = "h" ** 64 });
+    try env.tmp.dir.writeFile(t.io, .{ .sub_path = "ws/huge.bin", .data = repeat("h", 64) });
     const huge = try std.fs.path.join(t.allocator, &.{ env.root, "huge.bin" });
     defer t.allocator.free(huge);
     try confirmDelete(&app, &.{huge});

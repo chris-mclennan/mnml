@@ -114,7 +114,7 @@ pub const KeyValue = struct { key: []const u8, value: []const u8 };
 /// A name that reads like a credential.
 pub fn looksSecret(name: []const u8) bool {
     const marks = [_][]const u8{ "token", "secret", "password", "passwd", "api_key", "apikey", "auth", "private" };
-    for (marks) |m| if (std.ascii.indexOfIgnoreCase(name, m) != null) return true;
+    for (marks) |m| if (std.ascii.findIgnoreCase(name, m) != null) return true;
     return false;
 }
 

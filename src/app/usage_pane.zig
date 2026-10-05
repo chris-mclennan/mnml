@@ -16,6 +16,7 @@
 //! spec dumps and the unit tests use it.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
@@ -1081,7 +1082,7 @@ fn writeAccounts(app: *App, list: []const ClaudeAccount) Allocator.Error!void {
     const arena = app.frame.allocator();
     const elems = try arena.alloc([]const u8, owned.len);
     for (owned, 0..) |acc, i| elems[i] = try config_persist.serializeLiteral(arena, acc);
-    const literal = try config_persist.listLiteral(arena, elems, true, " " ** 12);
+    const literal = try config_persist.listLiteral(arena, elems, true, repeat(" ", 12));
     _ = try settings.persistLiteral(app, .home, &.{ "ai", "claude_accounts" }, literal);
 }
 

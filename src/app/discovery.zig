@@ -20,6 +20,7 @@
 //! scripted click never grows a box under itself.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -631,7 +632,7 @@ pub const Category = enum(u8) {
     code_lens_chips,
     split_dividers,
 
-    pub const count = @typeInfo(Category).@"enum".fields.len;
+    pub const count = compat.enumFields(Category).len;
 
     pub fn label(c: Category) []const u8 {
         return switch (c) {
@@ -709,9 +710,9 @@ pub fn drawOverlay(app: *App, ui: Ui, screen: Rect) void {
     // The counts are of the frame under the box: read before the
     // panel's own hits join the map.
     var counts: [Category.count]usize = undefined;
-    inline for (@typeInfo(Category).@"enum".fields, 0..) |f, i| counts[i] = countOf(app, @enumFromInt(f.value));
+    inline for (compat.enumFields(Category), 0..) |f, i| counts[i] = countOf(app, @enumFromInt(f.value));
     var inner_w: u16 = 0;
-    inline for (@typeInfo(Category).@"enum".fields) |f| {
+    inline for (compat.enumFields(Category)) |f| {
         const c: Category = @enumFromInt(f.value);
         inner_w = @max(inner_w, ui.width(c.label()) + 2 + ui.width(c.detail()) + 6);
     }
@@ -727,7 +728,7 @@ pub fn drawOverlay(app: *App, ui: Ui, screen: Rect) void {
     var flash_count = Theme.onBg(th.chip_active, th.warn_fg.fg);
     flash_count.bold = true;
     const dead_count = Theme.onBg(th.muted, th.chip.bg);
-    inline for (@typeInfo(Category).@"enum".fields, 0..) |f, i| {
+    inline for (compat.enumFields(Category), 0..) |f, i| {
         if (i < inner.h -| 1) {
             const c: Category = @enumFromInt(f.value);
             const r = inner.row(@intCast(i));
@@ -802,7 +803,7 @@ test "describe: every hit kind has words; the statusline ids each say what a cli
     try app.render();
     const arena = app.frame.allocator();
     const Tag = std.meta.Tag(HitTarget);
-    var seen = std.enums.EnumSet(Tag).initEmpty();
+    var seen = std.enums.EnumSet(Tag).empty;
     for (app.hits.items.items) |e| {
         const tip = try describe(&app, arena, e.target);
         try t.expect(tip != null);

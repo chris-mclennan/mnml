@@ -34,6 +34,7 @@ const scrollbar = @import("scrollbar.zig");
 const border = @import("border.zig");
 const indent_guides = @import("indent_guides.zig");
 const blendOver = @import("diff_view.zig").blendOver;
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -2557,22 +2558,22 @@ test "the scrollbar takes the last column and a cell of air before it; without i
     var f = try Fixture.init(20, 4);
     defer f.deinit();
     var view: ViewState = .{};
-    var d = mkDoc("a" ** 30 ++ "\n" ++ "b" ** 30 ++ "\n" ++ "c" ** 30 ++ "\nd\ne\nf\ng\nh\ni\nj");
+    var d = mkDoc(repeat("a", 30) ++ "\n" ++ repeat("b", 30) ++ "\n" ++ repeat("c", 30) ++ "\nd\ne\nf\ng\nh\ni\nj");
     d.line_numbers = false;
     d.scrollbar = true;
     _ = draw(f.ui(), 0, f.full(), &view, d);
     // The bar is Rust's editor bar: a styled cell, no glyph — the thumb
     // (rows 0–1 of 4 for 10 lines) on the muted ground, the track on the
     // chip's; the cell before it is air.
-    try f.expectRow(0, "a" ** 18);
-    try f.expectRow(1, "b" ** 18);
+    try f.expectRow(0, repeat("a", 18));
+    try f.expectRow(1, repeat("b", 18));
     try testing.expectEqualStrings(" ", f.cell(19, 0).char.grapheme);
     try testing.expect(vaxis.Color.eql(f.style(19, 0).bg, f.theme.muted.fg));
     try testing.expect(vaxis.Color.eql(f.style(19, 3).bg, f.theme.chip.bg));
     try testing.expect(f.hits.at(19, 0).? == .scrollbar);
     d.scrollbar = false;
     _ = draw(f.ui(), 0, f.full(), &view, d);
-    try f.expectRow(0, "a" ** 20);
+    try f.expectRow(0, repeat("a", 20));
 }
 
 test "an unfocused pane marks where its caret is; a focused one leaves the cell to the terminal" {

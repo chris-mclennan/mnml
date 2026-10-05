@@ -10,6 +10,7 @@
 //! handler implements only what it has.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const key_mod = @import("../core/key.zig");
 pub const Key = key_mod.Key;
@@ -143,7 +144,7 @@ pub const AppCommand = union(enum) {
     script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
-        std.debug.assert(@typeInfo(AppCommand).@"union".fields.len == 31);
+        std.debug.assert(compat.unionFields(AppCommand).len == 31);
     }
 };
 

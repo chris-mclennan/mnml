@@ -15,6 +15,7 @@
 //! — the script's `pcall` boundary turns it into a toast with the line.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const zlua = @import("zlua");
 const lua_mod = @import("lua.zig");
@@ -420,7 +421,7 @@ fn runBound(L: *State) !i32 {
     const id = L.toString(zlua.Lua.upvalueIndex(1)) catch return 0;
     command.runNamed(c.app, id) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => L.raiseErrorStr("%s", .{(try c.app.frame.allocator().dupeZ(u8, c.app.diag.msg orelse @errorName(err))).ptr}),
+        else => L.raiseErrorStr("%s", .{(try c.app.frame.allocator().dupeSentinel(u8, c.app.diag.msg orelse @errorName(err), 0)).ptr}),
     };
     return 0;
 }
@@ -430,7 +431,7 @@ fn on(L: *State) !i32 {
     const c = ctx(L);
     const name = argStr(L, 1, "mnml.on", "the first argument is a hook name, a string");
     argFn(L, 2, "mnml.on", "the second argument is a function(args) — args is a flat table of the hook's fields plus hook = \"<name>\"");
-    const hook = std.meta.stringToEnum(hooks.Hook, name) orelse L.raiseErrorStr("mnml.on: `%s` is not a hook — the names are %s", .{ (try c.app.frame.allocator().dupeZ(u8, name)).ptr, hook_names.ptr });
+    const hook = std.meta.stringToEnum(hooks.Hook, name) orelse L.raiseErrorStr("mnml.on: `%s` is not a hook — the names are %s", .{ (try c.app.frame.allocator().dupeSentinel(u8, name, 0)).ptr, hook_names.ptr });
     L.pushValue(2);
     const r = c.self.ref();
     c.app.hooks.subscribe(hook, .{ .lua = r }) catch |err| {
@@ -842,14 +843,14 @@ fn decodeOp(L: *State, arena: Allocator, t: i32) !EditOp {
         inner.* = try decodeOp(L, arena, -1);
         return .{ .repeat = .{ .count = @intCast(@max(count, 0)), .inner = inner } };
     }
-    inline for (@typeInfo(EditOp).@"union".fields) |f| {
+    inline for (compat.unionFields(EditOp)) |f| {
         if (comptime !(std.mem.eql(u8, f.name, "atomic") or std.mem.eql(u8, f.name, "repeat") or std.mem.eql(u8, f.name, "if_lines_object"))) {
             if (std.mem.eql(u8, f.name, name)) {
                 return @unionInit(EditOp, f.name, try decodePayload(f.type, f.name, L, arena, at));
             }
         }
     }
-    L.raiseErrorStr("mnml.buf.apply: `op` names no edit op — `%s` is not one of the tags in src/editor/edit_op.zig (docs/LUA.md lists them by shape)", .{(try arena.dupeZ(u8, name)).ptr});
+    L.raiseErrorStr("mnml.buf.apply: `op` names no edit op — `%s` is not one of the tags in src/editor/edit_op.zig (docs/LUA.md lists them by shape)", .{(try arena.dupeSentinel(u8, name, 0)).ptr});
 }
 
 /// An enum payload's accepted words, `, `-joined — so a wrong `value`
@@ -898,9 +899,9 @@ fn decodePayload(comptime T: type, comptime tag: []const u8, L: *State, arena: A
             const s = strField(L, at, "value") orelse strField(L, at, "case") orelse L.raiseErrorStr("mnml.buf.apply: `%s` needs `value`, one of %s", .{ tag.ptr, enumNames(T).ptr });
             return std.meta.stringToEnum(T, s) orelse L.raiseErrorStr("mnml.buf.apply: `%s`: `value` is one of %s", .{ tag.ptr, enumNames(T).ptr });
         },
-        .@"struct" => |s| {
+        .@"struct" => {
             var out: T = undefined;
-            inline for (s.fields) |sf| {
+            inline for (compat.structFields(T)) |sf| {
                 const fname: [:0]const u8 = sf.name;
                 const Ft = sf.type;
                 const got: ?Ft = switch (@typeInfo(Ft)) {
@@ -954,7 +955,7 @@ fn operatorRegister(L: *State) !i32 {
         L.raiseErrorStr("mnml.operator: `keys` needs a `vim` chord (\"g\" and one letter) or a `standard` one (any chord spec), or both", .{});
     }
     if (vim_spec) |v| if (!script_ops.validVimSpec(v)) {
-        const owned = c.app.frame.allocator().dupeZ(u8, v) catch "?";
+        const owned = c.app.frame.allocator().dupeSentinel(u8, v, 0) catch "?";
         L.pop(1);
         L.raiseErrorStr("mnml.operator: `keys.vim` must be `g` and one letter vim does not already use — `%s` is not; vim's own are g%s", .{ owned.ptr, script_ops.reserved.ptr });
     };
@@ -1539,7 +1540,7 @@ fn taskRun(L: *State) !i32 {
     errdefer if (on_done) |r| c.self.unref(r);
     const id = runners.spawn(app, label, cmd, cwd, .task) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => L.raiseErrorStr("mnml.task.run: %s", .{(try arena.dupeZ(u8, app.diag.msg orelse @errorName(err))).ptr}),
+        else => L.raiseErrorStr("mnml.task.run: %s", .{(try arena.dupeSentinel(u8, app.diag.msg orelse @errorName(err), 0)).ptr}),
     };
     if (on_done) |r| try c.self.tasks.append(c.self.gpa, .{ .pane = id, .on_done = r });
     L.pushInteger(id);
@@ -1586,12 +1587,12 @@ fn pushPath(L: *State, comptime T: type, value: T, path: []const u8) void {
     const rest = if (dot) |d| path[d + 1 ..] else "";
     if (T == Dynamic) return pushDynamicPath(L, value, path);
     switch (@typeInfo(T)) {
-        .@"struct" => |s| {
+        .@"struct" => {
             if (comptime isConfigMap(T)) {
                 if (value.get(head)) |v| return pushPath(L, T.Value, v, rest);
                 return L.pushNil();
             }
-            inline for (s.fields) |f| {
+            inline for (compat.structFields(T)) |f| {
                 if (std.mem.eql(u8, f.name, head)) return pushPath(L, f.type, @field(value, f.name), rest);
             }
             L.pushNil();
@@ -1629,7 +1630,7 @@ fn pushValue(L: *State, comptime T: type, value: T) void {
                 }
             } else L.pushNil();
         },
-        .@"struct" => |s| {
+        .@"struct" => {
             L.newTable();
             if (comptime isConfigMap(T)) {
                 for (value.keys(), value.values()) |k, v| {
@@ -1639,7 +1640,7 @@ fn pushValue(L: *State, comptime T: type, value: T) void {
                 }
                 return;
             }
-            inline for (s.fields) |f| {
+            inline for (compat.structFields(T)) |f| {
                 pushValue(L, f.type, @field(value, f.name));
                 L.setField(-2, f.name);
             }

@@ -10,6 +10,7 @@
 //! `.test` runner and IPC see the failure too.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const specs = @import("../commands/specs.zig");
@@ -214,7 +215,7 @@ pub const runners: std.enums.EnumArray(CommandId, ?CommandFn) = blk: {
     var r = std.enums.EnumArray(CommandId, ?CommandFn).initFill(null);
     for (runner_tables) |mod| {
         const T = @TypeOf(mod.table);
-        for (@typeInfo(T).@"struct".fields) |f| {
+        for (compat.structFields(T)) |f| {
             const id = by_name.get(f.name) orelse @compileError("runner table names unknown command id `" ++ f.name ++ "`");
             if (r.get(id) != null) @compileError("two runners for `" ++ f.name ++ "`");
             r.set(id, @field(mod.table, f.name));

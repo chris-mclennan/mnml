@@ -18,6 +18,7 @@
 //! it — and `:qa!` overrides.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -602,7 +603,7 @@ fn seedTree(tmp: *std.testing.TmpDir, files: usize) !void {
     var name_buf: [64]u8 = undefined;
     while (i < files) : (i += 1) {
         const name = try std.fmt.bufPrint(&name_buf, "big/nested/f{d}.bin", .{i});
-        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = "x" ** 512 });
+        try tmp.dir.writeFile(t.io, .{ .sub_path = name, .data = repeat("x", 512) });
     }
     try tmp.dir.writeFile(t.io, .{ .sub_path = "big/nested/deeper/leaf.txt", .data = "leaf" });
     try tmp.dir.writeFile(t.io, .{ .sub_path = "big/top.txt", .data = "top" });

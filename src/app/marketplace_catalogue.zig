@@ -29,6 +29,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const data_root_mod = @import("../config/data_root.zig");
@@ -71,12 +72,11 @@ pub const ParseError = error{ BadCatalogue, OutOfMemory };
 /// The catalogue's text as a `Catalogue` on `arena`. Unknown fields are
 /// ignored so an older mnml still reads a newer file.
 pub fn parse(arena: Allocator, text: [:0]const u8, why: *[]const u8) ParseError!Catalogue {
-    var diag: std.zon.parse.Diagnostics = .{};
-    defer diag.deinit(arena);
-    const c = std.zon.parse.fromSliceAlloc(Catalogue, arena, text, &diag, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch |err| switch (err) {
+    var diag: []const u8 = "";
+    const c = compat.zonParse(Catalogue, arena, text, &diag, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => {
-            why.* = std.fmt.allocPrint(arena, "{f}", .{diag}) catch "parse error";
+            why.* = (if (diag.len == 0) "parse error" else diag);
             return error.BadCatalogue;
         },
     };

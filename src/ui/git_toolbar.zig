@@ -21,6 +21,7 @@ const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
 const ids = @import("../core/ids.zig");
 const parse = @import("../git/parse.zig");
+const compat = @import("mnml_sdk").zig_compat;
 
 const Style = vaxis.Style;
 const Color = vaxis.Color;
@@ -30,7 +31,7 @@ pub const Action = enum(u8) { undo, redo, pull, push, fetch, branch, commit, sta
 
 /// Above the diff view's own controls (`diff_view.special_base` region).
 pub const hit_base: u32 = 0xF300_0000;
-const action_count: u32 = @typeInfo(Action).@"enum".fields.len;
+const action_count: u32 = compat.enumFields(Action).len;
 
 pub fn hitId(a: Action) u32 {
     return hit_base + @intFromEnum(a);

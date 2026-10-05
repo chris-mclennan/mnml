@@ -235,7 +235,7 @@ test "eq / any-of / match predicates decide which identifiers a pattern takes" {
     const cursor = try ts.QueryCursor.init();
     defer cursor.deinit();
     cursor.exec(q, tree.rootNode());
-    var seen: [5]usize = .{0} ** 5;
+    var seen: [5]usize = @splat(0);
     while (cursor.nextMatch()) |m| {
         if (t.pass(&m, text)) seen[m.pattern_index] += 1;
     }

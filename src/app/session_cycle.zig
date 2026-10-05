@@ -528,7 +528,7 @@ test "the statusline's sessions chip narrows in order: the whole ` ‹ ▣ 2/2 �
     const glyph = comptime @import("../ui/activity_bar.zig").Section.sessions.meta().glyph;
     const Form = enum(u8) { full, arrows, bare, gone };
     var last: Form = .full;
-    var seen = std.EnumSet(Form).initEmpty();
+    var seen = std.EnumSet(Form).empty;
     var w: u16 = 160;
     while (w >= 40) : (w -= 2) {
         try app.resize(w, 30);

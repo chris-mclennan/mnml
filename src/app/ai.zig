@@ -24,6 +24,7 @@
 //! and `suggest_idle_ms`.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const Io = std.Io;
@@ -2457,7 +2458,7 @@ test "the session picker's accept on a session already running shows its pane â€
 test "every ai / agents / cloud_agents id has a runner" {
     // The walk over every id is a comptime loop; the default quota is the id count.
     @setEvalBranchQuota(8_000);
-    inline for (@typeInfo(command.CommandId).@"enum".fields) |f| {
+    inline for (compat.enumFields(command.CommandId)) |f| {
         const name = f.name;
         if (std.mem.startsWith(u8, name, "ai.") or std.mem.startsWith(u8, name, "agents.") or std.mem.startsWith(u8, name, "cloud_agents.")) {
             const id: command.CommandId = @enumFromInt(f.value);

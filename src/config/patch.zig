@@ -18,6 +18,7 @@
 //!   `Dynamic`                            → replace
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Config = @import("Config.zig");
 const map = @import("map.zig");
@@ -47,10 +48,10 @@ pub fn Patch(comptime T: type) type {
     @setEvalBranchQuota(100_000);
     const info = @typeInfo(T);
     if (info != .@"struct" or isMap(T) or T == Dynamic) @compileError("Patch expects a fixed section struct, got " ++ @typeName(T));
-    const src_fields = info.@"struct".fields;
+    const src_fields = compat.structFields(T);
     var names: [src_fields.len][:0]const u8 = undefined;
     var types: [src_fields.len]type = undefined;
-    var attrs: [src_fields.len]std.builtin.Type.StructField.Attributes = undefined;
+    var attrs: [src_fields.len]compat.StructFieldAttributes = undefined;
     inline for (src_fields, 0..) |f, i| {
         const PF = PatchField(f.type);
         const default: PF = if (isMap(f.type)) .empty else null;
@@ -69,7 +70,7 @@ pub fn apply(alloc: Allocator, dst: *Config, patch: Patch(Config)) Allocator.Err
 
 pub fn applyStruct(comptime T: type, alloc: Allocator, dst: *T, patch: Patch(T)) Allocator.Error!void {
     @setEvalBranchQuota(100_000);
-    inline for (@typeInfo(T).@"struct".fields) |f| {
+    inline for (compat.structFields(T)) |f| {
         const F = f.type;
         const src = @field(patch, f.name);
         const target = &@field(dst, f.name);
@@ -101,7 +102,7 @@ fn mergeMap(comptime M: type, alloc: Allocator, dst: *M, src: M) Allocator.Error
 /// `true` when the patch mentions nothing at all.
 pub fn isEmpty(comptime T: type, patch: Patch(T)) bool {
     @setEvalBranchQuota(100_000);
-    inline for (@typeInfo(T).@"struct".fields) |f| {
+    inline for (compat.structFields(T)) |f| {
         const src = @field(patch, f.name);
         if (comptime isMap(f.type)) {
             if (src.count() != 0) return false;

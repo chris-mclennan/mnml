@@ -34,6 +34,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const parser = @import("parser.zig");
@@ -1969,9 +1970,9 @@ test "shipped defaults: 120×40, 50 ms settle, 3 s expect budget at 40 ms, 25 ms
 }
 
 test "debug_slowdown is 1 in the shipped build and scales the deadlines in Debug" {
-    try t.expectEqual(@as(u64, if (builtin.mode == .Debug) 20 else 1), debug_slowdown);
+    try t.expectEqual(@as(u64, if (compat.is_debug) 20 else 1), debug_slowdown);
     const o: Options = .{ .data_root = "" };
-    if (builtin.mode == .Debug) {
+    if (compat.is_debug) {
         try t.expect(o.timing.expect_budget_ms > 3000);
         try t.expect(o.file_timeout_secs > 120 and o.file_timeout_secs <= 600);
     } else {
@@ -2708,7 +2709,7 @@ test "--shard: every file runs in exactly one shard, and the split is the same e
 
     for ([_]u32{ 1, 3, 4, 12 }) |n| {
         // How many shards ran each file of the unsharded run.
-        var seen = [_]u32{0} ** files;
+        var seen = @as([files]u32, @splat(0));
         for (0..n) |i| {
             var opts = env.opts();
             opts.shard = .{ .index = @intCast(i), .count = n };
@@ -2754,7 +2755,7 @@ test "--shard splits the list left after --filter and --skip, and only shard 0 a
     try t.expectEqual(@as(usize, 6), all.len);
 
     const n = 3;
-    var seen = [_]u32{0} ** 6;
+    var seen = @as([6]u32, @splat(0));
     var skip_lines: usize = 0;
     for (0..n) |i| {
         var opts = base;

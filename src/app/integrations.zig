@@ -31,6 +31,7 @@
 //! sections.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 /// The one "does this pane have the keys" (`render.paneFocused`).
 const paneFocused = @import("render.zig").paneFocused;
 const builtin = @import("builtin");
@@ -2010,7 +2011,7 @@ fn sortWidest(app: *App) usize {
 }
 
 fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(hay, needle) != null;
+    return std.ascii.findIgnoreCase(hay, needle) != null;
 }
 
 /// The active tab's entries after the filter and the sort, as indices
@@ -3538,7 +3539,7 @@ pub fn loadSettings(app: *App) Allocator.Error!void {
     const arena = app.frame.allocator();
     const path = (try settingsPath(app, arena)) orelse return;
     const text = Io.Dir.cwd().readFileAllocOptions(app.io, path, arena, .limited(1 << 20), .of(u8), 0) catch return;
-    const rows = std.zon.parse.fromSliceAlloc([]StoredSetting, arena, text, null, .{ .ignore_unknown_fields = true, .free_on_error = false }) catch |err| switch (err) {
+    const rows = compat.zonParse([]StoredSetting, arena, text, null, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => {
             try app.toastLevel(.warn, "integration settings: {s} did not parse", .{path});

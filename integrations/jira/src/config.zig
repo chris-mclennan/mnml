@@ -714,11 +714,11 @@ pub fn parse(arena: Allocator, src: [:0]const u8, path: []const u8) Allocator.Er
     // The parser unrolls a branch per field at compile time; a config
     // this wide passes the default quota.
     @setEvalBranchQuota(4000);
-    var diag: std.zon.parse.Diagnostics = .{};
-    const cfg = std.zon.parse.fromSliceAlloc(Config, arena, src, &diag, .{ .free_on_error = false }) catch |err| switch (err) {
+    var diag: []const u8 = "";
+    const cfg = sdk.zig_compat.zonParse(Config, arena, src, &diag, .{}) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => {
-            const msg = std.fmt.allocPrint(arena, "{f}", .{diag}) catch "could not be parsed";
+            const msg = (if (diag.len == 0) "could not be parsed" else diag);
             return .{ .config = .{}, .path = path, .missing = false, .parse_error = msg };
         },
     };
@@ -810,7 +810,7 @@ const sdk_testing = @import("mnml_sdk").testing;
 test "the example parses, validates, and reads as the reference's config" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const src = try a.allocator().dupeZ(u8, example);
+    const src = try a.allocator().dupeSentinel(u8, example, 0);
     const loaded = try parse(a.allocator(), src, "example");
     try testing.expect(loaded.parse_error == null);
     const c = loaded.config;
@@ -992,7 +992,7 @@ test "the detail modal resolves aliases both ways and titles the built-ins" {
 test "a broken config is a parse error, a missing one is missing, normalise tidies" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
-    const src = try a.allocator().dupeZ(u8, ".{ .jira_url = ");
+    const src = try a.allocator().dupeSentinel(u8, ".{ .jira_url = ", 0);
     const bad = try parse(a.allocator(), src, "bad.zon");
     try testing.expect(bad.parse_error != null);
     const gone = try load(a.allocator(), testing.io, "/nowhere/at/all/config.zon");

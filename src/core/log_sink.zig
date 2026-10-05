@@ -11,6 +11,7 @@
 //! dropped — never the screen.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 
 pub const file_name = "mnml.log";
@@ -103,7 +104,7 @@ test "while redirected a log line goes to mnml.log in the data root, never stder
 test "a line longer than the buffer is cut, not lost" {
     var line: [64]u8 = undefined;
     var w: Io.Writer = .fixed(&line);
-    render(&w, .err, .x, "{s}", .{"y" ** 200});
+    render(&w, .err, .x, "{s}", .{repeat("y", 200)});
     const out = w.buffered();
     try t.expect(std.mem.startsWith(u8, out, "error(x): yyy"));
     try t.expect(std.mem.endsWith(u8, out, "…\n"));

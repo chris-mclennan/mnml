@@ -79,6 +79,7 @@
 //! lists as `✓ Official` rather than `Private`: it is the official set.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -674,7 +675,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
                         continue;
                     },
                 };
-                const z = try arena.dupeZ(u8, text);
+                const z = try arena.dupeSentinel(u8, text, 0);
                 var why: []const u8 = "";
                 const m = manifest_mod.parse(arena, z, &why) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
@@ -1271,7 +1272,7 @@ fn showNow(app: *App, id: []const u8, rows: []const Entry) Allocator.Error!void 
 /// `e` with every string copied onto `a`.
 fn dupeEntry(a: Allocator, e: Entry) Allocator.Error!Entry {
     var out = e;
-    inline for (std.meta.fields(Entry)) |f| if (f.type == []const u8) {
+    inline for (compat.fields(Entry)) |f| if (f.type == []const u8) {
         @field(out, f.name) = try a.dupe(u8, @field(e, f.name));
     };
     return out;
@@ -3177,7 +3178,7 @@ extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
 /// opens it to write — a listing read that is still running when the
 /// test acts, and one a cancel can interrupt.
 fn makeFifo(arena: Allocator, path: []const u8) !void {
-    if (mkfifo(try arena.dupeZ(u8, path), 0o644) != 0) return error.TestMkfifo;
+    if (mkfifo(try arena.dupeSentinel(u8, path, 0), 0o644) != 0) return error.TestMkfifo;
 }
 
 /// From another thread, from `after_ms` on or once `go` is set: opens

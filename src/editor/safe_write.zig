@@ -21,6 +21,7 @@
 //! its directory, and the in-place path covers the former).
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Dir = Io.Dir;
 
@@ -153,13 +154,13 @@ fn countEntries(tmp: *testing.TmpDir) !usize {
 test "a save that fails part-way leaves the old file whole, and no temp file behind" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    const old = "x" ** 4096;
+    const old = repeat("x", 4096);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = old });
     var pb: [std.fs.max_path_bytes]u8 = undefined;
     const path = try tmpPath(&tmp, &pb, "big.txt");
     var p = plan(testing.io, path);
     try testing.expectEqual(Outcome.replaced, p.outcome);
-    const new = "y" ** 8192;
+    const new = repeat("y", 8192);
     try testing.expectError(error.NoSpaceLeft, writePlanned(testing.io, &p, new, .{ .after_bytes = 100, .err = error.NoSpaceLeft }));
     const back = try tmp.dir.readFileAlloc(testing.io, "big.txt", testing.allocator, .limited(1 << 16));
     defer testing.allocator.free(back);

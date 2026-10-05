@@ -20,6 +20,7 @@ const Theme = @import("theme.zig");
 const overlay = @import("overlay.zig");
 const text_field = @import("text_field.zig");
 const key_mod = @import("../core/key.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -228,7 +229,7 @@ test "the box carries its title verbatim, the input takes the caret, the hint si
     try f.expectContains("line number");
     try f.expectContains("enter to submit · esc to cancel");
     // 60 wide, a third down: x = 10, y = (12-4)/3 = 2; input at row 3.
-    try f.expectRow(2, "          ┌ Go to line " ++ "─" ** 46 ++ "┐");
+    try f.expectRow(2, "          ┌ Go to line " ++ repeat("─", 46) ++ "┐");
     try testing.expectEqual(Caret{ .x = 12, .y = 3 }, caret.?);
     try testing.expectEqual(@as(u32, 0), f.hits.at(30, 3).?.overlay_item);
     try testing.expect(f.hits.at(30, 4) == null);

@@ -22,6 +22,7 @@ const link_span = @import("link_span.zig");
 const Rect = @import("rect.zig");
 const Ui = @import("context.zig");
 const Theme = @import("theme.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Segment = vaxis.Segment;
 const Style = vaxis.Style;
@@ -297,7 +298,7 @@ test "a long text wraps to the box, a newline breaks a line, past four lines it 
     try testing.expectEqual(@as(u16, 5), f.hits.items.items[0].rect.h);
     f.hits.reset();
     // Past four lines the fourth ends in an ellipsis, inside the cap.
-    const words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu " ** 3;
+    const words = repeat("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ", 3);
     draw(f.ui(), f.full(), &.{.{ .text = words }});
     const rr = f.hits.items.items[0].rect;
     try testing.expectEqual(@as(u16, 6), rr.h);

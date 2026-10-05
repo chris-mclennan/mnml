@@ -28,6 +28,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vaxis = @import("vaxis");
 const utf8_mod = @import("../core/utf8.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const side = @import("side.zig");
@@ -1573,7 +1574,7 @@ test "with a file open the row gains the file chip, the size and Ln/Col, and the
     _ = try b.app.openPath(path);
     // The Rust row on the same fixture with `package.json` open
     // (`tools/ui-diff.sh`, 2026-09-06), plus the missing-server chip.
-    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ " " ** 6 ++
+    const expected = " EDIT " ++ sl.pl_right_nerd ++ " " ++ sl.branch_glyph ++ " main  " ++ sl.added_glyph ++ " 1 " ++ sl.pl_right_nerd ++ " " ++ npm_glyph ++ " package.json" ++ repeat(" ", 6) ++
         sl.pl_left_nerd ++ " " ++ sl.coverage_glyph ++ " F 57% ▲1.0 " ++ idle_cluster ++ sl.pl_left_nerd ++ " LSP? " ++ sl.pl_left_nerd ++ " WRAP " ++ sl.pl_left_nerd ++ " 3B  Ln 1/1 Col 1  " ++ sl.bell_glyph ++ "  " ++ spec_clock ++ " " ++ sl.pl_left_nerd ++ sl.folder_glyph ++ " ws " ++ sl.pl_left_nerd ++ "  json";
     const actual = try b.row(38);
     try testing.expectEqualStrings(expected, trimRight(try normaliseClock(b.app.frame.allocator(), expected, actual)));
@@ -1916,7 +1917,7 @@ test "the narrow rule at 120 / 100 / 80 / 60 columns: the gap shrinks, then the 
         // The dump is right-trimmed: the language chip's last cell is a
         // space it does not carry.
         const rw = 1 + try std.unicode.utf8CountCodepoints(spec_right);
-        const spaces = " " ** 100;
+        const spaces = repeat(" ", 100);
         const expected_row = try std.fmt.allocPrint(b.app.frame.allocator(), "{s}{s}{s}", .{ spec_left, spaces[0 .. 100 - lw - rw], spec_right });
         try testing.expectEqualStrings(expected_row, trimRight(try normaliseClock(b.app.frame.allocator(), expected_row, row)));
         try testing.expect(std.mem.indexOf(u8, row, " main  " ++ sl.added_glyph ++ " 1 ") != null);

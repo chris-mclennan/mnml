@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const compat = @import("mnml_sdk").zig_compat;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
 const command = @import("../core/command.zig");
@@ -265,7 +266,7 @@ pub fn openRowMenu(app: *App, pane_integration: []const u8, r: host.UnpackedRow,
 /// its close.
 pub fn dupe(arena: Allocator, c: MenuContribution) Allocator.Error!MenuContribution {
     var out: MenuContribution = undefined;
-    inline for (@typeInfo(MenuContribution).@"struct".fields) |f| @field(out, f.name) = try arena.dupe(u8, @field(c, f.name));
+    inline for (compat.structFields(MenuContribution)) |f| @field(out, f.name) = try arena.dupe(u8, @field(c, f.name));
     return out;
 }
 

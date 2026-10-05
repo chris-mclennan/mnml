@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const marker = @import("../tui/marker.zig");
@@ -176,7 +177,7 @@ test "a socket path too long for sockaddr_un falls back to the broker's short na
     const short = try socketPath(t.allocator, "/t/d", 42);
     defer t.allocator.free(short);
     try sdk_testing.expectPath("/t/d/42.sock", short);
-    const deep = "/" ++ "x" ** 120;
+    const deep = "/" ++ repeat("x", 120);
     const long = try socketPath(t.allocator, deep, 42);
     defer t.allocator.free(long);
     try t.expect(long.len <= broker.max_path_len);

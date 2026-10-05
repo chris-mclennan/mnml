@@ -26,6 +26,7 @@
 //! the region's replacement through `ai.apply`'s preview.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
 const App = app_mod.App;
@@ -71,7 +72,7 @@ pub const Action = enum(u8) {
 /// range and above the `{{VAR}}` spans'; the dispatcher asks
 /// `actionOf` before either.
 pub const hit_base: u32 = 0x434F_0000;
-const action_count: u32 = @typeInfo(Action).@"enum".fields.len;
+const action_count: u32 = compat.enumFields(Action).len;
 
 pub fn hitId(region: usize, a: Action) u32 {
     return hit_base + @as(u32, @intCast(region)) * 8 + @intFromEnum(a);

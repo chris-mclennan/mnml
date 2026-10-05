@@ -386,7 +386,7 @@ pub fn ghosttyPids(exclude: i32) []const i32 {
         name[0] = 0;
         if (CFDictionaryGetValue(d, k_app)) |v| _ = CFStringGetCString(v, &name, name.len, kCFStringEncodingUTF8);
         const app = std.mem.sliceTo(&name, 0);
-        if (std.ascii.indexOfIgnoreCase(app, "ghostty") == null) continue;
+        if (std.ascii.findIgnoreCase(app, "ghostty") == null) continue;
         for (ghostty_pid_buf[0..n]) |seen| {
             if (seen == owner) continue :outer;
         }

@@ -1884,8 +1884,8 @@ test "both manifests name the reference's ids, chips and commands, and validate"
         defer t.allocator.free(text);
         var arena_state = std.heap.ArenaAllocator.init(t.allocator);
         defer arena_state.deinit();
-        const z = try arena_state.allocator().dupeZ(u8, text);
-        const back = try std.zon.parse.fromSliceAlloc(sdk.Manifest, arena_state.allocator(), z, null, .{ .free_on_error = false });
+        const z = try arena_state.allocator().dupeSentinel(u8, text, 0);
+        const back = try sdk.zig_compat.zonParse(sdk.Manifest, arena_state.allocator(), z, null, .{});
         try t.expectEqualStrings(m.id, back.id);
     }
 }

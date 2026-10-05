@@ -14,6 +14,7 @@
 //! the scan worker, the snapshot and the commands.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const transcript = @import("../ai/transcript.zig");
@@ -887,7 +888,7 @@ test "the totals: a transcript past the tail is summed whole, each split message
     var text: std.ArrayListUnmanaged(u8) = .empty;
     defer text.deinit(t.allocator);
     try text.appendSlice(t.allocator, "{\"type\":\"user\",\"cwd\":\"/tmp/p-long\",\"message\":{\"role\":\"user\",\"content\":\"long session\"}}\n");
-    const pad = "x" ** 900;
+    const pad = repeat("x", 900);
     var i: usize = 0;
     while (i < 300) : (i += 1) for (0..2) |_| try text.print(t.allocator, "{{\"type\":\"assistant\",\"message\":{{\"id\":\"msg_l{d}\",\"model\":\"claude-opus-4-7\",\"usage\":{{\"input_tokens\":1000,\"output_tokens\":200}},\"content\":[{{\"type\":\"text\",\"text\":\"{s}\"}}]}}}}\n", .{ i, pad });
     try t.expect(text.items.len > tail_cap);

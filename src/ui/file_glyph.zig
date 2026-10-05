@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const Theme = @import("theme.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 pub const Glyph = struct {
     /// The nerd-font glyph.
@@ -139,5 +140,5 @@ test "a name outranks its extension; extensions are case-insensitive; the unknow
     try testing.expectEqualStrings(default_glyph, none.glyph);
     try testing.expectEqualStrings(default_ascii, none.fallback);
     // A very long name is not a crash.
-    try testing.expectEqualStrings(default_glyph, forName("x" ** 200 ++ ".rs").glyph);
+    try testing.expectEqualStrings(default_glyph, forName(repeat("x", 200) ++ ".rs").glyph);
 }

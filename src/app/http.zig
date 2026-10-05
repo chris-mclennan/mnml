@@ -11,6 +11,7 @@
 //! `State.group`; `deinit` cancels before anything it borrows goes.
 
 const std = @import("std");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const app_mod = @import("../app.zig");
@@ -3041,14 +3042,14 @@ test "history: a re-fire resolves the URL and the headers against the env it was
     try pumpUntil(&app, rp, done, 300);
     // One env for all of it: dev's host AND dev's token.
     try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /dev/me "));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer dev-token\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "authorization: Bearer dev-token\r\n") != null);
     // An explicit pick moves the whole request to the new env.
     try cmd_http.acceptPicker(&app, .http_env_pick, 0, "staging");
     try testing.expect(rp.env_pin == null);
     try fire(&app, again);
     try pumpUntil(&app, rp, done, 300);
     try testing.expect(std.mem.startsWith(u8, server.lastRequest(), "GET /stg/me "));
-    try testing.expect(std.ascii.indexOfIgnoreCase(server.lastRequest(), "authorization: Bearer staging-token\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(server.lastRequest(), "authorization: Bearer staging-token\r\n") != null);
 }
 
 test "the Response strip's type chip opens the body menu, not a toast" {
@@ -3208,8 +3209,8 @@ test "directives: @set-* reach the wire, @assert rows land on the Tests tab, @ca
     }.f, 300);
     try testing.expect(rp.state == .done);
     const seen = server.lastRequest();
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "x-probe: yes\r\n") != null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: session=abc\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "x-probe: yes\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "cookie: session=abc\r\n") != null);
     // Tests tab: three passes, one failure with the value it saw, two captures.
     var passes: usize = 0;
     var fails: usize = 0;
@@ -3286,8 +3287,8 @@ test "send: a GET with trailing directives sends no body, and a 302's Set-Cookie
     const seen = server.lastRequest();
     try testing.expect(std.mem.startsWith(u8, seen, "GET /cookies HTTP/1.1\r\n"));
     try testing.expect(std.mem.indexOf(u8, seen, "@assert") == null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "content-length:") == null);
-    try testing.expect(std.ascii.indexOfIgnoreCase(seen, "cookie: session=abc123; user=chris\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "content-length:") == null);
+    try testing.expect(std.ascii.findIgnoreCase(seen, "cookie: session=abc123; user=chris\r\n") != null);
     // The hop's cookies are in the jar, keyed by the host that set them.
     const j = try @import("cmd_http.zig").jar(&app);
     try testing.expectEqual(@as(usize, 2), j.total());
@@ -3394,7 +3395,7 @@ test "completion: `{{` lists the env's names (a secret masked), the built-ins an
     try testing.expectEqualStrings("env", host.kind);
     try testing.expectEqualStrings("https://dev.example", host.detail);
     const token = find(c.items, "TOKEN") orelse return error.TestExpectedRow;
-    try testing.expectEqualStrings("\u{2022}" ** 8, token.detail);
+    try testing.expectEqualStrings(repeat("\u{2022}", 8), token.detail);
     const uuid = find(c.items, "$uuid") orelse return error.TestExpectedRow;
     try testing.expectEqualStrings("built-in", uuid.kind);
     try testing.expectEqual(@as(usize, 36), uuid.detail.len);

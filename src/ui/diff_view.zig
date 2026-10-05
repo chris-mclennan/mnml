@@ -56,6 +56,7 @@ const git_toolbar = @import("git_toolbar.zig");
 const parse = @import("../git/parse.zig");
 const intraline = @import("../git/intraline.zig");
 const ids = @import("../core/ids.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 const Allocator = std.mem.Allocator;
 const Style = vaxis.Style;
@@ -1288,7 +1289,7 @@ test "flatten lists hunk, lines and spacer; the Hunk view paints the header with
     try testing.expect(!f.style(11, 3).bold);
     try testing.expect(f.fgEql(11, 3, .{ .fg = f.theme.palette.comment }));
     // Wrap: a 70-cell line at 40 columns continues on a second row.
-    const long = "diff --git a/l.txt b/l.txt\n--- a/l.txt\n+++ b/l.txt\n@@ -1 +1 @@\n-" ++ "a" ** 30 ++ "\n+" ++ "b" ** 30 ++ "\n";
+    const long = "diff --git a/l.txt b/l.txt\n--- a/l.txt\n+++ b/l.txt\n@@ -1 +1 @@\n-" ++ repeat("a", 30) ++ "\n+" ++ repeat("b", 30) ++ "\n";
     const lf = try parse.parseDiff(arena, long);
     const lrows = try flatten(arena, lf);
     var g = try Fixture.init(30, 8);

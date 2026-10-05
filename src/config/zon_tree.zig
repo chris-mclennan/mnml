@@ -13,6 +13,7 @@
 //! and every name and literal is a slice of that copy.
 
 const std = @import("std");
+const compat = @import("mnml_sdk").zig_compat;
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
 const Zoir = std.zig.Zoir;
@@ -172,8 +173,8 @@ pub fn parse(gpa: Allocator, src: [:0]const u8, why: ?*[]const u8) ParseError!Tr
     errdefer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const copy = try arena.dupeZ(u8, src);
-    var ast = try Ast.parse(arena, copy, .zon);
+    const copy = try arena.dupeSentinel(u8, src, 0);
+    var ast = try compat.parseZonAst(arena, copy);
     if (ast.errors.len != 0) {
         if (why) |w| {
             var buf: std.Io.Writer.Allocating = .init(arena);
@@ -189,7 +190,7 @@ pub fn parse(gpa: Allocator, src: [:0]const u8, why: ?*[]const u8) ParseError!Tr
             const e = zoir.compile_errors[0];
             const tok: Ast.TokenIndex = if (e.token.unwrap()) |tk| tk else ast.nodeMainToken(@enumFromInt(e.node_or_offset));
             const loc = ast.tokenLocation(0, tok);
-            w.* = try std.fmt.allocPrint(gpa, "{d}:{d}: {s}", .{ loc.line + 1, loc.column + 1, e.msg.get(zoir) });
+            w.* = try std.fmt.allocPrint(gpa, "{d}:{d}: {s}", .{ loc.line + 1, loc.column + 1, compat.zoirGet(e.msg, &zoir) });
         }
         return error.ParseFailed;
     }
@@ -225,9 +226,9 @@ const Builder = struct {
     }
 
     fn visit(b: *Builder, node: Zoir.Node.Index, name: []const u8, index: ?u32, parent: ?u32, depth: u16) Allocator.Error!u32 {
-        const ast_node = node.getAstNode(b.zoir);
+        const ast_node = compat.zoirAstNode(node, &b.zoir);
         const span = b.spanOf(ast_node);
-        const got = node.get(b.zoir);
+        const got = compat.zoirGet(node, &b.zoir);
         const kind: Kind = switch (got) {
             .true, .false => .bool,
             .null => .null,
@@ -255,7 +256,7 @@ const Builder = struct {
         switch (got) {
             .struct_literal => |lit| {
                 for (lit.names, 0..) |n, i| {
-                    const child_name = try b.arena.dupe(u8, n.get(b.zoir));
+                    const child_name = try b.arena.dupe(u8, compat.zoirGet(n, &b.zoir));
                     const c = try b.visit(lit.vals.at(@intCast(i)), child_name, null, idx, depth + 1);
                     try kids.append(b.arena, c);
                 }

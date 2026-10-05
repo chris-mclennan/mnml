@@ -17,6 +17,7 @@ const scrollbar = @import("scrollbar.zig");
 const expander = @import("expander.zig");
 const vaxis = @import("vaxis");
 const utf8 = @import("../core/utf8.zig");
+const repeat = @import("mnml_sdk").zig_compat.repeat;
 
 pub const PaneId = ids.PaneId;
 
@@ -218,8 +219,8 @@ test "a hit on a 100k-char line paints a window: ellipsis, ~40 cells of context,
     var buf: [1024]u8 = undefined;
     const row = f.row(0, &buf);
     try testing.expect(std.mem.startsWith(u8, row, "   1:70001  …"));
-    try testing.expect(std.mem.indexOf(u8, row, "y" ** 40 ++ "needle" ++ "y" ** 10) != null);
-    try testing.expect(std.mem.indexOf(u8, row, "y" ** 41 ++ "needle") == null);
+    try testing.expect(std.mem.indexOf(u8, row, repeat("y", 40) ++ "needle" ++ repeat("y", 10)) != null);
+    try testing.expect(std.mem.indexOf(u8, row, repeat("y", 41) ++ "needle") == null);
     try testing.expect(std.mem.endsWith(u8, row, "…"));
     // The walker's window carries the same picture through `text_off`.
     const win = grep.windowLine(long, 70_000, 6);
@@ -232,7 +233,7 @@ test "a hit on a 100k-char line paints a window: ellipsis, ~40 cells of context,
     var h = try Fixture.init(60, 1);
     defer h.deinit();
     paintHit(h.ui(), h.full(), .{ .path = "/x", .rel = "x", .line = 2, .col = 0, .ccol = 0, .len = 3, .text = long }, false, h.theme.bg.bg);
-    try h.expectRow(0, "   2:1  " ++ "y" ** 51 ++ "…");
+    try h.expectRow(0, "   2:1  " ++ repeat("y", 51) ++ "…");
 }
 
 test "a short hit paints whole: no ellipsis, leading blanks trimmed" {
