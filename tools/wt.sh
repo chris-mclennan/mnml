@@ -107,7 +107,7 @@ live_reasons() {
 
 dirty_reason() {
     local n
-    n=$(git -C "$1" status --porcelain 2>/dev/null | grep -c .)
+    n=$(git -C "$1" --no-optional-locks status --porcelain 2>/dev/null | grep -c .)
     [ "$n" -gt 0 ] && echo "dirty ($n changed or untracked)"
     return 0
 }
