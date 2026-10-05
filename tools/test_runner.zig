@@ -272,9 +272,12 @@ const Watchdog = struct {
         var last_text: [24]u8 = undefined;
         var last_len: usize = 0;
         var last_change = w.started;
+        //
+        // Through the Io, never `std.c`: this runner is the root of every
+        // test binary, and on Linux most of those do not link libc — a
+        // direct libc call fails them all at compile time.
         while (!w.done.load(.acquire)) {
-            var ts: std.c.timespec = .{ .sec = 1, .nsec = 0 };
-            _ = std.c.nanosleep(&ts, null);
+            w.io.sleep(.fromSeconds(1), .awake) catch {};
             if (w.done.load(.acquire)) return;
             var buf: [24]u8 = undefined;
             const text = Io.Dir.cwd().readFile(w.io, w.progress_path, &buf) catch "";
@@ -292,7 +295,7 @@ const Watchdog = struct {
             // The sample took a second; a test that finished meanwhile is
             // slow, not wedged, and its pid is not ours to signal.
             if (w.done.load(.acquire)) return;
-            _ = std.c.kill(w.pid, .KILL);
+            std.posix.kill(w.pid, .KILL) catch {};
             return;
         }
     }

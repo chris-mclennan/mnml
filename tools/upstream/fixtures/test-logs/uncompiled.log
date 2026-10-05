@@ -1,0 +1,26 @@
+▶ 1/2 pty.test.a session opens
+  ok   12 ms
+▶ 2/2 pty.test.a grid resizes
+  ok   3 ms
+2 passed; 0 skipped; 0 failed; 0 FLAKY.
+test
++- run test
+   +- compile test Debug native 1 errors
+/opt/toolchain/zig-0.0.0/lib/std/c.zig:100:12: error: dependency on libc must be explicitly specified in the build command
+    extern "c" fn nanosleep(rqtp: *const timespec, rmtp: ?*timespec) c_int;
+           ^~~~~~~~~
+referenced by:
+    run: tools/test_runner.zig:277:22
+error: 1 compilation errors
+failed command: /opt/toolchain/zig-0.0.0/zig test -fllvm -ODebug -Mroot=/ci/work/app/tools/audit_one.zig --test-runner /ci/work/app/tools/test_runner.zig --listen=-
+filter .pty_: 0 of 2 tests matched
+0 passed; 0 skipped; 0 failed; 0 FLAKY.
+test
++- run test
+   +- compile test Debug native 1 errors
+/opt/toolchain/zig-0.0.0/lib/std/c.zig:100:12: error: dependency on libc must be explicitly specified in the build command
+error: 1 compilation errors
+failed command: /opt/toolchain/zig-0.0.0/zig test -fllvm -ODebug -Mroot=/ci/work/app/tools/fake_server/main.zig --test-runner /ci/work/app/tools/test_runner.zig --listen=-
+filter .pty_: 7 of 300 tests matched
+7 passed; 0 skipped; 0 failed; 0 FLAKY.
+error: the following build command failed with exit code 1:

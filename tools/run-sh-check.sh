@@ -137,6 +137,17 @@ check "docs: CONFIG.md documents every Config field at its default" '[ $rc -eq 0
 check "check: the sequence runs the Debug unit suite" 'grep -q "bash tools/debug-suite-check.sh" "$ROOT/run.sh"'
 check "check: the sequence still runs the ReleaseSafe suite" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe" "$ROOT/run.sh"'
 check "check: the ReleaseSafe suite runs under the trace runner (FLAKY reported, as in Debug)" 'grep -q "\"\$ZIG\" build test -Doptimize=ReleaseSafe -Dtest-trace=true" "$ROOT/run.sh"'
+# The trace runner is the root of every test binary, and on Linux most of
+# them link no libc: a libc-only call in it (std.c.nanosleep once) fails
+# them all to compile, on Linux only — where ci.yml never passes
+# -Dtest-trace, so the weekly upstream watch was the first to find out.
+# Analysis only (-fno-emit-bin), against a one-test root, per target.
+printf 'test "one" {}\n' > "$TMP/runner_root.zig"
+for t in x86_64-linux aarch64-linux x86_64-windows-gnu aarch64-macos; do
+    out=$("${MNML_REAL_ZIG:-zig}" test -target "$t" -fno-emit-bin --cache-dir "$TMP/runner-cache" \
+        --test-runner "$ROOT/tools/test_runner.zig" "$TMP/runner_root.zig" 2>&1); rc=$?
+    check "trace runner: compiles for $t with no libc linked" '[ $rc -eq 0 ]' "$out"
+done
 # tools/debug-suite-check.sh builds `unit-debug` and ends on a verdict a
 # chain can read: the fake zig (logs, exits 0) and one that exits 1.
 out=$(MNML_ZIG="$MNML_ZIG" bash "$ROOT/tools/debug-suite-check.sh" 2>&1); rc=$?

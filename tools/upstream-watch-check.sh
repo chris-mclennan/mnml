@@ -12,11 +12,17 @@
 #   week2/       overlays week1: a maintainer commented on the thread
 #   week3/       overlays week1: the toolchain pull request merged and
 #                the issue's last task was ticked
+#   test-logs/   a terminal-tests step's log, one per outcome: tests
+#                failed, a test crashed or wedged, binaries did not
+#                compile, the filter matched nothing, the step failed
+#                with none of those, all passed
 #
 # Cases: a pin behind, a pin current, a crate behind (and one current,
 # and Lua on its newest 5.4.x), a mirror behind ghostty's, an action tag
 # that moved (and an annotated tag that did not), Zig behind, npm counts,
-# a thread that gained a maintainer comment, an issue's task list, a
+# a terminal-tests step read from its log (failed / crashed / did not
+# compile / matched nothing / failed otherwise / passed) and reported without ever saying
+# "0 failed", a thread that gained a maintainer comment, an issue's task list, a
 # pull request open and merged (the Zig-move note and the comment's
 # headline), zig-next's expected and real failure lines, a release channel that
 # disagrees (and one that agrees through a prefixed winget directory),
@@ -37,7 +43,8 @@ export UW_ROOT="$fx/root" UW_REPO=example-org/app
 # that moves the toolchain (the ZIG_MOVE_PR role).
 export UW_THREADS="example-org/forum#7 issue:example-org/forum#9 pr:example-org/forum#8"
 export UW_ZIG_MOVE_PR="example-org/forum#8" UW_ZIG_MOVE_VERSION=0.17
-unset UW_CI_GHOSTTY_BUILD UW_CI_TERMINAL_TESTS UW_CI_RESIZE UW_CI_ZIG_NEXT UW_RUN_URL
+unset UW_CI_GHOSTTY_BUILD UW_CI_TERMINAL_TESTS UW_CI_TERMINAL_FAILED UW_CI_TERMINAL_CRASHED \
+    UW_CI_TERMINAL_UNCOMPILED UW_CI_TERMINAL_ERROR UW_CI_RESIZE UW_CI_ZIG_NEXT UW_RUN_URL
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/uw-check.XXXXXX")" || exit 2
 trap 'rm -f "$scratch"/*; rmdir "$scratch"' EXIT
@@ -124,11 +131,71 @@ UW_FIXTURES="$fx/week1" UW_CI_GHOSTTY_SHA="$(printf 'e%.0s' {1..40})" UW_CI_GHOS
     UW_CI_TERMINAL_TESTS=failure UW_CI_TERMINAL_FAILED=2 UW_CI_RESIZE=fixed UW_CI_ZIG_NEXT=skipped \
     bash "$script" --dry-run --only ci > "$scratch/ci.out" 2>&1
 if has "$scratch/ci.out" "- builds against ghostty main (eeeeeeee): yes" \
-    && has "$scratch/ci.out" "- terminal tests: fail (2 failed)" \
+    && has "$scratch/ci.out" "- terminal tests: fail — 2 tests failed" \
     && has "$scratch/ci.out" "- resize redraw: FIXED upstream — the workaround in src/pty/common.zig can go" \
     && has "$scratch/ci.out" "- zig: no newer stable release to try"; then
     ok "the ghostty-main and zig-next results: one line each"
 else bad "the job-result lines" "$(sed -n '/^## Against/,/^State/p' "$scratch/ci.out")"; fi
+
+# The terminal-tests step, from its log: --classify-tests' counts, then
+# the report line the workflow's outputs make of them. A step can fail
+# with no test failing; the line must say how, never "0 failed".
+logs=$fx/test-logs
+# terminal <log> → the report's "- terminal tests:" line, the step marked
+# failed unless the log is the all-passed one.
+terminal() {
+    local kv outcome=failure
+    kv=$(bash "$script" --classify-tests "$logs/$1.log" /ci/work/app) || return 1
+    [ "$1" != passed ] || outcome=success
+    UW_FIXTURES="$fx/week1" UW_CI_TERMINAL_TESTS=$outcome \
+        UW_CI_TERMINAL_FAILED="$(sed -n 's/^failed=//p' <<< "$kv")" \
+        UW_CI_TERMINAL_CRASHED="$(sed -n 's/^crashed=//p' <<< "$kv")" \
+        UW_CI_TERMINAL_UNCOMPILED="$(sed -n 's/^uncompiled=//p' <<< "$kv")" \
+        UW_CI_TERMINAL_MATCHED="$(sed -n 's/^matched=//p' <<< "$kv")" \
+        UW_CI_TERMINAL_ERROR="$(sed -n 's/^first_error=//p' <<< "$kv")" \
+        bash "$script" --dry-run --only ci 2>&1 | grep -F -- "- terminal tests:"
+}
+kv=$(bash "$script" --classify-tests "$logs/uncompiled.log" /ci/work/app)
+want="failed=0
+crashed=0
+uncompiled=2
+matched=7
+first_error=tools/audit_one.zig: std/c.zig:100:12: error: dependency on libc must be explicitly specified in the build command"
+if [ "$kv" = "$want" ]; then ok "classify: binaries that did not compile — counted, the first error named with its binary"
+else bad "classify: a log with compile errors" "$kv"; fi
+
+line=$(terminal uncompiled)
+if [ "$line" = "- terminal tests: fail — 2 test binaries did not compile — first error: tools/audit_one.zig: std/c.zig:100:12: error: dependency on libc must be explicitly specified in the build command" ]; then
+    ok "a step whose binaries did not compile: says so, with the first error (not \"0 failed\")"
+else bad "the did-not-compile line" "$line"; fi
+
+line=$(terminal failed)
+if [ "$line" = "- terminal tests: fail — 3 tests failed" ]; then ok "tests that failed: the runners' counts summed"
+else bad "the tests-failed line" "$line"; fi
+
+line=$(terminal crashed)
+if [ "$line" = "- terminal tests: fail — 2 tests crashed or wedged the process" ]; then
+    ok "a CRASH and a WEDGED test: counted once each (the watcher's own WEDGED: line is not)"
+else bad "the crashed line" "$line"; fi
+
+line=$(terminal other)
+if [ "$line" = "- terminal tests: fail — no test failed, crashed or failed to compile; first error: error: unable to connect to the package host: ConnectionRefused" ]; then
+    ok "a step that failed with none of those: says so, with its first error line"
+else bad "the failed-otherwise line" "$line"; fi
+
+line=$(terminal vacuous)
+if [ "$line" = "- terminal tests: fail — the test filter matched no test" ]; then
+    ok "a filter that matched no test in any binary: says so"
+else bad "the vacuous-filter line" "$line"; fi
+
+line=$(terminal passed)
+if [ "$line" = "- terminal tests: pass" ]; then ok "all passed: pass"
+else bad "the passed line" "$line"; fi
+
+line=$(UW_FIXTURES="$fx/week1" UW_CI_TERMINAL_TESTS=failure bash "$script" --dry-run --only ci 2>&1 | grep -F -- "- terminal tests:")
+if [ "$line" = "- terminal tests: fail — no test failed, crashed or failed to compile; the run's log has the cause" ]; then
+    ok "a failure with no counts at all (an older workflow): never \"0 failed\" or \"? failed\""
+else bad "the no-counts line" "$line"; fi
 
 if has "$o" "- [example-org/forum#9](https://github.com/example-org/forum/issues/9): issue open, 2 comments, tasks 2/3 done, labels: tracking" \
     && [ "$(q w1 '.threads["example-org/forum#9"].tasks_done')" = 2 ]; then

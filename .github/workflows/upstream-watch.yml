@@ -73,7 +73,8 @@ jobs:
   # mnml against ghostty main: the pin is rewritten in this runner's
   # checkout only (`zig fetch --save=ghostty`), never committed. ubuntu
   # only: the runner gives a real pty, which is all the pty tests need
-  # (ci.yml runs the same suites there).
+  # (ci.yml runs the same suites there, under the default runner; this
+  # job needs the trace runner for MNML_TEST_FILTER).
   ghostty-main:
     needs: probe
     runs-on: ubuntu-latest
@@ -82,6 +83,10 @@ jobs:
       build: ${{ steps.build.outcome }}
       tests: ${{ steps.tests.outcome }}
       failed: ${{ steps.tests.outputs.failed }}
+      crashed: ${{ steps.tests.outputs.crashed }}
+      uncompiled: ${{ steps.tests.outputs.uncompiled }}
+      matched: ${{ steps.tests.outputs.matched }}
+      first_error: ${{ steps.tests.outputs.first_error }}
       resize: ${{ steps.repro.outputs.resize }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -119,8 +124,14 @@ jobs:
       # keepCursorRow's resize tests), then the app's terminal-pane tests
       # by name — every test in a src/**/pty_*.zig file is named
       # `<dir>.pty_<file>.test.…`, which `.pty_` picks out (a bare `pty`
-      # would also match "empty"). Each runner prints
-      # `N passed; S skipped; F failed; K FLAKY.`; the failures are summed.
+      # would also match "empty"). `MNML_TEST_FILTER` is read by the trace
+      # runner when each binary runs, not by build.zig: every unit binary
+      # is still built, and one that does not compile fails the step with
+      # no test failed — the trace runner itself once made seven of them
+      # fail that way on Linux. `--classify-tests` reads the log for how
+      # the step went: tests failed, a test crashed or wedged, a binary
+      # did not compile (and its first error), the filter matched no test,
+      # or none of those.
       - name: terminal tests against ghostty main
         id: tests
         run: |
@@ -129,9 +140,11 @@ jobs:
           status=0
           zig build -j2 pty-test -Dtest-trace=true -Dtest-trace-live=true 2>&1 | tee tests.log || status=1
           MNML_TEST_FILTER=.pty_ zig build -j2 unit -Dtest-trace=true -Dtest-trace-live=true 2>&1 | tee -a tests.log || status=1
-          failed=$(grep -oE '[0-9]+ failed;' tests.log | awk '{ n += $1 } END { print n + 0 }')
-          crashed=$(grep -cE '^  (CRASH|WEDGED) ' tests.log || true)
-          echo "failed=$((failed + crashed))" >> "$GITHUB_OUTPUT"
+          tools/upstream-watch.sh --classify-tests tests.log | tee -a "$GITHUB_OUTPUT"
+          # A filter that matches nothing passes vacuously: that is a
+          # failure of this step, not a green line in the report.
+          grep -qE '^filter \.pty_: [1-9][0-9]* of [0-9]+ tests? matched$' tests.log \
+            || { echo "::error::MNML_TEST_FILTER=.pty_ matched no test"; status=1; }
           exit "$status"
 
       # Independent of mnml's own build: the repro builds libghostty-vt
@@ -221,6 +234,10 @@ jobs:
           UW_CI_GHOSTTY_BUILD: ${{ needs.ghostty-main.outputs.build || needs.ghostty-main.result }}
           UW_CI_TERMINAL_TESTS: ${{ needs.ghostty-main.outputs.tests || 'skipped' }}
           UW_CI_TERMINAL_FAILED: ${{ needs.ghostty-main.outputs.failed }}
+          UW_CI_TERMINAL_CRASHED: ${{ needs.ghostty-main.outputs.crashed }}
+          UW_CI_TERMINAL_UNCOMPILED: ${{ needs.ghostty-main.outputs.uncompiled }}
+          UW_CI_TERMINAL_MATCHED: ${{ needs.ghostty-main.outputs.matched }}
+          UW_CI_TERMINAL_ERROR: ${{ needs.ghostty-main.outputs.first_error }}
           UW_CI_RESIZE: ${{ needs.ghostty-main.outputs.resize || 'unknown' }}
           UW_CI_ZIG_NEXT: ${{ needs.zig-next.outputs.build || needs.zig-next.result }}
           UW_CI_ZIG_NEXT_VERSION: ${{ needs.probe.outputs.zig_next }}
