@@ -2,8 +2,8 @@
 # env: PATH=${MNML_E2E_WORKSPACE}/bin:${PATH}
 # A session in a worktree of its own (src/app/session_worktree.zig):
 # ai.new_session_worktree prompts for a branch name seeded `session-1`,
-# Enter makes `<ws>-worktrees/session-1` on branch session-1 beside the
-# repository and opens the session there. The fake `claude` on PATH
+# Enter makes `../.worktrees/<ws>/session-1` on branch session-1 — the
+# shared folder beside the repository — and opens the session there. The fake `claude` on PATH
 # takes the session id mnml starts it with (`--session-id`, what the
 # card owns), titles its window `job`, writes its transcript for that
 # cwd, commits one file in the tree and stays up as `claude --resume
@@ -59,5 +59,5 @@ expect screen contains "Remove worktree session-1 and branch session-1?"
 key enter
 wait 1000
 expect screen contains "removed worktree session-1"
-shell test ! -d "../$(basename "$PWD")-worktrees/session-1"
+shell test ! -d "../.worktrees/$(basename "$PWD")/session-1"
 shell test -z "$(git branch --list session-1)"

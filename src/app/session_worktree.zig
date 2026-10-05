@@ -5,9 +5,26 @@
 //! name, `git worktree add -b <name> <root>/<name> HEAD` makes the tree
 //! and the session runs there with `MNML_WORKSPACE` pointing at it.
 //!
-//! The convention is this project's own: `<repo>-worktrees/<name>`
-//! beside the repository, the branch named after the tree.
-//! `ai.default_worktree_root` overrides the root (`rootFor`).
+//! Where the tree goes (`rootFor`): `<parent>/.worktrees/<repo>/<name>`,
+//! where `<parent>` is the directory holding the repository and `<repo>`
+//! its directory name — outside every repository, one folder per repo
+//! under a `.worktrees` folder the repos beside it share, never a temp
+//! directory. `<name>` is one path segment and is the branch name too
+//! (`validName`). The folders are made on demand; one that cannot be
+//! made fails the launch with the reason, in the diag line and the
+//! command log, as a failed `git worktree add` does. A repository whose
+//! parent is a filesystem root (`/repo`, `C:\repo`) — or that is one —
+//! has no such parent to share: its trees go under the home directory,
+//! `~/.worktrees/<repo>/<name>`, and with no home known, beside it as
+//! `<repo>-worktrees/<name>`. `ai.default_worktree_root` overrides the
+//! root; set it to `../<repo>-worktrees` for the layout before this
+//! one.
+//!
+//! A tree is only ever found again by the path recorded when it was
+//! made (the registry below) or by `git worktree list` (the git panel's
+//! WORKTREES rows) — never by working out the default root again — so a
+//! tree made under an earlier layout or another override stays where it
+//! is and keeps every verb.
 //!
 //! The registry (`sessions.State.worktrees`, saved as `session.zon`
 //! `sessions_worktrees`) is what ties a worktree to its session: an
@@ -138,36 +155,65 @@ pub const Registry = struct {
 
 // ─── names and paths ────────────────────────────────────────────────────
 
-/// A name that is a directory name and a branch name at once: letters,
-/// digits, `-`, `_`, `.`, `/`; not starting with `-`, `.` or `/`, not
-/// ending with `/`, `.` or `.lock`, no `..`, `//` or `@{`, at most 80
-/// bytes (the subset of `git check-ref-format` a session name needs).
+/// A name that is one directory name and a branch name at once: letters,
+/// digits, `-`, `_`, `.`; not starting with `-` or `.`, not ending with
+/// `.` or `.lock`, no `..` or `@{`, at most 80 bytes (the subset of `git
+/// check-ref-format` a session name needs). No `/`: the tree is one
+/// folder under the root, so `feat/login` — a branch git takes — would
+/// nest a folder `feat` there that nothing records.
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > 80) return false;
-    if (name[0] == '-' or name[0] == '.' or name[0] == '/') return false;
-    if (name[name.len - 1] == '/' or name[name.len - 1] == '.') return false;
+    if (name[0] == '-' or name[0] == '.') return false;
+    if (name[name.len - 1] == '.') return false;
     if (std.mem.endsWith(u8, name, ".lock")) return false;
-    if (std.mem.indexOf(u8, name, "..") != null or std.mem.indexOf(u8, name, "//") != null or std.mem.indexOf(u8, name, "@{") != null) return false;
+    if (std.mem.indexOf(u8, name, "..") != null or std.mem.indexOf(u8, name, "@{") != null) return false;
     if (std.mem.eql(u8, name, "@")) return false;
-    for (name) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '/')) return false;
+    for (name) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) return false;
     return true;
 }
 
-pub const name_rule = "letters, digits, `-`, `_`, `.`, `/`; no leading `-` or `.`, no `..`";
+pub const name_rule = "one folder name: letters, digits, `-`, `_`, `.`; no leading `-` or `.`, no `..`, no `/`";
 
-/// Where the trees of `repo_root` go: `<repo>-worktrees` beside it, or
-/// `override` (`ai.default_worktree_root`) with `~` expanded and a
-/// relative path taken under the repository.
+/// The folder the repositories beside each other share for their trees.
+pub const shared_dir = ".worktrees";
+
+/// Where the trees of `repo_root` go: `defaultRoot`, or `override`
+/// (`ai.default_worktree_root`) with `~` expanded and a relative path
+/// taken from the repository (`../<repo>-worktrees` is the layout
+/// before `defaultRoot`'s).
 pub fn rootFor(arena: Allocator, repo_root: []const u8, override: ?[]const u8, home: ?[]const u8) Allocator.Error![]const u8 {
     const o = std.mem.trim(u8, override orelse "", " \t");
-    if (o.len == 0) return std.fmt.allocPrint(arena, "{s}-worktrees", .{std.mem.trimEnd(u8, repo_root, "/")});
+    if (o.len == 0) return defaultRoot(arena, repo_root, home);
     if (o[0] == '~' and (o.len == 1 or o[1] == '/')) {
         const h = home orelse return try arena.dupe(u8, o);
         if (o.len == 1) return try arena.dupe(u8, h);
         return std.fs.path.join(arena, &.{ h, o[2..] });
     }
     if (std.fs.path.isAbsolute(o)) return try arena.dupe(u8, o);
-    return std.fs.path.join(arena, &.{ repo_root, o });
+    // Resolved, so `../<repo>-worktrees` records the path `git worktree
+    // list` prints and the WORKTREES row finds the tree by it.
+    return std.fs.path.resolve(arena, &.{ repo_root, o });
+}
+
+/// `<parent>/.worktrees/<repo>`: the repository's parent directory, the
+/// shared folder, the repository's directory name. A repository whose
+/// parent is a filesystem root, or that is one (named `root` then), goes
+/// under `home` instead — a shared folder at the top of the disk is no
+/// one's to make — and with no usable home, beside the repository as
+/// `<repo>-worktrees`, the layout before this one.
+pub fn defaultRoot(arena: Allocator, repo_root: []const u8, home: ?[]const u8) Allocator.Error![]const u8 {
+    const base = std.fs.path.basename(repo_root);
+    const name = if (base.len == 0) "root" else base;
+    const parent = std.fs.path.dirname(repo_root);
+    if (parent) |p| if (!isFsRoot(p)) return std.fs.path.join(arena, &.{ p, shared_dir, name });
+    if (home) |h| if (std.fs.path.isAbsolute(h) and !isFsRoot(h)) return std.fs.path.join(arena, &.{ h, shared_dir, name });
+    const beside = try std.fmt.allocPrint(arena, "{s}-worktrees", .{name});
+    return std.fs.path.join(arena, &.{ parent orelse repo_root, beside });
+}
+
+/// `/`, `C:\`, `\\server\share`: a path with no parent of its own.
+fn isFsRoot(path: []const u8) bool {
+    return std.fs.path.dirname(path) == null;
 }
 
 pub fn pathFor(arena: Allocator, root: []const u8, name: []const u8) Allocator.Error![]const u8 {
@@ -364,14 +410,23 @@ pub fn rootOf(app: *App, arena: Allocator, repo: []const u8) Allocator.Error![]c
 
 /// `git worktree add -b <name> <root>/<name> HEAD` in `repo`; the path.
 /// Refused, with the reason, when the name is not one, the directory
-/// exists, or the branch does.
+/// exists, the branch does, or the root cannot be made.
 pub fn create(app: *App, arena: Allocator, repo: []const u8, name: []const u8) CommandError![]const u8 {
     if (!validName(name)) return app.diag.fail(arena, "worktree: `{s}` is not a branch name ({s})", .{ name, name_rule });
     const root = try rootOf(app, arena, repo);
     const path = try pathFor(arena, root, name);
     if (exists(app.io, path)) return app.diag.fail(arena, "worktree: {s} exists already", .{path});
     if (try branchExists(app, arena, repo, name)) return app.diag.fail(arena, "worktree: branch `{s}` exists already — pick another name", .{name});
-    Io.Dir.cwd().createDirPath(app.io, root) catch |err| return app.diag.fail(arena, "worktree: cannot create {s}: {s}", .{ root, @errorName(err) });
+    // The root may be the first tree of the shared `.worktrees` folder:
+    // made here, every missing level of it. A failure is the command
+    // log's line as a failed `worktree add` is, and the launch's reason.
+    const started = App.nowMs(app.io);
+    Io.Dir.cwd().createDirPath(app.io, root) catch |err| {
+        const reason = try std.fmt.allocPrint(arena, "cannot create {s}: {s}", .{ root, @errorName(err) });
+        const args = [_][]const u8{ "-p", root };
+        try logLine(app, repo, &.{ "mkdir", "-p", root }, &args, started, false, null, reason);
+        return app.diag.fail(arena, "worktree: {s}", .{reason});
+    };
     const out = try run(app, arena, repo, &.{ "worktree", "add", "-b", name, path, "HEAD" });
     if (!out.ok) return app.diag.fail(arena, "worktree add {s}: {s}", .{ name, out.reason() });
     return path;
@@ -714,37 +769,74 @@ pub fn acceptRemove(app: *App, path: []const u8, force: RemoveForce) CommandErro
 const t = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;
 
-test "validName: a directory name and a branch name at once" {
+test "validName: one directory name and a branch name at once" {
     try t.expect(validName("feat"));
     try t.expect(validName("session-1"));
-    try t.expect(validName("feat/login"));
     try t.expect(validName("v1.2_rc"));
     try t.expect(!validName(""));
     try t.expect(!validName("-x"));
     try t.expect(!validName(".x"));
-    try t.expect(!validName("/x"));
-    try t.expect(!validName("x/"));
     try t.expect(!validName("x."));
     try t.expect(!validName("a..b"));
-    try t.expect(!validName("a//b"));
     try t.expect(!validName("a b"));
     try t.expect(!validName("x.lock"));
     try t.expect(!validName("a@{b"));
     try t.expect(!validName("@"));
     try t.expect(!validName("a~b"));
+    // One segment: no separator of any kind, no walking up or out.
+    try t.expect(!validName("feat/login"));
+    try t.expect(!validName("/x"));
+    try t.expect(!validName("x/"));
+    try t.expect(!validName("a//b"));
+    try t.expect(!validName("a\\b"));
+    try t.expect(!validName(".."));
+    try t.expect(!validName("../x"));
+    try t.expect(!validName("x/.."));
+    try t.expect(!validName("C:x"));
+    try t.expect(!validName("x" ** 81));
 }
 
-test "rootFor: <repo>-worktrees beside the repo; the override with ~ expanded, relative under the repo, absolute as is" {
+test "rootFor: <parent>/.worktrees/<repo> by default; the override with ~ expanded, relative from the repo, absolute as is" {
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
-    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
-    try sdk_testing.expectPath("/home/x/wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
+    const sep = std.fs.path.sep_str;
+    // The default: the repo's parent, the shared folder, the repo's name.
+    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, "/p/mnml-zig", null, "/home/x"));
+    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig", try rootFor(a, "/p/mnml-zig/", "  ", "/home/x"));
+    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "mnml-zig" ++ sep ++ "feat", try pathFor(a, try rootFor(a, "/p/mnml-zig", null, null), "feat"));
+    // Two repos beside each other share the folder, one sub-folder each.
+    try t.expectEqualStrings("/p" ++ sep ++ ".worktrees" ++ sep ++ "other", try rootFor(a, "/p/other", null, "/home/x"));
+    // The override.
+    try t.expectEqualStrings("/home/x" ++ sep ++ "wt", try rootFor(a, "/p/mnml-zig", "~/wt", "/home/x"));
     try sdk_testing.expectPath("/home/x", try rootFor(a, "/p/mnml-zig", "~", "/home/x"));
-    try sdk_testing.expectPath("/p/mnml-zig/.worktrees", try rootFor(a, "/p/mnml-zig", ".worktrees", "/home/x"));
     try sdk_testing.expectPath("/srv/trees", try rootFor(a, "/p/mnml-zig", "/srv/trees", "/home/x"));
-    try sdk_testing.expectPath("/p/mnml-zig-worktrees/feat", try pathFor(a, "/p/mnml-zig-worktrees", "feat"));
+    // Relative from the repo, resolved: `../<repo>-worktrees` is the
+    // layout before this one, beside the repository.
+    try sdk_testing.expectPath("/p/mnml-zig/.trees", try rootFor(a, "/p/mnml-zig", ".trees", "/home/x"));
+    try sdk_testing.expectPath("/p/mnml-zig-worktrees", try rootFor(a, "/p/mnml-zig", "../mnml-zig-worktrees", "/home/x"));
+}
+
+test "rootFor: a repo whose parent is a filesystem root, or that is one, goes under home — never a .worktrees at the top of the disk" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const sep = std.fs.path.sep_str;
+    const windows = @import("builtin").os.tag == .windows;
+    const top = if (windows) "C:\\" else "/";
+    const home = if (windows) "C:\\Users\\x" else "/home/x";
+    const at_top = top ++ "repo";
+    try t.expectEqualStrings(home ++ sep ++ ".worktrees" ++ sep ++ "repo", try rootFor(a, at_top, null, home));
+    try t.expectEqualStrings(home ++ sep ++ ".worktrees" ++ sep ++ "root", try rootFor(a, top, null, home));
+    // No home (or a home that is a root itself): beside the repo, the
+    // earlier layout — still not a shared folder at the top.
+    try t.expectEqualStrings(top ++ "repo-worktrees", try rootFor(a, at_top, null, null));
+    try t.expectEqualStrings(top ++ "repo-worktrees", try rootFor(a, at_top, null, top));
+    try t.expectEqualStrings(top ++ "root-worktrees", try rootFor(a, top, null, null));
+    for ([_][]const u8{ at_top, top }) |r| for ([_]?[]const u8{ home, null, top }) |h| {
+        const got = try rootFor(a, r, null, h);
+        try t.expect(!std.mem.startsWith(u8, got, top ++ ".worktrees"));
+    };
 }
 
 test "suggestName skips the directories that exist" {
@@ -784,26 +876,32 @@ test "registry: add / replace by path, of() by id then cwd, learn takes the id o
     try t.expectEqual(@as(usize, 1), r.items.items.len);
 }
 
-/// A repository under a tmp dir with one commit on `main`.
+/// A repository with one commit on `main`: the App's scratch workspace
+/// (`App.scratch_workspace`, `…/<n>/ws`), so `root` — the folder it sits
+/// in, where the trees' shared `.worktrees` goes — is private to the
+/// test and goes with the App.
 const RepoFixture = struct {
-    tmp: t.TmpDir,
-    root: []u8,
-    repo: []u8,
+    /// `root`, open.
+    dir: Io.Dir,
+    root: []const u8,
+    /// The repository: the scratch workspace itself. Borrowed from `app`.
+    repo: []const u8,
     app: App,
 
     fn init() !RepoFixture {
-        var tmp = t.tmpDir(.{});
-        errdefer tmp.cleanup();
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const n = try tmp.dir.realPath(t.io, &buf);
-        const root = try t.allocator.dupe(u8, buf[0..n]);
-        errdefer t.allocator.free(root);
-        const repo = try std.fs.path.join(t.allocator, &.{ root, "repo" });
-        errdefer t.allocator.free(repo);
-        try tmp.dir.createDirPath(t.io, "repo");
-        var app = try App.initWith(t.allocator, t.io, .{ .workspace = repo, .data_root = root, .cols = 100, .rows = 30 });
+        var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 100, .rows = 30 });
         errdefer app.deinit();
-        var f: RepoFixture = .{ .tmp = tmp, .root = root, .repo = repo, .app = app };
+        const root = std.fs.path.dirname(app.workspace).?;
+        // The data root (a launch profile's shim goes there) beside the
+        // repository, out of its status.
+        t.allocator.free(app.data_root);
+        app.data_root = try t.allocator.dupe(u8, root);
+        var dir = try Io.Dir.cwd().openDir(t.io, root, .{});
+        errdefer dir.close(t.io);
+        // The workspace string is the App's heap copy: borrowing it
+        // survives the App moving into the fixture.
+        var f: RepoFixture = .{ .dir = dir, .root = root, .repo = app.workspace, .app = app };
+        const repo = f.repo;
         try f.sh(repo, &.{ "init", "-q", "-b", "main" });
         // The `-c` prefix below only reaches the test's own git. `merge`
         // makes a commit through a child process that carries none, so on
@@ -813,17 +911,20 @@ const RepoFixture = struct {
         try f.sh(repo, &.{ "config", "user.email", "t@mnml.dev" });
         try f.sh(repo, &.{ "config", "user.name", "t" });
         try f.sh(repo, &.{ "config", "commit.gpgsign", "false" });
-        try tmp.dir.writeFile(t.io, .{ .sub_path = "repo/a.txt", .data = "one\n" });
+        try f.dir.writeFile(t.io, .{ .sub_path = "ws/a.txt", .data = "one\n" });
         try f.sh(repo, &.{ "add", "a.txt" });
         try f.sh(repo, &.{ "commit", "-q", "-m", "first" });
         return f;
     }
 
     fn deinit(f: *RepoFixture) void {
+        f.dir.close(t.io);
         f.app.deinit();
-        t.allocator.free(f.repo);
-        t.allocator.free(f.root);
-        f.tmp.cleanup();
+    }
+
+    /// Where the default root puts the tree `name`: `<root>/.worktrees/ws/<name>`.
+    fn treePath(f: *RepoFixture, a: Allocator, name: []const u8) ![]const u8 {
+        return std.fs.path.join(a, &.{ f.root, shared_dir, "ws", name });
     }
 
     /// The test's own git, with an identity.
@@ -843,7 +944,7 @@ const RepoFixture = struct {
     }
 };
 
-test "create refuses a bad name, an existing directory and an existing branch; makes <repo>-worktrees/<name> on branch <name>, logged" {
+test "create refuses a bad name, an existing directory and an existing branch; makes <parent>/.worktrees/<repo>/<name> on branch <name>, logged" {
     var f = try RepoFixture.init();
     defer f.deinit();
     const app = &f.app;
@@ -853,8 +954,14 @@ test "create refuses a bad name, an existing directory and an existing branch; m
     try f.sh(f.repo, &.{ "branch", "taken" });
     try t.expectError(error.Failed, create(app, a, f.repo, "taken"));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "branch `taken` exists") != null);
+    // A name of two segments is refused before anything is made.
+    try t.expectError(error.Failed, create(app, a, f.repo, "feat/login"));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "not a branch name") != null);
+    try t.expect(!exists(t.io, try std.fs.path.join(a, &.{ f.root, shared_dir })));
+    // The shared folder and the repo's own under it are made on demand.
     const path = try create(app, a, f.repo, "feat");
-    try t.expectEqualStrings(try std.fs.path.join(a, &.{ f.root, "repo-worktrees", "feat" }), path);
+    try t.expectEqualStrings(try f.treePath(a, "feat"), path);
+    try t.expect(!std.mem.startsWith(u8, path, f.repo));
     try t.expect(exists(t.io, path));
     try t.expect(try branchExists(app, a, f.repo, "feat"));
     try t.expectEqualStrings("feat", try currentBranch(app, a, path));
@@ -887,7 +994,7 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     try f.sh(path, &.{ "add", "wt.txt" });
     try f.sh(path, &.{ "commit", "-q", "-m", "from the worktree" });
     try t.expectEqual(@as(?u32, 1), try commitsAhead(app, a, f.repo, "feat"));
-    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "repo/a.txt", .data = "two\n" });
+    try f.dir.writeFile(t.io, .{ .sub_path = "ws/a.txt", .data = "two\n" });
     try t.expect(try isDirty(app, a, f.repo));
     try t.expectError(error.Failed, merge(app, a, e));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "uncommitted changes") != null);
@@ -925,9 +1032,9 @@ test "merge refuses a dirty main tree, then lands the worktree's commit on main;
     const p3 = try create(app, a, f.repo, "clash");
     try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ p3, "a.txt" }), .data = "theirs\n" });
     try f.sh(p3, &.{ "commit", "-q", "-am", "theirs" });
-    try f.tmp.dir.writeFile(t.io, .{ .sub_path = "repo/a.txt", .data = "ours\n" });
+    try f.dir.writeFile(t.io, .{ .sub_path = "ws/a.txt", .data = "ours\n" });
     try f.sh(f.repo, &.{ "commit", "-q", "-am", "ours" });
-    try t.expectError(error.Failed, merge(app, a, .{ .path = @constCast(p3), .name = @constCast("clash"), .branch = @constCast("clash"), .repo = f.repo }));
+    try t.expectError(error.Failed, merge(app, a, .{ .path = @constCast(p3), .name = @constCast("clash"), .branch = @constCast("clash"), .repo = @constCast(f.repo) }));
     try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "merge clash into main failed") != null);
     var log_pane = false;
     for (app.panes.slots.items) |*slot| if (slot.*) |*p| if (p.* == .list and p.list.kind == .git_log) {
@@ -960,7 +1067,7 @@ test "the launch: the prompt is seeded with the first free session-<n>; accept m
     app.overlay = .none;
 
     const id = try acceptName(app, .claude, "sh", " feat ");
-    const wt = try std.fs.path.join(app.frame.allocator(), &.{ f.root, "repo-worktrees", "feat" });
+    const wt = try f.treePath(app.frame.allocator(), "feat");
     const pane = app.panes.pty(id).?;
     try t.expectEqualStrings(wt, pane.cwd.?);
     try t.expectEqualStrings("claude (sh) @ feat", pane.label);
@@ -1006,7 +1113,7 @@ test "a profile with .worktree opens the name prompt from openSessionWith; the c
     // Where there is no work tree (a bare repository stands in for a
     // directory outside every repo — the test's tmp dir is under this
     // checkout) the prompt is refused with the reason.
-    try f.tmp.dir.createDirPath(t.io, "bare.git");
+    try f.dir.createDirPath(t.io, "bare.git");
     const bare_path = try std.fs.path.join(t.allocator, &.{ f.root, "bare.git" });
     defer t.allocator.free(bare_path);
     try f.sh(bare_path, &.{ "init", "-q", "--bare" });
@@ -1256,4 +1363,80 @@ test "the name seed skips a local branch that already has the name, as it skips 
     // The prompt is seeded with it.
     try openNamePrompt(app, .claude, launch_profiles.builtin_name);
     try t.expectEqualStrings("session-4", app.overlay.prompt.state.buf.items);
+}
+
+test "create: a root that cannot be made fails the launch with the reason in the diag line and the command log — no tree, no crash" {
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    // A file where the shared folder would go.
+    try f.dir.writeFile(t.io, .{ .sub_path = shared_dir, .data = "not a folder\n" });
+    try t.expectError(error.Failed, create(app, a, f.repo, "feat"));
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, "cannot create") != null);
+    try t.expect(std.mem.indexOf(u8, app.diag.msg.?, shared_dir) != null);
+    const last = app.git.log.items.items[app.git.log.items.items.len - 1];
+    try t.expect(!last.ok);
+    try t.expect(std.mem.startsWith(u8, last.argv, "mkdir -p "));
+    try t.expect(std.mem.indexOf(u8, last.stderr, "cannot create") != null);
+    try t.expectEqual(app.git.last_failed_seq, last.seq);
+    // Nothing reached git: no branch, no `worktree add`.
+    try t.expect(!try branchExists(app, a, f.repo, "feat"));
+    for (app.git.log.items.items) |e| try t.expect(std.mem.indexOf(u8, e.argv, "worktree add") == null);
+}
+
+test "a tree made under the earlier layout stays where it is: found by its recorded path for the card, the git panel row, merge and remove" {
+    const sessions = @import("../sessions.zig");
+    var f = try RepoFixture.init();
+    defer f.deinit();
+    const app = &f.app;
+    const a = app.frame.allocator();
+    // `<repo>-worktrees/<name>` beside the repo, as an earlier mnml made
+    // it, and the registry row `session.zon` brings back.
+    const old_root = try std.fs.path.join(a, &.{ f.root, "ws-worktrees" });
+    const old = try std.fs.path.join(a, &.{ old_root, "old" });
+    try f.sh(f.repo, &.{ "worktree", "add", "-q", "-b", "old", old, "HEAD" });
+    try app.sessions.worktrees.add(app.gpa, old, "old", "old", f.repo, "sid-old");
+    // The default root moved; the tree did not.
+    try t.expectEqualStrings(try std.fs.path.join(a, &.{ f.root, shared_dir, "ws" }), try rootOf(app, a, f.repo));
+    // The SESSIONS card / row menu: by the session's id, and by its cwd.
+    var it = sessions.testItem("sid-old", .idle, 30, "ws", "old work");
+    try t.expectEqualStrings(old, sessions.worktreeOf(app, it).?.path);
+    it.session_id = "unpaired";
+    it.cwd = old;
+    try t.expectEqualStrings(old, sessions.worktreeOf(app, it).?.path);
+    // The git panel's WORKTREES row: the path `git worktree list` prints.
+    const list = try run(app, a, f.repo, &.{ "worktree", "list", "--porcelain" });
+    var listed: ?[]const u8 = null;
+    var lines = std.mem.tokenizeScalar(u8, list.stdout, '\n');
+    while (lines.next()) |line| if (std.mem.startsWith(u8, line, "worktree ") and std.mem.endsWith(u8, line, "old")) {
+        listed = line["worktree ".len..];
+    };
+    // (Windows git prints `C:/…` with forward slashes, which the registry
+    // compares byte for byte: a separate, older gap — not checked there.)
+    if (@import("builtin").os.tag != .windows) try t.expect(app.sessions.worktrees.byPath(listed.?) != null);
+    // A commit in the tree; merge, then remove — both by the recorded path.
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = try std.fs.path.join(a, &.{ old, "o.txt" }), .data = "o\n" });
+    try f.sh(old, &.{ "add", "o.txt" });
+    try f.sh(old, &.{ "commit", "-q", "-m", "from the old tree" });
+    const e = app.sessions.worktrees.byPath(old).?.*;
+    try confirmMerge(app, e);
+    try t.expectEqualStrings("Merge old into main? (1 commit)", app.overlay.confirm.message);
+    try t.expectEqualStrings(old, app.overlay.confirm.purpose.session_worktree_merge);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try acceptMerge(app, old);
+    try t.expectEqualStrings("merged old into main", app.lastToast().?);
+    try confirmRemove(app, app.sessions.worktrees.byPath(old).?.*);
+    try t.expectEqualStrings("Remove worktree old and branch old?", app.overlay.confirm.message);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try acceptRemove(app, old, .{});
+    try t.expectEqualStrings("removed worktree old", app.lastToast().?);
+    try t.expect(!exists(t.io, old));
+    try t.expect(!try branchExists(app, a, f.repo, "old"));
+    try t.expect(app.sessions.worktrees.byPath(old) == null);
+    // Its emptied root went with it; the new layout's folder was never made.
+    try t.expect(!exists(t.io, old_root));
+    try t.expect(!exists(t.io, try std.fs.path.join(a, &.{ f.root, shared_dir })));
 }
