@@ -34,6 +34,15 @@ the release ships one file), and one line per change a user can see.
   as the host's own controls do. Panes set it with `Help.runs(id)` and
   `Mount.hoverHelp`; older panes and hosts are unaffected. The sample
   integration's header shows it.
+### The setup wizard on a first launch
+
+- A first launch from your home folder — the way a new terminal window
+  opens — shows the setup wizard. It used to show the "where to?"
+  picker instead, and the wizard never came; the picker returns on
+  later launches once the setup is done.
+- A dialog that is already up on a first launch, such as the workspace
+  trust question, no longer cancels the wizard: it opens as soon as
+  that dialog closes.
 
 ### Claude tokens renew on every system
 
