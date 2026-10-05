@@ -378,21 +378,14 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
     // mnml's own config, in the isolated data root (harness.mnml_config
     // says why each key is there).
     //
-    // In BOTH roots, because the harness launches `--profile dev` and the
-    // dev profile is the stable answer with `-dev` on the end — an
-    // explicit $MNML_DATA_ROOT included (`config/data_root.zig`). Writing
-    // only the un-suffixed one is exactly the bug that put the
-    // first-launch wizard on the user's screen: the file was there, and
-    // the app was reading the directory next door.
     // Plus the developer's own layout keys, so a hunter is looking at
     // the layout the developer looks at rather than the defaults
     // (`harness.copied_keys` — two appearance keys, and nothing that
     // names a token, a path or an integration).
     const own_cfg = readUserMnmlConfig(gpa, io, init_env) orelse "";
     const mnml_cfg = try harness.mnmlConfigWith(gpa, own_cfg, .{ .allow_input = hasFlag(args, "--allow-input") });
-    for ([_][]const u8{ data_root, try std.fmt.allocPrint(gpa, "{s}-dev", .{data_root}) }) |root| {
-        try Io.Dir.cwd().createDirPath(io, root);
-        const cfg_path = try std.fs.path.join(gpa, &.{ root, "config.zon" });
+    {
+        const cfg_path = try std.fs.path.join(gpa, &.{ data_root, "config.zon" });
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = cfg_path, .data = mnml_cfg });
     }
 
@@ -456,11 +449,6 @@ fn launch(gpa: Allocator, io: Io, init_env: *std.process.Environ.Map, args: []co
                 cfg_flag,
                 "-e",
                 abs_exe,
-                // The dev profile keeps the IPC mailbox and the running-
-                // instance marker separate from an installed mnml's, so
-                // the harness never collides with the developer's own.
-                "--profile",
-                "dev",
                 abs_ws,
             },
             .environ_map = &child_env,
@@ -683,9 +671,7 @@ fn waitForGrid(gpa: Allocator, io: Io, guard: *const FocusGuard, ipc_dir: []cons
 }
 
 /// The developer's own `config.zon`, read-only, for the two layout keys
-/// the harness copies. The stable root, not the dev one: the dev profile
-/// is a scratch copy, and the settings a person actually lives in are in
-/// the one they opened first.
+/// the harness copies.
 fn readUserMnmlConfig(gpa: Allocator, io: Io, env: *std.process.Environ.Map) ?[]u8 {
     const home = env.get("HOME") orelse return null;
     const p = std.fs.path.join(gpa, &.{ home, ".config", "mnml", "config.zon" }) catch return null;

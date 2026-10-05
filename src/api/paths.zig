@@ -43,7 +43,7 @@ pub fn dir(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.Error!
         else => nonEmpty(env, "XDG_RUNTIME_DIR") orelse nonEmpty(env, "TMPDIR") orelse "/tmp",
     };
     const user = nonEmpty(env, "USER") orelse nonEmpty(env, "USERNAME") orelse "x";
-    const name = try std.fmt.allocPrint(gpa, "{s}{s}.api", .{ marker.filePrefix(env), user });
+    const name = try std.fmt.allocPrint(gpa, "{s}{s}.api", .{ marker.file_prefix, user });
     defer gpa.free(name);
     return std.fs.path.join(gpa, &.{ base, name });
 }
@@ -162,7 +162,7 @@ test "the directory is per user and profile, under TMPDIR on macOS; MNML_API_DIR
         .windows => ".",
         else => "/run/user/501",
     };
-    const want = try std.fmt.allocPrint(t.allocator, "{s}/{s}chris.api", .{ base, marker.filePrefix(&env) });
+    const want = try std.fmt.allocPrint(t.allocator, "{s}/{s}chris.api", .{ base, marker.file_prefix });
     defer t.allocator.free(want);
     try sdk_testing.expectPath(want, d);
 

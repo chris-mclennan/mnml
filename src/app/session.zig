@@ -64,7 +64,6 @@ const theme_mod = @import("../ui/theme.zig");
 const zen = @import("zen.zig");
 const command = @import("../core/command.zig");
 const dock = @import("dock.zig");
-const config_profile = @import("../config/profile.zig");
 const git_app = @import("git.zig");
 const git_client = @import("../git/client.zig");
 const grep = @import("grep.zig");
@@ -73,23 +72,9 @@ const http_app = @import("http.zig");
 const http_parse = @import("../http/parse.zig");
 const browser_pane = @import("browser_pane.zig");
 const session_changes = @import("session_changes.zig");
-const Profile = config_profile.Profile;
 
 pub const format_version: u32 = 1;
 pub const rel_path = ".mnml/session.zon";
-/// The dev profile's own file, so daily-driving a workspace and
-/// developing in it do not overwrite each other's layout. The two
-/// profiles share `.mnml/`; they do not share this
-/// (`src/config/profile.zig`).
-pub const rel_path_dev = ".mnml/session-dev.zon";
-
-/// The session file for `p`.
-pub fn relPath(p: Profile) []const u8 {
-    return switch (p) {
-        .stable => rel_path,
-        .dev => rel_path_dev,
-    };
-}
 pub const autosave_ms: i64 = 30_000;
 /// A pane index the file names that did not come back; swept out of
 /// the rebuilt tree before it is installed.
@@ -334,7 +319,7 @@ pub fn tick(app: *App, now: i64) void {
 }
 
 pub fn path(app: *App, arena: Allocator) Allocator.Error![]const u8 {
-    return std.fs.path.join(arena, &.{ app.workspace, relPath(app.profile()) });
+    return std.fs.path.join(arena, &.{ app.workspace, rel_path });
 }
 
 // ─── save ────────────────────────────────────────────────────────────────
@@ -668,23 +653,23 @@ pub fn restore(app: *App) RestoreError!void {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return,
         else => {
-            app.toast("session: cannot read {s}: {s}", .{ relPath(app.profile()), @errorName(err) });
+            app.toast("session: cannot read {s}: {s}", .{ rel_path, @errorName(err) });
             return;
         },
     };
     const saved = parse(arena, src) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.ParseZon => {
-            app.toast("session: {s} does not parse — ignored", .{relPath(app.profile())});
+            app.toast("session: {s} does not parse — ignored", .{rel_path});
             return;
         },
     };
     if (saved.version != format_version) {
-        app.toast("session: {s} is format v{d}, this build writes v{d} — ignored", .{ relPath(app.profile()), saved.version, format_version });
+        app.toast("session: {s} is format v{d}, this build writes v{d} — ignored", .{ rel_path, saved.version, format_version });
         return;
     }
     if (!sameWorkspace(app.io, saved.workspace, app.workspace)) {
-        app.toast("session: {s} belongs to {s} — ignored", .{ relPath(app.profile()), saved.workspace });
+        app.toast("session: {s} belongs to {s} — ignored", .{ rel_path, saved.workspace });
         return;
     }
     try apply(app, arena, saved);
@@ -1272,7 +1257,7 @@ fn wellFormed(tab: Tab) bool {
 pub fn saveCmd(app: *App) command.CommandError!void {
     save(app) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.WriteFailed => return app.diag.fail(app.frame.allocator(), "session: could not write {s}", .{relPath(app.profile())}),
+        error.WriteFailed => return app.diag.fail(app.frame.allocator(), "session: could not write {s}", .{rel_path}),
     };
     app.toast("session saved ({d} pane(s), {d} tab(s))", .{ app.panes.count(), app.layouts.layouts.items.len });
 }
@@ -1280,7 +1265,7 @@ pub fn saveCmd(app: *App) command.CommandError!void {
 pub fn restoreCmd(app: *App) command.CommandError!void {
     app.session.restored = false;
     try restore(app);
-    if (!app.session.restored) return app.diag.fail(app.frame.allocator(), "session: nothing restored from {s}", .{relPath(app.profile())});
+    if (!app.session.restored) return app.diag.fail(app.frame.allocator(), "session: nothing restored from {s}", .{rel_path});
     const kept = app.session.kept_live;
     if (kept == 0) return app.toast("session restored", .{});
     app.toast("session restored · {d} AI session{s} already running, kept in {s} pane, not resumed again", .{ kept, if (kept == 1) "" else "s", if (kept == 1) "its" else "their" });
@@ -1290,7 +1275,7 @@ pub fn clearCmd(app: *App) command.CommandError!void {
     const file = try path(app, app.frame.allocator());
     Io.Dir.cwd().deleteFile(app.io, file) catch |err| switch (err) {
         error.FileNotFound => {},
-        else => return app.diag.fail(app.frame.allocator(), "session: could not delete {s}: {s}", .{ relPath(app.profile()), @errorName(err) }),
+        else => return app.diag.fail(app.frame.allocator(), "session: could not delete {s}: {s}", .{ rel_path, @errorName(err) }),
     };
     // Off until `session.save` asks again, so quitting does not bring it back.
     app.session.autosave = false;
@@ -1755,38 +1740,6 @@ test "session: an editor's rail colour rides in the file too, and a pane picked 
         try t.expectEqualStrings("green", seen[0] orelse return error.TestUnexpectedResult);
         try t.expectEqualStrings("purple", seen[1] orelse return error.TestUnexpectedResult);
     }
-}
-
-test "session: the two profiles key the file apart — dev saves session-dev.zon and never touches the stable one" {
-    var f = try Fixture.init();
-    defer f.deinit();
-    // Both profiles open the SAME workspace, which is the whole point:
-    // you daily-drive a project and develop mnml in it on the same day.
-    try f.tmp.dir.createDirPath(t.io, ".mnml");
-    try f.tmp.dir.writeFile(t.io, .{ .sub_path = rel_path, .data = ".{ .workspace = \"/elsewhere\" }" });
-
-    var env: std.process.Environ.Map = .init(t.allocator);
-    defer env.deinit();
-    try env.put("MNML_PROFILE", "dev");
-    var app = try App.initWith(t.allocator, t.io, .{ .workspace = f.root, .cols = 120, .rows = 40, .env = &env });
-    defer app.deinit();
-    try t.expectEqual(config_profile.Profile.dev, app.profile());
-
-    {
-        const arena = app.frame.allocator();
-        const p = try path(&app, arena);
-        try t.expect(std.mem.endsWith(u8, p, rel_path_dev));
-    }
-    try save(&app);
-    _ = try f.tmp.dir.statFile(t.io, rel_path_dev, .{});
-    // The stable profile's file is exactly as it was left.
-    const stable = try f.tmp.dir.readFileAlloc(t.io, rel_path, t.allocator, .limited(1 << 16));
-    defer t.allocator.free(stable);
-    try t.expectEqualStrings(".{ .workspace = \"/elsewhere\" }", stable);
-    // And the dev profile does not read it either: a restore that found
-    // the stable file would toast about /elsewhere.
-    try restore(&app);
-    try t.expect(app.session.restored);
 }
 
 /// The id a restore plan resumes, spelled so a rule that regressed

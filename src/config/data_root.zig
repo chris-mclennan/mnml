@@ -13,12 +13,10 @@
 //! `homeConfigPath` is the same ladder minus the state probes (a fresh
 //! install has no state yet, and the file it names is where it will go).
 //!
-//! That ladder answers for the *stable* profile. The dev profile
-//! (`MNML_PROFILE=dev`, `config/profile.zig`) is the same answer with
-//! `-dev` on the end — at every rung, the explicit `$MNML_DATA_ROOT`
-//! included — so the two profiles never share a file and there is still
-//! only one precedence to reason about. `stableDataRoot` is the
-//! un-suffixed answer, for the one caller that needs both: the seeder.
+//! There is one ladder for every build — an installed mnml and one built
+//! from source answer the same root. `--sandbox` and `--demo` pick their
+//! own throwaway roots per launch (`sandbox.zig`, `demo.zig`), and
+//! `$MNML_DATA_ROOT` is the explicit override.
 //!
 //! Every function takes the environment and the binary dir as values so
 //! tests can hand in a fake map and a tmp dir; only the existence probes
@@ -27,8 +25,6 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const profile_mod = @import("profile.zig");
-pub const Profile = profile_mod.Profile;
 
 pub const config_file = "config.zon";
 pub const portable_dir = "mnml-data";
@@ -54,21 +50,7 @@ pub const Env = struct {
     pub fn home(env: Env) ?[]const u8 {
         return env.get("HOME") orelse env.get("USERPROFILE");
     }
-
-    /// The profile this environment asks for (`MNML_PROFILE`).
-    pub fn profile(env: Env) Profile {
-        return profile_mod.of(env.vars);
-    }
 };
-
-/// `base` as this profile spells it: itself for stable, `base-dev` for
-/// dev. Frees `base` either way; the result is owned.
-fn withProfile(alloc: Allocator, base: []u8, p: Profile) Allocator.Error![]u8 {
-    const sfx = profile_mod.suffix(p);
-    if (sfx.len == 0) return base;
-    defer alloc.free(base);
-    return std.mem.concat(alloc, u8, &.{ base, sfx });
-}
 
 fn exists(io: Io, path: []const u8) bool {
     Io.Dir.cwd().access(io, path, .{}) catch return false;
@@ -105,14 +87,8 @@ fn hasState(alloc: Allocator, io: Io, root: []const u8) Allocator.Error!bool {
     return isDir(io, integrations);
 }
 
-/// Where this profile keeps its state.
+/// Where mnml keeps its state.
 pub fn dataRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error![]u8 {
-    return withProfile(alloc, try stableDataRoot(alloc, io, env), env.profile());
-}
-
-/// The stable profile's root, whatever profile is running — what the
-/// dev profile seeds itself from.
-pub fn stableDataRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error![]u8 {
     if (env.get("MNML_DATA_ROOT")) |root| return alloc.dupe(u8, root);
     if (try portableState(alloc, io, env) == .active) {
         if (try portableCandidate(alloc, env)) |p| return p;
@@ -146,15 +122,14 @@ pub fn homeConfigPath(alloc: Allocator, io: Io, env: Env) Allocator.Error!?[]u8 
 }
 
 /// The directory `homeConfigPath` names — the ladder without the state
-/// probes, with the profile applied. Null when there is no home at all.
+/// probes. Null when there is no home at all.
 fn homeConfigRoot(alloc: Allocator, io: Io, env: Env) Allocator.Error!?[]u8 {
-    const p = env.profile();
-    if (env.get("MNML_DATA_ROOT")) |root| return try withProfile(alloc, try alloc.dupe(u8, root), p);
+    if (env.get("MNML_DATA_ROOT")) |root| return try alloc.dupe(u8, root);
     if (try portableState(alloc, io, env) == .active) {
-        if (try portableCandidate(alloc, env)) |c| return try withProfile(alloc, c, p);
+        if (try portableCandidate(alloc, env)) |c| return c;
     }
-    if (env.get("XDG_CONFIG_HOME")) |xdg| return try withProfile(alloc, try std.fs.path.join(alloc, &.{ xdg, "mnml" }), p);
-    if (env.home()) |home| return try withProfile(alloc, try std.fs.path.join(alloc, &.{ home, ".config", "mnml" }), p);
+    if (env.get("XDG_CONFIG_HOME")) |xdg| return try std.fs.path.join(alloc, &.{ xdg, "mnml" });
+    if (env.home()) |home| return try std.fs.path.join(alloc, &.{ home, ".config", "mnml" });
     return null;
 }
 
@@ -302,77 +277,17 @@ test "USERPROFILE is the home where HOME is not set" {
     try expectPath(both, "/home/x", ".config/mnml");
 }
 
-test "the dev profile is every rung of the ladder with -dev on the end" {
+test "MNML_PROFILE is not read: a leftover value names no second root" {
     var s = try Sandbox.init();
     defer s.deinit();
-    try s.vars.put("MNML_PROFILE", "dev");
-
-    // 5. no home at all
-    {
-        const root = try dataRoot(t.allocator, t.io, s.env(null));
-        defer t.allocator.free(root);
-        try t.expectEqualStrings("mnml-dev", root);
-        try t.expect((try homeConfigPath(t.allocator, t.io, s.env(null))) == null);
-    }
-    // 4. HOME
     try s.vars.put("HOME", "/home/x");
-    {
-        const root = try dataRoot(t.allocator, t.io, s.env(null));
-        defer t.allocator.free(root);
-        try sdk_testing.expectPath("/home/x/.config/mnml-dev", root);
-        const cfg = (try homeConfigPath(t.allocator, t.io, s.env(null))).?;
-        defer t.allocator.free(cfg);
-        try sdk_testing.expectPath("/home/x/.config/mnml-dev/config.zon", cfg);
-    }
-    // 3. XDG — and the state probes still run on the STABLE paths, so a
-    // dev root that does not exist yet (it is about to be seeded) never
-    // changes which rung was taken.
-    const xdg = try s.sub("xdg");
-    defer t.allocator.free(xdg);
-    const home = try s.sub("home");
-    defer t.allocator.free(home);
-    try s.vars.put("XDG_CONFIG_HOME", xdg);
-    try s.vars.put("HOME", home);
-    try s.tmp.dir.createDirPath(t.io, "home/.config/mnml/integrations");
-    {
-        const root = try dataRoot(t.allocator, t.io, s.env(null));
-        defer t.allocator.free(root);
-        try expectPath(root, s.root, "home/.config/mnml-dev");
-        const stable = try stableDataRoot(t.allocator, t.io, s.env(null));
-        defer t.allocator.free(stable);
-        try expectPath(stable, s.root, "home/.config/mnml");
-    }
-    // 2. portable
-    const bin = try s.sub("bin");
-    defer t.allocator.free(bin);
-    try s.tmp.dir.createDirPath(t.io, "bin/mnml-data");
-    try s.tmp.dir.writeFile(t.io, .{ .sub_path = "bin/mnml-data/.opted-in", .data = "" });
-    {
-        const root = try dataRoot(t.allocator, t.io, s.env(bin));
-        defer t.allocator.free(root);
-        try expectPath(root, s.root, "bin/mnml-data-dev");
-        const cfg = (try homeConfigPath(t.allocator, t.io, s.env(bin))).?;
-        defer t.allocator.free(cfg);
-        try expectPath(cfg, s.root, "bin/mnml-data-dev/config.zon");
-    }
-    // 1. the explicit root is suffixed too: a private root stays private.
-    try s.vars.put("MNML_DATA_ROOT", "/explicit/root");
-    {
-        const root = try dataRoot(t.allocator, t.io, s.env(bin));
-        defer t.allocator.free(root);
-        try sdk_testing.expectPath("/explicit/root-dev", root);
-        const cfg = (try homeConfigPath(t.allocator, t.io, s.env(bin))).?;
-        defer t.allocator.free(cfg);
-        try sdk_testing.expectPath("/explicit/root-dev/config.zon", cfg);
-        const stable = try stableDataRoot(t.allocator, t.io, s.env(bin));
-        defer t.allocator.free(stable);
-        try sdk_testing.expectPath("/explicit/root", stable);
-    }
-    // An unknown profile is the stable one, not a third root.
-    try s.vars.put("MNML_PROFILE", "prod");
-    const root = try dataRoot(t.allocator, t.io, s.env(bin));
+    try s.vars.put("MNML_PROFILE", "dev");
+    const root = try dataRoot(t.allocator, t.io, s.env(null));
     defer t.allocator.free(root);
-    try sdk_testing.expectPath("/explicit/root", root);
+    try sdk_testing.expectPath("/home/x/.config/mnml", root);
+    const cfg = (try homeConfigPath(t.allocator, t.io, s.env(null))).?;
+    defer t.allocator.free(cfg);
+    try sdk_testing.expectPath("/home/x/.config/mnml/config.zon", cfg);
 }
 
 test "an empty variable counts as unset" {

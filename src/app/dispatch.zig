@@ -2858,7 +2858,6 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     .workspace => if (right) try context_menus.openWorkspaceChipMenu(app, m.x, m.y),
                     // The session ring's chip and its arrows.
                     .zoom, .sessions, .session_prev, .session_next => {},
-                    .dev_profile => if (!right) app.toast("dev profile — state in {s} (the installed mnml keeps its own)", .{app.data_root}),
                     .sandbox => if (app.sandboxState() == .unsafe)
                         app.toast("sandbox? — NOT isolated: HOME {s}, state in {s}", .{ app.env.get("HOME") orelse "(unset)", app.data_root })
                     else if (app.demoActive())

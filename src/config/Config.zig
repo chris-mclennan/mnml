@@ -1456,7 +1456,7 @@ pub const MarketplaceSource = union(enum) {
     /// built on, and per platform an archive URL and its sha256.
     /// Install downloads the archive for this platform, checks the
     /// sum, and installs the binary under the data root. `{version}`
-    /// in the URL is this mnml's version; a dev build (no release of
+    /// in the URL is this mnml's version; a source build (no release of
     /// its own) skips a URL that needs one.
     release_index: struct { id: []const u8 = "", url: []const u8 = "" },
 };
@@ -1474,7 +1474,7 @@ pub const Marketplace = struct {
 /// this repo's releases. Every mnml release carries `integrations.json`
 /// — the integrations built for that version, each on its own
 /// `<id>-v<version>` tag — and this is its URL for the running mnml's
-/// own version. A dev build has no release, so it skips this source and
+/// own version. A source build has no release, so it skips this source and
 /// lists the checkout's catalogue instead (`app/marketplace.zig`).
 pub const default_marketplace_sources = [_]MarketplaceSource{
     .{ .release_index = .{ .id = "mnml", .url = default_index_url } },

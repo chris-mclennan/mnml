@@ -172,11 +172,6 @@ pub fn entry(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Entry {
             .keys = &.{.{ .command = .@"view.toggle_zoom", .label = "Zoom the split / restore" }},
             .links = &.{ .{ .command = .{ .id = .@"view.toggle_zoom", .label = "Restore the layout" } }, .{ .command = .{ .id = .@"view.fullscreen", .label = "Full screen as well" } } },
         },
-        .dev_profile => .{
-            .title = "dev profile",
-            .body = "This is a build run from a source tree (`./run.sh`), not the installed mnml: its config, session and IPC live under a separate data root so a development build cannot rewrite the daily driver's settings. Click toasts where that root is. `mnml profile seed` copies the stable profile into it when you want the same settings on both.",
-            .links = &.{ .{ .command = .{ .id = .@"app.choose_data_layout", .label = "Choose the data layout" } }, .{ .command = .{ .id = .@"app.restart", .label = "Rebuild and relaunch" } } },
-        },
         .sandbox => if (app.sandboxState() == .unsafe) .{
             .title = "sandbox? — NOT isolated",
             .body = "`MNML_SANDBOX` says this is a sandbox, but `HOME` is not a throwaway directory or the data root lies outside it, so this session CAN read and write your real config and state. Quit, and launch with `mnml --sandbox` from a normal shell: it makes a fresh temp home and re-runs itself inside it. Click toasts the HOME and data root in play.",

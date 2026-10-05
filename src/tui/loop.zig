@@ -17,7 +17,6 @@ const App = app_mod.App;
 const event = @import("../core/event.zig");
 const key_mod = @import("../core/key.zig");
 const config = @import("../config/root.zig");
-const profile = config.profile;
 const ipc = @import("../ipc/root.zig");
 const screen_mod = @import("../ipc/screen.zig");
 const integrations = @import("../app/integrations.zig");
@@ -43,7 +42,7 @@ pub const Options = struct {
     data_root: []const u8 = "",
     /// Files to open at start, workspace-relative or absolute.
     files: []const []const u8 = &.{},
-    /// A line for the first frame — the dev profile's "seeded from …".
+    /// A line for the first frame — `--demo`'s note on what is missing.
     note: ?[]const u8 = null,
 };
 
@@ -68,12 +67,10 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // The window title names the workspace ("mnml — work"), so several
     // mnml tabs stay telling apart — and `scripts/shot.sh` finds the
     // window by it.
-    // The dev profile says so in the title, so the window you are
-    // looking at names which mnml it is ("mnml [dev] — work").
     {
         const base = std.fs.path.basename(opts.workspace);
         // A sandbox says so in the title as well as on the statusline.
-        const tag = if (config.sandbox.state(env, opts.data_root) != .off) "sandbox" else profile.tag(profile.of(env));
+        const tag: []const u8 = if (config.sandbox.state(env, opts.data_root) != .off) "sandbox" else "";
         var title_buf: [256]u8 = undefined;
         const title = if (tag.len > 0)
             std.fmt.bufPrint(&title_buf, "mnml [{s}]{s}{s}", .{ tag, if (base.len > 0) " — " else "", base }) catch "mnml"
@@ -116,7 +113,7 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // file the headless loop writes — so a script can watch the real
     // terminal session too.
     var channel: ?ipc.Channel = null;
-    channel = ipc.Channel.init(gpa, io, opts.workspace, .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = profile.ipcSubdir(profile.of(env)) }) catch |err| blk: {
+    channel = ipc.Channel.init(gpa, io, opts.workspace, .{ .dir_override = env.get("MNML_IPC_DIR"), .subdir = build_options.ipc_subdir }) catch |err| blk: {
         app.toast("ipc: cannot open the channel: {s}", .{@errorName(err)});
         break :blk null;
     };
