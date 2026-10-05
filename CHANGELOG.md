@@ -75,6 +75,25 @@ the release ships one file), and one line per change a user can see.
   hover names the account and why; a click on a chip with a `!` opens
   the usage pane at that account.
 
+### A ticket key says what it names
+
+- Hovering a ticket key that the Jira integration has lately polled —
+  in a terminal, on a session card, anywhere it links — shows
+  `ACME-123 · Fix the login redirect · In Review`; its right-click menu
+  leads with the same line. An old or failed poll keeps the title and
+  adds `as of 3h ago`. No request is made for it.
+- The Jira integration writes what its `--values` poll and its pane's
+  tabs list into a shared recent-items cache,
+  `recent/jira/ticket.json` under the shared state dir (else the data
+  root): key, summary, status, assignee's display name, priority, type,
+  fix versions — never a description, an account id or an email.
+- `recent_items.enabled = false` turns it off: mnml reads none of it
+  and the integrations it starts write none.
+- SDK: `sdk.cache` — `put` / `failed` / `get` / `query` over typed
+  `Ticket`, `Pr`, `Pipeline` and `Release` records, with the file
+  format documented as a contract (`docs/SDK.md`, *The recent-items
+  cache*).
+
 ### A bare pull-request or pipeline number links
 
 - `Pull request 5505`, `PR #5505` and `pipeline 10554` link to the

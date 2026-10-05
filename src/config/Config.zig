@@ -57,8 +57,16 @@ workspaces: []const Workspace = &.{},
 marketplace: Marketplace = .{},
 scripts: Scripts = .{},
 statusline: Statusline = .{},
+/// The shared recent-items cache (`docs/SDK.md`, "Cache"): off, the
+/// host reads none of it and the integrations it starts write none.
+recent_items: RecentItems = .{},
 
 // ─── statusline ──────────────────────────────────────────────
+
+/// `recent_items` — the shared recent-items cache, read for link titles.
+pub const RecentItems = struct {
+    enabled: bool = true,
+};
 
 pub const Statusline = struct {
     /// How many of the things behind a figure the chip's hover lists

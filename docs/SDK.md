@@ -1295,6 +1295,78 @@ budget.setFeed(w.state(now_ms));
 `Feed` is the interface both sources sit behind (`PollFeed.feed()`,
 `FileFeed.feed()`); `Watcher` is the rule between them.
 
+## The recent-items cache — `mnml_sdk.cache`
+
+What your integration polls anyway, shared: the host labels a link
+to `ACME-123` with the ticket's summary, and any pane — in any language
+— can read the same file. One small typed record per item, never a body:
+
+| kind | id | record |
+|------|----|--------|
+| `.ticket` | `ACME-123` | `sdk.cache.Ticket` — summary, status, status_category, assignee, priority, type, fix_versions, updated |
+| `.pr` | `acme/widget#45` | `sdk.cache.Pr` — title, source_branch, dest_branch, author, state, draft, updated |
+| `.pipeline` | `acme/widget!1234` | `sdk.cache.Pipeline` — state, result, ref_name, created, updated |
+| `.release` | `ACME/2026.10` | `sdk.cache.Release` — name, project, state, release_date, role (`current`/`next`/empty), keys |
+
+People appear by display name only — never an account id or an email.
+
+```zig
+// Where a poll already has the records in hand (a worker, not paint):
+_ = sdk.cache.put(gpa, io, env, .{
+    .source = "jira",
+    .kind = .ticket,
+    .listing = "assigned_open", // which poll this was
+    .complete = true,           // the listing came back whole
+    .stale_after_secs = 120,    // the poll interval, doubled
+}, tickets);                    // []const sdk.cache.Ticket
+_ = sdk.cache.failed(gpa, io, env, "jira", .ticket); // the poll failed: error_at only
+
+const t = sdk.cache.get(.ticket, arena, io, env, "ACME-123"); // ?Found(Ticket)
+const open = sdk.cache.query(.pr, arena, io, env, .{ .repo = "acme/widget", .state = "OPEN", .since_secs = 7 * 86400, .limit = 50 });
+```
+
+`put` upserts by id and sets `seen_at`; it never deletes on absence.
+With `.complete = true`, a record that named this listing before and is
+missing now loses the listing and turns `stale` (it moved or closed);
+seeing it again clears that. `putAt` / `failedAt` / `getAt` / `queryAt`
+take the `recent/` directory instead of the environment — what a worker
+thread holding no `env` calls (`sdk.cache.rootDir` once, up front). A
+`Found` carries `source`, `seen_at` and a computed `stale`. Every write
+is best effort and returns an `Outcome`, never an error.
+
+### The file — a public contract
+
+`recent/<source>/<kind>.json`, `recent/` being the first of
+`$MNML_SHARED_STATE_DIR/recent/`, `<MNML_DATA_ROOT>/recent/`,
+`~/.config/mnml/recent/`:
+
+```json
+{"version":1,"source":"jira","kind":"ticket","fresh_at":1791100000,"error_at":0,"stale_after_secs":1800,"records":[
+ {"id":"ACME-123","seen_at":1791100000,"stale":false,"listings":["assigned_open"],"summary":"Fix the login redirect","status":"In Review","status_category":"indeterminate","assignee":"Pat Example","priority":"High","type":"Bug","fix_versions":["2026.10"],"updated":"2026-10-01T09:12:00.000+0000"}
+]}
+```
+
+- `fresh_at` is the last good poll, `error_at` the last failed one,
+  `seen_at` when the record last came back. A record reads as stale
+  when its `stale` is true, when `error_at` is newer than `fresh_at`,
+  or when `fresh_at` is more than `stale_after_secs` ago. A stale
+  record is still shown — an old title beats none.
+- Fields a reader does not know are kept on rewrite, so a newer
+  writer's survive an older one's.
+- **Writers** take `<kind>.lock` exclusively (a writer that cannot in
+  2 s skips the write), merge, evict, write `<kind>.json.tmp.<pid>`
+  mode 0600 and rename it over the file — three tries 50 ms apart,
+  then give up until the next poll. The directory is 0700.
+  **Readers** never lock and refuse a file over 4 MiB.
+- Eviction, oldest `seen_at` first: tickets 1000 / 30 days, PRs 500 /
+  30 days, pipelines 20 per repo / 14 days, releases 20 plus every
+  `current`/`next` / 180 days. A file stays under 2 MiB.
+- `$MNML_RECENT_ITEMS=0` turns every write off; mnml sets it for what
+  it starts when the user sets `recent_items.enabled = false`.
+- The files hold real company data: they live on the user's machine
+  only — never under a workspace's `.mnml/`, never in a repo or a bug
+  report. Tests point `MNML_SHARED_STATE_DIR` at a scratch directory.
+
 ## The shared bucket file — a public contract
 
 `budget.shared_bucket` names a file holding one token bucket that every

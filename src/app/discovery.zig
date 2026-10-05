@@ -595,6 +595,12 @@ pub fn hoverTip(app: *App, arena: Allocator) Allocator.Error!?Tip {
 
 /// The popup (`ui.hover_tooltip`), after everything else.
 pub fn drawTooltip(app: *App, ui: Ui, screen: Rect) Allocator.Error!void {
+    // A link the recent-items cache knows shows what it names, setting
+    // or no: that is the link's content, not help about it.
+    if (app.overlay == .none) if (try @import("recent_items.zig").linkTip(app, ui.arena)) |tip| {
+        const h = app.hover.?;
+        return tooltip.draw(ui, screen, h.x, h.y, tip);
+    };
     if (!app.cfg.ui.hover_tooltip or app.overlay == .info or app.overlay == .discovery) return;
     const h = app.hover orelse return;
     const tip = (try hoverTip(app, ui.arena)) orelse return;
