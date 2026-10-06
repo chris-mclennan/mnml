@@ -25,7 +25,7 @@ command view.toggle_hover_tooltip
 # The Work chip on the statusline (row 38).
 hover 73 38
 wait 300
-expect screen contains "open items assigned to me"
+expect screen contains "work items assigned to you"
 expect screen contains "ENG-"
 
 # One search, and only one: the rows are the issues it returned, so
