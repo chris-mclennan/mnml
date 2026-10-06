@@ -322,7 +322,7 @@ the next backfill has to come back for.
 | The tree keys: `→`/`←` expand / collapse, `Enter`/`Space` toggle, `E`/`C` every node open / shut | (the convention; both first-party panes bind it) |
 | State colours | `Theme.prState` / `pipelineState` / `ticketStatus` |
 | A chevron that folds under the mouse | `Painter.chevron` |
-| One figure on a statusline segment, and a bracketed subset only when the pane has one | `pane.figure` |
+| One statusline chip per integration: one figure, a bracketed subset only when the pane has one, further counts each named by a glyph after a ` · ` | `pane.figure` |
 
 The gutter runs the WHOLE height of the pane, whatever shape the body
 is. A pane with a column-shaped body (a board of boxed columns) starts
@@ -338,18 +338,34 @@ the tab wears the manifest's chip glyph.
 
 #### What a statusline segment may say
 
-**One named figure per segment, plus a bracketed subset only when the
-pane genuinely has one.**
+**One chip per integration.** An integration shows ONE statusline
+chip by default; the chip's hover gives the breakdown in words, one
+line per number; a click opens the pane. Three chips that all hover as
+the same app read as one thing said three times — that is what the
+owner saw when Bitbucket PRs published three.
+
+On the chip: **one named figure, a bracketed subset only when the pane
+genuinely has one, and every further count named by its own glyph
+after a ` · ` — a count of zero left off.**
 
 ```
-󰂨 12(11)    twelve of my pull requests open, eleven of them unapproved
-󰌃 43        forty-three items assigned to me — and no second number
+󰂨 12(11)              twelve of my pull requests open, eleven of them unapproved
+󰂨 3(2) ·  1 ·  2    …and one review thread on them, two waiting on my review
+󰌃 43                  forty-three items assigned to me — and no invented subset
+󰌃 10 ·  14           …and fourteen in my QA Actionable Now tab
 ```
 
 The bracket is a SUBSET of the figure beside it, never a second count
-about something else. A pane with two things to say publishes two
-segments, each named for its own figure, because a reader looking at
-`󰂨 12 3` has no way to learn which number is which.
+about something else. A second count says what it counts with its
+glyph — never as a bare number, because a reader looking at `󰂨 12 3`
+has no way to learn which number is which — and the hover says it in
+words:
+
+```
+3 open pull requests of yours (2 still unapproved)
+1 unresolved review thread on them
+2 waiting on your review
+```
 
 A pane with no subset says one figure and stops. That is not the
 poorer half of the standard — `43(2)` invented so the tracker's chip
@@ -357,18 +373,28 @@ matches the forge's shape is a number nobody can believe, which is
 worse than a chip that says less.
 
 `sdk.pane.figure` is the helper, and it makes the rule true by
-construction: one `n`, one optional `subset`.
+construction: one `n`, one optional `subset`, named `parts`.
 
 ```zig
-var buf: [32]u8 = undefined;
-const text = sdk.pane.figure.text(&buf, .{ .glyph = glyph, .n = open_mine, .subset = unapproved_mine });
+var buf: [96]u8 = undefined;
+const text = sdk.pane.figure.text(&buf, .{
+    .glyph = glyph,
+    .n = open_mine,
+    .subset = unapproved_mine,
+    .parts = &.{ .{ .glyph = "\u{f075}", .n = threads }, .{ .glyph = "\u{f06e}", .n = waiting } },
+});
 try ipc.statuslineSetSegment(.{ .id = "…", .text = text, .tooltip = breakdown });
 ```
 
+A part's glyph has an `--ascii` twin like any other (`RT`, `RV`, `QA`).
+Give the manifest's segment a short `label` (below): it is how the
+statusline's *Segments ▸* menu names the chip.
+
 `sdk.pane.expect.statuslineFigure` is the assertion both integration
 suites call on their own published text; `sdk.pane.figure.check`
-refuses a second bare figure, a tail after the figure, empty brackets,
-and a "subset" larger than the figure it claims to be a subset of.
+refuses a second bare figure, a tail after the figure, a ` · ` part with
+no glyph or no count, empty brackets, and a "subset" larger than the
+figure it claims to be a subset of.
 
 The hover is where the breakdown goes, and it is not rationed: the
 figure is what the reader sees from across the room, and the sentence
@@ -682,7 +708,7 @@ What mnml does with each field:
 | `chip` | a button on the palette bar: `glyph` (Nerd Font) — or `glyph_codepoint` (`F1D00`, painted verbatim when `glyph` is empty, for a mark in mnml's own font block), `fallback` (plain, always), `color` (a theme name — `red orange yellow green blue cyan teal purple pink magenta comment grey fg white`, `magenta` the same colour as `pink` and `white` as `fg` — or `#rrggbb`; anything else paints in the accent), `tooltip`, `enabled`, `in_palette_bar`. Right-click → enable / disable / show or hide on the bar / add to the activity bar / manifest / remove |
 | `commands[]` | each is a palette command with `keys`; it opens the binary (with `args`) unless `run` (or `ex`, the same field) names an ex line to run instead — `term mnml-hello --pty`, `:term code --goto {{current_file_abs}}:{{cursor_line}}:{{cursor_col}}`; mnml expands `{{workspace}}` `{{workspace_name}}` `{{current_file}}` `{{current_file_abs}}` `{{current_file_dir}}` `{{cursor_line}}` `{{cursor_col}}` `{{selection}}` when it fires and leaves an unknown token as written (`launchers/README.md`). The first one is what the chip, Enter and a pinned activity-bar icon do |
 | `settings[]` | a row in mnml's settings overlay under *Integrations* (discrete choices); the chosen value reaches the binary as `MNML_SETTING_<KEY>` |
-| `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, and `click_command` (a command id) — keyed `<id>.<segment id>`; it goes with the manifest. The live run replaces it over Tier 2, where it may also carry `items` (below) |
+| `statusline[]` | a segment on the statusline while the integration is enabled and its binary resolves — `text`, `side`, `color`, `priority`, `click_command` (a command id), `tooltip`, and an optional short `label` (what the chip counts, in a few words: the statusline's *Segments ▸* menu shows `<integration label>: <label>`, and the raw `<id>.<segment id>` without one) — keyed `<id>.<segment id>`; it goes with the manifest. One per integration (*What a statusline segment may say*). The live run replaces it over Tier 2, where it may also carry `items` (below); a published value stays until the run publishes again or the integration goes, a rescan included. A segment a newer manifest no longer declares is cleared on the rescan its install triggers |
 | `requires[]` | environment variables the integration needs (shown in the detail pane) |
 | `values_sources[]` | the statusline poller (`src/app/integration_poll.zig`): each entry's `command` runs as `<binary> --values --workspace <ws>` every `poll_interval_secs` (300 by default), one worker per source, staggered, backed off on a failure, and quiet while a pane of the integration is open; `prefetch = true` also runs the whole-pane warm |
 | `links[]` | text shapes the integration links — a ticket key and the address it opens — wherever mnml shows text it did not write: a SESSIONS card's name and output, the sessions table's summary, a terminal pane, an editor, the Markdown preview, a commit's message in the git graph, a toast, an HTTP response body. See *Links* below |
@@ -697,9 +723,9 @@ binary wraps its manifest in `sdk.manifest.withChipMark`
 so what `--install` writes holds the glyph; mnml fills in a `{chip}` it
 still meets. A live figure takes the host's mark from `$MNML_CHIP_GLYPH`
 (`sdk.pane.chipGlyphFromEnv(env, <the manifest's glyph>)`), never a
-codepoint of the binary's own. A second figure with its own meaning
-(Bitbucket's review threads, Jira's QA count) may wear its own glyph
-when it publishes, but rests blank in the manifest: at install mnml
+codepoint of the binary's own. A further count on the chip
+(Bitbucket's review threads, Jira's QA count) wears its own glyph after
+the ` · ` when it publishes, and never leads a resting text: at install mnml
 names any segment whose resting text starts on a private-use glyph that
 is not its chip's, in a warning toast with the integration, the segment
 and both glyphs. Jira and Bitbucket each carry a test that the chip's

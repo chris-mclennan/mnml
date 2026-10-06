@@ -10,6 +10,28 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
+## v0.3.5 (unreleased)
+
+### One statusline chip per integration
+
+- Bitbucket PRs and Jira Work show one statusline chip each; the hover
+  carries the breakdown; the Segments menu names them. Bitbucket's
+  chip reads your open pull requests, then the review threads on them
+  and the pull requests waiting on your review, each with its own small
+  icon and left off at zero; it turns yellow, then orange, as those
+  appear. Jira Work's carries the QA Actionable Now count beside the
+  assigned one. The hover says each number in words, one line apiece. A
+  click opens the pane. Needs Jira and Bitbucket 0.2.4; installing them
+  takes the old second and third chips off the row.
+- Right-click the statusline between its chips: *Segments ▸* lists an
+  integration's chip as *Bitbucket PRs: pull requests, review threads,
+  waiting on you* rather than by its id. A chip's own right-click menu
+  has *Hide*.
+- Opening Bitbucket Pipelines no longer turns the Bitbucket PRs chip's
+  icon into the Pipelines one.
+- An integration manifest's statusline segment takes an optional
+  `label`, the few words the Segments menu shows.
+
 ## v0.3.4 (2026-10-05)
 
 ### Jira and Bitbucket 0.2.3 in the Marketplace

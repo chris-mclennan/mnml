@@ -125,6 +125,26 @@ and backs the old file up first. From a release download, install
 Until the font has them, a toast at startup says how many integration
 icons will render as `?`; `:integrations.audit_glyphs` lists each one.
 
+### On the statusline: one chip each
+
+An integration shows one chip on the statusline. Bitbucket PRs and
+Jira Work each carry their counts on that one chip, every further
+count named by its own small icon and left off at zero, and the chip's
+hover says each number in words:
+
+| Chip | Reads | Hover |
+| ---- | ----- | ----- |
+| Bitbucket PRs | `3(2) ·  1 ·  2` | 3 open pull requests of yours (2 still unapproved) · 1 unresolved review thread on them · 2 waiting on your review |
+| Jira Work | `10 ·  14` | 10 work items assigned to you, by status · 14 in your QA Actionable Now tab |
+
+The Bitbucket chip turns yellow while a review thread on yours waits on
+someone and orange while anything waits on your review. A click on a
+chip opens its pane; the hover's rows open the pull request or ticket
+they name. Right-click a chip for *Hide*, or right-click the statusline
+between its chips for *Segments ▸*, which lists each integration's chip
+by name — *Bitbucket PRs: pull requests, review threads, waiting on
+you*, *Jira Work: assigned, QA actionable*.
+
 ## Links
 
 The Jira integration teaches mnml its ticket keys, and Bitbucket its

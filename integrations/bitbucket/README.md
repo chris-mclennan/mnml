@@ -336,38 +336,62 @@ keeps the rows it had (the same rule the Jira pane follows), and `as
 of` stays on the last time every repo answered. Only a tab with
 nothing to show paints the reason in place of the list.
 
-## The statusline chips
+## The statusline chip
 
-Three, because they are three numbers about three different things.
+One chip, `bitbucket_prs.prs_mine`, with up to three numbers on it:
 
-**`bitbucket_prs.prs_mine`** — `󰂨 N(K)`: N open pull requests you
-authored in the last `chip_stale_after_days`, off the excluded
-branches, K of them still without an approval. `󰂨 …` at rest, `󰂨 !` in
-red on a failure. A click opens the mine-only tab.
+```
+󰂨 3(2) ·  1 ·  2
+```
 
-**`bitbucket_prs.reviews_mine`** — ` M`: review threads across those
-pull requests that are still **waiting on someone** — neither marked
-resolved nor replied to. A reply is an answer whoever wrote it ("I
-disagree" closes a loop as surely as a fix does) and the resolve button
-is used unevenly across teams, so counting only `resolution` would call
-every answered thread unanswered. Blank at rest: it is published only
-once the count has been taken, because a zero before then would read as
-"nothing outstanding".
+- **`󰂨 3(2)`** — the open pull requests you authored in the last
+  `chip_stale_after_days`, off the excluded branches, and in brackets
+  how many of them still have no approval. Nothing open reads `󰂨 0`.
+- **` 1`** (a filled speech bubble, `RT` with `--ascii`) — review
+  threads across those pull requests that are still **waiting on
+  someone**: neither marked resolved nor replied to. A reply is an
+  answer whoever wrote it, and the resolve button is used unevenly
+  across teams, so counting only `resolution` would call every answered
+  thread unanswered.
+- **` 2`** (an eye, `RV` with `--ascii`) — open pull requests waiting
+  on **your** review: you are a reviewer and have not approved. Counted
+  out of the same listing as the first figure, so it costs no extra
+  request.
 
-**`bitbucket_prs.reviews_pending`** — ` P`: open pull requests
-waiting on **your** review — you are a reviewer and have not approved.
-The one of the three that is your move. Counted out of the same listing
-as the first chip (one BBQL asks for both sets), so it costs no extra
-request. A click opens the pane with the awaiting filter already on.
+A part whose count is zero is left off, so a quiet chip is `󰂨 0`. The
+colour is the most urgent thing on it: orange while anything waits on
+your review, yellow while a thread on yours waits on someone, green
+otherwise, red with `󰂨 !` on a failure. `󰂨 …` at rest, before the first
+poll.
 
-Each chip's hover says what its number counts, names the top three by
-title so you do not have to open the pane to find out which, and the
-review one says
-what the count cost — how many pull requests were answered off the
-cache. See **Prefetch** below for why that matters: the review figure is
-one `…/comments` request per pull request whose `updated_on` has
-changed since the last run, and none for the rest, which is what keeps
-a five-minute poll inside the bucket.
+The hover says each number in words, one line apiece —
+
+```
+3 open pull requests of yours (2 still unapproved)
+1 unresolved review thread on them
+2 waiting on your review
+threads: 2 of 3 counted off the cache
+```
+
+— then the shared rate-limit bucket's line, and lists the pull requests
+themselves: yours first, then the ones waiting on you. A press on a row
+opens that pull request's tab with the cursor on it. A click on the
+chip opens the pane; its own tabs do the narrowing. Its right-click
+menu has *Refresh now*, *Open*, *Requests…*, *Integrations…* and
+*Hide*; the statusline's *Segments ▸* menu lists it as *Bitbucket PRs:
+pull requests, review threads, waiting on you*.
+
+The `threads:` line says what the thread count cost. See **Prefetch**
+below for why that matters: the thread figure is one `…/comments`
+request per pull request whose `updated_on` has changed since the last
+run, and none for the rest, which is what keeps a five-minute poll
+inside the bucket.
+
+Until 0.2.4 these were three chips (`prs_mine`, `reviews_mine`,
+`reviews_pending`) that all hovered as Bitbucket PRs. Installing 0.2.4
+takes the other two off the row; a name of theirs left in
+`statusline.hidden` shows in *Segments ▸* by its raw id and can be
+unticked from there.
 
 The pane recounts and publishes every five minutes over the Tier-2 file
 channel, with the open count on the INTEGRATIONS badge.
