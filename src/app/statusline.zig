@@ -2366,10 +2366,11 @@ test "a chip with no room on the row is named in Segments, and a hidden chip tak
     var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .data_root = "", .cols = 60, .rows = 12 });
     defer app.deinit();
     const arena = app.frame.allocator();
-    // A lane of 20 cells: the first chip (12 with its padding) fits,
-    // the second does not.
-    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_one.chip", .text = "AAAAAAA 1", .priority = 60 });
-    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_two.chip", .text = "BBBBBBB 2", .priority = 50 });
+    // A lane of 20 cells: the first chip (11 with its padding) fits,
+    // and the second, which will not be cut below its whole width,
+    // does not.
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_one.chip", .text = "AAAAAAA 1", .priority = 60, .min_width = 9 });
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_two.chip", .text = "BBBBBBB 2", .priority = 50, .min_width = 9 });
     const d = try droppedForWidth(&app, arena, 60, false, .unicode);
     try testing.expect(!d[0] and d[1]);
     try openBarMenu(&app, 5, 5);
