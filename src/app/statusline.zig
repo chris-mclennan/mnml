@@ -228,8 +228,29 @@ pub fn dynamicLaneBudget(width: u16) usize {
 
 /// The host segments one lane of a `width`-cell row paints, packed
 /// into the lane's budget and measured by `method`, the screen's.
+///
+/// A segment `statusline.hidden` names takes no room: it used to be
+/// packed and then left off the row, so a hidden chip could still push
+/// a shown one out of the lane.
 pub fn dynamicLane(app: *const App, arena: Allocator, width: u16, side_: ipc.effects.Side, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]ipc.effects.Rendered {
-    return ipc.effects.pack(arena, app.ipc_fx.segments.items, side_, dynamicLaneBudget(width), ascii, method);
+    const segs = app.ipc_fx.segments.items;
+    const skip = try arena.alloc(bool, segs.len);
+    for (segs, skip) |sg, *k| k.* = isHidden(app, sg.id);
+    return ipc.effects.packSkipping(arena, segs, side_, dynamicLaneBudget(width), ascii, method, skip);
+}
+
+/// How many host segments, shown and not hidden, the lanes of a
+/// `width`-cell row have no room for — each one's slot marked in the
+/// returned slice. The Segments menu says so rather than letting a chip
+/// vanish without a word.
+pub fn droppedForWidth(app: *const App, arena: Allocator, width: u16, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]bool {
+    const segs = app.ipc_fx.segments.items;
+    const dropped = try arena.alloc(bool, segs.len);
+    for (segs, dropped) |sg, *d| d.* = !isHidden(app, sg.id) and sg.text.len > 0;
+    for ([_]ipc.effects.Side{ .left, .right }) |lane| {
+        for (try dynamicLane(app, arena, width, lane, ascii, method)) |r| dropped[r.index] = false;
+    }
+    return dropped;
 }
 
 // ─── the mode ────────────────────────────────────────────────────────────
@@ -1101,13 +1122,22 @@ pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     const a = mem.allocator();
     var kids: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     for (named) |n| try kids.append(a, .{ .label = n.label, .action = .{ .toggle_statusline_segment = n.key }, .checked = !isHidden(app, n.key), .checkable = true });
+    // A chip the lane has no room for is named as such: it is shown in
+    // the sense the tick means, and not on the row.
+    const dropped = try droppedForWidth(app, a, app.screen.width, app.cfg.ui.ascii_icons, app.screen.width_method);
+    var n_dropped: usize = 0;
     for (app.ipc_fx.segments.items, 0..) |sg, i| {
         const id = try a.dupe(u8, sg.id);
         // A person's words, not the id: the integration's label and
         // what its chip counts (`integrations.segmentLabel`).
-        const label = try @import("integrations.zig").segmentLabel(app, a, id);
+        var label = try @import("integrations.zig").segmentLabel(app, a, id);
+        if (dropped[i]) {
+            label = try std.fmt.allocPrint(a, "{s} (no room on the row)", .{label});
+            n_dropped += 1;
+        }
         try kids.append(a, .{ .label = label, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
     }
+    if (n_dropped > 0) try kids.append(a, .{ .label = try std.fmt.allocPrint(a, "{d} chip{s} hidden for width", .{ n_dropped, if (n_dropped == 1) "" else "s" }), .action = .none, .separator_before = true });
     // A name the file holds that no segment answers to any more (an
     // integration since removed) still gets its row, so it can go.
     for (app.statusline_hidden.items) |h| {
@@ -2327,6 +2357,39 @@ test "the bell's hover lists the unread warnings and errors, newest first, and t
     const read = (try discovery.describe(&b.app, arena, .{ .statusline_seg = SegId.bell.raw() })).?;
     try testing.expectEqual(@as(usize, 0), read.rows.len);
     try testing.expect(read.row_seg == null);
+}
+
+test "a chip with no room on the row is named in Segments, and a hidden chip takes no room from a shown one" {
+    // Eleven integrations' chips outrun the lane (a third of the row);
+    // the ones that did not fit used to vanish without a word, and a
+    // chip the user hid still took its room before being left off.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .data_root = "", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    // A lane of 20 cells: the first chip (12 with its padding) fits,
+    // the second does not.
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_one.chip", .text = "AAAAAAA 1", .priority = 60 });
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_two.chip", .text = "BBBBBBB 2", .priority = 50 });
+    const d = try droppedForWidth(&app, arena, 60, false, .unicode);
+    try testing.expect(!d[0] and d[1]);
+    try openBarMenu(&app, 5, 5);
+    var saw_row = false;
+    var saw_count = false;
+    for (app.overlay.menu.items[0].submenu) |k| {
+        if (std.mem.eql(u8, k.label, "acme_two.chip (no room on the row)")) saw_row = true;
+        if (std.mem.eql(u8, k.label, "1 chip hidden for width")) saw_count = k.isInfo();
+    }
+    try testing.expect(saw_row and saw_count);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Hide the first (in memory: no file to write here): the second
+    // now has the lane to itself.
+    try app.statusline_hidden.append(app.gpa, try app.gpa.dupe(u8, "acme_one.chip"));
+    const after = try droppedForWidth(&app, arena, 60, false, .unicode);
+    try testing.expect(!after[0] and !after[1]);
+    const lane = try dynamicLane(&app, arena, 60, .right, false, .unicode);
+    try testing.expectEqual(@as(usize, 1), lane.len);
+    try testing.expectEqualStrings("acme_two.chip", lane[0].id);
 }
 
 test "a figure's hover lists what it counts, the pointer can walk onto the list, and a row runs its command" {

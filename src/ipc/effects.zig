@@ -251,8 +251,18 @@ pub const Rendered = struct {
 /// painter lays the chips and their hits by, so a CJK character or an
 /// emoji costs the two cells it paints, not one codepoint.
 pub fn pack(arena: Allocator, segments: []const Segment, side: Side, budget: usize, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]Rendered {
+    return packSkipping(arena, segments, side, budget, ascii, method, &.{});
+}
+
+/// `pack` over every segment but those `skip` marks (by slot; shorter
+/// than `segments` skips nothing past its end): a chip the user hid
+/// takes no room from the ones still on the row.
+pub fn packSkipping(arena: Allocator, segments: []const Segment, side: Side, budget: usize, ascii: bool, method: vaxis.gwidth.Method, skip: []const bool) Allocator.Error![]Rendered {
     var order: std.ArrayListUnmanaged(u32) = .empty;
-    for (segments, 0..) |s, i| if (s.side == side) try order.append(arena, @intCast(i));
+    for (segments, 0..) |s, i| {
+        if (i < skip.len and skip[i]) continue;
+        if (s.side == side) try order.append(arena, @intCast(i));
+    }
     const Ctx = struct {
         segs: []const Segment,
         fn lt(ctx: @This(), a: u32, b: u32) bool {
