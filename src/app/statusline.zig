@@ -1093,7 +1093,8 @@ fn appendRows(app: *App, extra: []const command.MenuItem) Allocator.Error!void {
 
 /// The statusline's own menu — the right button on the row between
 /// chips: *Segments ▸*, every segment with a tick on the ones shown,
-/// built-ins first and then the host segments by id; *Reset order*.
+/// built-ins first and then the host segments, each named by its
+/// integration's label and what it counts; *Reset order*.
 pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
@@ -1102,7 +1103,10 @@ pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     for (named) |n| try kids.append(a, .{ .label = n.label, .action = .{ .toggle_statusline_segment = n.key }, .checked = !isHidden(app, n.key), .checkable = true });
     for (app.ipc_fx.segments.items, 0..) |sg, i| {
         const id = try a.dupe(u8, sg.id);
-        try kids.append(a, .{ .label = id, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
+        // A person's words, not the id: the integration's label and
+        // what its chip counts (`integrations.segmentLabel`).
+        const label = try @import("integrations.zig").segmentLabel(app, a, id);
+        try kids.append(a, .{ .label = label, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
     }
     // A name the file holds that no segment answers to any more (an
     // integration since removed) still gets its row, so it can go.
@@ -1792,7 +1796,7 @@ test "a host chip with a wide glyph: the cells the pack plans are the cells pain
         b.app.cfg.ui.clock = false;
         b.app.cfg.ui.wrap = false;
         const y: u16 = 22;
-        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "bitbucket_prs.reviews_pending", .text = "\u{6f22}\u{5b57} 2", .side = .right, .priority = 60, .color = "magenta" });
+        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "bitbucket_prs.prs_mine", .text = "\u{6f22}\u{5b57} 2", .side = .right, .priority = 60, .color = "magenta" });
         // At 80 the row has room for one host chip a side before the
         // narrow rule cuts the right lane at the edge; at 120, for more.
         if (w >= 120) try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "t.bell", .text = "\u{1f514} 3", .side = .right, .priority = 50, .color = "yellow" });
