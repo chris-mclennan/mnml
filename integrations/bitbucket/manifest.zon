@@ -8,13 +8,13 @@
 //
 // The keys mirror the reference's `bitbucket_prs.toml`: the id, the
 // label, the chip (Atlassian's pull-request mark, `BP`, blue, off the palette bar),
-// the three open commands, the auth fields, the values source and the
-// three statusline segments.
+// the open commands, the auth fields, the values source and the one
+// statusline segment.
 .{
     .id = "bitbucket_prs",
     .label = "Bitbucket PRs",
     .description = "Bitbucket: open + merged pull requests across the workspace",
-    .version = "0.2.3",
+    .version = "0.2.4",
     .binary = "mnml-bitbucket",
     .args = .{ "--only", "prs" },
     .category = "forge",
@@ -25,19 +25,14 @@
         .{ .id = "bitbucket_prs.open_awaiting", .title = "Bitbucket PRs: open (awaiting my approval)", .args = .{ "--only", "prs-awaiting" } },
         .{ .id = "bitbucket_prs.refresh", .title = "Bitbucket PRs: refresh the statusline chip", .ex = "term mnml-bitbucket --refresh --workspace {{workspace}}" },
     },
+    // ONE chip: the open pull requests of yours (and the subset nobody
+    // has approved), then — each named by its own glyph after a ` · `,
+    // left off at zero — the review threads on them and the pull
+    // requests waiting on your review. The hover says each number in
+    // words; a click opens the pane. `label` is what the statusline's
+    // Segments menu calls it.
     .statusline = .{
-        .{ .id = "prs_mine", .text = "{chip} …", .color = "green", .click_command = "bitbucket_prs.open_mine", .priority = 60, .tooltip = "Bitbucket: open pull requests you authored, and how many are still unapproved. Hover after a poll for the live figures." },
-        // The second figure. It rests blank: `--values` publishes it
-        // only once the count has been taken, and a zero before then
-        // would read as "nothing outstanding".
-        .{ .id = "reviews_mine", .text = "", .color = "yellow", .click_command = "bitbucket_prs.open_mine", .priority = 59, .tooltip = "Bitbucket: review threads on your open pull requests that are neither resolved nor replied to." },
-        // The third figure, and the one that is your move: pull
-        // requests you are a reviewer on and have not voted. It rests
-        // blank like the second: its mark is its own, not the chip's,
-        // and a resting glyph that is not the chip's is the drift the
-        // host's install audit flags — the binary publishes it with its
-        // count. The tooltip's example names are invented.
-        .{ .id = "reviews_pending", .text = "", .color = "orange", .click_command = "bitbucket_prs.open_awaiting", .priority = 58, .tooltip = "Bitbucket: open pull requests waiting on YOUR review \u{2014} \u{201c}Fix the login redirect\u{201d}, \u{201c}Bump the client timeout\u{201d}. Hover after a poll for the live names." },
+        .{ .id = "prs_mine", .text = "{chip} …", .color = "green", .click_command = "bitbucket_prs.open", .priority = 60, .label = "pull requests, review threads, waiting on you", .tooltip = "Bitbucket: your open pull requests, the review threads on them, and the pull requests waiting on your review. Hover after a poll for the live figures." },
     },
     .auth = .{
         .{ .key = "api_token", .label = "Bitbucket API token (recommended)", .kind = .secret, .env_fallback = "BITBUCKET_API_TOKEN", .help_url = "https://id.atlassian.com/manage-profile/security/api-tokens", .help = "Preferred. Atlassian scoped API token — fresh rate-limit bucket, per-integration revoke. Either this OR an app password is required." },
