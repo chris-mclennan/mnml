@@ -842,16 +842,18 @@ pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: fetch.ValuesRes
     try ipc.setActivityBadge("integrations", @intCast(@min(v.open_mine, std.math.maxInt(u32))));
 }
 
-/// The hover text with the shared bucket's own line under it: tokens,
+/// The hover text with the shared bucket's own line under it, after a
+/// blank line — the host reads what follows it as a trailer, under its
+/// own "click runs …" line rather than inside the breakdown: tokens,
 /// rate, throttles, how long since the last 429. It is the answer to
 /// "why is this chip stale", and it is one hover away.
 fn withBucket(arena: Allocator, body: []const u8, bucket: ?Bucket) Allocator.Error![]const u8 {
     const b = bucket orelse return body;
     var buf: [192]u8 = undefined;
     const line = b.status.describe(&buf);
-    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n{s}", .{ body, line });
+    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, line });
     var dbuf: [96]u8 = undefined;
-    return std.fmt.allocPrint(arena, "{s}\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
+    return std.fmt.allocPrint(arena, "{s}\n\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
 }
 
 /// What the hover says about the shared bucket: its state, and who has
@@ -2057,7 +2059,7 @@ test "the chip's hover rows: yours, then the ones waiting on you, each a deep li
     for (retired_segment_ids) |gone| try t.expect(std.mem.indexOf(u8, got, gone) == null);
     // The hover carries the shared bucket, which is the answer to "why
     // is this chip stale", and WHO drained it.
-    try t.expect(std.mem.indexOf(u8, got, "\\n2 waiting on your review\\nthreads: 3 of 4 counted off the cache\\nbudget: 0.2 of 40 tokens") != null);
+    try t.expect(std.mem.indexOf(u8, got, "\\n2 waiting on your review\\nthreads: 3 of 4 counted off the cache\\n\\nbudget: 0.2 of 40 tokens") != null);
     try t.expect(std.mem.indexOf(u8, got, "127 throttles") != null);
     try t.expect(std.mem.indexOf(u8, got, "last 429 4h ago") != null);
     try t.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 83 draws in 10m") != null);

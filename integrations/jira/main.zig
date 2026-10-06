@@ -943,17 +943,18 @@ pub fn qaTabIndex(app: *const app_mod.App) ?usize {
     return null;
 }
 
-/// The hover text with the shared bucket's own two lines under it:
-/// what it holds, at what rate, with how many throttles and how long
+/// The hover text with the shared bucket's own two lines under it,
+/// after a blank line (the host's trailer, under its own "click runs"
+/// line rather than inside the breakdown): what it holds, at what rate, with how many throttles and how long
 /// since the last 429 — and who has been spending it. It is the answer
 /// to "why is this chip stale", and it is one hover away.
 fn withBucket(arena: Allocator, body: []const u8, bucket: ?Bucket) Allocator.Error![]const u8 {
     const b = bucket orelse return body;
     var buf: [192]u8 = undefined;
     const line = b.status.describe(&buf);
-    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n{s}", .{ body, line });
+    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, line });
     var dbuf: [96]u8 = undefined;
-    return std.fmt.allocPrint(arena, "{s}\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
+    return std.fmt.allocPrint(arena, "{s}\n\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
 }
 
 /// What the hover says about the shared bucket: its state, and who has
@@ -1875,6 +1876,8 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     // And the hover carries the shared bucket, which is the answer to
     // "why is this chip stale" — one hover away rather than nowhere.
     try testing.expect(std.mem.indexOf(u8, got, "budget: 0.2 of 60 tokens") != null);
+    // After a blank line: the host's trailer, under its own line.
+    try testing.expect(std.mem.indexOf(u8, got, "Ready for QA\\n\\nbudget: 0.2 of 60 tokens") != null);
     try testing.expect(std.mem.indexOf(u8, got, "3 throttles") != null);
     try testing.expect(std.mem.indexOf(u8, got, "last 429 4h ago") != null);
     // And WHO drained it — a chip that is stale because a script is
