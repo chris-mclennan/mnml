@@ -460,6 +460,9 @@ pub const App = struct {
     assigned_tab: ?usize = null,
     /// Set when `assigned_open` changed and has not been published.
     segment_dirty: bool = false,
+    /// The tab the chip's QA count is taken off (main's `qaTabIndex`);
+    /// its fetch marks the chip dirty too.
+    qa_tab: ?usize = null,
     /// The last thing worth a toast (an action's outcome); the loop drains it.
     toast: std.ArrayList(u8) = .empty,
     toast_pending: bool = false,
@@ -1516,6 +1519,9 @@ pub const App = struct {
             a.assigned_tab = idx;
             a.segment_dirty = true;
         };
+        if (a.qa_tab) |q| if (q == idx) {
+            a.segment_dirty = true;
+        };
         // The reference auto-expands unresolved tickets on tree tabs
         // and shows their linked PRs. What is already known — because
         // the ticket has not moved since the last run — is painted
@@ -1599,6 +1605,9 @@ pub const App = struct {
                 if (t.cfg.kind) |k| if (k.isAssignedOpen()) {
                     a.assigned_open = t.issues.len;
                     a.assigned_tab = idx;
+                    a.segment_dirty = true;
+                };
+                if (a.qa_tab) |q| if (q == idx) {
                     a.segment_dirty = true;
                 };
                 if (t.tree) |*st| if (t.cfg.isTree()) {

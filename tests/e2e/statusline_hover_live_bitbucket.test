@@ -22,19 +22,19 @@ shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" >
 wait 700
 expect screen contains "2(1)"
 command view.toggle_hover_tooltip
-hover 61 38
+hover 66 38
 wait 300
 expect screen contains "Fix the login redirect"
 # A press on a row opens the pane.
-click 62 35
+click 70 34
 wait 2500
 expect screen contains "BITBUCKET"
-# The pane has its own values now and has republished all three chips
+# The pane has its own values now and has republished its one chip
 # for itself. The rows are still under the pointer.
 wait 12000
 hover 20 38
 wait 200
-hover 61 38
+hover 66 38
 wait 600
 expect screen contains "Fix the login redirect"
-expect screen contains "open pull requests you authored"
+expect screen contains "open pull requests of yours"

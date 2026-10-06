@@ -19,17 +19,18 @@ shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" >
 wait 700
 expect screen contains "2(1)"
 command view.toggle_hover_tooltip
-hover 61 38
+hover 66 38
 wait 300
-# The box's rows: "Fix the login redirect" (acme/api#1234) at 35,
-# "Redesign the empty state" (acme/web#820) at 36.
+# The box's rows: "Fix the login redirect" (acme/api#1234) at 34,
+# "Redesign the empty state" (acme/web#820) at 35, then the one waiting
+# on you at 36.
 expect screen contains "Redesign the empty state"
-click 62 36
+click 70 35
 wait 2500
 # The detail is the pane's own fetch from the fake: polled for.
 expect within 20000 screen contains "Part of ENG-4300"
 
-# No second `--values` run: the pane republishes all three chips for
+# No second `--values` run: the pane republishes its one chip for
 # itself as its own values land, rows and all, so the list is still
 # under the pointer when the second row is pressed.
 wait 12000
@@ -38,10 +39,10 @@ wait 12000
 shell grep -c 'pullrequests"' wire.jsonl > listings.txt
 hover 20 38
 wait 200
-hover 61 38
+hover 66 38
 wait 600
 expect screen contains "Fix the login redirect"
-click 62 35
+click 70 34
 wait 2000
 # The cursor moved onto the other pull request: the detail is
 # api#1234's own description, and web#820's is gone.

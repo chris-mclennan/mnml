@@ -1066,6 +1066,27 @@ fn setSegments(app: *App) Allocator.Error!void {
     }
 }
 
+/// What the statusline's *Segments ▸* menu and a chip's own menu call
+/// a host segment: `<integration label>: <segment label>` (`Bitbucket
+/// PRs: pull requests, review threads, waiting on you`) when the
+/// installed manifest gives the segment a `label`; the raw
+/// `<id>.<segment id>` otherwise — an older manifest, a segment no
+/// manifest declares, a name only `statusline.hidden` still holds.
+pub fn segmentLabel(app: *const App, arena: Allocator, id: []const u8) Allocator.Error![]const u8 {
+    const dot = std.mem.indexOfScalar(u8, id, '.') orelse return id;
+    const owner = id[0..dot];
+    const seg_id = id[dot + 1 ..];
+    for (app.integrations.list) |*inst| {
+        if (!std.mem.eql(u8, inst.id(), owner)) continue;
+        for (inst.manifest.statusline) |seg| if (std.mem.eql(u8, seg.id, seg_id)) {
+            const l = seg.label orelse return id;
+            if (l.len == 0) return id;
+            return std.fmt.allocPrint(arena, "{s}: {s}", .{ inst.manifest.label, l });
+        };
+    }
+    return id;
+}
+
 /// Clears every id in `old` the new scan did not declare again, then
 /// frees the list.
 fn dropStaleSegments(app: *App, old: *std.ArrayListUnmanaged([]u8)) void {
@@ -3814,13 +3835,13 @@ test "a re-scan keeps a chip's published figure: installing a second integration
             try testing.expect(try ipc_effects.apply(ap, &cmd));
         }
     }.f;
-    // What the three chips published in that run.
+    // What the two chips published in that run.
     try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"\u{f0303} 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30}");
     // Bitbucket is installed: the manifest lands and the list is re-read.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/bitbucket_prs.zon", .data = bb });
     try refresh(&app);
-    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 2(1)\",\"color\":\"green\",\"click_command\":\"bitbucket_prs.open_mine\",\"priority\":60,\"min_width\":4,\"max_width\":30}");
-    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"side\":\"right\",\"text\":\"\u{f0e5} 1\",\"color\":\"orange\",\"click_command\":\"bitbucket_prs.open_awaiting\",\"priority\":58,\"min_width\":4,\"max_width\":30}");
+    // Bitbucket's ONE chip: its figure, then the reviews waiting on you.
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"side\":\"right\",\"text\":\"\u{f00a8} 2(1) \u{b7} \u{f06e} 1\",\"color\":\"orange\",\"click_command\":\"bitbucket_prs.open\",\"priority\":60,\"min_width\":4,\"max_width\":30}");
 
     const txt = try screenText(&app);
     defer testing.allocator.free(txt);
@@ -3829,15 +3850,14 @@ test "a re-scan keeps a chip's published figure: installing a second integration
     while (rows.next()) |r| if (std.mem.indexOf(u8, r, "\u{f00a8} 2(1)") != null) {
         status = r;
     };
-    // The row holds all three, each with its figure, in id order.
+    // The row holds both, each with its figures, in id order.
     const j = std.mem.indexOf(u8, status, " \u{f0303} 3 ") orelse {
         std.debug.print("status row: [{s}]\nsegments:\n", .{status});
         for (app.ipc_fx.segments.items) |sg| std.debug.print("  {s} live={} text=[{s}]\n", .{ sg.id, sg.live, sg.text });
         return error.JiraChipLostItsCount;
     };
-    const b = std.mem.indexOf(u8, status, " \u{f00a8} 2(1) ").?;
-    const r = std.mem.indexOf(u8, status, " \u{f0e5} 1 ").?;
-    try testing.expect(b < j and j < r);
+    const b = std.mem.indexOf(u8, status, " \u{f00a8} 2(1) \u{b7} \u{f06e} 1 ").?;
+    try testing.expect(b < j);
 
     // A figure nobody published does follow the manifest: an edited
     // resting text is what the next re-scan shows.
@@ -3851,6 +3871,127 @@ test "a re-scan keeps a chip's published figure: installing a second integration
     try tmp.dir.deleteFile(testing.io, "integrations/jira_work.zon");
     try refresh(&app);
     try testing.expect(app.ipc_fx.find("jira_work.assigned") == null);
+}
+
+test "a declared segment keeps its last value across a refresh; a reinstall that retires segments leaves no ghost chip; a stale hidden name can still go" {
+    const statusline_app = @import("statusline.zig");
+    // The owner opened one app, closed it, opened another and asked
+    // whether statusline chips are only shown some of the time. A chip
+    // an integration has published stays until it publishes again or
+    // is uninstalled: a rescan must not paint the manifest's resting
+    // text over it, and the segments a newer manifest no longer
+    // declares (Bitbucket's 0.2.3 trio became one chip in 0.2.4) must
+    // go rather than linger at their last count.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tool", .data = "#!/bin/sh\n" });
+    const tool = try std.fs.path.join(testing.allocator, &.{ root, "tool" });
+    defer testing.allocator.free(tool);
+    const old_manifest =
+        \\.{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.3", .binary = "$CHIP_TOOL",
+        \\   .commands = .{ .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open" } },
+        \\   .statusline = .{
+        \\     .{ .id = "prs_mine", .text = "PR …", .click_command = "bitbucket_prs.open", .priority = 60 },
+        \\     .{ .id = "reviews_mine", .text = "", .priority = 59 },
+        \\     .{ .id = "reviews_pending", .text = "", .priority = 58 },
+        \\   } }
+    ;
+    const new_manifest =
+        \\.{ .id = "bitbucket_prs", .label = "Bitbucket PRs", .version = "0.2.4", .binary = "$CHIP_TOOL",
+        \\   .commands = .{ .{ .id = "bitbucket_prs.open", .title = "Bitbucket PRs: open" } },
+        \\   .statusline = .{
+        \\     .{ .id = "prs_mine", .text = "PR …", .click_command = "bitbucket_prs.open", .priority = 60, .label = "pull requests, review threads, waiting on you" },
+        \\   } }
+    ;
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/bitbucket_prs.zon", .data = old_manifest });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("CHIP_TOOL", tool);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 160, .rows = 40, .env = &env });
+    defer app.deinit();
+    try refresh(&app);
+    try testing.expectEqualStrings("PR …", app.ipc_fx.segments.items[app.ipc_fx.find("bitbucket_prs.prs_mine").?].text);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const publish = struct {
+        fn f(ap: *App, arena: Allocator, line: []const u8) !void {
+            const cmd = try @import("../ipc/command.zig").parse(arena, line);
+            try testing.expect(try ipc_effects.apply(ap, &cmd));
+        }
+    }.f;
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.prs_mine\",\"text\":\"PR 3(2)\",\"priority\":60}");
+    try publish(&app, a, "{\"cmd\":\"statusline-set-segment\",\"id\":\"bitbucket_prs.reviews_pending\",\"text\":\"RV 2\",\"priority\":58}");
+
+    // A rescan with nothing changed — what an install of something else
+    // does — keeps the last value of every segment still declared.
+    try refresh(&app);
+    try testing.expectEqualStrings("PR 3(2)", app.ipc_fx.segments.items[app.ipc_fx.find("bitbucket_prs.prs_mine").?].text);
+    try testing.expectEqualStrings("RV 2", app.ipc_fx.segments.items[app.ipc_fx.find("bitbucket_prs.reviews_pending").?].text);
+
+    // A manifest whose segments carry no `label` lists them by raw id.
+    try testing.expectEqualStrings("bitbucket_prs.prs_mine", try segmentLabel(&app, a, "bitbucket_prs.prs_mine"));
+    try testing.expectEqualStrings("bitbucket_prs.reviews_pending", try segmentLabel(&app, a, "bitbucket_prs.reviews_pending"));
+    try testing.expectEqualStrings("nobody.chip", try segmentLabel(&app, a, "nobody.chip"));
+    try testing.expectEqualStrings("nodot", try segmentLabel(&app, a, "nodot"));
+
+    // The user had hidden the third chip; the name is in the file.
+    try statusline_app.toggleHidden(&app, "bitbucket_prs.reviews_pending");
+    try testing.expect(statusline_app.isHidden(&app, "bitbucket_prs.reviews_pending"));
+
+    // The reinstall writes the one-chip manifest: the chip keeps its
+    // value, and the retired ids are gone from the row, live or not.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/bitbucket_prs.zon", .data = new_manifest });
+    try refresh(&app);
+    try testing.expectEqualStrings("PR 3(2)", app.ipc_fx.segments.items[app.ipc_fx.find("bitbucket_prs.prs_mine").?].text);
+    try testing.expect(app.ipc_fx.find("bitbucket_prs.reviews_mine") == null);
+    try testing.expect(app.ipc_fx.find("bitbucket_prs.reviews_pending") == null);
+    try testing.expectEqual(@as(usize, 1), app.ipc_fx.segments.items.len);
+
+    // The Segments menu: the chip by its words, and the stale hidden
+    // name as the raw-id row a name no segment answers to gets —
+    // unticked, and one press takes it out of `statusline.hidden`.
+    try statusline_app.openBarMenu(&app, 5, 5);
+    const kids = app.overlay.menu.items[0].submenu;
+    var chip_row: ?command.MenuItem = null;
+    var stale_row: ?command.MenuItem = null;
+    for (kids) |k| {
+        if (std.mem.eql(u8, k.label, "Bitbucket PRs: pull requests, review threads, waiting on you")) chip_row = k;
+        if (std.mem.eql(u8, k.label, "bitbucket_prs.reviews_pending")) stale_row = k;
+    }
+    try testing.expectEqualStrings("bitbucket_prs.prs_mine", chip_row.?.action.toggle_statusline_segment);
+    try testing.expect(chip_row.?.checked);
+    try testing.expect(!stale_row.?.checked);
+    try statusline_app.toggleHidden(&app, stale_row.?.action.toggle_statusline_segment);
+    try testing.expect(!statusline_app.isHidden(&app, "bitbucket_prs.reviews_pending"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    try statusline_app.openBarMenu(&app, 5, 5);
+    for (app.overlay.menu.items[0].submenu) |k| try testing.expect(!std.mem.eql(u8, k.label, "bitbucket_prs.reviews_pending"));
+
+    // The chip's own right-click: titled in words, and a Hide row that
+    // writes `statusline.hidden` as unticking it under Segments does.
+    const slot: u32 = @intCast(app.ipc_fx.find("bitbucket_prs.prs_mine").?);
+    try context_menus.openIntegrationSegmentMenu(&app, slot, 5, 5);
+    try testing.expectEqualStrings("Bitbucket PRs: pull requests, review threads, waiting on you", app.overlay.menu.title);
+    var hide: ?command.MenuItem = null;
+    for (app.overlay.menu.items) |it| if (std.mem.eql(u8, it.label, "Hide")) {
+        hide = it;
+    };
+    try testing.expectEqualStrings("bitbucket_prs.prs_mine", hide.?.action.toggle_statusline_segment);
+    try statusline_app.toggleHidden(&app, hide.?.action.toggle_statusline_segment);
+    try testing.expect(statusline_app.isHidden(&app, "bitbucket_prs.prs_mine"));
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+
+    // Uninstalled: the chip goes with it.
+    try tmp.dir.deleteFile(testing.io, "integrations/bitbucket_prs.zon");
+    try refresh(&app);
+    try testing.expect(app.ipc_fx.find("bitbucket_prs.prs_mine") == null);
 }
 
 test "toggle_enabled rewrites the manifest and the list follows; remove deletes it after a confirm" {

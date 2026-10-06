@@ -228,8 +228,29 @@ pub fn dynamicLaneBudget(width: u16) usize {
 
 /// The host segments one lane of a `width`-cell row paints, packed
 /// into the lane's budget and measured by `method`, the screen's.
+///
+/// A segment `statusline.hidden` names takes no room: it used to be
+/// packed and then left off the row, so a hidden chip could still push
+/// a shown one out of the lane.
 pub fn dynamicLane(app: *const App, arena: Allocator, width: u16, side_: ipc.effects.Side, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]ipc.effects.Rendered {
-    return ipc.effects.pack(arena, app.ipc_fx.segments.items, side_, dynamicLaneBudget(width), ascii, method);
+    const segs = app.ipc_fx.segments.items;
+    const skip = try arena.alloc(bool, segs.len);
+    for (segs, skip) |sg, *k| k.* = isHidden(app, sg.id);
+    return ipc.effects.packSkipping(arena, segs, side_, dynamicLaneBudget(width), ascii, method, skip);
+}
+
+/// How many host segments, shown and not hidden, the lanes of a
+/// `width`-cell row have no room for — each one's slot marked in the
+/// returned slice. The Segments menu says so rather than letting a chip
+/// vanish without a word.
+pub fn droppedForWidth(app: *const App, arena: Allocator, width: u16, ascii: bool, method: vaxis.gwidth.Method) Allocator.Error![]bool {
+    const segs = app.ipc_fx.segments.items;
+    const dropped = try arena.alloc(bool, segs.len);
+    for (segs, dropped) |sg, *d| d.* = !isHidden(app, sg.id) and sg.text.len > 0;
+    for ([_]ipc.effects.Side{ .left, .right }) |lane| {
+        for (try dynamicLane(app, arena, width, lane, ascii, method)) |r| dropped[r.index] = false;
+    }
+    return dropped;
 }
 
 // ─── the mode ────────────────────────────────────────────────────────────
@@ -1093,17 +1114,30 @@ fn appendRows(app: *App, extra: []const command.MenuItem) Allocator.Error!void {
 
 /// The statusline's own menu — the right button on the row between
 /// chips: *Segments ▸*, every segment with a tick on the ones shown,
-/// built-ins first and then the host segments by id; *Reset order*.
+/// built-ins first and then the host segments, each named by its
+/// integration's label and what it counts; *Reset order*.
 pub fn openBarMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
     var mem = std.heap.ArenaAllocator.init(app.gpa);
     errdefer mem.deinit();
     const a = mem.allocator();
     var kids: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     for (named) |n| try kids.append(a, .{ .label = n.label, .action = .{ .toggle_statusline_segment = n.key }, .checked = !isHidden(app, n.key), .checkable = true });
+    // A chip the lane has no room for is named as such: it is shown in
+    // the sense the tick means, and not on the row.
+    const dropped = try droppedForWidth(app, a, app.screen.width, app.cfg.ui.ascii_icons, app.screen.width_method);
+    var n_dropped: usize = 0;
     for (app.ipc_fx.segments.items, 0..) |sg, i| {
         const id = try a.dupe(u8, sg.id);
-        try kids.append(a, .{ .label = id, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
+        // A person's words, not the id: the integration's label and
+        // what its chip counts (`integrations.segmentLabel`).
+        var label = try @import("integrations.zig").segmentLabel(app, a, id);
+        if (dropped[i]) {
+            label = try std.fmt.allocPrint(a, "{s} (no room on the row)", .{label});
+            n_dropped += 1;
+        }
+        try kids.append(a, .{ .label = label, .action = .{ .toggle_statusline_segment = id }, .checked = !isHidden(app, id), .checkable = true, .separator_before = i == 0 });
     }
+    if (n_dropped > 0) try kids.append(a, .{ .label = try std.fmt.allocPrint(a, "{d} chip{s} hidden for width", .{ n_dropped, if (n_dropped == 1) "" else "s" }), .action = .none, .separator_before = true });
     // A name the file holds that no segment answers to any more (an
     // integration since removed) still gets its row, so it can go.
     for (app.statusline_hidden.items) |h| {
@@ -1792,7 +1826,7 @@ test "a host chip with a wide glyph: the cells the pack plans are the cells pain
         b.app.cfg.ui.clock = false;
         b.app.cfg.ui.wrap = false;
         const y: u16 = 22;
-        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "bitbucket_prs.reviews_pending", .text = "\u{6f22}\u{5b57} 2", .side = .right, .priority = 60, .color = "magenta" });
+        try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "bitbucket_prs.prs_mine", .text = "\u{6f22}\u{5b57} 2", .side = .right, .priority = 60, .color = "magenta" });
         // At 80 the row has room for one host chip a side before the
         // narrow rule cuts the right lane at the edge; at 120, for more.
         if (w >= 120) try b.app.ipc_fx.setSegment(testing.allocator, .{ .id = "t.bell", .text = "\u{1f514} 3", .side = .right, .priority = 50, .color = "yellow" });
@@ -2325,6 +2359,117 @@ test "the bell's hover lists the unread warnings and errors, newest first, and t
     try testing.expect(read.row_seg == null);
 }
 
+test "a chip with no room on the row is named in Segments, and a hidden chip takes no room from a shown one" {
+    // Eleven integrations' chips outrun the lane (a third of the row);
+    // the ones that did not fit used to vanish without a word, and a
+    // chip the user hid still took its room before being left off.
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .data_root = "", .cols = 60, .rows = 12 });
+    defer app.deinit();
+    const arena = app.frame.allocator();
+    // A lane of 20 cells: the first chip (11 with its padding) fits,
+    // and the second, which will not be cut below its whole width,
+    // does not.
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_one.chip", .text = "AAAAAAA 1", .priority = 60, .min_width = 9 });
+    try app.ipc_fx.setSegment(testing.allocator, .{ .id = "acme_two.chip", .text = "BBBBBBB 2", .priority = 50, .min_width = 9 });
+    const d = try droppedForWidth(&app, arena, 60, false, .unicode);
+    try testing.expect(!d[0] and d[1]);
+    try openBarMenu(&app, 5, 5);
+    var saw_row = false;
+    var saw_count = false;
+    for (app.overlay.menu.items[0].submenu) |k| {
+        if (std.mem.eql(u8, k.label, "acme_two.chip (no room on the row)")) saw_row = true;
+        if (std.mem.eql(u8, k.label, "1 chip hidden for width")) saw_count = k.isInfo();
+    }
+    try testing.expect(saw_row and saw_count);
+    app.overlay.deinit(app.gpa);
+    app.overlay = .none;
+    // Hide the first (in memory: no file to write here): the second
+    // now has the lane to itself.
+    try app.statusline_hidden.append(app.gpa, try app.gpa.dupe(u8, "acme_one.chip"));
+    const after = try droppedForWidth(&app, arena, 60, false, .unicode);
+    try testing.expect(!after[0] and !after[1]);
+    const lane = try dynamicLane(&app, arena, 60, .right, false, .unicode);
+    try testing.expectEqual(@as(usize, 1), lane.len);
+    try testing.expectEqualStrings("acme_two.chip", lane[0].id);
+}
+
+/// The screen row whose text holds `needle`, from the top.
+fn rowWith(b: *Bench, needle: []const u8) !?u16 {
+    const text = try screen_mod.toTestText(b.app.frame.allocator(), &b.app.screen);
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var y: u16 = 0;
+    while (it.next()) |line| : (y += 1) if (std.mem.indexOf(u8, line, needle) != null) return y;
+    return null;
+}
+
+/// The first column of `needle` on row `y`, in cells.
+fn colWith(b: *Bench, y: u16, needle: []const u8) ?u16 {
+    var x: u16 = 0;
+    while (x < b.app.screen.width) : (x += 1) {
+        const c = b.app.screen.readCell(x, y) orelse continue;
+        if (c.char.grapheme.len > 0 and c.char.grapheme[0] == needle[0]) {
+            var ok = true;
+            for (needle[1..], 1..) |ch, k| {
+                const cc = b.app.screen.readCell(x + @as(u16, @intCast(k)), y) orelse {
+                    ok = false;
+                    break;
+                };
+                if (cc.char.grapheme.len == 0 or cc.char.grapheme[0] != ch) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return x;
+        }
+    }
+    return null;
+}
+
+test "an integration chip's hover: its counts at the title's weight, its notes, then the host's line, then the trailer; the box grows to the widest line" {
+    // Any integration's multi-line hover, not one integration's: a line
+    // that leads with a figure is a count and reads like the title; any
+    // other line of the publisher's is a note; the host's "click runs"
+    // line follows them; what comes after a blank line (the shared
+    // bucket) comes last. The host's line used to land second and split
+    // the breakdown, and every count after the first was dimmed.
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    b.app.cfg.ui.hover_tooltip = true;
+    const long = "10 work items assigned to you \u{2014} 4 In Progress \u{b7} 3 In Review \u{b7} 2 To Do \u{b7} 1 Blocked";
+    try b.app.ipc_fx.setSegment(testing.allocator, .{
+        .id = "acme_tracker.chip",
+        .text = "T 10",
+        .side = .left,
+        .priority = 5,
+        .max_width = 12,
+        .click_command = "view.toggle_wrap",
+        .tooltip = "3 open things of yours\n" ++ long ++ "\n2 waiting on you\nthreads: 2 of 3 counted off the cache\n\nbudget: 40 of 60\nspent by acme 3 of 4",
+    });
+    _ = (try b.rowHover(38, sl.seg_dyn_base)).?;
+    const order = [_][]const u8{ "3 open things of yours", "10 work items assigned to you", "2 waiting on you", "threads: 2 of 3", "click runs the segment's command", "budget: 40 of 60", "spent by acme" };
+    var ys: [order.len]u16 = undefined;
+    for (order, 0..) |needle, i| ys[i] = (try rowWith(&b, needle)) orelse {
+        std.debug.print("missing [{s}]\n{s}\n", .{ needle, try screen_mod.toTestText(b.app.frame.allocator(), &b.app.screen) });
+        return error.LineMissing;
+    };
+    // One line each, in that order, top to bottom.
+    for (ys[1..], 0..) |y, i| try testing.expectEqual(ys[i] + 1, y);
+    // Weights: the counts wear the title's ink; the note, the host's
+    // line and the trailer are muted.
+    const title_x = colWith(&b, ys[0], "3 open").?;
+    const ink = b.cell(title_x, ys[0]).fg;
+    for ([_]usize{ 1, 2 }) |i| {
+        const x = colWith(&b, ys[i], order[i][0..4]).?;
+        try testing.expectEqual(ink, b.cell(x, ys[i]).fg);
+    }
+    for ([_]usize{ 3, 4, 5, 6 }) |i| {
+        const x = colWith(&b, ys[i], order[i][0..4]).?;
+        try testing.expect(!std.meta.eql(ink, b.cell(x, ys[i]).fg));
+    }
+    // Wider than the old 60-cell cap, and whole: no ellipsis on it.
+    try testing.expect(std.mem.indexOf(u8, try b.row(ys[1]), long) != null);
+}
+
 test "a figure's hover lists what it counts, the pointer can walk onto the list, and a row runs its command" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -2338,7 +2483,7 @@ test "a figure's hover lists what it counts, the pointer can walk onto the list,
         .side = .left,
         .priority = 5,
         .max_width = 12,
-        .tooltip = "Bitbucket \u{b7} 3 open pull requests you authored\nbucket: 40 of 60",
+        .tooltip = "Bitbucket \u{b7} 3 open pull requests you authored\n\nbucket: 40 of 60",
         .items = &.{
             .{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .command = "view.toggle_wrap" },
             .{ .text = "Redesign the empty state", .sub = "acme/web \u{b7} approved", .command = "view.toggle_wrap" },
@@ -2346,7 +2491,7 @@ test "a figure's hover lists what it counts, the pointer can walk onto the list,
     });
     const tip = (try discovery.describe(&b.app, arena, .{ .statusline_seg = sl.seg_dyn_base })).?;
     // The publisher's first line is the title; the bucket line it put
-    // after a newline is a row of its own, not a run-on.
+    // after a blank line is the trailer, a row of its own.
     try testing.expectEqualStrings("Bitbucket \u{b7} 3 open pull requests you authored", tip.title);
     try testing.expectEqual(@as(usize, 1), tip.lines.len);
     try testing.expectEqualStrings("bucket: 40 of 60", tip.lines[0]);

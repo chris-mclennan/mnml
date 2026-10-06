@@ -364,6 +364,9 @@ fn dynamic(app: *App, arena: Allocator, slot: u32) Allocator.Error!?Entry {
         var it = std.mem.splitScalar(u8, tip, '\n');
         title = try arena.dupe(u8, it.first());
         while (it.next()) |l| {
+            // A blank line only separates the publisher's words from
+            // the shared bucket's.
+            if (l.len == 0) continue;
             if (body.items.len > 0) try body.append(arena, ' ');
             try body.appendSlice(arena, l);
         }
@@ -376,7 +379,7 @@ fn dynamic(app: *App, arena: Allocator, slot: u32) Allocator.Error!?Entry {
     try body.appendSlice(arena, "Right-click lists ");
     if (polled) try body.appendSlice(arena, "Refresh now (every integration polls at once), ");
     if (seg.click_command != null) try body.appendSlice(arena, "Open (the click's command), ");
-    try body.print(arena, "Requests… (the request log filtered to `{s}`) and Integrations…. ", .{context_menus.serviceOfSegment(seg.id)});
+    try body.print(arena, "Requests… (the request log filtered to `{s}`), Integrations… and Hide. ", .{context_menus.serviceOfSegment(seg.id)});
     try body.appendSlice(arena, if (polled) "It is as fresh as that integration's last poll." else "Nothing here polls it; it is as fresh as the publisher's last send.");
     const links: []const Link = if (polled) &.{ .{ .command = .{ .id = .@"integrations.poll_now", .label = "Poll the integrations now" } }, ask } else &.{ .{ .command = .{ .id = .@"integrations.show_installed", .label = "The installed integrations" } }, ask };
     return .{ .title = title, .body = body.items, .links = links };
@@ -393,6 +396,8 @@ pub fn askContext(app: *App, arena: Allocator, seg: u32) Allocator.Error!?[]cons
     try out.print(arena, "- chip: {s}", .{tip.title});
     if (tip.detail) |d| try out.print(arena, " ({s})", .{d});
     try out.append(arena, '\n');
+    for (tip.body) |l| try out.print(arena, "  {s}\n", .{l});
+    for (tip.notes) |l| try out.print(arena, "  {s}\n", .{l});
     for (tip.lines) |l| try out.print(arena, "  {s}\n", .{l});
     for (tip.rows) |r| try out.print(arena, "- {s}{s}{s}\n", .{ r.text, if (r.sub.len > 0) " — " else "", r.sub });
     if (tip.more > 0) try out.print(arena, "- … and {d} more\n", .{tip.more});

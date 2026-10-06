@@ -24,11 +24,12 @@ shell "$MNML_BITBUCKET_INTEGRATION" --values --workspace "$MNML_E2E_WORKSPACE" >
 wait 700
 expect screen contains "2(1)"
 command view.toggle_hover_tooltip
-# The PR chip on the statusline (row 38): the first of the three the
+# The PR chip on the statusline (row 38): the one chip the
 # values run publishes, at the left of the right lane.
-hover 61 38
+hover 66 38
 wait 300
-expect screen contains "2 open pull requests you authored"
+expect screen contains "2 open pull requests of yours (1 still unapproved)"
+expect screen contains "waiting on your review"
 expect screen contains "Fix the login redirect"
 expect screen contains "acme/api"
 
@@ -44,7 +45,7 @@ shell test "$(grep -c '/pipelines/' wire.jsonl)" -eq 2
 
 # A row is a click target, and a press on it runs what the row names
 # — here the mine-only tab. The box sits above the chip; its first
-# row is line 35.
-click 62 35
+# row is line 34.
+click 70 34
 wait 2500
 expect screen contains "BITBUCKET"

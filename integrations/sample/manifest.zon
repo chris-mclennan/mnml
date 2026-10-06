@@ -26,7 +26,9 @@
         .{ .target = .{ .kind = "pr" }, .label = "Echo pull request", .command = "sample.echo_pr", .when = "state!=DECLINED" },
     },
     .statusline = .{
-        .{ .id = "chip", .text = "S·sample", .color = "teal", .click_command = "sample.open" },
+        // One chip per integration; `label` is the few words the
+        // statusline's Segments menu shows after "Sample: ".
+        .{ .id = "chip", .text = "S·sample", .color = "teal", .click_command = "sample.open", .label = "the live counter" },
     },
     .settings = .{
         .{ .key = "mood", .label = "Mood", .options = .{ "calm", "eager", "sleepy" }, .default = "calm", .help = "Reaches the binary as MNML_SETTING_MOOD" },

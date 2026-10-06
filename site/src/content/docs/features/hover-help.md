@@ -383,7 +383,8 @@ pipelines page.
 
 For a chip your integration publishes, the `tooltip` you send is the
 start of its entry. The first line becomes the title, and the rest
-opens the body. Without one, the entry can only name the chip by its id.
+opens the body. An integration shows one chip, so when it carries more
+than one number, say each in words on a line of its own. Without one, the entry can only name the chip by its id.
 Add `items` so the chip's hover lists what the figure is made of. The
 [SDK reference](/docs/integrations/sdk) has the fields and the rules.
 

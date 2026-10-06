@@ -70,11 +70,10 @@ pub fn chipColorOf(family: ?config.Family) []const u8 {
 }
 pub const version = "0.2.1";
 
-/// The two statusline segments the Work chip publishes — the
-/// manifest's slots, replaced live with their counts. They are two
-/// numbers about two different things, so they are two chips: one says
-/// how much is on your plate, the other how much is waiting on you to
-/// look at it.
+/// The ONE statusline segment the Work chip publishes — the manifest's
+/// slot, replaced live with its counts: what is on your plate, and,
+/// after a ` · ` and the clipboard, what waits in your QA Actionable Now
+/// tab. The hover says each in words.
 pub const segment_id = "jira_work.assigned";
 /// The Work chip's own mark — `manifest.zon`'s `chip.glyph`, never a
 /// codepoint of this file's. A run the host started wears the host's
@@ -83,7 +82,7 @@ pub const segment_glyph = (spec_work.chip orelse @compileError("manifest.zon dec
 
 /// What the assigned figure wears: the chip's mark — the host's,
 /// through `$MNML_CHIP_GLYPH`, else the manifest's own — or its plain
-/// twin. The QA figure keeps its own glyph: it is a second thing, not
+/// twin. The QA count keeps its own glyph: it is a second thing, not
 /// the chip.
 pub const Mark = struct {
     ascii: bool = false,
@@ -105,16 +104,17 @@ pub const segment_color = "#1B5DCF";
 pub const segment_click = "jira_work.open";
 pub const segment_priority: u8 = 60;
 
-/// The second figure: the tab the user configures as "QA Actionable
-/// Now" — a `jql_editable` tab, or, for a config written before that
-/// kind existed, one found by name. Without such a tab the chip is not
-/// published at all rather than showing a zero that means "not
-/// configured".
-pub const qa_segment_id = "jira_work.qa_actionable";
-pub const qa_segment_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
-pub const qa_segment_ascii = "QA";
-pub const qa_segment_color = "#C678DD";
-pub const qa_segment_priority: u8 = 59;
+/// The second count on the chip: the tab the user configures as "QA
+/// Actionable Now" — a `jql_editable` tab, or, for a config written
+/// before that kind existed, one found by name. Without such a tab the
+/// part is not shown at all rather than a zero that means "not
+/// configured"; at zero it is left off like any part.
+pub const qa_glyph = "\u{ed7a}"; // nf-fa-clipboard_check
+pub const qa_ascii = "QA";
+
+/// The segment an older manifest declared and this one does not; a
+/// reinstall drops it (the host clears what a scan no longer declares).
+pub const retired_segment_id = "jira_work.qa_actionable";
 
 /// The prefetch cache mnml hands a pane.
 pub const prefetch_env = "MNML_PREFETCH_CACHE_FILE";
@@ -479,6 +479,7 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
         .gate = &forge_gate,
     };
     var app = try app_mod.App.init(gpa, io, rd.cfg, family, &client, forge);
+    app.qa_tab = qaTabIndex(&app);
     // Both clients leave a long wait where the paint loop finds it.
     // `app` is a local that is never moved, so the pointer a worker's
     // copy of the client carries stays good for the whole run.
@@ -693,10 +694,16 @@ fn publishSide(app: *app_mod.App, mount: *sdk.Mount, ipc: ?*const sdk.Ipc, gpa: 
         var bucket_name: [64]u8 = undefined;
         if (ipc) |i| if (app.assigned_open != null) {
             // The rows are built here, on an arena of their own, out of
-            // the tab the figure was counted off — no second search.
+            // the tabs the figures were counted off — no second search.
             var rows_arena = std.heap.ArenaAllocator.init(gpa);
             defer rows_arena.deinit();
-            publishSegment(i, rows_arena.allocator(), app.assignedIssues(), bucketOf(gpa, io, limiter, &bucket_name), mark) catch {};
+            const ra = rows_arena.allocator();
+            if (paneValues(ra, app) catch null) |v| {
+                publishSegments(i, ra, v, bucketOf(gpa, io, limiter, &bucket_name), mark) catch {};
+            }
+            // Else the QA tab has not loaded yet: wait for it rather
+            // than publish a chip that has lost its second count until
+            // the next poll. Its fetch marks the chip dirty again.
         };
     }
 }
@@ -843,42 +850,58 @@ fn nameIsQaActionable(name: []const u8) bool {
     return std.mem.indexOf(u8, buf[0..n], "qa actionable") != null;
 }
 
-/// The Work chips' statusline segments: the glyph and the count, the
-/// breakdown on hover, a click opens the pane — the manifest's slots,
-/// live.
+/// The chip's text: the mark and the assigned figure, then ` · ` and
+/// the clipboard with the QA count when a QA tab is set up and holds
+/// any. One figure and no bracketed subset: a tracker has no subset of
+/// "assigned to me" it can name.
+pub fn segmentText(buf: []u8, v: Values, mark: Mark) []const u8 {
+    const parts = [_]sdk.pane.FigurePart{.{ .glyph = if (mark.ascii) qa_ascii else qa_glyph, .n = v.qa_actionable orelse 0 }};
+    return sdk.pane.figure.text(buf, .{ .glyph = mark.chip(), .n = v.assigned_open, .parts = &parts });
+}
+
+/// What the chip means, on hover: each number in words, one line
+/// apiece — the assigned figure with its breakdown by status, then the
+/// QA tab's.
+pub fn segmentTooltip(arena: Allocator, v: Values) Allocator.Error![]const u8 {
+    const lead = try std.fmt.allocPrint(arena, "{d} work item{s} assigned to you", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
+    const first = try breakdownText(arena, lead, v.assigned_by_status);
+    const n = v.qa_actionable orelse return first;
+    const qlead = try std.fmt.allocPrint(arena, "{d} in your {s} tab", .{ n, if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now" });
+    return std.fmt.allocPrint(arena, "{s}\n{s}", .{ first, try breakdownText(arena, qlead, v.qa_by_status) });
+}
+
+/// The rows the hover lists: the assigned tickets, then the QA tab's
+/// that are not already among them, each a click from the pane.
+pub fn segmentRows(arena: Allocator, v: Values) Allocator.Error![]const sdk.ipc.Item {
+    var out: std.ArrayList(sdk.ipc.Item) = .empty;
+    try out.appendSlice(arena, try hoverRows(arena, v.assigned_items, segment_click));
+    const tab = if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now";
+    for (try hoverRows(arena, v.qa_items, segment_click), v.qa_items) |row, it| {
+        const dup = it.key.len > 0 and for (v.assigned_items) |as| {
+            if (std.mem.eql(u8, as.key, it.key)) break true;
+        } else false;
+        if (dup) continue;
+        var r = row;
+        r.sub = if (row.sub.len > 0) try std.fmt.allocPrint(arena, "{s} \u{b7} {s}", .{ row.sub, tab }) else tab;
+        try out.append(arena, r);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// The Work chip's ONE statusline segment: the counts, the words on
+/// hover, a click opens the pane — the manifest's slot, live. The owner
+/// read the old second chip (the clipboard) as the same app said twice.
 pub fn publishSegments(ipc: *const sdk.Ipc, arena: Allocator, v: Values, bucket: ?Bucket, mark: Mark) !void {
-    const ascii = mark.ascii;
-    var buf: [32]u8 = undefined;
-    // One figure, and no bracketed subset: a tracker has no subset of
-    // "assigned to me" it can name, and `43(2)` invented to match the
-    // forge pane's shape would be a number nobody could believe.
-    const label = sdk.pane.figure.text(&buf, .{ .glyph = mark.chip(), .n = v.assigned_open });
-    const lead = try std.fmt.allocPrint(arena, "Jira · {d} open item{s} assigned to me", .{ v.assigned_open, if (v.assigned_open == 1) "" else "s" });
+    var buf: [64]u8 = undefined;
     try ipc.statuslineSetSegment(.{
         .id = segment_id,
-        .text = label,
+        .text = segmentText(&buf, v, mark),
         .color = segment_color,
         .click_command = segment_click,
         .priority = segment_priority,
-        .tooltip = try withBucket(arena, try breakdownText(arena, lead, v.assigned_by_status), bucket),
-        .items = try hoverRows(arena, v.assigned_items, segment_click),
+        .tooltip = try withBucket(arena, try segmentTooltip(arena, v), bucket),
+        .items = try segmentRows(arena, v),
     });
-    if (v.qa_actionable) |n| {
-        var qbuf: [32]u8 = undefined;
-        // Its own segment, named for its own figure — which is the
-        // family's answer to a pane with a second thing to say.
-        const qlabel = sdk.pane.figure.text(&qbuf, .{ .glyph = if (ascii) qa_segment_ascii else qa_segment_glyph, .n = n });
-        const qlead = try std.fmt.allocPrint(arena, "{s} · {d} actionable now", .{ if (v.qa_tab_name.len > 0) v.qa_tab_name else "QA Actionable Now", n });
-        try ipc.statuslineSetSegment(.{
-            .id = qa_segment_id,
-            .text = qlabel,
-            .color = qa_segment_color,
-            .click_command = segment_click,
-            .priority = qa_segment_priority,
-            .tooltip = try withBucket(arena, try breakdownText(arena, qlead, v.qa_by_status), bucket),
-            .items = try hoverRows(arena, v.qa_items, segment_click),
-        });
-    }
 }
 
 /// The form the pane's own refresh publishes as it goes — off the
@@ -894,17 +917,44 @@ pub fn publishSegment(ipc: *const sdk.Ipc, arena: Allocator, issues: []const mod
     return publishSegments(ipc, arena, try assignedValues(arena, issues), bucket, mark);
 }
 
-/// The hover text with the shared bucket's own two lines under it:
-/// what it holds, at what rate, with how many throttles and how long
+/// What the pane's own publish says: the assigned figure off its
+/// assigned tab, and — when the config has a QA Actionable Now tab — its
+/// count off that tab. Null while that tab is set up but this pane has
+/// not loaded it: the chip a poll left keeps its QA count rather than
+/// losing it to a publish that does not know it.
+pub fn paneValues(arena: Allocator, app: *const app_mod.App) Allocator.Error!?Values {
+    var v = try assignedValues(arena, app.assignedIssues());
+    const qt = qaTab(app.cfg.tabs) orelse return v;
+    const i = app.qa_tab orelse return null;
+    if (i >= app.tabs.len or !app.tabs[i].fetched) return null;
+    const issues = app.tabs[i].issues;
+    v.qa_actionable = issues.len;
+    v.qa_by_status = try countByStatus(arena, issues);
+    v.qa_items = try issueItems(arena, issues);
+    v.qa_tab_name = qt.name;
+    return v;
+}
+
+/// Which of the pane's tabs is the QA Actionable Now tab the chip
+/// counts, if this pane has it.
+pub fn qaTabIndex(app: *const app_mod.App) ?usize {
+    const qt = qaTab(app.cfg.tabs) orelse return null;
+    for (app.tabs, 0..) |ts, i| if (std.mem.eql(u8, ts.cfg.name, qt.name)) return i;
+    return null;
+}
+
+/// The hover text with the shared bucket's own two lines under it,
+/// after a blank line (the host's trailer, under its own "click runs"
+/// line rather than inside the breakdown): what it holds, at what rate, with how many throttles and how long
 /// since the last 429 — and who has been spending it. It is the answer
 /// to "why is this chip stale", and it is one hover away.
 fn withBucket(arena: Allocator, body: []const u8, bucket: ?Bucket) Allocator.Error![]const u8 {
     const b = bucket orelse return body;
     var buf: [192]u8 = undefined;
     const line = b.status.describe(&buf);
-    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n{s}", .{ body, line });
+    const d = b.draws orelse return std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ body, line });
     var dbuf: [96]u8 = undefined;
-    return std.fmt.allocPrint(arena, "{s}\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
+    return std.fmt.allocPrint(arena, "{s}\n\n{s}\nspent by {s}", .{ body, line, d.describe(&dbuf, draws_window_secs) });
 }
 
 /// What the hover says about the shared bucket: its state, and who has
@@ -1505,20 +1555,20 @@ test "the three manifests: one binary, three families, the Work chip carries the
     try testing.expectEqualStrings("\u{f1c19}", spec_work.chip.?.glyph);
     try testing.expectEqualStrings("\u{f1c17}", spec_boards.chip.?.glyph);
     try testing.expectEqualStrings("\u{f1c18}", spec_fix_versions.chip.?.glyph);
-    // Two chips, because they are two numbers about two different
-    // things: what is on my plate, and what is waiting for me to look
-    // at it. Each carries its own resting hover text.
-    try testing.expectEqual(@as(usize, 2), spec_work.statusline.len);
+    // ONE chip: the owner read the old second chip (the clipboard) as
+    // the same app said twice. It carries its resting hover text and
+    // the short label the Segments menu reads.
+    try testing.expectEqual(@as(usize, 1), spec_work.statusline.len);
     try testing.expectEqualStrings("jira_work.open", spec_work.statusline[0].click_command.?);
     try testing.expectEqualStrings("#1B5DCF", spec_work.statusline[0].color.?);
     try testing.expectEqualStrings("assigned", spec_work.statusline[0].id);
-    try testing.expectEqualStrings("qa_actionable", spec_work.statusline[1].id);
-    for (spec_work.statusline) |seg| try testing.expect(seg.tooltip != null);
-    // The ids the binary publishes on are the manifest's own slots,
+    try testing.expectEqualStrings("assigned, QA actionable", spec_work.statusline[0].label.?);
+    try testing.expect(spec_work.statusline[0].tooltip != null);
+    // The id the binary publishes on is the manifest's own slot,
     // prefixed with the manifest id — a mismatch is a chip that never
     // moves, which is only visible by running it.
     try testing.expectEqualStrings(segment_id, "jira_work." ++ "assigned");
-    try testing.expectEqualStrings(qa_segment_id, "jira_work." ++ "qa_actionable");
+    try testing.expect(!std.mem.eql(u8, retired_segment_id, segment_id));
     try testing.expectEqual(@as(usize, 0), spec_boards.statusline.len);
     // The issue key links, on the Work chip alone, any project's key.
     try testing.expectEqual(@as(usize, 1), spec_work.links.len);
@@ -1586,7 +1636,7 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     // manifest's, so a chip change never leaves this line behind.
     try testing.expectEqualStrings(
         "{\"cmd\":\"statusline-set-segment\",\"id\":\"jira_work.assigned\",\"side\":\"right\",\"text\":\"" ++ segment_glyph ++ " 3\",\"color\":\"#1B5DCF\",\"click_command\":\"jira_work.open\",\"priority\":60,\"min_width\":4,\"max_width\":30," ++
-            "\"tooltip\":\"Jira · 3 open items assigned to me — 2 In Progress · 1 To Do\"," ++
+            "\"tooltip\":\"3 work items assigned to you — 2 In Progress · 1 To Do\"," ++
             // Each row carries `focus-row`'s deep link, so a press from
             // the hover of a chip the PANE published lands on that
             // ticket just as it does from the poll's.
@@ -1600,6 +1650,34 @@ test "the statusline segment is the manifest's slot, live: the exact IPC line" {
     try testing.expectEqualStrings(spec_work.statusline[0].color.?, segment_color);
     try testing.expectEqualStrings(spec_work.statusline[0].click_command.?, segment_click);
     try testing.expect(std.mem.endsWith(u8, segment_id, spec_work.statusline[0].id));
+}
+
+test "the pane's own publish keeps the QA count: it waits for the QA tab rather than drop the part" {
+    // One chip carries both counts now, so a publish from a pane that
+    // has not loaded its QA tab would wipe the QA part the last poll
+    // put there until the next poll, five minutes later.
+    const tabs = [_]config.Tab{
+        .{ .name = "Assigned", .kind = .work_assigned },
+        .{ .name = "QA Actionable Now", .kind = .work_open },
+    };
+    const h = try app_mod.Harness.start(.{ .tabs = &tabs }, .work);
+    defer h.stop();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    h.app.qa_tab = qaTabIndex(&h.app);
+    try testing.expectEqual(@as(?usize, 1), h.app.qa_tab);
+    h.app.tabs[1].fetched = false;
+    try testing.expect((try paneValues(arena, &h.app)) == null);
+    h.app.tabs[1].fetched = true;
+    const v = (try paneValues(arena, &h.app)).?;
+    try testing.expectEqual(@as(?usize, h.app.tabs[1].issues.len), v.qa_actionable);
+    try testing.expectEqualStrings("QA Actionable Now", v.qa_tab_name);
+    // No QA tab in the config: the assigned figure alone, at once.
+    const plain = try app_mod.Harness.start(.{ .tabs = &app_mod.work_tabs }, .work);
+    defer plain.stop();
+    try testing.expect(qaTabIndex(&plain.app) == null);
+    try testing.expect((try paneValues(arena, &plain.app)).?.qa_actionable == null);
 }
 
 test "the pane's own publish is the `--values` publish for the same listing, rows and all" {
@@ -1768,10 +1846,11 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
     var got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
     try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.assigned\"") != null);
     try testing.expect(std.mem.indexOf(u8, got, segment_glyph ++ " 7") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "7 open items assigned to me — 4 In Progress · 3 To Do") != null);
-    // No tab, no chip: a zero here would read as "nothing to do" when
-    // it means "not set up".
-    try testing.expect(std.mem.indexOf(u8, got, "jira_work.qa_actionable") == null);
+    try testing.expect(std.mem.indexOf(u8, got, "7 work items assigned to you — 4 In Progress · 3 To Do") != null);
+    // No tab, no part: a zero here would read as "nothing to do" when
+    // it means "not set up". And the retired second chip is never sent.
+    try testing.expect(std.mem.indexOf(u8, got, qa_glyph) == null);
+    try testing.expect(std.mem.indexOf(u8, got, retired_segment_id) == null);
     // The figure says how many; `items` says which, in the order the
     // search returned them, each carrying what a click on the row runs.
     try testing.expect(std.mem.indexOf(u8, got, "\"items\":[{\"text\":\"ENG-1  Checkout rewrite\",\"sub\":\"In Progress\",\"command\":\"jira_work.open\"") != null);
@@ -1790,23 +1869,25 @@ test "both chips carry their count and their breakdown; the QA one is absent whe
         .qa_items = &.{.{ .text = "ENG-9  Voucher stacking", .sub = "Ready for QA" }},
     }, .{ .status = .{ .tokens = 0.24, .capacity = 60, .rate = 0.33, .baseline_rate = 0.33, .throttles = 3, .cooldown_remaining_secs = 0, .last_429_age_secs = 4 * 3600 }, .draws = .{ .top = "bb.py", .top_n = 30, .total = 71 } }, .{});
     got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
-    try testing.expect(std.mem.indexOf(u8, got, "\"id\":\"jira_work.qa_actionable\"") != null);
-    try testing.expect(std.mem.indexOf(u8, got, "QA Actionable Now · 3 actionable now — 3 Ready for QA") != null);
+    try testing.expect(std.mem.indexOf(u8, got, retired_segment_id) == null);
+    try testing.expect(std.mem.indexOf(u8, got, "\\n3 in your QA Actionable Now tab — 3 Ready for QA") != null);
     // One item reads as one item, not "1 items".
-    try testing.expect(std.mem.indexOf(u8, got, "1 open item assigned to me") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "1 work item assigned to you") != null);
     // And the hover carries the shared bucket, which is the answer to
     // "why is this chip stale" — one hover away rather than nowhere.
     try testing.expect(std.mem.indexOf(u8, got, "budget: 0.2 of 60 tokens") != null);
+    // After a blank line: the host's trailer, under its own line.
+    try testing.expect(std.mem.indexOf(u8, got, "Ready for QA\\n\\nbudget: 0.2 of 60 tokens") != null);
     try testing.expect(std.mem.indexOf(u8, got, "3 throttles") != null);
     try testing.expect(std.mem.indexOf(u8, got, "last 429 4h ago") != null);
     // And WHO drained it — a chip that is stale because a script is
     // holding the budget says so rather than blaming itself.
     try testing.expect(std.mem.indexOf(u8, got, "spent by bb.py 30 of 71 draws in 10m") != null);
-    // The QA chip lists its own, not the assigned chip's.
-    try testing.expect(std.mem.indexOf(u8, got, "\"text\":\"ENG-9  Voucher stacking\",\"sub\":\"Ready for QA\"") != null);
+    // The QA tab's rows follow the assigned ones, saying where they are.
+    try testing.expect(std.mem.indexOf(u8, got, "\"text\":\"ENG-9  Voucher stacking\",\"sub\":\"Ready for QA \u{b7} QA Actionable Now\"") != null);
 }
 
-test "--ascii: both chips publish their twin, and no Nerd Font glyph goes out" {
+test "--ascii: the chip publishes its twins, and no Nerd Font glyph goes out" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
@@ -1822,25 +1903,51 @@ test "--ascii: both chips publish their twin, and no Nerd Font glyph goes out" {
         .qa_tab_name = "QA Actionable Now",
     }, null, .{ .ascii = true });
     const got = try tmp.dir.readFileAlloc(testing.io, "command", arena, .unlimited);
-    try testing.expect(std.mem.indexOf(u8, got, segment_ascii ++ " 7") != null);
-    try testing.expect(std.mem.indexOf(u8, got, qa_segment_ascii ++ " 3") != null);
+    try testing.expect(std.mem.indexOf(u8, got, segment_ascii ++ " 7 \u{b7} " ++ qa_ascii ++ " 3") != null);
     // The point of the twin: a host that cannot paint the font is sent
     // no codepoint it would render as tofu.
     try testing.expect(std.mem.indexOf(u8, got, segment_glyph) == null);
-    try testing.expect(std.mem.indexOf(u8, got, qa_segment_glyph) == null);
+    try testing.expect(std.mem.indexOf(u8, got, qa_glyph) == null);
 }
 
 test "every segment this pane publishes obeys the family's figure rule" {
     // The SDK's assertion, not this pane's own opinion of it: one
-    // figure the segment is named for, and a bracketed subset only
-    // when the pane genuinely has one. A tracker has no subset of
-    // "assigned to me" it can name, so both of its chips say one
-    // number — and the rule is what stops `43(2)` being invented here
-    // to make the two families' chips look alike.
-    var buf: [32]u8 = undefined;
-    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = 43 }));
-    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = segment_glyph, .n = 0 }));
-    try sdk.pane.expect.statuslineFigure(sdk.pane.figure.text(&buf, .{ .glyph = qa_segment_glyph, .n = 3 }));
+    // figure, no invented subset (a tracker has no subset of "assigned
+    // to me" it can name), and the QA count named by its glyph.
+    var buf: [64]u8 = undefined;
+    for ([_]Values{ .{ .assigned_open = 43 }, .{ .assigned_open = 0 }, .{ .assigned_open = 10, .qa_actionable = 14 }, .{ .assigned_open = 10, .qa_actionable = 0 } }) |v| {
+        try sdk.pane.expect.statuslineFigure(segmentText(&buf, v, .{}));
+        try sdk.pane.expect.statuslineFigure(segmentText(&buf, v, .{ .ascii = true }));
+    }
+}
+
+test "one chip, two numbers: the text and the hover at (0,0), (10,0) and (10,14)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var buf: [64]u8 = undefined;
+    const by_status = [_]StatusCount{ .{ .status = "In Progress", .n = 6 }, .{ .status = "To Do", .n = 4 } };
+
+    // Nothing assigned, a QA tab with nothing in it.
+    const quiet: Values = .{ .assigned_open = 0, .qa_actionable = 0, .qa_tab_name = "QA Actionable Now" };
+    try testing.expectEqualStrings(segment_glyph ++ " 0", segmentText(&buf, quiet, .{}));
+    try testing.expectEqualStrings("0 work items assigned to you\n0 in your QA Actionable Now tab", try segmentTooltip(arena, quiet));
+
+    // Ten assigned, the QA tab empty: the part stays off the chip, the
+    // hover still says it.
+    const ten: Values = .{ .assigned_open = 10, .assigned_by_status = &by_status, .qa_actionable = 0, .qa_tab_name = "QA Actionable Now" };
+    try testing.expectEqualStrings(segment_glyph ++ " 10", segmentText(&buf, ten, .{}));
+    try testing.expectEqualStrings("10 work items assigned to you — 6 In Progress · 4 To Do\n0 in your QA Actionable Now tab", try segmentTooltip(arena, ten));
+
+    // Ten assigned and fourteen in the QA tab.
+    const both: Values = .{ .assigned_open = 10, .assigned_by_status = &by_status, .qa_actionable = 14, .qa_by_status = &.{.{ .status = "Ready for QA", .n = 14 }}, .qa_tab_name = "QA Actionable Now" };
+    try testing.expectEqualStrings(segment_glyph ++ " 10 \u{b7} " ++ qa_glyph ++ " 14", segmentText(&buf, both, .{}));
+    try testing.expectEqualStrings("10 work items assigned to you — 6 In Progress · 4 To Do\n14 in your QA Actionable Now tab — 14 Ready for QA", try segmentTooltip(arena, both));
+
+    // No QA tab set up: no part and no second line.
+    const none: Values = .{ .assigned_open = 10, .assigned_by_status = &by_status };
+    try testing.expectEqualStrings(segment_glyph ++ " 10", segmentText(&buf, none, .{}));
+    try testing.expectEqualStrings("10 work items assigned to you — 6 In Progress · 4 To Do", try segmentTooltip(arena, none));
 }
 
 test "one binary, three manifests, one poll: only the chip that has a segment declares a values source" {
@@ -2048,8 +2155,7 @@ const Probe = struct {
         const ui: screen.Ui = .{ .ascii = p.ascii, .nerd = !p.ascii };
         try screen.paint(arena, &p.f, &p.h.app, ui);
         var segs: std.ArrayList([]const u8) = .empty;
-        try segs.append(arena, sdk.pane.figure.text(try arena.alloc(u8, 32), .{ .glyph = if (p.ascii) segment_ascii else segment_glyph, .n = 43 }));
-        try segs.append(arena, sdk.pane.figure.text(try arena.alloc(u8, 32), .{ .glyph = if (p.ascii) qa_segment_ascii else qa_segment_glyph, .n = 3 }));
+        try segs.append(arena, segmentText(try arena.alloc(u8, 64), .{ .assigned_open = 43, .qa_actionable = 3 }, .{ .ascii = p.ascii }));
         return .{
             .frame = &p.f,
             .hits = &p.h.app.hits,

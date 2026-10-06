@@ -1200,7 +1200,13 @@ pub fn openIntegrationSegmentMenu(app: *App, slot: u32, x: u16, y: u16) Allocato
     const segs = app.ipc_fx.segments.items;
     if (slot >= segs.len) return;
     const seg = segs[slot];
-    const polled = app.integration_poll.jobForSegment(seg.id) != null;
+    // The menu's strings are its own: a poll that republishes the chip
+    // while the menu is open replaces the segment's.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
+    const ma = mem.allocator();
+    const id = try ma.dupe(u8, seg.id);
+    const polled = app.integration_poll.jobForSegment(id) != null;
     const a = app.frame.allocator();
     var rows: std.ArrayListUnmanaged(MenuItem) = .empty;
     if (polled) try rows.append(a, .{ .label = "Refresh now", .action = .{ .command = .@"integrations.poll_now" } });
@@ -1208,15 +1214,18 @@ pub fn openIntegrationSegmentMenu(app: *App, slot: u32, x: u16, y: u16) Allocato
     // What this chip's number cost: the REQUESTS view, filtered to the
     // service behind it. A chip that is stale or slow is the place the
     // question gets asked, so it is the place the answer is offered.
-    try rows.append(a, .{ .label = "Requests…", .action = .{ .requests_for = serviceOfSegment(seg.id) }, .separator_before = rows.items.len > 0 });
+    try rows.append(a, .{ .label = "Requests…", .action = .{ .requests_for = serviceOfSegment(id) }, .separator_before = rows.items.len > 0 });
     try rows.append(a, .{ .label = "Integrations…", .action = .{ .command = .@"integrations.show_installed" }, .separator_before = true });
+    // Off the row, as unticking it under the bar's *Segments ▸* does:
+    // `statusline.hidden`, written home.
+    try rows.append(a, .{ .label = "Hide", .action = .{ .toggle_statusline_segment = id }, .separator_before = true });
     const built = try items(app, rows.items);
     errdefer app.gpa.free(built);
-    try app.openMenu(seg.id, built, x, y);
+    try openOwned(app, try @import("integrations.zig").segmentLabel(app, ma, id), built, x, y, mem);
 }
 
 /// The service behind a segment id (`jira_work.assigned` → `jira`,
-/// `bitbucket_prs.reviews_mine` → `bitbucket`). The prefix before the
+/// `bitbucket_prs.prs_mine` → `bitbucket`). The prefix before the
 /// first `_` or `.` is the integration's family, which is what the
 /// request log files are named for. An id that names neither filters
 /// to nothing in particular, which is the whole view.
@@ -2612,7 +2621,7 @@ test "an integration chip's menu offers the requests behind its number, filtered
     // `jira_work.assigned` is paid for out of the `jira` bucket and
     // logged to `jira.jsonl`; the prefix is what names both.
     try t.expectEqualStrings("jira", serviceOfSegment("jira_work.assigned"));
-    try t.expectEqualStrings("bitbucket", serviceOfSegment("bitbucket_prs.reviews_mine"));
+    try t.expectEqualStrings("bitbucket", serviceOfSegment("bitbucket_prs.prs_mine"));
     try t.expectEqualStrings("jira", serviceOfSegment("jira.x"));
     try t.expectEqualStrings("plain", serviceOfSegment("plain"));
     try t.expectEqualStrings("", serviceOfSegment(""));

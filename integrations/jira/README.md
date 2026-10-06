@@ -309,30 +309,50 @@ never.
 
 ## The statusline
 
-The Work chip's manifest declares **two** segments, because they are
-two numbers about two different things.
+The Work chip's manifest declares **one** segment, `jira_work.assigned`,
+with up to two numbers on it:
 
-**`jira_work.assigned`** — `󰌃 N`: open items assigned to you — the
-count of the `work_open` (or `work_assigned`) tab. A click runs
-`jira_work.open`.
+```
+󰌃 10 ·  14
+```
 
-**`jira_work.qa_actionable`** — ` K`: the tab you have set up as **QA
-Actionable Now** — the first `.kind = .jql_editable` tab, whatever it is
-called. A config written before that kind existed still works: failing a
-kinded tab, one is found by name ("QA Actionable Now", "qa_actionable",
-"QA actionable" all count). Its own `jql` — holes filled from `.vars` —
-is what runs. With no such tab the key is `null` and the chip is not
-published at all, which is not the same as a zero.
+- **`󰌃 10`** — open work items assigned to you: the count of the
+  `work_open` (or `work_assigned`) tab.
+- **` 14`** (a clipboard, `QA` with `--ascii`) — the tab you have set
+  up as **QA Actionable Now**: the first `.kind = .jql_editable` tab,
+  whatever it is called. A config written before that kind existed still
+  works: failing a kinded tab, one is found by name ("QA Actionable
+  Now", "qa_actionable", "QA actionable" all count). Its own `jql` —
+  holes filled from `.vars` — is what runs. With no such tab, or none in
+  it, the part is left off.
 
-Each chip's hover is its breakdown by status —
-`Jira · 7 open items assigned to me — 3 In Progress · 2 In Review ·
-2 To Do` — so a number that moved says what moved.
+The hover says each number in words, one line apiece, with its
+breakdown by status —
 
-The pane publishes the first over mnml's Tier-2 IPC after every
-refresh. `mnml-jira --values --workspace <ws>` publishes both from
-outside the pane and prints `{"assigned_open":N,"qa_actionable":K}` for
-a poller; mnml's own poller runs exactly that line on the manifest's
-interval, so the chips move with no pane open.
+```
+10 work items assigned to you — 6 In Progress · 4 To Do
+14 in your QA Actionable Now tab — 14 Ready for QA
+```
+
+— then the shared rate-limit bucket's line, and lists the tickets:
+the assigned ones, then the QA tab's not already among them. A press on
+a row opens the pane with the cursor on that ticket; a click on the
+chip opens the pane. The statusline's *Segments ▸* menu lists it as
+*Jira Work: assigned, QA actionable*, and its own right-click menu has
+*Hide*.
+
+The pane republishes the chip over mnml's Tier-2 IPC after every
+refresh — once its QA tab has loaded, so an open pane never drops the
+QA count a poll put there. `mnml-jira --values --workspace <ws>`
+publishes it from outside the pane and prints
+`{"assigned_open":N,"qa_actionable":K}` for a poller; mnml's own poller
+runs exactly that line on the manifest's interval, so the chip moves
+with no pane open.
+
+Until 0.2.4 the QA count was a second chip, `jira_work.qa_actionable`.
+Installing 0.2.4 takes it off the row; its name left in
+`statusline.hidden` shows in *Segments ▸* by its raw id and can be
+unticked from there.
 
 ## Builds under a pull request
 

@@ -394,7 +394,7 @@ pub const Options = struct {
     /// `--only prs-mine`: keep the `mode = mine` tabs, or synthesise one.
     mine: bool = false,
     /// `--only prs-awaiting`: open with the awaiting-my-review filter
-    /// already on — what the `reviews_pending` chip's click asks for.
+    /// already on — what a "waiting on you" row of the PRs chip's hover asks for.
     awaiting: bool = false,
     /// `--focus <repo>#<id>`: the pull request to land the cursor on
     /// once the first listing is in. Empty asks for nothing.
@@ -518,6 +518,12 @@ pub const App = struct {
     /// The glyph the host paints on the PRs chip (`$MNML_CHIP_GLYPH`),
     /// which the figure wears; the manifest's own until main sets it.
     chip_mark: []const u8 = chip_glyph,
+    /// Whether this pane republishes the PRs chip. A pane opened on the
+    /// Pipelines family does not: the host hands it the Pipelines chip's
+    /// mark as `$MNML_CHIP_GLYPH`, and the PRs chip it published wore
+    /// that mark — the owner saw the PRs icon turn into the Pipelines
+    /// one on opening Pipelines. The poller and a PRs pane keep the chip.
+    publishes_chip: bool = true,
     /// Sessions this pane started and wants told about, waiting to go
     /// out over the mount.
     watch_out: std.ArrayListUnmanaged(WatchRequest) = .empty,

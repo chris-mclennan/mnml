@@ -249,6 +249,7 @@ test "the manifest renders and parses back to the same shape" {
     try std.testing.expectEqualStrings(spec.id, back.id);
     try std.testing.expectEqualStrings(spec.commands[1].ex.?, back.commands[1].ex.?);
     try std.testing.expectEqualStrings("chip", back.statusline[0].id);
+    try std.testing.expectEqualStrings("the live counter", back.statusline[0].label.?);
     try std.testing.expectEqualStrings("ticket", back.context_menu[0].target.kind);
     try std.testing.expectEqualStrings("sample.echo_ticket", back.context_menu[0].command);
     try std.testing.expectEqualStrings("state!=DECLINED", back.context_menu[1].when.?);

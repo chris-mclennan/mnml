@@ -243,6 +243,12 @@ pub const StatuslineSegment = struct {
     /// run replaces it with the live breakdown by sending `tooltip` on
     /// its `statusline-set-segment` line.
     tooltip: ?[]const u8 = null,
+    /// What the chip counts, in a few words — the row mnml's statusline
+    /// *Segments ▸* menu shows after the integration's label
+    /// (`Bitbucket PRs: pull requests, review threads, waiting on
+    /// you`). Optional: a manifest without it lists the raw
+    /// `<id>.<segment id>`.
+    label: ?[]const u8 = null,
 };
 
 /// A discrete-choice row in mnml's settings overlay, under the
@@ -723,6 +729,10 @@ test "write renders ZON that parses back with the same shape" {
         },
         .settings = &.{.{ .key = "greeting", .label = "Greeting", .options = &.{ "hi", "hello" }, .default = "hi" }},
         .requires = &.{"HELLO_TOKEN"},
+        .statusline = &.{
+            .{ .id = "greetings", .text = "{chip} 0", .click_command = "hello.open", .label = "greetings, waves" },
+            .{ .id = "bare", .text = "B" },
+        },
     };
     const p = try writeUnder(testing.allocator, testing.io, root, m);
     defer testing.allocator.free(p);
@@ -745,6 +755,12 @@ test "write renders ZON that parses back with the same shape" {
     try testing.expectEqualStrings("term mnml-hello --shell", back.commands[1].ex.?);
     try testing.expectEqualStrings("hello", back.settings[0].options[1]);
     try testing.expectEqualStrings("HELLO_TOKEN", back.requires[0]);
+    // A segment's short label survives the round trip; one without it
+    // reads back as none, and nothing is written for it.
+    try testing.expectEqual(@as(usize, 2), back.statusline.len);
+    try testing.expectEqualStrings("greetings, waves", back.statusline[0].label.?);
+    try testing.expect(back.statusline[1].label == null);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, ".label = \"greetings, waves\""));
     // `--install` stamps the SDK it was compiled against, which the
     // author never wrote; the host reads it back to call a build stale.
     try testing.expectEqualStrings(sdk_root.version, back.sdk);

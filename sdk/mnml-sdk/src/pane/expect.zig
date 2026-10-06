@@ -231,8 +231,9 @@ pub fn foldRow(f: *const Frame, th: Theme, y: u16, ascii: bool) Error!void {
 }
 
 /// The text of one statusline segment obeys the family's figure rule:
-/// one figure the segment is named for, and a bracketed subset only
-/// when the pane genuinely has one (`sdk.pane.figure`).
+/// one figure the segment is named for, a bracketed subset only when
+/// the pane genuinely has one, and further counts each named by its
+/// own glyph after a ` · ` (`sdk.pane.figure`).
 ///
 /// Asserted from both suites because the two panes disagreed about it
 /// by accident rather than on purpose — the forge pane had a real
