@@ -10,6 +10,18 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
+## v0.3.4 (2026-10-05)
+
+### Jira and Bitbucket 0.2.3 in the Marketplace
+
+- The Marketplace an installed mnml reads lists the integrations its
+  own release was cut with, and 0.3.3 was cut before Jira and
+  Bitbucket 0.2.3 existed. This release's index names them, so the
+  recent-items cache, the pull-request and pipeline number ranges, the
+  Atlassian chip icons, the confirm-box click fix and the measured
+  tables described under 0.3.3 reach a Marketplace install. Nothing
+  else changes.
+
 ## v0.3.3 (2026-10-05)
 
 ### Integrations add rows to each other's menus
