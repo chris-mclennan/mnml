@@ -1539,6 +1539,14 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     var worker = fetch.Worker.init(gpa, io, &session.client, &progress, session.loaded.config.account_id, session.loaded.config.workspace);
     worker.recent = session.recentSink();
     defer worker.deinit();
+    // The pane's own values count the review threads too, off the same
+    // cache `--values` keeps: the chip carries that count now, and a
+    // pane that published without it took the bubble off the chip the
+    // moment it opened (the poller is quiet while a pane is open, so
+    // the two never write the cache at once).
+    var pane_rc: ?review_cache.Cache = review_cache.Cache.open(gpa, io, session.loaded.path) catch null;
+    defer if (pane_rc) |*rc| rc.deinit();
+    if (pane_rc) |*rc| worker.review_cache = rc;
 
     var event_buf: [256]Event = undefined;
     var events = EventQueue.init(&event_buf);
