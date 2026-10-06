@@ -3,6 +3,7 @@ title: Release Notes
 description: Every published version of mnml and its release notes.
 ---
 
+- [0.3.4](/docs/install/release-notes/0-3-4) — Jira and Bitbucket 0.2.3 in the Marketplace
 - [0.3.3](/docs/install/release-notes/0-3-3) — the release a new user can install
 - [0.3.2](/docs/install/release-notes/0-3-2) — a sessions mode, an API, and links everywhere
 - [0.3.1](/docs/install/release-notes/0-3-1) — the Jira and Bitbucket fix release
