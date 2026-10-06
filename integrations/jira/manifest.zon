@@ -8,7 +8,7 @@
     .id = "jira_work",
     .label = "Jira Work",
     .description = "Jira: tickets assigned to me + recently done",
-    .version = "0.2.3",
+    .version = "0.2.4",
     .binary = "mnml-jira",
     .category = "tracker",
     .chip = .{ .glyph = "\u{f1c19}", .fallback = "JW", .color = "blue", .tooltip = "Jira Work", .in_palette_bar = false }, // MnmlSymbols: Atlassian work-items
@@ -16,13 +16,13 @@
         .{ .id = "jira_work.open", .title = "Jira Work: open", .args = .{ "--only", "work" }, .keys = .{"space i j w"} },
         .{ .id = "jira_work.refresh", .title = "Jira Work: republish the statusline count", .ex = "term mnml-jira --values --only work --workspace {{workspace}}" },
     },
+    // ONE chip: the work items assigned to you, then — after a ` · `
+    // and the clipboard, left off at zero or with no such tab — the
+    // count in the tab you set up as QA Actionable Now. The hover says
+    // each in words; a click opens the pane. `label` is what the
+    // statusline's Segments menu calls it.
     .statusline = .{
-        .{ .id = "assigned", .text = "{chip}", .color = "#1B5DCF", .click_command = "jira_work.open", .priority = 60, .tooltip = "Jira: open items assigned to me. Hover after a poll for the breakdown by status." },
-        // The second figure: the tab configured as QA Actionable Now.
-        // It rests blank — `--values` publishes it only when such a tab
-        // exists, so a user without one never sees a zero that means
-        // "not set up".
-        .{ .id = "qa_actionable", .text = "", .color = "#C678DD", .click_command = "jira_work.open", .priority = 59, .tooltip = "Jira: the tab you have set up as QA Actionable Now." },
+        .{ .id = "assigned", .text = "{chip}", .color = "#1B5DCF", .click_command = "jira_work.open", .priority = 60, .label = "assigned, QA actionable", .tooltip = "Jira: work items assigned to you, and the count in your QA Actionable Now tab. Hover after a poll for the breakdown by status." },
     },
     .auth = .{
         .{ .key = "site_url", .label = "Jira site URL", .kind = .url, .required = true, .env_fallback = "JIRA_URL", .help = "Your Atlassian instance, like https://mycompany.atlassian.net" },
