@@ -20,8 +20,9 @@
 //!           the column a row is known by; and its header row
 //!   meter   a fill meter (a bucket, a quota) in the budget chip's
 //!           tier inks, with its `--ascii` twin
-//!   figure  what a statusline segment is allowed to say — one named
-//!           figure, and a bracketed subset only when the pane has one
+//!   figure  what an integration's one statusline chip may say — one
+//!           named figure, a bracketed subset only when the pane has
+//!           one, further counts each named by a glyph after a ` · `
 //!   expect  what an integration's OWN tests assert about the chrome
 //!           it painted — the check that a pane CALLS the toolkit,
 //!           which the toolkit's self-consistency cannot show
@@ -72,8 +73,9 @@ pub const help = @import("pane/help.zig");
 /// The `?` key sheet's grammar — the chord spelling and the keys it
 /// answers; `chrome.Painter.keySheet` paints it. One sheet for every pane.
 pub const keysheet = @import("pane/keysheet.zig");
-/// What a statusline segment is allowed to say: one named figure, and
-/// a bracketed subset only when the pane genuinely has one.
+/// What an integration's one statusline chip may say: one named
+/// figure, a bracketed subset only when the pane genuinely has one,
+/// and further counts each named by its own glyph after a ` · `.
 pub const figure = @import("pane/figure.zig");
 /// The assertions an integration's own tests make about the shared
 /// chrome, so two families check one expectation rather than two.
@@ -101,6 +103,7 @@ pub const Readiness = merge.Readiness;
 pub const MergeStrategy = merge.Strategy;
 pub const buildCaption = build.caption;
 pub const Figure = figure.Figure;
+pub const FigurePart = figure.Part;
 pub const figureText = figure.text;
 pub const ActionState = action.State;
 pub const ActionStore = action.Store;
