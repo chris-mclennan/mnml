@@ -13,6 +13,13 @@ const overlay = @import("overlay.zig");
 
 pub const Tip = struct {
     title: []const u8,
+    /// Lines that belong with the title — an integration chip's other
+    /// counts, one per line — painted at the title's weight right under
+    /// it, so a chip's second and third numbers are not footnotes.
+    body: []const []const u8 = &.{},
+    /// The publisher's own notes on those lines (`threads: 2 of 3
+    /// counted off the cache`), muted, before the host's `detail`.
+    notes: []const []const u8 = &.{},
     detail: ?[]const u8 = null,
     /// // changed (sessions-card): more rows under the detail, muted —
     /// the SESSIONS card's branch, cwd and what the pane shows. An
@@ -30,6 +37,10 @@ pub const Tip = struct {
     /// `.tip_row{ .seg, .idx }`, so a click runs what the row names.
     /// The tip itself still registers nothing.
     row_seg: ?u32 = null,
+    /// Grow to the longest line up to the screen's width rather than
+    /// `max_width`: an integration's breakdown is cut only when the
+    /// screen itself has no more room.
+    wide: bool = false,
 };
 
 /// One thing behind a figure.
@@ -57,16 +68,19 @@ pub fn draw(ui: Ui, screen: Rect, x: u16, y: u16, tip: Tip) void {
     // the width pass, and a stack buffer would be dead by then.
     const more_text: ?[]const u8 = if (tip.more > 0) ui.fmt("\u{2026} and {d} more", .{tip.more}) else null;
     var widest: u16 = @max(ui.width(tip.title), if (tip.detail) |d| ui.width(d) else 0);
+    for (tip.body) |l| widest = @max(widest, ui.width(l));
+    for (tip.notes) |l| widest = @max(widest, ui.width(l));
     for (tip.lines) |l| widest = @max(widest, ui.width(l));
     for (tip.rows) |r| widest = @max(widest, ui.width(r.text) +| (if (r.sub.len > 0) sub_gap +| ui.width(r.sub) else 0));
     if (more_text) |m| widest = @max(widest, ui.width(m));
-    const inner_w: u16 = @min(widest, @min(max_width, screen.w -| 2));
+    const cap: u16 = if (tip.wide) screen.w -| 2 else @min(max_width, screen.w -| 2);
+    const inner_w: u16 = @min(widest, cap);
     if (inner_w == 0) return;
     const w = inner_w + 2;
     const base_h: u16 = if (tip.detail != null) 4 else 3;
     if (w > screen.w or base_h > screen.h) return;
     // The extra lines and rows take what room there is under the base box.
-    const extra = @min(tip.lines.len, 12) + tip.rows.len + @intFromBool(tip.more > 0);
+    const extra = @min(tip.body.len, 8) + @min(tip.notes.len, 8) + @min(tip.lines.len, 12) + tip.rows.len + @intFromBool(tip.more > 0);
     const h: u16 = @min(base_h +| @as(u16, @intCast(@min(extra, 64))), screen.h);
     // Below-right of the cell; flip when the edge is in the way.
     var bx = x + 1;
@@ -79,7 +93,17 @@ pub fn draw(ui: Ui, screen: Rect, x: u16, y: u16, tip: Tip) void {
     if (inner.isEmpty()) return;
     _ = ui.putStr(inner.x, inner.y, inner.w, ui.clipStr(tip.title, inner.w), Theme.onBg(t.fg, t.overlay_bg.bg));
     var yy: u16 = inner.y + 1;
-    if (tip.detail) |d| if (inner.h > 1) {
+    for (tip.body[0..@min(tip.body.len, 8)]) |l| {
+        if (yy >= inner.bottom()) break;
+        _ = ui.putStr(inner.x, yy, inner.w, ui.clipStr(l, inner.w), Theme.onBg(t.fg, t.overlay_bg.bg));
+        yy += 1;
+    }
+    for (tip.notes[0..@min(tip.notes.len, 8)]) |l| {
+        if (yy >= inner.bottom()) break;
+        _ = ui.putStr(inner.x, yy, inner.w, ui.clipStr(l, inner.w), Theme.onBg(t.muted, t.overlay_bg.bg));
+        yy += 1;
+    }
+    if (tip.detail) |d| if (yy < inner.bottom()) {
         _ = ui.putStr(inner.x, yy, inner.w, ui.clipStr(d, inner.w), Theme.onBg(t.muted, t.overlay_bg.bg));
         yy += 1;
     };

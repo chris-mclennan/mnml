@@ -340,6 +340,43 @@ fn segmentRows(app: *App, arena: Allocator, items: []const @import("../ipc/effec
     return capped(app, seg, rows, 0);
 }
 
+/// A publisher's hover text, laid out: one line per newline, and a
+/// blank line between the integration's own words and a trailer (the
+/// shared rate-limit bucket's lines). In the integration's part the
+/// first line is the title; a line that leads with a figure is one of
+/// the chip's other counts and goes at the title's weight; any other
+/// line is a note. The host's own line (what a click runs) sits after
+/// all of that and before the trailer, so the breakdown reads as one
+/// block. A tooltip with no blank line is all the integration's.
+pub const PublisherTip = struct {
+    title: []const u8,
+    body: []const []const u8,
+    notes: []const []const u8,
+    trailer: []const []const u8,
+};
+
+pub fn splitPublisherTip(arena: Allocator, tip: []const u8) Allocator.Error!PublisherTip {
+    var it = std.mem.splitScalar(u8, tip, '\n');
+    const head = try arena.dupe(u8, it.first());
+    var body: std.ArrayListUnmanaged([]const u8) = .empty;
+    var notes: std.ArrayListUnmanaged([]const u8) = .empty;
+    var trailer: std.ArrayListUnmanaged([]const u8) = .empty;
+    var in_trailer = false;
+    while (it.next()) |l| {
+        if (l.len == 0) {
+            in_trailer = true;
+            continue;
+        }
+        const line = try arena.dupe(u8, l);
+        if (in_trailer) {
+            try trailer.append(arena, line);
+        } else if (std.ascii.isDigit(l[0])) {
+            try body.append(arena, line);
+        } else try notes.append(arena, line);
+    }
+    return .{ .title = head, .body = body.items, .notes = notes.items, .trailer = trailer.items };
+}
+
 fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
     switch (seg) {
         statusline.seg_mode => return .{
@@ -370,20 +407,17 @@ fn describeSegment(app: *App, arena: Allocator, seg: u32) Allocator.Error!?Tip {
             const detail: []const u8 = if (busy) "refreshing… · click runs the segment's command · right-click: Refresh now" else if (polled) "click runs the segment's command · right-click: Refresh now" else "click runs the segment's command";
             const listed = try segmentRows(app, arena, segs[slot].items, seg);
             if (segs[slot].tooltip) |tip| {
-                // The publisher's hover text is one line per newline:
-                // the first is the title, the rest sit under the
-                // detail (the shared bucket's own two lines).
-                var it = std.mem.splitScalar(u8, tip, '\n');
-                const head = try arena.dupe(u8, it.first());
-                var rest: std.ArrayListUnmanaged([]const u8) = .empty;
-                while (it.next()) |l| try rest.append(arena, try arena.dupe(u8, l));
+                const parts = try splitPublisherTip(arena, tip);
                 return .{
-                    .title = head,
+                    .title = parts.title,
+                    .body = parts.body,
+                    .notes = parts.notes,
                     .detail = detail,
-                    .lines = rest.items,
+                    .lines = parts.trailer,
                     .rows = listed.rows,
                     .more = listed.more,
                     .row_seg = listed.row_seg,
+                    .wide = true,
                 };
             }
             if (polled or listed.rows.len > 0) return .{

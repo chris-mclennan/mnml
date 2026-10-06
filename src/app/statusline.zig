@@ -2393,6 +2393,83 @@ test "a chip with no room on the row is named in Segments, and a hidden chip tak
     try testing.expectEqualStrings("acme_two.chip", lane[0].id);
 }
 
+/// The screen row whose text holds `needle`, from the top.
+fn rowWith(b: *Bench, needle: []const u8) !?u16 {
+    const text = try screen_mod.toTestText(b.app.frame.allocator(), &b.app.screen);
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var y: u16 = 0;
+    while (it.next()) |line| : (y += 1) if (std.mem.indexOf(u8, line, needle) != null) return y;
+    return null;
+}
+
+/// The first column of `needle` on row `y`, in cells.
+fn colWith(b: *Bench, y: u16, needle: []const u8) ?u16 {
+    var x: u16 = 0;
+    while (x < b.app.screen.width) : (x += 1) {
+        const c = b.app.screen.readCell(x, y) orelse continue;
+        if (c.char.grapheme.len > 0 and c.char.grapheme[0] == needle[0]) {
+            var ok = true;
+            for (needle[1..], 1..) |ch, k| {
+                const cc = b.app.screen.readCell(x + @as(u16, @intCast(k)), y) orelse {
+                    ok = false;
+                    break;
+                };
+                if (cc.char.grapheme.len == 0 or cc.char.grapheme[0] != ch) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return x;
+        }
+    }
+    return null;
+}
+
+test "an integration chip's hover: its counts at the title's weight, its notes, then the host's line, then the trailer; the box grows to the widest line" {
+    // Any integration's multi-line hover, not one integration's: a line
+    // that leads with a figure is a count and reads like the title; any
+    // other line of the publisher's is a note; the host's "click runs"
+    // line follows them; what comes after a blank line (the shared
+    // bucket) comes last. The host's line used to land second and split
+    // the breakdown, and every count after the first was dimmed.
+    var b = try Bench.init(120, 40);
+    defer b.deinit();
+    b.app.cfg.ui.hover_tooltip = true;
+    const long = "10 work items assigned to you \u{2014} 4 In Progress \u{b7} 3 In Review \u{b7} 2 To Do \u{b7} 1 Blocked";
+    try b.app.ipc_fx.setSegment(testing.allocator, .{
+        .id = "acme_tracker.chip",
+        .text = "T 10",
+        .side = .left,
+        .priority = 5,
+        .max_width = 12,
+        .click_command = "view.toggle_wrap",
+        .tooltip = "3 open things of yours\n" ++ long ++ "\n2 waiting on you\nthreads: 2 of 3 counted off the cache\n\nbudget: 40 of 60\nspent by acme 3 of 4",
+    });
+    _ = (try b.rowHover(38, sl.seg_dyn_base)).?;
+    const order = [_][]const u8{ "3 open things of yours", "10 work items assigned to you", "2 waiting on you", "threads: 2 of 3", "click runs the segment's command", "budget: 40 of 60", "spent by acme" };
+    var ys: [order.len]u16 = undefined;
+    for (order, 0..) |needle, i| ys[i] = (try rowWith(&b, needle)) orelse {
+        std.debug.print("missing [{s}]\n{s}\n", .{ needle, try screen_mod.toTestText(b.app.frame.allocator(), &b.app.screen) });
+        return error.LineMissing;
+    };
+    // One line each, in that order, top to bottom.
+    for (ys[1..], 0..) |y, i| try testing.expectEqual(ys[i] + 1, y);
+    // Weights: the counts wear the title's ink; the note, the host's
+    // line and the trailer are muted.
+    const title_x = colWith(&b, ys[0], "3 open").?;
+    const ink = b.cell(title_x, ys[0]).fg;
+    for ([_]usize{ 1, 2 }) |i| {
+        const x = colWith(&b, ys[i], order[i][0..4]).?;
+        try testing.expectEqual(ink, b.cell(x, ys[i]).fg);
+    }
+    for ([_]usize{ 3, 4, 5, 6 }) |i| {
+        const x = colWith(&b, ys[i], order[i][0..4]).?;
+        try testing.expect(!std.meta.eql(ink, b.cell(x, ys[i]).fg));
+    }
+    // Wider than the old 60-cell cap, and whole: no ellipsis on it.
+    try testing.expect(std.mem.indexOf(u8, try b.row(ys[1]), long) != null);
+}
+
 test "a figure's hover lists what it counts, the pointer can walk onto the list, and a row runs its command" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -2406,7 +2483,7 @@ test "a figure's hover lists what it counts, the pointer can walk onto the list,
         .side = .left,
         .priority = 5,
         .max_width = 12,
-        .tooltip = "Bitbucket \u{b7} 3 open pull requests you authored\nbucket: 40 of 60",
+        .tooltip = "Bitbucket \u{b7} 3 open pull requests you authored\n\nbucket: 40 of 60",
         .items = &.{
             .{ .text = "Fix the login redirect", .sub = "acme/api \u{b7} unapproved", .command = "view.toggle_wrap" },
             .{ .text = "Redesign the empty state", .sub = "acme/web \u{b7} approved", .command = "view.toggle_wrap" },
@@ -2414,7 +2491,7 @@ test "a figure's hover lists what it counts, the pointer can walk onto the list,
     });
     const tip = (try discovery.describe(&b.app, arena, .{ .statusline_seg = sl.seg_dyn_base })).?;
     // The publisher's first line is the title; the bucket line it put
-    // after a newline is a row of its own, not a run-on.
+    // after a blank line is the trailer, a row of its own.
     try testing.expectEqualStrings("Bitbucket \u{b7} 3 open pull requests you authored", tip.title);
     try testing.expectEqual(@as(usize, 1), tip.lines.len);
     try testing.expectEqualStrings("bucket: 40 of 60", tip.lines[0]);
