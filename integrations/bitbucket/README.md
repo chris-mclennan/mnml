@@ -478,6 +478,19 @@ A thirteen-repo prefetch takes minutes under that bucket; the pane's
 header says `fetching… 7/13 repos` (over `loading…` until the first
 rows land) and it answers keys meanwhile.
 
+**The shared response cache.** Every GET under `/2.0/repositories/` is
+held in `http-cache/bitbucket/` under the shared state dir (else the
+data root) — one file per URL, in a format any other tool on the
+machine that agrees to it reads and writes too (`docs/SDK.md`, "The
+shared HTTP response cache"). A listing is always asked again, carrying
+`If-None-Match` (a `304` costs a token and no bytes); a pull request
+whose `updated_on` still matches the listing's costs no request at all,
+and neither does anything another writer stored inside its own
+`valid_until`. An approval or its withdrawal marks the pull request
+changed, so nothing on the machine answers from what it held before.
+`R` asks outright. `MNML_HTTP_CACHE=0` turns it off; the old
+`<data root>/cache/bitbucket/etags.json` is no longer read.
+
 ## The API budget
 
 The header's budget chip, beside refresh — the same chip, in the same
@@ -508,7 +521,7 @@ on the chip, or the host's `integrations.cancel_wait` stops the wait.
 
 `Shift+N` (or `integrations.toggle_dry_run`) is dry run for the
 session; `.dry_run = true` starts the pane in it. Nothing is sent: a GET
-answers with the body already held for it (the ETag store), anything
+answers with the body already held for it (the shared response cache), anything
 else says `dry run`, and the request log still gets the line
 (`"dry":true`, no status) so you can see what WOULD have gone out.
 

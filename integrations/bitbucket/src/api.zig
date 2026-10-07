@@ -117,6 +117,9 @@ pub const Head = struct {
     /// The server answered 304: it has nothing new, and the body we
     /// already hold still stands.
     not_modified: bool = false,
+    /// The response's `Content-Type`, duped like `etag` — what the
+    /// shared cache files beside the body. Empty when none came.
+    content_type: []const u8 = "",
 };
 
 pub const Body = struct {
@@ -170,12 +173,13 @@ pub const Client = struct {
     cache: ?*cache_mod.Cache = null,
     /// The clock the cache ages entries against; the pane sets it.
     now_secs: i64 = 0,
-    /// Bodies already held, filed under the server's own `ETag`
-    /// (`mnml_sdk.store`). A GET with an entry goes out carrying
-    /// `If-None-Match`; a 304 hands the held body back, which is a
-    /// round trip that costs a token and no bytes rather than a
-    /// listing. Null simply means every GET is unconditional.
-    etags: ?*sdk.Store = null,
+    /// The shared HTTP response cache (`mnml_sdk.http_cache`), one file
+    /// per GET that every process on the machine reads and writes.
+    /// `decide` says, per GET: fresh (answered off the file, no
+    /// request), revalidate (`If-None-Match` with the held tag; a 304
+    /// hands the held body back — a token and no bytes), or miss. Null
+    /// simply means every GET is unconditional.
+    http_cache: ?sdk.http_cache.Dir = null,
     /// The pacer for this service — see `mnml_sdk.warm`.
     gate: ?*sdk.warm.Gate = null,
     /// Send `If-None-Match` where a tag is held. False is the full
@@ -240,7 +244,15 @@ pub const Client = struct {
     /// wire, a 304's held one, a cache's — is folded into `digest` when
     /// one is set, so a listing refresh can say whether anything moved.
     pub fn send(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
-        const reply = try self.sendUnhashed(gpa, method, path, payload, side);
+        return self.sendStamped(gpa, method, path, payload, side, "");
+    }
+
+    /// `send`, for a GET about one pull request whose `updated_on` the
+    /// caller already holds from a listing: a held answer filed under
+    /// the same stamp is the server's own word that nothing moved, and
+    /// is used with no request at all.
+    pub fn sendStamped(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side, stamp: []const u8) Allocator.Error!Reply {
+        const reply = try self.sendUnhashed(gpa, method, path, payload, side, stamp);
         if (method == .GET) if (self.digest) |d| {
             d.update(path);
             switch (reply) {
@@ -254,9 +266,14 @@ pub const Client = struct {
         return reply;
     }
 
-    fn sendUnhashed(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side) Allocator.Error!Reply {
+    fn sendUnhashed(self: *Client, gpa: Allocator, method: Method, path: []const u8, payload: ?[]const u8, side: Side, stamp: []const u8) Allocator.Error!Reply {
         const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ self.base_url, path });
         defer gpa.free(url);
+        // Everything the shared cache reads for this request lives here
+        // and goes with it; a body handed back is duped onto `gpa`.
+        var scratch = std.heap.ArenaAllocator.init(gpa);
+        defer scratch.deinit();
+        const held: ?Held = if (method == .GET) self.heldFor(scratch.allocator(), url, stamp) else null;
         var own_budget: sdk.Budget = .{};
         const budget = self.budget orelse blk: {
             own_budget.configure(self.io, .{ .label = "Bitbucket", .service = ratelimit.service, .backoff = self.backoff() });
@@ -266,12 +283,10 @@ pub const Client = struct {
         // out; a GET is answered with what is already held for it.
         if (budget.isDry()) {
             self.note(gpa, method, url, null, 0, 0, .{ .ok = true }, 0, .none, .{}, null, .dry);
-            if (method == .GET) {
-                if (self.etags) |st| if (st.stale(url)) |e| {
-                    budget.record(.{ .now_secs = self.nowSecs(), .on_wire = false, .cache = .hit });
-                    return .{ .ok = .{ .status = 200, .bytes = try gpa.dupe(u8, e.body) } };
-                };
-            }
+            if (held) |h| if (h.entry) |e| {
+                budget.record(.{ .now_secs = self.nowSecs(), .on_wire = false, .cache = .hit });
+                return .{ .ok = .{ .status = 200, .bytes = try gpa.dupe(u8, e.body) } };
+            };
             return .{ .failed = .{ .status = null, .message = try gpa.dupe(u8, if (method == .GET) "dry run — nothing held for this yet" else "dry run — not sent") } };
         }
         // A prefetched GET is answered off the disk: no token spent, no
@@ -288,18 +303,25 @@ pub const Client = struct {
                 }
             }
         }
-        // What the server last said about this URL. A GET with an
-        // `ETag` in hand goes out conditional: a 304 is a round trip
-        // that costs a token and no bytes, where the unconditional
-        // form costs a token and the whole listing.
+        // What the machine last heard about this URL. Fresh — inside
+        // the writer's `valid_until`, or filed under the very stamp the
+        // caller's listing carries — is answered off the file with no
+        // request. Revalidate goes out conditional: a 304 is a round
+        // trip that costs a token and no bytes, where the unconditional
+        // form costs a token and the whole listing. `R` (conditional
+        // off) asks outright either way.
         var if_none_match: []const u8 = "";
-        if (method == .GET and self.conditional) {
-            if (self.etags) |st| {
-                if (st.stale(url)) |e| if (e.stamp.len > 0) {
-                    if_none_match = e.stamp;
-                };
-            }
-        }
+        if (self.conditional) if (held) |h| switch (h.verdict) {
+            .fresh => {
+                const e = h.entry.?;
+                const bytes = try gpa.dupe(u8, e.body);
+                self.note(gpa, method, url, null, bytes.len, 0, .{ .ok = true }, 0, .hit, .{}, .cache_hit, .off_wire);
+                budget.record(.{ .now_secs = self.nowSecs(), .on_wire = false, .cache = .hit });
+                return .{ .ok = .{ .status = 200, .bytes = bytes } };
+            },
+            .revalidate => if_none_match = h.entry.?.etag,
+            .miss => {},
+        };
         var attempt: u32 = 0;
         while (true) {
             attempt += 1;
@@ -343,6 +365,7 @@ pub const Client = struct {
             var reply = try self.once(gpa, method, url, payload, side, if_none_match, &head);
             if (self.notice) |n| n.setPhase(.idle, 0);
             defer if (head.etag.len > 0) gpa.free(head.etag);
+            defer if (head.content_type.len > 0) gpa.free(head.content_type);
             const ms: u64 = @intCast(@max(Io.Timestamp.now(self.io, .real).toMilliseconds() - started.toMilliseconds(), 0));
             // Nothing new. The body already held still stands, so it
             // is handed back as if it had been sent — and the line
@@ -350,14 +373,16 @@ pub const Client = struct {
             // pane tells a cheap round trip from a dear one.
             if (head.not_modified) {
                 reply.deinit(gpa);
-                if (self.etags) |st| {
-                    if (st.stale(url)) |e| {
-                        const kept = try gpa.dupe(u8, e.body);
-                        self.note(gpa, method, url, 304, kept.len, ms, gate, attempt - 1, .hit, head.rate_limit, .revalidate, .wire);
-                        budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = .hit });
-                        return .{ .ok = .{ .status = 200, .bytes = kept } };
-                    }
-                }
+                if (held) |h| if (h.entry) |e| {
+                    // The server's word that the held body still
+                    // stands: the entry's clock moves to when this
+                    // request left, so every process sees it confirmed.
+                    _ = self.http_cache.?.confirm(scratch.allocator(), self.io, e, started.toSeconds());
+                    const kept = try gpa.dupe(u8, e.body);
+                    self.note(gpa, method, url, 304, kept.len, ms, gate, attempt - 1, .hit, head.rate_limit, .revalidate, .wire);
+                    budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = .hit });
+                    return .{ .ok = .{ .status = 200, .bytes = kept } };
+                };
                 // A 304 with nothing held is a server being odd; the
                 // next unconditional GET fixes it.
                 self.note(gpa, method, url, 304, 0, ms, gate, attempt - 1, .miss, head.rate_limit, .revalidate, .wire);
@@ -372,13 +397,31 @@ pub const Client = struct {
                     budget.record(.{ .now_secs = self.nowSecs(), .rate_limit = head.rate_limit, .cache = if (method == .GET) .miss else .none });
                     if (method == .GET) {
                         if (self.cache) |c| c.put(url, body.bytes, self.now_secs);
-                        // File the body under the server's own tag, so
-                        // the next ask for this URL can be conditional.
-                        if (head.etag.len > 0) {
-                            if (self.etags) |st| {
-                                st.put(url, head.etag, body.bytes, self.now_secs) catch {};
-                            }
-                        }
+                        // Into the shared cache, dated when the request
+                        // LEFT, so a change stamped while it was in
+                        // flight still makes it stale. Only a 200 is.
+                        if (held) |h| if (body.status == 200) {
+                            const sa = scratch.allocator();
+                            _ = self.http_cache.?.store(sa, self.io, .{
+                                .url = h.url,
+                                .body = body.bytes,
+                                .etag = head.etag,
+                                .key = h.key,
+                                .stamp = stampOf(sa, h, body.bytes),
+                                .content_type = head.content_type,
+                                .now = started.toSeconds(),
+                            });
+                        };
+                    } else if (self.http_cache) |d| {
+                        // A write this process made: everything held
+                        // about the pull request it touched is stale,
+                        // for every process on the machine.
+                        const sa = scratch.allocator();
+                        if (sdk.http_cache.canonical(sa, url, &.{})) |canon| {
+                            if (sdk.http_cache.itemKey(sa, canon)) |key| {
+                                _ = d.markChanged(sa, self.io, key, sdk.http_cache.changedNow(self.io));
+                            } else |_| {}
+                        } else |_| {}
                     }
                     return reply;
                 },
@@ -400,6 +443,51 @@ pub const Client = struct {
                 },
             }
         }
+    }
+
+    /// What the shared cache holds for one GET, and what to do about it.
+    const Held = struct {
+        /// The canonical URL — the entry's file name and its `url`.
+        url: []const u8,
+        /// The pull request or pipeline the URL is about, or empty.
+        key: []const u8,
+        entry: ?sdk.http_cache.Entry,
+        verdict: sdk.http_cache.Verdict,
+        /// The caller's stamp (the listing's `updated_on`), or empty.
+        stamp: []const u8,
+    };
+
+    /// The cache's view of `url`: null when there is no cache or the
+    /// URL is not one every credential gets the same answer to.
+    fn heldFor(self: *Client, a: Allocator, url: []const u8, stamp: []const u8) ?Held {
+        const d = self.http_cache orelse return null;
+        const canon = sdk.http_cache.canonical(a, url, &.{}) catch return null;
+        if (!shareable(canon)) return null;
+        const key = sdk.http_cache.itemKey(a, canon) catch return null;
+        const entry = d.load(a, self.io, canon);
+        const now_s = @as(f64, @floatFromInt(Io.Timestamp.now(self.io, .real).toMilliseconds())) / 1000.0;
+        return .{
+            .url = canon,
+            .key = key,
+            .entry = entry,
+            .verdict = sdk.http_cache.decide(entry, now_s, d.changedAt(a, self.io, key), stamp),
+            .stamp = stamp,
+        };
+    }
+
+    /// The `stamp` a 200 is filed under: the pull request's own
+    /// `updated_on` when the body IS the pull request; else the
+    /// listing's stamp the caller passed for something under it (its
+    /// comments); else none, and the entry revalidates by its tag.
+    fn stampOf(a: Allocator, h: Held, body: []const u8) []const u8 {
+        if (h.key.len == 0 or std.mem.indexOfScalar(u8, h.key, '#') == null) return "";
+        if (isPullRequestItself(h.url)) {
+            const v = std.json.parseFromSliceLeaky(std.json.Value, a, body, .{}) catch return "";
+            if (v != .object) return "";
+            const u = v.object.get("updated_on") orelse return "";
+            return if (u == .string) u.string else "";
+        }
+        return h.stamp;
     }
 
     /// One line in the request log. Best effort: a log is never a
@@ -524,6 +612,9 @@ pub const Client = struct {
             if (std.ascii.eqlIgnoreCase(h.name, "etag") and head.etag.len == 0) {
                 head.etag = gpa.dupe(u8, std.mem.trim(u8, h.value, " \t")) catch "";
             }
+            if (std.ascii.eqlIgnoreCase(h.name, "content-type") and head.content_type.len == 0) {
+                head.content_type = gpa.dupe(u8, std.mem.trim(u8, h.value, " \t")) catch "";
+            }
             // The budget headers, by name — an allow-list, so nothing
             // a response carries can reach the log by accident.
             request_log.rateLimitHeader(&head.rate_limit, h.name, h.value);
@@ -614,8 +705,20 @@ pub const Client = struct {
         return self.prPath(gpa, .GET, workspace, repo, id, "", null, .read);
     }
 
+    /// `prDetail` with the `updated_on` the caller's listing carried: a
+    /// held detail filed under the same stamp costs no request.
+    pub fn prDetailAt(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64, updated_on: []const u8) Allocator.Error!Reply {
+        return self.prPathStamped(gpa, workspace, repo, id, "", updated_on);
+    }
+
     pub fn prComments(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64) Allocator.Error!Reply {
         return self.prPath(gpa, .GET, workspace, repo, id, "/comments?pagelen=50", null, .read);
+    }
+
+    /// `prComments` with the listing's `updated_on` — a comment moves
+    /// it, so held comments filed under the same stamp still stand.
+    pub fn prCommentsAt(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64, updated_on: []const u8) Allocator.Error!Reply {
+        return self.prPathStamped(gpa, workspace, repo, id, "/comments?pagelen=50", updated_on);
     }
 
     /// `GET …/diffstat` — the per-file summary. Its STATUS is what
@@ -653,7 +756,41 @@ pub const Client = struct {
         defer gpa.free(path);
         return self.send(gpa, method, path, payload, side);
     }
+
+    fn prPathStamped(self: *Client, gpa: Allocator, workspace: []const u8, repo: []const u8, id: i64, tail: []const u8, stamp: []const u8) Allocator.Error!Reply {
+        const path = try std.fmt.allocPrint(gpa, "/repositories/{s}/{s}/pullrequests/{d}{s}", .{ workspace, repo, id, tail });
+        defer gpa.free(path);
+        return self.sendStamped(gpa, .GET, path, null, .read, stamp);
+    }
 };
+
+/// Whether a canonical URL's answer is the same whichever credential
+/// asks, and so may go in a cache every token on the machine shares:
+/// repository content only (`/2.0/repositories/…`), never `/2.0/user`,
+/// a workspace probe, or a listing filtered by the caller's own role.
+pub fn shareable(canon: []const u8) bool {
+    const after_scheme = (std.mem.indexOf(u8, canon, "://") orelse return false) + 3;
+    const slash = std.mem.indexOfScalarPos(u8, canon, after_scheme, '/') orelse return false;
+    const rest = canon[slash..];
+    const q = std.mem.indexOfScalar(u8, rest, '?');
+    const path = rest[0 .. q orelse rest.len];
+    if (!std.mem.startsWith(u8, path, "/2.0/repositories/")) return false;
+    const query = if (q) |i| rest[i + 1 ..] else "";
+    var it = std.mem.splitScalar(u8, query, '&');
+    while (it.next()) |pair| if (std.mem.startsWith(u8, pair, "role=")) return false;
+    return true;
+}
+
+/// The URL is the pull request's own resource, not something under it.
+fn isPullRequestItself(canon: []const u8) bool {
+    const q = std.mem.indexOfScalar(u8, canon, '?') orelse canon.len;
+    const path = std.mem.trimEnd(u8, canon[0..q], "/");
+    const at = std.mem.lastIndexOf(u8, path, "/pullrequests/") orelse return false;
+    const id = path[at + "/pullrequests/".len ..];
+    if (id.len == 0) return false;
+    for (id) |c| if (!std.ascii.isDigit(c)) return false;
+    return true;
+}
 
 /// `author.account_id = "{id}"` and friends, ready for `&q=`.
 pub fn percentEncode(w: *Io.Writer, s: []const u8) Io.Writer.Error!void {
@@ -914,8 +1051,8 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
-    defer t.allocator.free(store_path);
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
     const log_dir = try std.fs.path.join(t.allocator, &.{ dir, "requests" });
     defer t.allocator.free(log_dir);
 
@@ -924,13 +1061,11 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     const base = try srv.baseUrl(t.allocator);
     defer t.allocator.free(base);
 
-    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
-    defer etags.deinit();
     var log = try sdk.RequestLog.openAt(t.allocator, t.io, log_dir, "bitbucket", "mnml-bitbucket");
     defer log.deinit();
     var client = try Client.init(t.allocator, t.io, base, "me@x.com", "read-tok", "", .{});
     defer client.deinit();
-    client.etags = &etags;
+    client.http_cache = .{ .root = cache_root, .service = "bitbucket" };
     client.log = &log;
 
     // The first ask is unconditional: nothing is held, so the whole
@@ -940,8 +1075,14 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     try t.expect(first == .ok);
     try t.expect(first.ok.bytes.len > 0);
     try t.expectEqual(@as(u32, 0), srv.snapshot().not_modified);
-    const held = etags.stale(etags.entries.items[0].key).?;
-    try t.expect(held.stamp.len > 0);
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const listing = try sdk.http_cache.canonical(arena.allocator(), try std.fmt.allocPrint(arena.allocator(), "{s}/repositories/acme/api/pullrequests?pagelen=25&state=OPEN", .{base}), &.{});
+    const held = client.http_cache.?.load(arena.allocator(), t.io, listing).?;
+    try t.expect(held.etag.len > 0);
+    // A listing is mnml's to ask about every time: `valid_until` 0.
+    try t.expectEqual(@as(f64, 0), held.valid_until);
+    try t.expectEqualStrings("", held.key);
 
     // The second ask carries `If-None-Match`. The server says there is
     // nothing new; the client hands back the body it already had, so
@@ -968,6 +1109,158 @@ test "a GET that already holds the server's tag goes out conditional, and a 304 
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"revalidate\"") != null);
     try t.expect(std.mem.indexOf(u8, text, "\"status\":304") != null);
+}
+
+test "the shared cache end to end: a 200 is stored, a 304 confirms, a stamp answers with no request, a write makes it ask again" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
+    const log_dir = try std.fs.path.join(t.allocator, &.{ dir, "requests" });
+    defer t.allocator.free(log_dir);
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var log = try sdk.RequestLog.openAt(t.allocator, t.io, log_dir, "bitbucket", "mnml-bitbucket");
+    defer log.deinit();
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+    defer client.deinit();
+    const shared: sdk.http_cache.Dir = .{ .root = cache_root, .service = "bitbucket" };
+    client.http_cache = shared;
+    client.log = &log;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const pr_url = try sdk.http_cache.canonical(a, try std.fmt.allocPrint(a, "{s}/repositories/acme/api/pullrequests/1198", .{base}), &.{});
+
+    // A miss: a plain GET, and the 200 goes in the cache with the tag,
+    // the pull request's key, and its own `updated_on` as the stamp.
+    var first = try client.prDetail(t.allocator, "acme", "api", 1198);
+    defer first.deinit(t.allocator);
+    try t.expect(first == .ok);
+    try t.expectEqual(@as(u32, 1), client.sent);
+    const held = shared.load(a, t.io, pr_url).?;
+    try t.expectEqualStrings("acme/api#1198", held.key);
+    try t.expect(held.etag.len > 0);
+    try t.expect(held.stamp.len > 0);
+    try t.expectEqual(@as(f64, 0), held.valid_until);
+    try t.expectEqualStrings(first.ok.bytes, held.body);
+    try t.expect(std.mem.indexOf(u8, held.content_type, "json") != null);
+
+    // The listing's stamp matches the held one: the server's own word
+    // that nothing moved. No request at all.
+    var by_stamp = try client.prDetailAt(t.allocator, "acme", "api", 1198, held.stamp);
+    defer by_stamp.deinit(t.allocator);
+    try t.expectEqualStrings(first.ok.bytes, by_stamp.ok.bytes);
+    try t.expectEqual(@as(u32, 1), client.sent);
+
+    // No stamp: `valid_until` is 0, so it revalidates; the 304 hands
+    // the held body back and moves `fetched_at` forward.
+    const served_before = srv.snapshot().not_modified;
+    var older = held;
+    older.fetched_at = 1000;
+    try t.expect(sdk.http_cache.confirm(a, t.io, cache_root, "bitbucket", older, 1000, 0));
+    var again = try client.prDetail(t.allocator, "acme", "api", 1198);
+    defer again.deinit(t.allocator);
+    try t.expectEqualStrings(first.ok.bytes, again.ok.bytes);
+    try t.expectEqual(@as(u32, 2), client.sent);
+    try t.expectEqual(served_before + 1, srv.snapshot().not_modified);
+    const confirmed = shared.load(a, t.io, pr_url).?;
+    try t.expect(confirmed.fetched_at > 1000);
+    try t.expectEqualStrings(held.etag, confirmed.etag);
+    try t.expectEqualStrings(held.stamp, confirmed.stamp);
+
+    // A write this process made — an approval — stamps the pull request
+    // changed. The listing's `updated_on` has not moved, but the change
+    // is after the fetch: it asks again, conditionally, and the body
+    // that comes back (the approval in it) replaces the held one.
+    var approved = try client.approve(t.allocator, "acme", "api", 1198);
+    defer approved.deinit(t.allocator);
+    try t.expect(approved == .ok);
+    try t.expect(shared.changedAt(a, t.io, "acme/api#1198") > 0);
+    t.io.sleep(.fromMilliseconds(1100), .awake) catch {};
+    const sent_before = client.sent;
+    var after = try client.prDetailAt(t.allocator, "acme", "api", 1198, held.stamp);
+    defer after.deinit(t.allocator);
+    try t.expectEqual(sent_before + 1, client.sent);
+    try t.expect(!std.mem.eql(u8, first.ok.bytes, after.ok.bytes));
+    try t.expectEqualStrings(after.ok.bytes, shared.load(a, t.io, pr_url).?.body);
+    // Dated after the write, so the stamp answers again.
+    var settled = try client.prDetailAt(t.allocator, "acme", "api", 1198, held.stamp);
+    defer settled.deinit(t.allocator);
+    try t.expectEqual(sent_before + 1, client.sent);
+
+    // The log says which was which: a cache hit with no request, a
+    // revalidation's 304.
+    const p = try log.path(t.allocator);
+    defer t.allocator.free(p);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, p, t.allocator, .limited(1 << 20));
+    defer t.allocator.free(text);
+    try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"cache_hit\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"reason\":\"revalidate\"") != null);
+}
+
+test "an entry another writer holds inside its valid_until answers with no request; /user is never shared" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var budget: sdk.Budget = .{};
+    budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
+    var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
+    defer client.deinit();
+    client.budget = &budget;
+    client.http_cache = .{ .root = cache_root, .service = "bitbucket" };
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Written the way the other side writes: decimal times, a 60 s
+    // TTL, a listing (no key), and a body that is not what the server
+    // would say — so an answer off the file is unmistakable.
+    const raw = try std.fmt.allocPrint(a, "{s}/repositories/acme/api/pullrequests?state=OPEN&pagelen=25", .{base});
+    const url = try sdk.http_cache.canonical(a, raw, &.{});
+    const now = Io.Timestamp.now(t.io, .real).toSeconds();
+    const path = try sdk.http_cache.entryPath(a, cache_root, "bitbucket", url);
+    var out: Io.Writer.Allocating = .init(a);
+    try out.writer.print("{{\"version\": 1, \"url\": \"{s}\", \"key\": \"\", \"status\": 200, \"etag\": \"\", \"stamp\": \"\", \"fetched_at\": {d}.25, \"valid_until\": {d}.25, \"content_type\": \"application/json\", \"body\": \"{{\\\"values\\\": [], \\\"from\\\": \\\"the other writer\\\"}}\"}}", .{ url, now - 5, now + 55 });
+    sdk.cache.makeDir(t.io, std.fs.path.dirname(path).?);
+    try Io.Dir.cwd().writeFile(t.io, .{ .sub_path = path, .data = out.written() });
+
+    const served = srv.snapshot().served;
+    var got = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer got.deinit(t.allocator);
+    try t.expect(got == .ok);
+    try t.expect(std.mem.indexOf(u8, got.ok.bytes, "the other writer") != null);
+    try t.expectEqual(@as(u32, 0), client.sent);
+    try t.expectEqual(served, srv.snapshot().served);
+    try t.expectEqual(@as(u32, 1), budget.snapshot(now).hits);
+    // `R` asks outright whatever is held.
+    client.conditional = false;
+    var fresh = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
+    defer fresh.deinit(t.allocator);
+    try t.expectEqual(@as(u32, 1), client.sent);
+    try t.expect(std.mem.indexOf(u8, fresh.ok.bytes, "the other writer") == null);
+    client.conditional = true;
+
+    // `/user` answers about the caller: never filed where another
+    // token would read it.
+    var me = try client.whoami(t.allocator);
+    defer me.deinit(t.allocator);
+    const user_url = try sdk.http_cache.canonical(a, try std.fmt.allocPrint(a, "{s}/user", .{base}), &.{});
+    try t.expect(client.http_cache.?.load(a, t.io, user_url) == null);
+    try t.expect(!shareable(user_url));
+    try t.expect(!shareable("https://api.bitbucket.org/2.0/repositories/acme?pagelen=100&role=member"));
+    try t.expect(shareable("https://api.bitbucket.org/2.0/repositories/acme/api/pullrequests/7/comments?pagelen=50"));
 }
 
 test "a 429 on a write pauses the budget and goes back to the pane: a write is never asked twice" {
@@ -1018,20 +1311,18 @@ test "the budget reads the server's rate-limit headers and counts a 304 as a hit
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
-    defer t.allocator.free(store_path);
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
     const srv = try listener.Server.start(t.allocator, t.io, 0);
     defer srv.stop();
     const base = try srv.baseUrl(t.allocator);
     defer t.allocator.free(base);
-    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
-    defer etags.deinit();
     var budget: sdk.Budget = .{};
     budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket", .data_root = dir });
     var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
     defer client.deinit();
     client.budget = &budget;
-    client.etags = &etags;
+    client.http_cache = .{ .root = cache_root, .service = "bitbucket" };
     srv.budgetHeaders(1000, 900);
     var first = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer first.deinit(t.allocator);
@@ -1052,16 +1343,14 @@ test "dry run sends nothing: a GET answers what is held, a write is refused, and
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
-    defer t.allocator.free(store_path);
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
     const log_dir = try std.fs.path.join(t.allocator, &.{ dir, "requests" });
     defer t.allocator.free(log_dir);
     const srv = try listener.Server.start(t.allocator, t.io, 0);
     defer srv.stop();
     const base = try srv.baseUrl(t.allocator);
     defer t.allocator.free(base);
-    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
-    defer etags.deinit();
     var log = try sdk.RequestLog.openAt(t.allocator, t.io, log_dir, "bitbucket", "mnml-bitbucket");
     defer log.deinit();
     var budget: sdk.Budget = .{};
@@ -1069,7 +1358,7 @@ test "dry run sends nothing: a GET answers what is held, a write is refused, and
     var client = try Client.init(t.allocator, t.io, base, "me@x.com", "tok", "", .{});
     defer client.deinit();
     client.budget = &budget;
-    client.etags = &etags;
+    client.http_cache = .{ .root = cache_root, .service = "bitbucket" };
     client.log = &log;
     var live = try client.listPrs(t.allocator, "acme", "api", &.{"OPEN"}, "", 25);
     defer live.deinit(t.allocator);

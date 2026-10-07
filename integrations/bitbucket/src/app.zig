@@ -4088,19 +4088,17 @@ test "a pane that does not hold the machine's warm lock fetches only its own tab
 
 test "a dry-run refresh answered from the held tags keeps `as of`: the rows are as old as they were" {
     // Round-7 hunt: with dry run on, `r` answered every GET from the
-    // ETag store — rows right, nothing on the wire — and stamped the
+    // held responses — rows right, nothing on the wire — and stamped the
     // tab fresh ("as of 2s ago").
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    const store_path = try std.fs.path.join(t.allocator, &.{ dir, "etags.json" });
-    defer t.allocator.free(store_path);
-    var etags = try sdk.Store.openAt(t.allocator, t.io, store_path);
-    defer etags.deinit();
+    const cache_root = try std.fs.path.join(t.allocator, &.{ dir, "http-cache" });
+    defer t.allocator.free(cache_root);
     const r = try Rig.init(acme, .{});
     defer r.deinit();
-    r.client.etags = &etags;
+    r.client.http_cache = .{ .root = cache_root, .service = "bitbucket" };
     r.app.budget.configure(t.io, .{ .label = "Bitbucket", .service = "bitbucket" });
     r.client.budget = &r.app.budget;
     // A live refresh files every listing under its tag.
