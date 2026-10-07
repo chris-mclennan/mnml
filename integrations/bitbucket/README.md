@@ -99,12 +99,17 @@ comments do not survive, as in the reference.
 
 ## Auth
 
-**`BITBUCKET_ACCESS_TOKEN` when it is set, else `<config dir>/token`.**
-One variable to export, one file otherwise, and the same token for the
-reads and for the one write the pane has (`a`, approve).
+**`<config dir>/token` when it is there, else the environment.** The
+file is mnml's own token: when it is present (and not empty) it is the
+token for the reads AND for the one write the pane has (`a`, approve),
+whatever your shell exports. A shell commonly exports the
+`BITBUCKET_*` variables below for other tools, and Bitbucket counts its
+rate limit per token, so a pane that took the exported one would spend
+— and be throttled on — every other tool's budget. Give mnml a token of
+its own, in the file, and its budget is its own too (see Rate limiting).
 
 Bitbucket takes two kinds of token and they are **not** interchangeable
-on the wire, which is what the one exception to that rule is about:
+on the wire:
 
 | token | header | `/2.0/user` |
 |---|---|---|
@@ -116,24 +121,29 @@ nothing to say the token itself was fine. `mnml-bitbucket` reads the
 kind off the token and picks the scheme, and `--check` says which it
 used and why — you never choose.
 
-The exception: an access token has no account, so the `mine` /
-`reviewing` tabs, the chip and `--values` have nothing to filter by.
-When an account credential is available too, **reads take it** and
-`BITBUCKET_ACCESS_TOKEN` stays the approve token. With only an access
-token exported, reads use it and `--check` reports the workspace it
-reached instead of a person — set `account_id` in `config.zon` for the
-`mine` tabs.
+**An access token has no account**, so the `mine` / `reviewing` tabs,
+the chip and `--values` have nothing to filter by. With an access token
+in the file, set `account_id` in `config.zon` — `--check` says so when
+it is missing:
 
-The reference's three variables still resolve, between those two, so a
-machine that already exports one keeps working — first hit wins:
+```
+note: set `account_id` in <config dir>/config.zon — the token file holds an access token, which has no account, and the `mine` / `reviewing` tabs need one
+```
+
+With no file, the environment answers in its old order. There, when an
+account credential is available too, **reads take it** and
+`BITBUCKET_ACCESS_TOKEN` stays the approve token; with only an access
+token exported, reads use it and `--check` reports the workspace it
+reached instead of a person. The reference's three variables still
+resolve, so a machine that already exports one keeps working:
 
 | | |
 |---|---|
-| `BITBUCKET_ACCESS_TOKEN` | the rule's variable; also the approve token |
+| `<config dir>/token` | one line, `chmod 600`; **wins when present**, for reads and approve |
+| `BITBUCKET_ACCESS_TOKEN` | with no file: the approve token, and the read token unless an account credential follows |
 | `BITBUCKET_API_TOKEN` | an Atlassian scoped API token |
 | `BITBUCKET_APP_PASSWORD` | a Bitbucket app password |
 | `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used |
-| `<config dir>/token` | one line, `chmod 600` |
 
 Scopes: **Pull requests: Read**, **Account: Read** for the mine /
 reviewing tabs and the chip, **Pull requests: Write** for approve.
@@ -147,9 +157,9 @@ mnml-bitbucket --diag       # the same as a tree, with the rate bucket
 ```
 
 ```
-token source: BITBUCKET_PERSONAL_TOKEN (loaded, 25 chars, not shown)
-auth scheme: Basic base64(email:token) — an account credential (an Atlassian API token or an app password) authenticates as a person
-approve token: BITBUCKET_ACCESS_TOKEN (192 chars, not shown) · Bearer <token>
+token source: <config dir>/token (loaded, 192 chars, not shown)
+auth scheme: Bearer <token> — an `ATCTT…` access token is scoped to a repository, a project or a workspace, not to a person
+approve token: the read token
 ```
 
 ## Keys
@@ -293,7 +303,7 @@ one that hides every row reads `no pull requests match`.
 **Which filters cost a request.** Every chip is a predicate over the
 rows already loaded — `participants`, `dest_branch`, a run's facts all
 come with the listing — with two exceptions, both on the PR tab, both
-one refetch through the ordinary refresh path and the shared bucket:
+one refetch through the ordinary refresh path and the token's bucket:
 
 * **Status** that adds an API state the listing was not fetched with:
   Merged (or Declined) on the open tree, Open on the merged one. The
@@ -405,7 +415,7 @@ where `unresolved_comments` is `null` when the count was not taken.
 ## Prefetch — and the contract a poller runs it under
 
 `mnml-bitbucket --prefetch` fetches every configured tab once, through
-the same shared bucket as everything else, and writes each 2xx GET body
+the same bucket as everything else, and writes each 2xx GET body
 to `<config dir>/cache/` — one file per URL, with the URL and the time
 in its first line. The pane, on open, serves each GET from that
 directory **once**: the startup fetch lands off the disk, so the first
@@ -436,9 +446,9 @@ mnml-bitbucket --prefetch          # MNML_DATA_ROOT / MNML_BITBUCKET_CONFIG as t
   not a reason to alert) · `1` it could not run at all (no config, no
   token, no tab, nothing fetched). Only `1` is worth surfacing.
 * **How often.** One pass costs about `1 + tabs × (1 + repos)` requests
-  — 44 for the thirteen-repo, three-tab config. The shared bucket
-  refills at 0.22 requests/s, so that pass is ~200 s of the machine's
-  whole Bitbucket budget. **Ten to fifteen minutes between passes** is
+  — 44 for the thirteen-repo, three-tab config. The token's bucket
+  refills at 1.2 requests/s, so that pass is ~40 s of its whole
+  Bitbucket budget. **Ten to fifteen minutes between passes** is
   the intended cadence: it leaves three quarters of the bucket for the
   panes and the scripts, and stays inside the cache's one-hour
   freshness. **Five minutes is the floor** — below that the passes
@@ -456,18 +466,37 @@ is green, and every comment is either resolved or replied to.
 
 ## Rate limiting
 
-Every request passes the shared token bucket that any other tool on
-the machine that agrees to the file format takes turns on too, 0.22
-requests/s, a burst of 40. The file is the first of:
-`.rate.state_path`; `$BITBUCKET_RATELIMIT_STATE`;
-`bitbucket-ratelimit.json` under `$MNML_SHARED_STATE_DIR`;
-`<MNML_DATA_ROOT>/ratelimit/bitbucket.json`; and
-`~/.config/mnml/ratelimit/bitbucket.json` with no data root
-(`sdk/mnml-sdk/src/ratelimit.zig` `statePath`). The rate broker's
-socket is `bitbucket-broker.sock` beside the file the environment
-resolves — `.rate.state_path` does not move it — or
-`$BITBUCKET_BROKER_SOCKET` outright; a derived path too long for a Unix
-socket becomes `/tmp/mnml-broker-bitbucket-<12 hex>.sock`
+Bitbucket Cloud's limit is **per token**, not per IP — measured by a
+fleet of tools on one machine on 2026-10-07:
+
+| | |
+|---|---|
+| sustained | 1,500 plain GETs in 19 min (1.3/s, at least 4,700 an hour) with no 429 |
+| burst | ~9.6/s met a 429 after 694 calls in 72 s; it cleared within 30 s |
+| the signal | a 429 is the only one — successes carry no rate-limit headers for a workspace token, and the 429 no useful `Retry-After` |
+| whose | per token: a second token on the same machine got 200s meanwhile |
+
+So every request passes **the token's own bucket**: 1.2 requests/s, a
+burst of 40, parked 30 s after a 429 (`.rate`'s `rate_per_sec` and
+`capacity` win over the first two). The file is the first of:
+`.rate.state_path`; `$BITBUCKET_RATELIMIT_STATE` (both name it
+outright); else `bitbucket-ratelimit-<id>.json` beside the shared
+`bitbucket-ratelimit.json` — under `$MNML_SHARED_STATE_DIR`, else
+`<MNML_DATA_ROOT>/ratelimit/`, else `~/.config/mnml/ratelimit/` —
+where `<id>` is the first 12 hex characters of a sha256 of the token
+(`docs/SDK.md`, "A bucket per token"). Anything else on the machine
+spending the same token and agreeing to the format takes turns on the
+same file; a tool with no token to name stays on the shared one. Every
+draw, whichever bucket, is a line in the one `bitbucket-draws.jsonl`,
+carrying the bucket's `token_id`.
+
+The rate broker hands out tokens from the shared file, so a token's own
+bucket does not ask it: the pane and its poller draw straight off their
+file. With `.rate.state_path` or `$BITBUCKET_RATELIMIT_STATE` set the
+broker is asked as before — its socket is `bitbucket-broker.sock`
+beside the file the environment resolves (`.rate.state_path` does not
+move it), or `$BITBUCKET_BROKER_SOCKET` outright; a derived path too
+long for a Unix socket becomes `/tmp/mnml-broker-bitbucket-<12 hex>.sock`
 (`broker.zig` `socketPath`). A 429 pauses the pane (The API budget,
 below — the Jira pane's same `sdk.budget`) and parks every process on
 the bucket; a read is asked again, up to three tries, a write never,

@@ -1590,6 +1590,47 @@ file name `<service>-ratelimit.json` and its six keys are the contract;
 the broker's socket, the election lock and `<service>-draws.jsonl` sit
 beside whichever file this resolves.
 
+### A bucket per token — part of the contract
+
+Bitbucket Cloud counts its rate limit **per token, not per IP**
+(measured 2026-10-07: a second token from the same machine got 200s
+while the first sat in a 429). So a service that counts per token keeps
+one bucket per credential, beside the shared one
+(`ratelimit.statePathFor`, `Limiter.forToken`):
+
+```
+<dir of the shared file>/<service>-ratelimit-<id>.json
+```
+
+**`<id>`** is the first 12 lowercase hex characters of a sha256 over the
+bare credential, as UTF-8:
+
+- strip a leading `Bearer ` and hash what is left;
+- for a `Basic ` header, strip it and **base64-decode first**, then hash
+  the decoded `user:secret`;
+- for Basic auth held as a `(user, secret)` pair, hash `user:secret` —
+  one colon, no newline — so the pair and the header it builds name the
+  same bucket.
+
+Two vectors pin the rule; any implementation must agree:
+
+| hashed | `<id>` |
+| --- | --- |
+| `abc` | `ba7816bf8f01` |
+| `me@x:pw` (also `Basic bWVAeDpwdw==`) | `0032469eec6d` |
+
+Same six keys, same lock, same arithmetic as the shared file. **No
+credential — or a client that predates this — means the shared file,
+unchanged**, and so does `<SERVICE>_RATELIMIT_STATE`, which names the
+file outright. It is opt-in per service (`ratelimit.per_token_services`):
+Bitbucket is in; Jira is not, its limits never having been measured.
+The broker hands out the shared bucket, so a per-token limiter does not
+ask it.
+
+The draws file stays **one per service** (`<service>-draws.jsonl`,
+beside both buckets); a draw from a per-token bucket carries an eighth
+key, `token_id`, the same 12 hex (see the draws file below).
+
 ## The shared HTTP response cache — a public contract
 
 `mnml_sdk.http_cache`: Bitbucket and Jira GET responses held on disk,
@@ -1996,6 +2037,14 @@ those shares:
 | `reason` | string | why, in the requesting side's own words |
 | `wait_ms` | integer | how long `acquire` held the request before it went out |
 | `tokens_after` | number | tokens left in the shared bucket afterwards |
+| `token_id` | string, optional | present only when the draw came out of a per-token bucket: that bucket's 12-hex `<id>` ("A bucket per token"); `tokens_after` is then that bucket's |
+
+```json
+{"ts":1789526218.411,"pid":48123,"program":"mnml-bitbucket","service":"bitbucket","reason":"pane_open","wait_ms":0,"tokens_after":39.0,"token_id":"ba7816bf8f01"}
+```
+
+The file stays one per service whichever bucket a draw came out of; a
+reader that does not know `token_id` ignores it.
 
 Anything else on the machine that spends from one of these buckets can
 append the same line and be counted; nothing has to be taught to read

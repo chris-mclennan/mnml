@@ -1959,6 +1959,24 @@ back under the data root — set the variable to have every root (a
 sandbox, a test's private root), and any other tool on the machine that agrees to the file format,
 share one budget.
 
+**Bitbucket's budget is per token**, so its bucket is the token's:
+`bitbucket-ratelimit-<id>.json` beside the shared file that 2–4
+resolve, `<id>` the first 12 hex characters of a sha256 of the token
+(`docs/SDK.md`, "A bucket per token"). `BITBUCKET_RATELIMIT_STATE` (1)
+still names the file outright. A tool with no token to name — and Jira,
+whose limits were never measured — stays on the shared
+`<service>-ratelimit.json`. The draws file stays one per service.
+
+**Which token mnml-bitbucket spends.** `<bitbucket config dir>/token` —
+the file beside its `config.zon` — when it is there, for reads and for
+approving; only without it do the inherited `BITBUCKET_ACCESS_TOKEN`,
+`BITBUCKET_API_TOKEN`, `BITBUCKET_APP_PASSWORD` and
+`BITBUCKET_PERSONAL_TOKEN` answer (`integrations/bitbucket/README.md`,
+"Auth"). A shell that exports those for other tools therefore no longer
+decides mnml's token, or its budget. An access token (`ATCTT…`) in the
+file has no account: set `account_id` in that `config.zon` for the
+`mine` / `reviewing` tabs.
+
 ## Sandbox
 
 `mnml --sandbox` runs mnml against a throwaway home — what a brand-new
