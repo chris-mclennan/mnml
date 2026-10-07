@@ -27,7 +27,7 @@ expect screen contains " window: 1h "
 # NOW: the bucket as its file has it.
 expect screen contains "bucket  12.5/40 tokens"
 expect screen contains "2 throttles"
-expect screen contains "hour    8 of 792 limit"
+expect screen contains "hour    8 of 4320 limit"
 # The legend: mnml's own marked.
 expect screen contains "mnml-bitbucket (mnml)"
 # WHO: busiest first, the share, the top reason, the worst wait and the
