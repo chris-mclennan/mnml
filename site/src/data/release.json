@@ -1,7 +1,7 @@
 {
   "comment": "The release the download page names when GitHub cannot be asked at build time. scripts/pin-release.mjs writes it on every release; scripts/prepare.mjs resolves the live one into release.latest.json (ignored), which src/lib/release.mjs prefers.",
-  "tag": "v0.3.4",
-  "version": "0.3.4",
+  "tag": "v0.3.5",
+  "version": "0.3.5",
   "assets": [
     "dist-manifest.json",
     "integrations.json",
