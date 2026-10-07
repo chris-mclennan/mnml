@@ -1590,9 +1590,182 @@ file name `<service>-ratelimit.json` and its six keys are the contract;
 the broker's socket, the election lock and `<service>-draws.jsonl` sit
 beside whichever file this resolves.
 
+## The shared HTTP response cache — a public contract
+
+`mnml_sdk.http_cache`: Bitbucket and Jira GET responses held on disk,
+one file per URL, so a second process asking the same question within
+minutes does not spend another request. mnml and any other tool on the
+machine that agrees to the format read and write the same files: each
+works alone, and on a machine with both they share entries by pointing
+at one directory. `sdk/mnml-sdk/src/testdata/http_cache_vectors.json` is
+the shared case file — canonical URLs with their file names, item keys,
+and decisions — vendored verbatim from the other implementation, and
+every case runs as a unit test here.
+
+**A cache is a hint.** Any read, parse or write failure costs a
+request, never a wrong answer and never an error.
+
+```zig
+const d = (try sdk.http_cache.Dir.fromEnv(gpa, env, "bitbucket")) orelse return; // off, or no home
+defer d.deinit(gpa);
+const url = try sdk.http_cache.canonical(a, raw_url, &.{});
+const key = try sdk.http_cache.itemKey(a, url);       // acme/widget#45, or ""
+const entry = d.load(a, io, url);                     // ?Entry
+switch (sdk.http_cache.decide(entry, now, d.changedAt(a, io, key), listing_stamp)) {
+    .fresh => {},      // answer from entry.?.body — no request
+    .revalidate => {}, // If-None-Match: entry.?.etag; a 304 → d.confirm(a, io, entry.?, sent_at)
+    .miss => {},       // a plain GET; a 200 → d.store(a, io, .{ .url = url, .body = …, .etag = …, .key = key, .now = sent_at })
+}
+_ = d.markChanged(a, io, key, sdk.http_cache.changedNow(io)); // after a write this process made
+```
+
+### Where
+
+`<root>/http-cache/<service>/`, `<root>` being the first of
+`$MNML_SHARED_STATE_DIR`, `$MNML_DATA_ROOT`, `~/.config/mnml` (the
+recent-items cache's rule, `cache.sharedDir`). `<service>` is
+`bitbucket` or `jira`.
+
+| file | what |
+| --- | --- |
+| `<sha256 hex of the canonical URL>.json` | one response |
+| `changed/<sha256 hex of the item key>.json` | one item's change stamp |
+| `<target>.<pid>.tmp` | a write in progress — never an entry |
+| `<root>/http-cache/.gc-at` | when the last sweep ran (its modification time) |
+
+`$MNML_HTTP_CACHE=0` (or `off` / `false` / `no`) turns the cache off for
+a process. `$MNML_RECENT_ITEMS` does not touch it.
+
+### The canonical URL
+
+The cache key, so two writers that build the same request reach the
+same file:
+
+1. Scheme and host lower-cased; the default port dropped; the fragment
+   dropped; a `user:password@` authority dropped.
+2. The path kept byte for byte.
+3. The query: every `name=value` pair, blank values kept, decoded (`+`
+   is a space), sorted by name then value (code-point order of the
+   decoded text), then each part percent-encoded as UTF-8 with only
+   `A-Z a-z 0-9 - . _ ~` left bare (space is `%20`, `,` is `%2C`),
+   joined with `&`. No `?` when there are none. A list parameter is one
+   pair per element; a number is the caller's text (`50`, not `50.0`).
+
+Credentials never appear in a URL, so they never reach a key. Because
+every token on the machine shares the files, a writer holds only
+responses that are the same whichever credential asks: Bitbucket reads
+under `/2.0/repositories/` — never `/2.0/user`, a workspace probe, or
+a listing filtered by the caller's own `role=`.
+
+### A response file
+
+```json
+{"version":1,"url":"<canonical URL>","key":"acme/widget#45","status":200,
+ "etag":"\"abc\"","stamp":"2026-10-06T12:00:00Z","fetched_at":1790000000,
+ "valid_until":0,"content_type":"application/json","body":"<response body, verbatim>"}
+```
+
+| field | meaning |
+| --- | --- |
+| `version` | `1`. Any other value reads as a miss. |
+| `url` | the canonical URL. A file naming another URL is a miss. |
+| `key` | the item the response is about: `<workspace>/<repo>#<pr id>` for a pull request and everything under it, `<workspace>/<repo>!<build number>` for a pipeline run, the issue key for a Jira issue; workspace and repo lower-cased. Empty for a listing and anything else. |
+| `status` | `200` — only 200s are stored. |
+| `etag` | the `ETag` header, or empty: an expired entry revalidates with `If-None-Match`, and a `304` keeps the body. |
+| `stamp` | the server's own last-changed value for `key` (`updated_on`, `updated`), when the writer knows it. A reader holding the same stamp from a cheap listing uses the entry with no request. |
+| `fetched_at` | when the body was last confirmed current (a 200, or a 304), epoch seconds — the time the request was **sent**, so a change stamped while it was in flight still makes the entry stale. |
+| `valid_until` | answer with no request until then; `0` means always ask first. |
+| `content_type` | optional: the response's `Content-Type`, written when known. |
+| `body` | the response text. A writer skips bodies over 8 MB. |
+
+Times may be integers or decimals; a reader compares them as numbers.
+mnml writes integers: `fetched_at` rounded down, `changed_at` rounded
+up, so neither ever claims to be later than it was.
+
+### A change stamp
+
+```json
+{"version":1,"key":"acme/widget#45","changed_at":1790000100}
+```
+
+Written when anything learns the item changed: a write this process
+made itself, or a webhook. An entry with this `key` and `fetched_at <
+changed_at` is stale whatever its `valid_until` says. A writer only ever
+moves `changed_at` forward.
+
+### Deciding
+
+Given an entry, the time, the item's `changed_at` (if a change stamp
+exists) and a `stamp` from the caller (if it has one), in order:
+
+1. No entry, unreadable, or `version` is not 1: **miss**.
+2. `changed_at` is after `fetched_at`: **revalidate** if there is an
+   `etag`, else **miss**.
+3. The caller's `stamp` and the entry's are both non-empty: equal is
+   **fresh**, different is **revalidate** if there is an `etag`, else
+   **miss**.
+4. `now < valid_until`: **fresh**.
+5. An `etag`: **revalidate**. Otherwise **miss**.
+
+**fresh**: answer from `body`, no request. **revalidate**: GET with
+`If-None-Match: <etag>`; a 304 answers from `body` and rewrites the
+entry with a new `fetched_at` / `valid_until`; a 200 replaces it.
+**miss**: a plain GET; a 200 is stored. A revalidation takes a
+rate-limit token like any other request.
+
+In the request log a fresh answer is a `cache_hit` line (no status, no
+request) and a 304 is a `revalidate` line with `cache: hit` — the
+REQUESTS pane's meanings, unchanged.
+
+### Writing
+
+The whole file goes to `<target>.<pid>.tmp` in the same directory, then
+a rename over the target (`rename(2)`; on Windows `Io.Dir.rename`, which
+replaces an existing target — `MoveFileEx`'s replace). No lock: one file
+is one entry, a rename is atomic, and the last writer wins with a whole
+entry. Every store is written at once, not at exit, so other processes
+see it. A reader never sees a partial file.
+
+### What mnml writes
+
+- **Bitbucket.** Every GET under `/2.0/repositories/` goes through the
+  cache. A listing is stored with `valid_until: 0` — mnml always asks
+  first, conditionally — and an entry another writer stored with its
+  own TTL is honoured. A pull request's own detail carries its
+  `updated_on` as the stamp; its comments carry the listing's
+  `updated_on` when the caller had one (the readiness look and the
+  statusline's review-thread count pass it), so an unmoved pull request
+  costs no request at all. `R` (full refresh) asks outright and stores
+  what comes back. Dry run answers from whatever is held.
+- **Jira.** A ticket's linked-PR (dev-status) answer, under the issue
+  key with the ticket's `updated` as the stamp and `valid_until: 0`.
+  The search that carries `updated` is what makes it free on the next
+  open. A 404 ("no dev info") paints as an empty list and is not
+  stored — it is not a 200.
+- **Change stamps.** After every write mnml itself makes — a Bitbucket
+  approval or its withdrawal, a Jira transition, comment, assignee,
+  fix-version or watch change — the item's `changed_at` moves to now.
+  mnml does not merge or decline pull requests itself (a merge is a
+  Claude Code session's, `sdk.pane.merge`), so those stamps are the
+  merging tool's to write.
+
+### Collecting
+
+Entries, change stamps and abandoned temp files older than seven days by
+modification time may be deleted by anyone. mnml does it at most once a
+day, from the first store after `<root>/http-cache/.gc-at` is a day old
+(`http_cache.maybeGc`; `gc(max_age)` sweeps on demand).
+
+**Upgrading.** The single-file stores this replaced —
+`<data root>/cache/bitbucket/etags.json` and
+`<data root>/cache/jira/dev-status.json` — are no longer read, and not
+deleted. The first open after an upgrade costs one unconditional GET per
+URL. Jira's `cache/jira/sync.json` (the delta windows' marks, not a
+response store) is still read and written.
+
 ## The warmer — pacing, one warmer per service, windows
 
-`mnml_sdk.warm` is the part `ratelimit` and `store` do not own: **when**
+`mnml_sdk.warm` is the part `ratelimit` and `http_cache` do not own: **when**
 a request may go, **who** may make the speculative ones, and **how
 little** of a listing has to be asked for. It lives in the SDK because
 two integrations drawing on one bucket have to agree about it.
@@ -2053,7 +2226,10 @@ sdk/mnml-sdk/src/
                  shared bucket file
   feed.zig       when to ask: the adaptive poll schedule, the JSONL
                  event file, and the Watcher that picks between them
-  store.zig      bodies kept between runs, keyed by the server's stamp
+  store.zig      small keyed records kept between runs (Jira's sync marks)
+  http_cache.zig the shared HTTP response cache: one file per GET, the
+                 public contract, fresh / revalidate / miss
+  testdata/http_cache_vectors.json  the contract's shared cases, verbatim
   zon_edit.zig   saving a hand-written ZON file in place, comments kept —
                  the splice the host's settings write through too
   warm.zig       the warmer: pacing with priority, one warmer per
