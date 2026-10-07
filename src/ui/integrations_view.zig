@@ -30,6 +30,7 @@ const chip = @import("chip.zig");
 const scrollbar = @import("scrollbar.zig");
 const empty_state = @import("empty_state.zig");
 const text_field = @import("text_field.zig");
+const overlay = @import("overlay.zig");
 const ids = @import("../core/ids.zig");
 const manifest = @import("../bridge/manifest.zig");
 const fonts_section = @import("fonts_section.zig");
@@ -127,6 +128,9 @@ pub const Entry = struct {
     /// `(<bin> not installed)`.
     missing: ?[]const u8 = null,
     version: []const u8 = "",
+    /// An Installed row behind the Marketplace: the newer version, painted
+    /// after `version` as ` → 0.2.4 available`. Empty paints nothing.
+    update: []const u8 = "",
     badge: ?Badge = null,
     /// // changed (int-distribution): a Marketplace row's install
     /// state — `installed` / `update available` / `not installed`,
@@ -177,6 +181,9 @@ pub const SectionProps = struct {
     tab: Tab,
     /// Installed, marketplace, dev — the tab labels' counts.
     counts: [3]usize,
+    /// Installed integrations behind the Marketplace: the Installed
+    /// label's ` · 2 updates` (` ↑2` where the tier is narrower).
+    updates: usize = 0,
     show_dev: bool,
     filter: []const u8,
     filter_caret: usize,
@@ -274,12 +281,22 @@ pub fn drawChips(ui: Ui, right_x: u16, y: u16, min_x: u16, bg: Style, chips: []c
 
 const Tier = enum { full, compact, tiny };
 
-fn tabLabel(ui: Ui, tab: Tab, tier: Tier, count: usize) []const u8 {
+/// The Installed label's update suffix per tier: ` · 2 updates`, then
+/// ` ↑2` (` ^2` in ASCII) where the tier is short of cells.
+fn updatesSuffix(ui: Ui, tier: Tier, updates: usize) []const u8 {
+    if (updates == 0) return "";
+    return switch (tier) {
+        .full => overlay.hintText(ui, ui.fmt(" \u{b7} {d} update{s}", .{ updates, if (updates == 1) "" else "s" })),
+        .compact, .tiny => overlay.hintText(ui, ui.fmt(" \u{2191}{d}", .{updates})),
+    };
+}
+
+fn tabLabel(ui: Ui, tab: Tab, tier: Tier, count: usize, updates: usize) []const u8 {
     return switch (tab) {
         .installed => switch (tier) {
-            .full => ui.fmt("Installed ({d})", .{count}),
-            .compact => ui.fmt("Inst ({d})", .{count}),
-            .tiny => "Inst",
+            .full => ui.fmt("Installed ({d}){s}", .{ count, updatesSuffix(ui, tier, updates) }),
+            .compact => ui.fmt("Inst ({d}){s}", .{ count, updatesSuffix(ui, tier, updates) }),
+            .tiny => ui.fmt("Inst{s}", .{updatesSuffix(ui, tier, updates)}),
         },
         .marketplace => switch (tier) {
             .full => ui.fmt("Marketplace ({d})", .{count}),
@@ -304,7 +321,7 @@ fn drawTabs(ui: Ui, row: Rect, p: SectionProps) void {
         tier = tr;
         var total: u16 = n - 1;
         for (Tab.all[0..n]) |tab| {
-            labels[@intFromEnum(tab)] = tabLabel(ui, tab, tr, p.counts[@intFromEnum(tab)]);
+            labels[@intFromEnum(tab)] = tabLabel(ui, tab, tr, p.counts[@intFromEnum(tab)], p.updates);
             total += ui.width(labels[@intFromEnum(tab)]);
         }
         if (total <= avail) break :tiers;
@@ -471,7 +488,10 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
         ms.dim = true;
         x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt(" ({s} not installed)", .{bin}), right -| x), ms);
     }
-    if (e.version.len > 0) x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{e.version}), Theme.withFg(style, t.muted.fg));
+    if (e.update.len > 0)
+        x += paintUpdate(ui, x, r1.y, right, e.version, e.update, style)
+    else if (e.version.len > 0)
+        x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{e.version}), Theme.withFg(style, t.muted.fg));
     if (e.badge) |b| {
         const fg: Color = switch (b) {
             .official, .installed_here => t.palette.green,
@@ -504,6 +524,33 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
     var ds = Theme.withFg(style, t.muted.fg);
     ds.dim = true;
     _ = ui.putStr(r2.x + 4, r2.y, r2.right() -| (r2.x + 4), ui.clipStr(e.line2, r2.right() -| (r2.x + 4)), ds);
+}
+
+/// An Installed row behind the Marketplace: `  0.2.3 → 0.2.4 available`
+/// — the current version as any row paints it, the arrow and the newer
+/// number in the attention colour (the Marketplace's own `update
+/// available`), the word muted. A row short of cells drops the word,
+/// then the current version (`  ↑0.2.4`): the newer number is the one
+/// thing the row must not lose, and the shipped 26-cell column, a chip
+/// glyph and a two-word label leave it about ten cells.
+fn paintUpdate(ui: Ui, x0: u16, y: u16, right: u16, current: []const u8, newer: []const u8, style: Style) u16 {
+    const t = ui.theme;
+    const muted = Theme.withFg(style, t.muted.fg);
+    const hot = Theme.withFg(style, t.palette.yellow);
+    const cur = if (current.len > 0) ui.fmt("  {s}", .{current}) else "";
+    const head = ui.fmt("{s} {s}", .{ overlay.hintText(ui, " \u{2192}"), newer });
+    const word = " available";
+    const avail = right -| x0;
+    var x = x0;
+    if (avail >= ui.width(cur) + ui.width(head)) {
+        x += ui.putStr(x, y, right -| x, cur, muted);
+        x += ui.putStr(x, y, right -| x, head, hot);
+        if (right -| x >= ui.width(word)) x += ui.putStr(x, y, right -| x, word, muted);
+    } else {
+        const short = ui.fmt("  {s}{s}", .{ overlay.hintText(ui, "\u{2191}"), newer });
+        x += ui.putStr(x, y, right -| x, ui.clipStr(short, right -| x), hot);
+    }
+    return x - x0;
 }
 
 // ─── the detail pane ─────────────────────────────────────────────────────
@@ -811,6 +858,72 @@ test "a mnml-catalogue row paints its version, badge and install state — insta
     defer g.deinit();
     _ = drawSection(g.ui(), g.full(), sectionProps(&plain, &scroll, .marketplace));
     try g.expectContains("[launcher] btop  \u{2713} Official  (acme)");
+}
+
+test "an Installed row behind the Marketplace: ` → 0.2.4 available` after its version, the arrow and number in the attention colour; a short row keeps the number; the label counts updates at every tier" {
+    var scroll: usize = 0;
+    const rows = [_]Entry{
+        .{ .kind = .installed, .label = "Jira Work", .version = "0.2.3", .update = "0.2.4", .line2 = "jira_work.open" },
+        .{ .kind = .installed, .label = "Bitbucket PRs", .version = "0.2.4", .line2 = "bitbucket_prs.open" },
+    };
+    var f = try Fixture.init(60, 12);
+    defer f.deinit();
+    var p = sectionProps(&rows, &scroll, .installed);
+    p.updates = 2;
+    _ = drawSection(f.ui(), f.full(), p);
+    try f.expectRow(4, "\u{258c} Jira Work  0.2.3 \u{2192} 0.2.4 available");
+    try f.expectRow(7, "  Bitbucket PRs  0.2.4");
+    try f.expectRow(1, " Installed (3) \u{b7} 2 updates Marketplace (9) " ++ dev_glyph ++ " (34)");
+    // `0.2.3` as today; ` → 0.2.4` yellow (the Marketplace's own
+    // `update available`); the word muted.
+    try testing.expect(f.fgEql(13, 4, f.theme.muted));
+    try testing.expect(Color.eql(f.style(19, 4).fg, f.theme.palette.yellow));
+    try testing.expect(Color.eql(f.style(22, 4).fg, f.theme.palette.yellow));
+    try testing.expect(f.fgEql(27, 4, f.theme.muted));
+    // The shipped 26-cell column: the compact tier carries the count as
+    // `↑2`; the row keeps `→ 0.2.4` and drops the word it has no room for.
+    var g = try Fixture.init(26, 12);
+    defer g.deinit();
+    p.show_dev = false;
+    _ = drawSection(g.ui(), g.full(), p);
+    try g.expectRow(1, " Inst (3) \u{2191}2 Mkt (9)");
+    try g.expectRow(4, "\u{258c} Jira Work  0.2.3 \u{2192} 0.2.4");
+    // A chip glyph and a longer label leave no room for both numbers:
+    // the newer one stays, as `↑0.2.4`.
+    const glyphed = [_]Entry{.{ .glyph = "B", .fallback = "B", .kind = .installed, .label = "Bitbucket PRs", .version = "0.2.3", .update = "0.2.4", .line2 = "bitbucket_prs.open" }};
+    var gg = try Fixture.init(26, 6);
+    defer gg.deinit();
+    _ = drawSection(gg.ui(), gg.full(), sectionProps(&glyphed, &scroll, .installed));
+    try gg.expectRow(4, "\u{258c} B Bitbucket PRs  \u{2191}0.2.4");
+    try testing.expect(Color.eql(gg.style(20, 4).fg, gg.theme.palette.yellow));
+    // With the Dev tab too the compact tier is a cell over: the tiny one
+    // keeps the update count rather than the tab counts.
+    var gd = try Fixture.init(26, 6);
+    defer gd.deinit();
+    p.show_dev = true;
+    _ = drawSection(gd.ui(), gd.full(), p);
+    try gd.expectRow(1, " Inst \u{2191}2 Mkt " ++ dev_glyph ++ " (34)");
+    // One update reads singular; without the Dev tab the full tier fits.
+    var h = try Fixture.init(50, 6);
+    defer h.deinit();
+    p.updates = 1;
+    p.show_dev = false;
+    _ = drawSection(h.ui(), h.full(), p);
+    try h.expectRow(1, " Installed (3) \u{b7} 1 update Marketplace (9)");
+    // `--ascii`: the hint language's own twins.
+    var ha = try Fixture.init(60, 6);
+    defer ha.deinit();
+    ha.ascii = true;
+    p.updates = 2;
+    _ = drawSection(ha.ui(), ha.full(), p);
+    try ha.expectRow(1, " Installed (3) - 2 updates Marketplace (9)");
+    try ha.expectContains("Jira Work  0.2.3 -> 0.2.4 available");
+    // No updates: the label is today's.
+    p.updates = 0;
+    var k = try Fixture.init(40, 6);
+    defer k.deinit();
+    _ = drawSection(k.ui(), k.full(), p);
+    try k.expectRow(1, " Installed (3) Marketplace (9)");
 }
 
 test "the detail pane: title, buttons with hits, the manifest's sections" {

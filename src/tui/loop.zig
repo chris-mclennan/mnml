@@ -180,6 +180,9 @@ pub fn run(gpa: Allocator, io: Io, env: *std.process.Environ.Map, opts: Options)
     // After the session restore, so its toast lands on the restored
     // frame; only here, because it reaches GitHub.
     @import("../app/update.zig").startupCheck(&app);
+    // The installed integrations against the Marketplace: the listing
+    // is fetched quietly, so the Installed tab can say what is behind.
+    @import("../app/integration_updates.zig").startupCheck(&app);
     @import("../app/font_scan.zig").startupFetch(&app);
     // Until Enter says the setup is done: now, or when the overlay
     // already up (the trust dialog) closes — `App.tick` keeps asking.

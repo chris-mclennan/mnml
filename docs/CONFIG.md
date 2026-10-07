@@ -1155,10 +1155,19 @@ otherwise. Copy what you need; leave the rest out.
         // downloads the archive, refuses it unless the sha256 matches,
         // writes the binary to `<data root>/integrations/<id>/bin/`,
         // links `<data root>/bin/<name>` at it and runs
-        // `<binary> --install`. A source build (a checkout, whose version
-        // has no release) skips the index. Nothing is bundled in the
-        // mnml archive; the first-launch setup offers Jira and Bitbucket
-        // from the same index.
+        // `<binary> --install`. A build with no release of its own — a
+        // source build (`0.3.6+g…`), or a version nobody published, whose
+        // index answers 404 — reads the NEWEST published mnml release's
+        // index instead: `github.com/chris-mclennan/mnml/releases/latest`
+        // redirects to its tag (no API call), only a `vX.Y.Z` tag counts
+        // (never an integration's `jira-v…` or a prerelease), and the tag
+        // is cached in `<data root>/marketplace/latest-release` for 12
+        // hours. The SDK rule still decides which of its rows this mnml
+        // can run. Only the mnml you run in a terminal looks it up:
+        // headless runs and the test corpus skip the index as before,
+        // and so does a session with MNML_MARKETPLACE_CATALOGUE set.
+        // Nothing is bundled in the mnml archive; the first-launch setup
+        // offers Jira and Bitbucket from the same index.
         //
         // Second, the `mnml` catalogue — the integrations this checkout
         // builds (Jira, Bitbucket, the SDK sample): `data/marketplace.zon`,
@@ -1168,9 +1177,25 @@ otherwise. Copy what you need; leave the rest out.
         // `run.sh install`, else this checkout's `zig-out/bin` — which is
         // what keeps a manifest from ever hardcoding a repo path. A
         // catalogue row the release index also lists is dropped: the
-        // index's download is the install. A row says `installed`,
-        // `update available` (the source is ahead of the installed
-        // manifest's version) or `not installed`.
+        // index's download is the install — unless the catalogue's
+        // version is the newer (a checkout ahead of the newest release),
+        // when the index's row is the one dropped. A row says
+        // `installed`, `update available` (the source is ahead of the
+        // installed manifest's version) or `not installed`.
+        //
+        // The Installed tab says the same from the other side: a row
+        // behind the Marketplace reads `0.2.3 → 0.2.4 available`, its
+        // right-click menu leads with *Update to 0.2.4* (the Marketplace
+        // row's own install), and the tab label counts them
+        // (`Installed (11) · 2 updates`). The terminal's mnml fetches the
+        // listing quietly at start and every six hours after — not
+        // while `ui.dashboard_refresh` is `manual`, `ui.check_updates` is
+        // off or MNML_NO_UPDATE_CHECK=1 — and when it finds versions it
+        // has not announced before, one toast names them all
+        // (`Jira 0.2.4 and Bitbucket 0.2.4 are available — Integrations
+        // ▸ Installed`); `<data root>/marketplace/update-notice` remembers
+        // which, so the same versions are not announced twice. A listing
+        // that cannot be read paints no hint and toasts nothing.
         //
         // With no config at all, `<data root>/marketplace/local/` is
         // listed too, as the `local` source with the Private badge:
@@ -1222,7 +1247,8 @@ otherwise. Copy what you need; leave the rest out.
         //       paths are workspace-relative; `~` expanded.
         //   MNML_MARKETPLACE_INDEX=<url>        a release_index source
         //       named `index` at that URL, and the ONLY source while it
-        //       is set — how a source build installs from a release.
+        //       is set — how any session reads one particular index
+        //       (no newest-release lookup).
         //   MNML_MARKETPLACE_LOCAL=<folder>     a local_folder source,
         //       and the ONLY source while it is set.
         //   MNML_MARKETPLACE_GITHUB=<owner>/<repo>[:<apps dir>]

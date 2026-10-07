@@ -97,6 +97,7 @@ const catalogue = @import("marketplace_catalogue.zig");
 const release = @import("marketplace_release.zig");
 const build_options = @import("build_options");
 const settings = @import("settings.zig");
+const integration_updates = @import("integration_updates.zig");
 const keepCancel = release.keepCancel;
 const child_os = @import("../core/child.zig");
 const builtin = @import("builtin");
@@ -157,11 +158,21 @@ pub const SourceSpec = struct {
     /// version in it — empty when a source build has none to fill in.
     path: []u8,
     official: bool = false,
+    /// release_index: the URL template (`…/download/v{version}/…`)
+    /// when this build may fall back to the newest published release's
+    /// index — `path` is empty (a source build, which has no release of
+    /// its own) or 404s (a version nobody published). Empty: no fallback.
+    latest_template: []u8 = &.{},
+    /// release_index: where the resolved tag is cached
+    /// (`<data root>/marketplace/latest-release`); empty without a data root.
+    latest_cache: []u8 = &.{},
 
     fn deinit(s: SourceSpec, gpa: Allocator) void {
         gpa.free(s.id);
         gpa.free(s.repo);
         gpa.free(s.path);
+        gpa.free(s.latest_template);
+        gpa.free(s.latest_cache);
     }
 };
 
@@ -232,6 +243,18 @@ pub const State = struct {
     /// (`integrations.rebuild_stale` / `rebuild_focused`), one at a time
     /// behind whatever install is running. gpa-owned.
     rebuilds: std.ArrayListUnmanaged(Rebuild) = .empty,
+    /// The terminal loop's mnml (`startupCheck`): it may reach GitHub on
+    /// its own — the newest-release fallback for a build with no release
+    /// of its own, and the quiet update check. Off headless, in the
+    /// `.test` corpus and in the unit tests, none of which may touch the
+    /// network unasked.
+    live: bool = false,
+    /// The fetch running was started by the update check, not by a
+    /// person: its problems are not toasted (an offline start is not
+    /// news), and what it finds newer is the startup note.
+    quiet: bool = false,
+    /// When the update check last started a fetch.
+    checked_at_ms: ?i64 = null,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.fetch_group.cancel(io);
@@ -335,9 +358,19 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         // URL (it has no release), so the catalogue is all it lists.
         for (Config.default_marketplace_sources) |s| {
             var spec = try specOf(app, gpa, s);
-            if (spec.kind == .release_index and spec.path.len == 0) {
-                spec.deinit(gpa);
-                continue;
+            if (spec.kind == .release_index) {
+                // A build with no release of its own reads the newest
+                // published one's index — only where mnml may reach
+                // the network on its own (`State.live`), and not while
+                // a catalogue override says which rows to list.
+                if (latestFallback(app)) {
+                    errdefer spec.deinit(gpa);
+                    spec.latest_template = try gpa.dupe(u8, s.release_index.url);
+                    if (app.data_root.len > 0) spec.latest_cache = try std.fs.path.join(gpa, &.{ app.data_root, release.latest_cache });
+                } else if (spec.path.len == 0) {
+                    spec.deinit(gpa);
+                    continue;
+                }
             }
             spec.official = true;
             try out.append(gpa, spec);
@@ -359,6 +392,15 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         try out.append(gpa, .{ .id = try gpa.dupe(u8, "local"), .kind = .local_folder, .repo = try gpa.dupe(u8, ""), .path = root });
     }
     return out.toOwnedSlice(gpa);
+}
+
+/// Whether a default release index falls back to the newest published
+/// release (`SourceSpec.latest_template`): the terminal loop's mnml, with
+/// no `MNML_MARKETPLACE_CATALOGUE` naming the rows by hand.
+fn latestFallback(app: *App) bool {
+    if (!app.marketplace.live) return false;
+    if (app.env.get("MNML_MARKETPLACE_CATALOGUE")) |v| if (v.len > 0) return false;
+    return true;
 }
 
 /// `<data root>/marketplace/local` — the folder a private integrations
@@ -447,7 +489,7 @@ pub fn sourceCount(app: *App) usize {
     var fba = std.heap.FixedBufferAllocator.init(&buf);
     if (app.cfg.marketplace.use_defaults) {
         for (Config.default_marketplace_sources) |s| {
-            if (sourceResolves(fba.allocator(), s)) n += 1;
+            if (sourceResolves(fba.allocator(), s) or (s == .release_index and latestFallback(app))) n += 1;
             fba.reset();
         }
         if (cataloguePath(app, fba.allocator())) |p| {
@@ -525,10 +567,13 @@ pub fn refresh(app: *App) CommandError!void {
     }
     const api = try gpa.dupe(u8, apiBase(app));
     errdefer gpa.free(api);
-    st.fetch_group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation, st.fetcher }) catch |err| {
+    st.fetch_group.concurrent(app.io, fetchWorker, .{ app.events, app.io, gpa, specs, api, st.generation, st.fetcher, App.nowMs(app.io) }) catch |err| {
         return app.diag.fail(app.frame.allocator(), "marketplace: cannot start the fetch: {s}", .{@errorName(err)});
     };
     st.fetching = true;
+    // A refresh somebody asked for says what it finds; the update check
+    // sets this again after calling here.
+    st.quiet = false;
     app.needs_render = true;
 }
 
@@ -588,7 +633,7 @@ pub fn safeName(s: []const u8) bool {
     return true;
 }
 
-fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []SourceSpec, api: []u8, generation: u32, fetcher: release.Fetcher) void {
+fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []SourceSpec, api: []u8, generation: u32, fetcher: release.Fetcher, now_ms: i64) void {
     defer {
         for (specs) |s| s.deinit(gpa);
         gpa.free(specs);
@@ -604,7 +649,7 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []Sourc
             arena_state.deinit();
             return;
         };
-        listSource(io, gpa, arena, api, s, fetcher, &entries, &problems) catch {
+        listSource(io, gpa, arena, api, s, fetcher, now_ms, &entries, &problems) catch {
             arena_state.deinit();
             const msg = gpa.dupe(u8, "marketplace: out of memory") catch return;
             post(events, io, gpa, .{ .generation = generation, .kind = .{ .fetch_failed = msg } });
@@ -625,19 +670,27 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, specs: []Sourc
 }
 
 /// A catalogue row the release index also lists goes: the same
-/// integration, and the index's download is how it installs.
+/// integration, and the index's download is how it installs — unless the
+/// catalogue's version is the newer one (a checkout ahead of the newest
+/// release, which a source build reads), when the index's row goes.
 fn dropShadowedBuiltins(entries: *std.ArrayListUnmanaged(Entry)) void {
     var i: usize = 0;
     while (i < entries.items.len) {
         const e = entries.items[i];
-        const shadowed = e.kind == .builtin and for (entries.items) |o| {
-            if (o.kind == .release and std.mem.eql(u8, o.id, e.id)) break true;
-        } else false;
+        const shadowed = switch (e.kind) {
+            .builtin => for (entries.items) |o| {
+                if (o.kind == .release and std.mem.eql(u8, o.id, e.id) and !catalogue.olderThan(o.version, e.version)) break true;
+            } else false,
+            .release => for (entries.items) |o| {
+                if (o.kind == .builtin and std.mem.eql(u8, o.id, e.id) and catalogue.olderThan(e.version, o.version)) break true;
+            } else false,
+            else => false,
+        };
         if (shadowed) _ = entries.orderedRemove(i) else i += 1;
     }
 }
 
-fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: SourceSpec, fetcher: release.Fetcher, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: SourceSpec, fetcher: release.Fetcher, now_ms: i64, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
     switch (s.kind) {
         .crates => {
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: crates.io sources are not searched — integrations are Zig packages now", .{s.id}));
@@ -645,7 +698,7 @@ fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: Sour
         },
         .mnml => return listCatalogue(io, arena, s, entries, problems),
         .local_folder => return listLocal(io, arena, s, entries, problems),
-        .release_index => return listIndex(io, gpa, arena, s, fetcher, entries, problems),
+        .release_index => return listIndex(io, gpa, arena, s, fetcher, now_ms, entries, problems),
         .launcher_folder, .monorepo_apps => {},
     }
     const url = try std.fmt.allocPrint(arena, "{s}/repos/{s}/contents/{s}", .{ api, s.repo, s.path });
@@ -764,8 +817,33 @@ fn listCatalogue(io: Io, arena: Allocator, s: SourceSpec, entries: *std.ArrayLis
 /// integration this mnml offers — built on a compatible SDK, released
 /// for this platform (`marketplace_release.offered`). The rest are
 /// left out without a word: a row that cannot install is not a row.
-fn listIndex(io: Io, gpa: Allocator, arena: Allocator, s: SourceSpec, fetcher: release.Fetcher, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
-    const body = switch (try fetcher.get(fetcher.ctx, gpa, io, arena, s.path)) {
+///
+/// With `latest_template` (a default index): a build with no release of
+/// its own (`path` empty), or one whose own release's index is not there
+/// (a 404), reads the newest published release's index instead
+/// (`marketplace_release.latestIndexUrl`). The SDK rule still decides
+/// which of its rows this mnml can run.
+fn listIndex(io: Io, gpa: Allocator, arena: Allocator, s: SourceSpec, fetcher: release.Fetcher, now_ms: i64, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    var first: ?release.Fetched = null;
+    if (s.path.len > 0) {
+        first = try fetcher.get(fetcher.ctx, gpa, io, arena, s.path);
+        const not_found = switch (first.?) {
+            .err => |e| release.isNotFound(e),
+            .body => false,
+        };
+        if (!not_found or s.latest_template.len == 0) return listIndexBody(arena, s, first.?, entries, problems);
+    }
+    var why: []const u8 = "";
+    const url = (try release.latestIndexUrl(io, gpa, arena, fetcher, s.latest_template, s.latest_cache, now_ms, &why)) orelse {
+        try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: the newest mnml release could not be found ({s})", .{ s.id, why }));
+        return;
+    };
+    io.checkCancel() catch |err| return keepCancel(io, err);
+    return listIndexBody(arena, s, try fetcher.get(fetcher.ctx, gpa, io, arena, url), entries, problems);
+}
+
+fn listIndexBody(arena: Allocator, s: SourceSpec, fetched: release.Fetched, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    const body = switch (fetched) {
         .body => |b| b,
         .err => |e| {
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s}", .{ s.id, e }));
@@ -1770,9 +1848,12 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             st.problems = l.problems;
             st.fetching = false;
             st.fetched_at_ms = app.now_ms;
-            for (l.problems) |p| try app.toastLevel(.warn, "marketplace: {s}", .{p});
+            const quiet = st.quiet;
+            st.quiet = false;
+            if (!quiet) for (l.problems) |p| try app.toastLevel(.warn, "marketplace: {s}", .{p});
             // The arena moved into the state; only the box goes.
             gpa.destroy(r);
+            try integration_updates.afterListing(app, quiet);
             pumpOrToast(app);
         },
         .installed => |i| {
@@ -1791,7 +1872,8 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             // A superseded fetch's failure says nothing about the one running.
             if (r.generation != st.generation) return;
             st.fetching = false;
-            try app.toastLevel(.err, "{s}", .{msg});
+            if (!st.quiet) try app.toastLevel(.err, "{s}", .{msg});
+            st.quiet = false;
             pumpOrToast(app);
         },
         .failed => |msg| {
@@ -2015,6 +2097,154 @@ test "a source build's default source is the mnml catalogue: its release index h
     try testing.expect(std.mem.indexOf(u8, text, "Bitbucket") != null);
     try testing.expect(std.mem.indexOf(u8, text, "\u{2713} Official  not installed") != null);
     try testing.expect(std.mem.indexOf(u8, text, "No sources yet") == null);
+}
+
+test "a source build in the terminal loop reads the NEWEST published release's index: the releases/latest redirect names the tag, the tag is cached in the data root and not asked again; headless and a catalogue override keep the catalogue alone" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    try testing.expect(!release.isReleaseVersion(build_options.version));
+
+    const latest = "https://github.com/chris-mclennan/mnml/releases/latest";
+    const index = "https://github.com/chris-mclennan/mnml/releases/download/v0.3.5/integrations.json";
+    const sha = release.sha256Hex("x");
+    var fake: release.FakeFetcher = .{ .routes = &.{
+        .{ .url = latest, .body = "https://github.com/chris-mclennan/mnml/releases/tag/v0.3.5" },
+        .{ .url = index, .body = try release.demoIndex(arena, "http://127.0.0.1:1", release.host_sdk, &sha, &sha) },
+    } };
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.marketplace.fetcher = fake.fetcher();
+    // Headless (and every test App): the catalogue alone, as before.
+    try testing.expectEqual(@as(usize, 1), sourceCount(&app));
+    app.marketplace.live = true;
+    try testing.expectEqual(@as(usize, 2), sourceCount(&app));
+    {
+        const specs = try sources(&app, gpa);
+        defer {
+            for (specs) |sp| sp.deinit(gpa);
+            gpa.free(specs);
+        }
+        try testing.expect(specs[0].kind == .release_index);
+        try testing.expectEqual(@as(usize, 0), specs[0].path.len);
+        try testing.expectEqualStrings(Config.default_index_url, specs[0].latest_template);
+        try testing.expectEqualStrings(try std.fs.path.join(arena, &.{ root, release.latest_cache }), specs[0].latest_cache);
+    }
+    try refresh(&app);
+    try settle(&app);
+    try testing.expectEqual(@as(usize, 0), app.marketplace.problems.len);
+    const demo = find(&app, "demo").?;
+    try testing.expectEqual(Kind.release, app.marketplace.entries[demo].kind);
+    try testing.expectEqualStrings("0.4.0", app.marketplace.entries[demo].version);
+    // The shipped catalogue's rows are listed beside it.
+    try testing.expect(find(&app, "jira") != null);
+    try testing.expectEqual(@as(u32, 1), fake.hitsOf(latest));
+    try testing.expectEqualStrings("v0.3.5", release.readLatestCache(io, arena, try std.fs.path.join(arena, &.{ root, release.latest_cache })).?.tag);
+    // The next poll reads the cache, not the redirect.
+    try refresh(&app);
+    try settle(&app);
+    try testing.expectEqual(@as(u32, 1), fake.hitsOf(latest));
+    try testing.expectEqual(@as(u32, 2), fake.hitsOf(index));
+    // A catalogue named by hand is the rows; nothing is looked up.
+    try app.env.put("MNML_MARKETPLACE_CATALOGUE", "cat.zon");
+    try testing.expectEqual(@as(usize, 1), sourceCount(&app));
+}
+
+test "a build whose own release's index 404s reads the newest one's; a non-404 failure is reported as it is; the quiet check toasts no problem" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const sha = release.sha256Hex("x");
+    const tpl = "https://github.com/o/r/releases/download/v{version}/integrations.json";
+    var fake: release.FakeFetcher = .{ .routes = &.{
+        .{ .url = "https://github.com/o/r/releases/latest", .body = "/o/r/releases/tag/v0.3.5" },
+        .{ .url = "https://github.com/o/r/releases/download/v0.3.5/integrations.json", .body = try release.demoIndex(arena, "http://127.0.0.1:1", release.host_sdk, &sha, &sha) },
+        .{ .url = "https://github.com/o/r/releases/download/v0.3.6/broken.json", .body = "not json" },
+    } };
+    var spec: SourceSpec = .{
+        .id = try arena.dupe(u8, "mnml"),
+        .kind = .release_index,
+        .repo = try arena.dupe(u8, ""),
+        // A version nobody published: the fake answers 404.
+        .path = try arena.dupe(u8, "https://github.com/o/r/releases/download/v9.9.9/integrations.json"),
+        .latest_template = try arena.dupe(u8, tpl),
+        .latest_cache = try std.fs.path.join(arena, &.{ root, release.latest_cache }),
+    };
+    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var problems: std.ArrayListUnmanaged([]const u8) = .empty;
+    try listIndex(io, gpa, arena, spec, fake.fetcher(), 0, &entries, &problems);
+    try testing.expectEqual(@as(usize, 0), problems.items.len);
+    try testing.expectEqual(@as(usize, 1), entries.items.len);
+    try testing.expectEqualStrings("demo", entries.items[0].id);
+    // An index that is THERE but unreadable is that index's problem —
+    // not a reason to read another release's.
+    spec.path = try arena.dupe(u8, "https://github.com/o/r/releases/download/v0.3.6/broken.json");
+    entries = .empty;
+    try listIndex(io, gpa, arena, spec, fake.fetcher(), 0, &entries, &problems);
+    try testing.expectEqual(@as(usize, 0), entries.items.len);
+    try testing.expectEqual(@as(usize, 1), problems.items.len);
+    try testing.expect(fake.hitsOf("https://github.com/o/r/releases/latest") == 1);
+    // No fallback configured: a 404 is the problem.
+    spec.path = try arena.dupe(u8, "https://github.com/o/r/releases/download/v9.9.9/integrations.json");
+    spec.latest_template = &.{};
+    problems = .empty;
+    try listIndex(io, gpa, arena, spec, fake.fetcher(), 0, &entries, &problems);
+    try testing.expectEqual(@as(usize, 1), problems.items.len);
+    try testing.expect(std.mem.endsWith(u8, problems.items[0], "HTTP 404"));
+
+    // A listing the quiet check started keeps its problems off the
+    // toasts; the same problem from a refresh somebody asked for is said.
+    // (No cached tag to fall back on: the lookup itself fails.)
+    try tmp.dir.deleteFile(io, release.latest_cache);
+    var down: release.FakeFetcher = .{ .routes = &.{} };
+    var app = try App.initWith(gpa, io, .{ .workspace = root, .data_root = root, .cols = 100, .rows = 20 });
+    defer app.deinit();
+    app.marketplace.fetcher = down.fetcher();
+    app.marketplace.live = true;
+    const before = app.toasts.items.len;
+    try refresh(&app);
+    app.marketplace.quiet = true;
+    try settle(&app);
+    try testing.expectEqual(@as(usize, 1), app.marketplace.problems.len);
+    try testing.expect(std.mem.indexOf(u8, app.marketplace.problems[0], "the newest mnml release could not be found") != null);
+    try testing.expectEqual(before, app.toasts.items.len);
+    try refresh(&app);
+    try settle(&app);
+    try testing.expectEqual(before + 1, app.toasts.items.len);
+}
+
+test "a catalogue row ahead of the index's keeps its place: the index shadows only a catalogue row at or behind its own version" {
+    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    defer entries.deinit(testing.allocator);
+    const base: Entry = .{ .source = "x", .kind = .builtin, .id = "", .label = "", .description = "", .url = "" };
+    var e = base;
+    inline for (.{
+        .{ "same", Kind.builtin, "0.2.4" },   .{ "same", Kind.release, "0.2.4" },
+        .{ "ahead", Kind.builtin, "0.2.5" },  .{ "ahead", Kind.release, "0.2.4" },
+        .{ "behind", Kind.builtin, "0.2.3" }, .{ "behind", Kind.release, "0.2.4" },
+    }) |row| {
+        e.id = row[0];
+        e.kind = row[1];
+        e.version = row[2];
+        try entries.append(testing.allocator, e);
+    }
+    dropShadowedBuiltins(&entries);
+    try testing.expectEqual(@as(usize, 3), entries.items.len);
+    try testing.expect(entries.items[0].kind == .release and std.mem.eql(u8, entries.items[0].id, "same"));
+    try testing.expect(entries.items[1].kind == .builtin and std.mem.eql(u8, entries.items[1].id, "ahead"));
+    try testing.expect(entries.items[2].kind == .release and std.mem.eql(u8, entries.items[2].id, "behind"));
 }
 
 test "a mnml catalogue installs by linking the binary and running --install; the row turns installed, then update when the catalogue moves ahead; uninstall takes both" {
@@ -3231,7 +3461,7 @@ fn cancelListingMs(app: *App, srcs: []const FifoSource, fifos: []const []const u
     };
     const api = try gpa.dupe(u8, "http://127.0.0.1:9");
     var group: Io.Group = .init;
-    try group.concurrent(io, fetchWorker, .{ app.events, io, gpa, specs, api, app.marketplace.generation, app.marketplace.fetcher });
+    try group.concurrent(io, fetchWorker, .{ app.events, io, gpa, specs, api, app.marketplace.generation, app.marketplace.fetcher, 0 });
     // Long enough to reach the first pipe and block opening it.
     io.sleep(.fromMilliseconds(300), .awake) catch {};
     const t0 = Io.Timestamp.now(io, .awake);

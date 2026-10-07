@@ -137,7 +137,7 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .body = "A row of the debug column — a variable, a watch, a frame of the call stack, a breakpoint — under its section's header. Enter expands or jumps; `e` edits a variable or a watch, `x` removes a watch or a breakpoint, Space toggles a breakpoint on or off. Right-click is the row's menu.",
             .links = &.{ .{ .command = .{ .id = .@"dap.add_watch", .label = "Add a watch" } }, .{ .command = .{ .id = .@"dap.continue", .label = "Continue" } }, ask },
         },
-        .integrations => if (try @import("../integrations.zig").rowStaleText(app, arena, r.idx)) |why| if (try @import("../integrations.zig").rowNoRebuild(app, arena, r.idx)) |cannot| .{
+        .integrations => if (try updateRow(app, arena, r.idx)) |e| e else if (try @import("../integrations.zig").rowStaleText(app, arena, r.idx)) |why| if (try @import("../integrations.zig").rowNoRebuild(app, arena, r.idx)) |cannot| .{
             .title = try std.fmt.allocPrint(arena, "Integration {d} \u{b7} old SDK", .{r.idx + 1}),
             .body = try std.fmt.allocPrint(arena, "The `old SDK` chip: {s}. An integration draws through the SDK it was compiled against, so this one misses whatever the SDK has changed since \u{2014} and it cannot be rebuilt here: {s}. Reinstall it from the Marketplace.", .{ why, cannot }),
             .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
@@ -176,6 +176,19 @@ pub fn row(app: *App, arena: Allocator, r: hit.PanelRow) Allocator.Error!?Entry 
             .keys = &.{.{ .chord = "Enter", .label = "The script's action" }},
             .links = &.{.{ .command = .{ .id = .@"view.activity_scripts", .label = "The scripts section" } }},
         },
+    };
+}
+
+/// An Installed row behind the Marketplace: what ` → 0.2.4 available`
+/// means, in words. Null for a current row (and on the other tabs).
+fn updateRow(app: *App, arena: Allocator, idx: u32) Allocator.Error!?Entry {
+    const updates = @import("../integration_updates.zig");
+    const h = (try updates.rowHint(app, arena, idx)) orelse return null;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Integration {d} \u{b7} {s} available", .{ idx + 1, h.version }),
+        .body = try std.fmt.allocPrint(arena, "{s} is in the Marketplace index; Update to install it. Right-click \u{2192} Update to {s} runs the same install as the Marketplace row's Install \u{2014} the download (or the link) and `--install` again \u{2014} and the row is current once it lands. The Installed tab's label counts the integrations that are behind.", .{ h.version, h.version }),
+        .keys = &.{.{ .chord = "Enter", .label = "Open it" }},
+        .links = &.{ .{ .command = .{ .id = .@"integrations.update_from_marketplace", .label = "Update it" } }, .{ .command = .{ .id = .@"integrations.show_marketplace", .label = "Open the Marketplace" } } },
     };
 }
 

@@ -58,6 +58,7 @@ const pty_pane = @import("pty_pane.zig");
 const cmd_picker = @import("cmd_picker.zig");
 const runners = @import("runners.zig");
 const marketplace = @import("marketplace.zig");
+const integration_updates = @import("integration_updates.zig");
 const catalogue = @import("marketplace_catalogue.zig");
 const font_scan = @import("font_scan.zig");
 const claude_mark = @import("claude_mark.zig");
@@ -916,7 +917,7 @@ pub fn catalogueState(app: *App, arena: Allocator, binary: []const u8, version: 
 /// The program a binary names: its file name, and on Windows without
 /// the `.exe` — a catalogue names `…\mnml-sample.exe` where the
 /// manifest its `--install` wrote says `mnml-sample`.
-fn programName(binary: []const u8) []const u8 {
+pub fn programName(binary: []const u8) []const u8 {
     const base = std.fs.path.basename(binary);
     if (builtin.os.tag == .windows and std.ascii.endsWithIgnoreCase(base, ".exe")) return base[0 .. base.len - 4];
     return base;
@@ -2146,7 +2147,7 @@ fn cursorEntry(app: *App) Allocator.Error!?usize {
     return rows[st.panel.cursor];
 }
 
-fn entryAt(app: *App, visible_idx: usize) Allocator.Error!?usize {
+pub fn entryAt(app: *App, visible_idx: usize) Allocator.Error!?usize {
     const rows = try visibleEntries(app, app.frame.allocator());
     if (visible_idx >= rows.len) return null;
     return rows[visible_idx];
@@ -2461,8 +2462,14 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
     const enabled = inst.enabled();
     const on_bar = if (inst.manifest.chip) |c| c.in_palette_bar else false;
     const pinned = isPinned(app, inst.id());
+    // The menu owns its strings (`openOwned`): the *Update to <version>*
+    // label outlives this frame.
+    var mem = std.heap.ArenaAllocator.init(app.gpa);
+    errdefer mem.deinit();
     var rows: std.ArrayListUnmanaged(command.MenuItem) = .empty;
     errdefer rows.deinit(app.gpa);
+    if (try integration_updates.hintFor(app, app.frame.allocator(), inst)) |h|
+        try rows.append(app.gpa, .{ .label = try std.fmt.allocPrint(mem.allocator(), "Update to {s}", .{h.version}), .action = .{ .command = .@"integrations.update_from_marketplace" } });
     try rows.appendSlice(app.gpa, &.{
         .{ .label = "Details", .action = .{ .command = .@"integrations.show_details" } },
         .{ .label = if (enabled) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } },
@@ -2480,7 +2487,7 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
     try rows.append(app.gpa, .{ .label = "Uninstall…", .action = .{ .command = .@"integrations.remove" } });
     const items = try rows.toOwnedSlice(app.gpa);
     errdefer app.gpa.free(items);
-    try app.openMenu(st.list[row].manifest.label, items, x, y);
+    try context_menus.openOwned(app, try mem.allocator().dupe(u8, st.list[row].manifest.label), items, x, y, mem);
 }
 
 /// The Marketplace tab's empty-state hint: the two ways to add a source
@@ -2522,6 +2529,7 @@ pub fn drawSection(app: *App, ui: Ui, area: Rect) Allocator.Error!void {
     const caret = view.drawSection(ui, area, .{
         .tab = st.tab,
         .counts = .{ installedCount(app), app.marketplace.entries.len, st.dev.len },
+        .updates = (try integration_updates.behind(app, ui.arena)).len,
         .show_dev = showDev(app),
         .filter = st.panel.filterText(),
         .filter_caret = st.panel.filter_caret,
@@ -2587,6 +2595,8 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
                 .hidden = !inst.enabled(),
                 .missing = if (inst.binary_found) null else std.fs.path.basename(m.binary),
                 .version = m.version,
+                // Behind the Marketplace: ` → 0.2.4 available`.
+                .update = if (try integration_updates.hintFor(app, arena, inst)) |h| h.version else "",
                 .line2 = if (m.commands.len > 0) m.commands[0].id else m.binary,
                 // A binary that is not there has nothing to compare: the
                 // red `not installed` note is the row's one warning.
@@ -2690,7 +2700,7 @@ pub fn openDetail(app: *App, target: IntegrationsPane.TargetRef) CommandError!vo
 
 /// The row a command acts on: the menu's, the detail pane's, else the
 /// section's cursor on the Installed tab, else null (a picker opens).
-fn focusedRow(app: *App) Allocator.Error!?usize {
+pub fn focusedRow(app: *App) Allocator.Error!?usize {
     const st = &app.integrations;
     if (st.menu_row) |r| {
         st.menu_row = null;

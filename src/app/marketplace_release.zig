@@ -216,21 +216,160 @@ pub fn resolveUrl(arena: Allocator, template: []const u8, version: []const u8) A
     return try std.mem.replaceOwned(u8, arena, template, "{version}", version);
 }
 
+// ─── the newest published release ───────────────────────────────────────
+//
+// A build with no release of its own — a source build (`0.3.6+g…`), or
+// one stamped with a version nobody published — reads the index of the
+// NEWEST published mnml release instead. GitHub answers
+// `<repo>/releases/latest` with a redirect to `/releases/tag/<tag>`;
+// that redirect is all this reads (no API, so no rate limit), the same
+// rule `site/scripts/release-source.mjs` uses for the site. Only a tag
+// shaped `vX.Y.Z` is an mnml release: the repo also publishes
+// integration tags (`jira-v0.2.4`) and prereleases (`v0.3.0-rc0`), and
+// neither names an index. The tag is cached in the data root
+// (`latest_cache`) so a poll does not ask again inside `latest_ttl_ms`.
+
+/// `v` and three dot-separated numbers, nothing else.
+pub fn isCoreTag(t: []const u8) bool {
+    if (t.len < 6 or t[0] != 'v') return false;
+    var parts: usize = 0;
+    var it = std.mem.splitScalar(u8, t[1..], '.');
+    while (it.next()) |p| {
+        if (p.len == 0) return false;
+        for (p) |c| if (!std.ascii.isDigit(c)) return false;
+        parts += 1;
+    }
+    return parts == 3;
+}
+
+/// The tag a `/releases/latest` redirect names: the last path segment
+/// after `/releases/tag/`, query and fragment dropped. Null for any
+/// other Location (a login page, a 404 page) — never a guess.
+pub fn tagFromLocation(location: []const u8) ?[]const u8 {
+    var loc = location;
+    if (std.mem.indexOfAny(u8, loc, "?#")) |cut| loc = loc[0..cut];
+    const key = "/releases/tag/";
+    const at = std.mem.lastIndexOf(u8, loc, key) orelse return null;
+    const tag = loc[at + key.len ..];
+    if (tag.len == 0 or std.mem.indexOfScalar(u8, tag, '/') != null) return null;
+    return tag;
+}
+
+/// `…/<owner>/<repo>/releases/latest` for an index template shaped
+/// `…/<owner>/<repo>/releases/download/<tag>/integrations.json`; null
+/// for a template that is not a GitHub release download (a mirror).
+pub fn latestUrlOf(arena: Allocator, template: []const u8) Allocator.Error!?[]const u8 {
+    const key = "/releases/download/";
+    const at = std.mem.indexOf(u8, template, key) orelse return null;
+    return try std.fmt.allocPrint(arena, "{s}/releases/latest", .{template[0..at]});
+}
+
+/// Under the data root: the newest release's tag as last resolved, and
+/// when (`v0.3.5\n<unix ms>\n`).
+pub const latest_cache = "marketplace" ++ std.fs.path.sep_str ++ "latest-release";
+
+/// How long a resolved tag is trusted before the redirect is asked again.
+pub const latest_ttl_ms: i64 = 12 * std.time.ms_per_hour;
+
+pub const Cached = struct { tag: []const u8, at_ms: i64 };
+
+/// The cache file's tag and time; null when it is missing or not a
+/// core tag (a hand-edited file is not trusted).
+pub fn readLatestCache(io: Io, arena: Allocator, path: []const u8) ?Cached {
+    if (path.len == 0) return null;
+    const text = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(256)) catch return null;
+    var lines = std.mem.tokenizeAny(u8, text, "\r\n");
+    const tag = std.mem.trim(u8, lines.next() orelse return null, " \t");
+    if (!isCoreTag(tag)) return null;
+    const at = std.fmt.parseInt(i64, std.mem.trim(u8, lines.next() orelse "0", " \t"), 10) catch 0;
+    return .{ .tag = tag, .at_ms = at };
+}
+
+fn writeLatestCache(io: Io, arena: Allocator, path: []const u8, tag: []const u8, now_ms: i64) void {
+    if (path.len == 0) return;
+    if (std.fs.path.dirname(path)) |d| Io.Dir.cwd().createDirPath(io, d) catch return;
+    const text = std.fmt.allocPrint(arena, "{s}\n{d}\n", .{ tag, now_ms }) catch return;
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text }) catch {};
+}
+
+/// The newest published mnml release's tag: the cache when it is
+/// younger than `latest_ttl_ms`, else the redirect (and the cache is
+/// rewritten), else a stale cache rather than nothing. Null with `why`
+/// when none of those has one.
+pub fn latestTag(io: Io, gpa: Allocator, arena: Allocator, fetcher: Fetcher, latest_url: []const u8, cache_path: []const u8, now_ms: i64, why: *[]const u8) Allocator.Error!?[]const u8 {
+    const cached = readLatestCache(io, arena, cache_path);
+    if (cached) |c| if (now_ms >= c.at_ms and now_ms - c.at_ms < latest_ttl_ms) return c.tag;
+    switch (try fetcher.redirect(fetcher.ctx, gpa, io, arena, latest_url)) {
+        .body => |location| if (tagFromLocation(location)) |tag| {
+            if (isCoreTag(tag)) {
+                writeLatestCache(io, arena, cache_path, tag, now_ms);
+                return tag;
+            }
+            why.* = try std.fmt.allocPrint(arena, "{s} is {s}, not an mnml release", .{ latest_url, tag });
+        } else {
+            why.* = try std.fmt.allocPrint(arena, "{s} redirects to {s}, not a release tag", .{ latest_url, location });
+        },
+        .err => |e| why.* = e,
+    }
+    if (cached) |c| return c.tag;
+    return null;
+}
+
+/// The index URL of the newest published release for `template`
+/// (`latestUrlOf` + `latestTag`, the tag's `v` dropped into
+/// `{version}`). Null with `why` when it cannot be found.
+pub fn latestIndexUrl(io: Io, gpa: Allocator, arena: Allocator, fetcher: Fetcher, template: []const u8, cache_path: []const u8, now_ms: i64, why: *[]const u8) Allocator.Error!?[]const u8 {
+    const latest = (try latestUrlOf(arena, template)) orelse {
+        why.* = try std.fmt.allocPrint(arena, "{s} is not a GitHub release download, so it has no latest release", .{template});
+        return null;
+    };
+    const tag = (try latestTag(io, gpa, arena, fetcher, latest, cache_path, now_ms, why)) orelse return null;
+    return try std.mem.replaceOwned(u8, arena, template, "{version}", tag[1..]);
+}
+
+/// Whether a fetch failed because the URL is not there — what sends a
+/// build whose own release does not exist to the newest one instead.
+/// Both fetchers spell a status as `<url>: HTTP <code>`.
+pub fn isNotFound(err: []const u8) bool {
+    return std.mem.endsWith(u8, err, ": HTTP 404");
+}
+
 // ─── the download ───────────────────────────────────────────────────────
 
 pub const Fetched = union(enum) { body: []const u8, err: []const u8 };
 
 /// Where an install's bytes come from. `http` in mnml; a table in the
 /// tests, so an install is exercised end to end without a socket.
+/// `redirect` asks for a URL WITHOUT following its redirect and hands
+/// back the Location (`.body`) — how the newest release is found.
 pub const Fetcher = struct {
     ctx: ?*anyopaque = null,
     get: *const fn (ctx: ?*anyopaque, gpa: Allocator, io: Io, arena: Allocator, url: []const u8) Allocator.Error!Fetched,
+    redirect: *const fn (ctx: ?*anyopaque, gpa: Allocator, io: Io, arena: Allocator, url: []const u8) Allocator.Error!Fetched = httpRedirect,
 };
 
 /// The HTTP fetcher: GET, redirects followed (a release asset answers
 /// with one), the body when the status is 2xx. The client cuts a body
 /// at `http_client.max_body`; a cut archive fails its sha256.
 pub const http: Fetcher = .{ .get = httpGet };
+
+fn httpRedirect(_: ?*anyopaque, gpa: Allocator, io: Io, arena: Allocator, url: []const u8) Allocator.Error!Fetched {
+    var req = try http_parse.Request.init(gpa);
+    defer req.deinit(gpa);
+    gpa.free(req.url);
+    req.url = try gpa.dupe(u8, url);
+    // A background lookup: a dead network costs ten seconds, never a hang.
+    var outcome = try http_client.send(gpa, io, &req, .{ .transport = .{ .follow_redirects = false, .timeout_ms = 10_000 } });
+    defer outcome.deinit(gpa);
+    switch (outcome) {
+        .ok => |*resp| {
+            if (resp.status >= 300 and resp.status < 400) if (resp.header("location")) |loc| return .{ .body = try arena.dupe(u8, loc) };
+            return .{ .err = try std.fmt.allocPrint(arena, "{s}: HTTP {d}", .{ url, resp.status }) };
+        },
+        .err => |e| return .{ .err = try std.fmt.allocPrint(arena, "{s}: {s}", .{ url, e }) },
+        .moved => unreachable,
+    }
+}
 
 fn httpGet(_: ?*anyopaque, gpa: Allocator, io: Io, arena: Allocator, url: []const u8) Allocator.Error!Fetched {
     var req = try http_parse.Request.init(gpa);
@@ -574,6 +713,74 @@ test "versions: an update is an older installed version; a source build resolves
     try testing.expectEqualStrings("http://127.0.0.1:1/i.json", (try resolveUrl(a, "http://127.0.0.1:1/i.json", "0.3.0-dev")).?);
 }
 
+test "the newest release: only a vX.Y.Z tag from the releases/latest redirect, never an integration tag or a prerelease" {
+    try testing.expect(isCoreTag("v0.3.5"));
+    try testing.expect(isCoreTag("v10.20.300"));
+    try testing.expect(!isCoreTag("jira-v0.2.4"));
+    try testing.expect(!isCoreTag("v0.3.0-rc0"));
+    try testing.expect(!isCoreTag("0.3.5"));
+    try testing.expect(!isCoreTag("v0.3"));
+    try testing.expect(!isCoreTag("v0.3.5.1"));
+    try testing.expect(!isCoreTag("v0..5"));
+    try testing.expectEqualStrings("v0.3.5", tagFromLocation("https://github.com/o/r/releases/tag/v0.3.5").?);
+    try testing.expectEqualStrings("v0.3.5", tagFromLocation("/o/r/releases/tag/v0.3.5?x=1#y").?);
+    try testing.expectEqualStrings("jira-v0.2.4", tagFromLocation("https://github.com/o/r/releases/tag/jira-v0.2.4").?);
+    try testing.expect(tagFromLocation("https://github.com/login") == null);
+    try testing.expect(tagFromLocation("https://github.com/o/r/releases/tag/") == null);
+    try testing.expect(tagFromLocation("https://github.com/o/r/releases/tag/v1.0.0/extra") == null);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const tpl = "https://github.com/o/r/releases/download/v{version}/integrations.json";
+    try testing.expectEqualStrings("https://github.com/o/r/releases/latest", (try latestUrlOf(a, tpl)).?);
+    try testing.expect((try latestUrlOf(a, "https://mirror.example/mnml/v{version}/integrations.json")) == null);
+    try testing.expect(isNotFound("https://x/i.json: HTTP 404"));
+    try testing.expect(!isNotFound("https://x/i.json: HTTP 500"));
+    try testing.expect(!isNotFound("https://x/i.json: ConnectionRefused"));
+}
+
+test "the newest release's index: resolved through the redirect, cached in the data root, re-asked after the TTL, a stale cache when the network is down, nothing for an integration tag" {
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+    const cache = try std.fs.path.join(a, &.{ root, latest_cache });
+    const tpl = "https://github.com/o/r/releases/download/v{version}/integrations.json";
+    const latest = "https://github.com/o/r/releases/latest";
+    var fake: FakeFetcher = .{ .routes = &.{.{ .url = latest, .body = "https://github.com/o/r/releases/tag/v0.3.5" }} };
+    var why: []const u8 = "";
+    const t0: i64 = 1_000_000;
+    try testing.expectEqualStrings("https://github.com/o/r/releases/download/v0.3.5/integrations.json", (try latestIndexUrl(io, testing.allocator, a, fake.fetcher(), tpl, cache, t0, &why)).?);
+    try testing.expectEqual(@as(u32, 1), fake.hitsOf(latest));
+    // Cached beside the index, with when.
+    const c = readLatestCache(io, a, cache).?;
+    try testing.expectEqualStrings("v0.3.5", c.tag);
+    try testing.expectEqual(t0, c.at_ms);
+    // Inside the TTL: the cache, no second ask.
+    _ = (try latestIndexUrl(io, testing.allocator, a, fake.fetcher(), tpl, cache, t0 + latest_ttl_ms - 1, &why)).?;
+    try testing.expectEqual(@as(u32, 1), fake.hitsOf(latest));
+    // Past it: asked again, and a newer release moves the cache.
+    var newer: FakeFetcher = .{ .routes = &.{.{ .url = latest, .body = "/o/r/releases/tag/v0.3.6" }} };
+    try testing.expectEqualStrings("https://github.com/o/r/releases/download/v0.3.6/integrations.json", (try latestIndexUrl(io, testing.allocator, a, newer.fetcher(), tpl, cache, t0 + latest_ttl_ms, &why)).?);
+    try testing.expectEqual(@as(u32, 1), newer.hitsOf(latest));
+    // The network down (the fake answers 404 for anything) and the cache
+    // stale: the stale tag rather than nothing.
+    var down: FakeFetcher = .{ .routes = &.{} };
+    try testing.expectEqualStrings("https://github.com/o/r/releases/download/v0.3.6/integrations.json", (try latestIndexUrl(io, testing.allocator, a, down.fetcher(), tpl, cache, t0 + 3 * latest_ttl_ms, &why)).?);
+    try testing.expectEqual(@as(usize, 1), down.calls);
+    // An integration release marked latest is not an mnml release; with
+    // no cache to fall back on, there is no index and the reason says so.
+    const fresh = try std.fs.path.join(a, &.{ root, "other", latest_cache });
+    var integ: FakeFetcher = .{ .routes = &.{.{ .url = latest, .body = "https://github.com/o/r/releases/tag/jira-v0.2.4" }} };
+    try testing.expect((try latestIndexUrl(io, testing.allocator, a, integ.fetcher(), tpl, fresh, t0, &why)) == null);
+    try testing.expect(std.mem.indexOf(u8, why, "jira-v0.2.4, not an mnml release") != null);
+    try testing.expect(readLatestCache(io, a, fresh) == null);
+}
+
 test "the archives: the binary comes out of a .tar.xz and a .zip by its name, whatever directory it is in" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -597,6 +804,8 @@ test "the archives: the binary comes out of a .tar.xz and a .zip by its name, wh
 }
 
 /// A fetcher that answers from a table and counts what it was asked.
+/// A redirect is answered from the same table: the route's body is the
+/// Location (`releases/latest` → `…/releases/tag/v0.3.5`).
 pub const FakeFetcher = struct {
     pub const Route = struct { url: []const u8, body: []const u8 };
     routes: []const Route,
@@ -606,7 +815,7 @@ pub const FakeFetcher = struct {
     mutex: std.atomic.Mutex = .unlocked,
 
     pub fn fetcher(self: *FakeFetcher) Fetcher {
-        return .{ .ctx = self, .get = get };
+        return .{ .ctx = self, .get = get, .redirect = get };
     }
 
     /// Times `url` was fetched.
