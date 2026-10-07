@@ -232,6 +232,7 @@ pub fn commandOf(s: Section) ?command.CommandId {
         .todos => .@"view.activity_todos",
         .findings => .@"view.activity_findings",
         .scripts => .@"view.activity_scripts",
+        .api_traffic => .@"view.api_traffic",
         .diagnostics => .@"lsp.diagnostics",
         .outline => .@"outline.show",
     };
@@ -302,6 +303,7 @@ fn sectionOfPane(app: *App, id: PaneId) ?Section {
         // Rust keeps the rail marker on Files for the status pane; only
         // the graph (git mode) moves it to Git.
         .git_graph => .git,
+        .api_traffic => .api_traffic,
         else => null,
     };
 }
@@ -421,6 +423,7 @@ pub fn describe(part: Part) tooltip.Tip {
             .script => "click: this script's section · its rows, filter, sort and folds · right-click: menu",
             .findings => "click: Findings rail · .mnml/findings/*.md tester / review reports · right-click: menu",
             .scripts => "click: Scripts rail · what init.lua registered, with file:line · ⟳ reloads · right-click: menu",
+            .api_traffic => "click: API traffic · who is spending each API's budget, by program · right-click: menu",
             .diagnostics => "click: Diagnostics · the language servers' problems list",
             .outline => "click: Outline · the symbols of the active file",
         } },
@@ -790,11 +793,12 @@ test "pinned icons: pinning an installed launcher paints its chip after the sect
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".activity_bar_pinned_integrations = .{\"htop\"}") != null);
-    // Painted after SCRIPTS on the rail's step, in green, with a pin hit.
+    // Painted after the last section (API traffic) on the rail's step,
+    // in green, with a pin hit.
     try app.render();
     const lay = rail.layout(railRect(&app), 1);
     const y = lay.pinY(0).?;
-    try t.expectEqual(lay.sectionY(.scripts).? + lay.step, y);
+    try t.expectEqual(lay.sectionY(.api_traffic).? + lay.step, y);
     try t.expectEqualStrings("\u{F1D00}", app.screen.readCell(1, y).?.char.grapheme);
     try t.expectEqual(app.theme.palette.green, app.screen.readCell(1, y).?.style.fg);
     try t.expectEqual(@as(u16, 0), app.hits.at(1, y).?.rail.pin);

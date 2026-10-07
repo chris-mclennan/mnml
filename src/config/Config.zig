@@ -245,7 +245,7 @@ pub const ActivityBar = enum { always, auto, hidden };
 /// The tags are `ui/activity_bar.zig`'s `Section.rail`, spelled here
 /// so the config layer does not import a painter; a unit test there
 /// keeps the two lists the same.
-pub const RailSection = enum { explorer, search, git, debug, integrations, sessions, http, notes, todos, findings, scripts };
+pub const RailSection = enum { explorer, search, git, debug, integrations, sessions, http, notes, todos, findings, scripts, api_traffic };
 /// `ui.rail` — the activity bar's MEMBERSHIP (`app/activity_bar.zig`).
 /// The two strips are split by kind: the activity bar holds panels,
 /// the launcher dock (`ui.dock`) holds launchers. This and

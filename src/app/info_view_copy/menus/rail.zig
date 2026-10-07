@@ -126,6 +126,12 @@ pub const rows = [_]Row{
         .body = "Walks the workspace again for TODO / FIXME / XXX / HACK / REVIEW markers and rebuilds the section's list now, rather than waiting for the throttled rescan that follows a file change. A large tree takes a moment; the header's ⟳ chip is the same row, and the sort chip orders what it finds.",
         .links = &.{ .{ .command = .{ .id = .@"todos.refresh", .label = "Rescan now" } }, .{ .command = .{ .id = .@"view.activity_todos", .label = "The TODOs section" } }, .{ .settings = .{ .row = copy.settingsRow("ui.todos_sort"), .label = "TODO sort in Settings" } } },
     } },
+    // ── API traffic ──
+    .{ .label = "mnml's own requests", .command = .@"integrations.requests", .entry = .{
+        .title = "mnml's own requests",
+        .body = "Opens the REQUESTS view: one row per request mnml's integrations made, newest first, with the status, the time and what it waited on. API TRAFFIC counts every program on the bucket but cannot say what one request was for; this is where a single call is read. Programs outside mnml write no lines here.",
+        .links = &.{ .{ .command = .{ .id = .@"integrations.requests", .label = "Open it" } }, .{ .command = .{ .id = .@"view.api_traffic", .label = "API traffic" } } },
+    } },
     // ── Scripts ──
     .{ .label = "Reload init.lua", .entry = .{
         .title = "Reload init.lua",

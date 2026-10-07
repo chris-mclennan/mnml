@@ -1372,6 +1372,8 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .search => try search_section.draw(app, ui, area),
         // // changed (lua-plumbing): a script's own rail section.
         .script => try script_section.draw(app, ui, area),
+        // A pane section: the rail row opens the pane, never a column.
+        .api_traffic => {},
     }
 }
 

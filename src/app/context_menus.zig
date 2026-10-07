@@ -446,6 +446,11 @@ pub fn openRailMenu(app: *App, s: activity_bar.Section, x: u16, y: u16) Allocato
         else
             &.{},
         .diagnostics, .outline => &.{},
+        // A pane, not a column: no side to move to. Its verbs are the
+        // REQUESTS view beside it — mnml's own calls, one by one.
+        .api_traffic => &.{
+            .{ .label = "mnml's own requests", .action = .{ .command = .@"integrations.requests" } },
+        },
     };
     // A section with a column surface can change sides (VS Code's
     // "Move to right side"); a pane section has no side.

@@ -195,6 +195,12 @@ pub const rows = [_]Row{
         .keys = &.{.{ .command = .palette, .label = "Command palette" }},
         .links = &.{ .{ .command = .{ .id = .palette, .label = "Open the palette" } }, .{ .command = .{ .id = .@"picker.recent_commands", .label = "Recent commands only" } }, .{ .command = .{ .id = .@"view.cheatsheet", .label = "The cheatsheet" } } },
     } },
+    .{ .menu = "View", .label = "API traffic", .entry = .{
+        .title = "API traffic",
+        .body = "Opens the API TRAFFIC pane: who is spending each API's budget right now. It reads the shared bucket's draws file — every process that draws on it writes a line, mnml's panes and the fleet's loops alike — and mnml's own request log, and shows a tab per service with the bucket now, requests a minute stacked by program, and a table of programs. Nothing is sent; it only reads.",
+        .keys = &.{.{ .command = .@"view.api_traffic", .label = "API traffic" }},
+        .links = &.{ .{ .command = .{ .id = .@"view.api_traffic", .label = "Open it" } }, .{ .command = .{ .id = .@"integrations.requests", .label = "mnml's own requests" } } },
+    } },
     .{ .menu = "View", .label = "Toggle left panel", .entry = .{
         .title = "Toggle left panel",
         .body = "Shows or hides the left column — the tree and whichever rail section sits on that side — and the editor takes the width. Under `ui.sidebar = auto` the column comes back on its own when the pointer reaches the screen edge; hidden is the mode that stays away until asked.",
