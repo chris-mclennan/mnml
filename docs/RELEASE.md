@@ -130,14 +130,25 @@ release, as long as its SDK is still compatible.
 
 **What mnml does with it.** The Marketplace tab's default source is
 `https://github.com/chris-mclennan/mnml/releases/download/v<its
-version>/integrations.json` (`Config.default_marketplace_sources`; a dev
-build has no release and skips it). A row is listed when its SDK is
+version>/integrations.json` (`Config.default_marketplace_sources`). A
+build with no release of its own — a source build, or a version whose
+index answers 404 — reads the newest published release's index instead:
+`/releases/latest` redirects to its tag, only a `vX.Y.Z` tag counts
+(never `jira-v…`; integration releases are cut with `--latest=false`
+for the same reason), and the tag is cached in `<data
+root>/marketplace/latest-release` for 12 hours. Only the mnml running in
+a terminal looks it up; headless runs and the test corpus skip the index
+as before. A row is listed when its SDK is
 compatible and it has an asset for this platform. Install downloads
 the asset, refuses it unless its sha256 is the index's, writes the
 binary to `<data root>/integrations/<id>/bin/`, links
 `<data root>/bin/<binary>` at it and runs `<binary> --install`, which
 writes the manifests; a newer version in the index makes the row
-`update available`, and installing again is the update. The
+`update available`, and installing again is the update — the Installed
+tab shows the same on the installed side (`0.2.3 → 0.2.4 available`,
+*Update to 0.2.4* on the row's menu, the count on the tab), and the
+terminal's mnml checks quietly at start and toasts newly published
+versions once. The
 first-launch setup offers Jira and Bitbucket from the same listing
 (`docs/CONFIG.md`, "First launch"). `MNML_MARKETPLACE_INDEX=<url>`
 points a session at any index — how a source build installs from a
