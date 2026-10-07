@@ -105,6 +105,7 @@ const launch_profiles = @import("launch_profiles.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const requests_pane = @import("requests.zig");
+const api_traffic = @import("api_traffic.zig");
 const toast_mod = @import("../ui/toast.zig");
 const discovery = @import("discovery.zig");
 const help_app = @import("help.zig");
@@ -459,6 +460,11 @@ fn keyInner(app: *App, k: Key) Allocator.Error!void {
         },
         .requests => |*rp| {
             if (try requests_pane.handleKey(app, id, rp, k)) return;
+            try unclaimedKey(app, k);
+            return;
+        },
+        .api_traffic => |*ap| {
+            if (try api_traffic.handleKey(app, id, ap, k)) return;
             try unclaimedKey(app, k);
             return;
         },
@@ -2729,6 +2735,7 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                 .tests => |*tp| try tests_pane.click(app, tp, sh.id, m),
                 .flaky => |*fp| flaky.click(app, fp, sh.id, m),
                 .requests => |*rp| requests_pane.click(app, rp, sh.id, m),
+                .api_traffic => |*ap| try api_traffic.click(app, sh.pane, ap, sh.id, m),
                 .files => |*f| try files_pane.click(app, sh.pane, f, sh.id, m),
                 .zon => |*z| try zon_pane.click(app, sh.pane, z, sh.id, m),
                 .outline, .md_preview, .image, .pty, .ai => {},
@@ -3704,6 +3711,7 @@ fn wheelOnPane(app: *App, id: PaneId, m: Mouse, count: u16) Allocator.Error!void
         .tests => |*tp| tests_pane.scrollBy(tp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .flaky => |*fp| flaky.scrollBy(fp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .requests => |*rp| requests_pane.scrollBy(rp, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
+        .api_traffic => |*ap| api_traffic.scrollBy(ap, if (down) @as(i64, @intCast(n)) else -@as(i64, @intCast(n))),
         .files => |*f| files_pane.scrollBy(f, signed(down, scroll_mod.listStep(lines, app.cfg.editor.scroll_accel))),
         .image => {},
     }

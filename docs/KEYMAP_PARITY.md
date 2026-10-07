@@ -22,8 +22,8 @@ binds the chord to something else; **missing** — mnml binds nothing there
 | NvChad / Neovim (vim profile) | 36 | 9 | 16 |
 | VS Code 1.138 (standard profile) | 117 | 27 | 39 |
 
-mnml's own chords (bound in mnml, defined by neither oracle): **252** in the vim
-profile, **158** in the standard profile — section (c).
+mnml's own chords (bound in mnml, defined by neither oracle): **253** in the vim
+profile, **160** in the standard profile — section (c).
 Section (d) lists what the three sections miss — **4** vim and **31**
 standard chords `src/commands/specs.zig` binds with no verdict yet.
 `tools/keymap-parity-check.sh` diffs this page against the specs both ways
@@ -431,7 +431,7 @@ Bound in mnml, defined by neither oracle for that profile. Most are the
 which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 `+integrations`, `+harpoon`, `+layouts`, …) and the `Ctrl+K` rows above.
 
-<details><summary>vim profile — 260 chords</summary>
+<details><summary>vim profile — 261 chords</summary>
 
 | chord | command |
 |---|---|
@@ -608,6 +608,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `space g shift+w` | `git.worktree_open_tab` |
 | `space g w` | `git.worktrees` |
 | `space g x` | `git.codex_commit` |
+| `space i a` | `view.api_traffic` |
 | `space i d` | `integrations.show_details` |
 | `space i h` | `tools.htop` |
 | `space i r` | `tools.btop` |
@@ -699,7 +700,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 
 </details>
 
-<details><summary>standard profile — 166 chords</summary>
+<details><summary>standard profile — 168 chords</summary>
 
 | chord | command |
 |---|---|
@@ -734,6 +735,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `ctrl+k b` | `git.blame_toggle` |
 | `ctrl+k ctrl+e` | `picker.recent_items` |
 | `ctrl+k g c` | `git.commit` |
+| `ctrl+k i a` | `view.api_traffic` |
 | `ctrl+k i d` | `integrations.show_details` |
 | `ctrl+k j` | `jobs.show` |
 | `ctrl+k n` | `tab.new` |
@@ -784,6 +786,7 @@ which-key tree's mnml groups (`+lang/run`, `+http`, `+test`, `+ai/term`,
 | `space g shift+s` | `git.stash` |
 | `space g w` | `git.worktrees` |
 | `space g x` | `git.codex_commit` |
+| `space i a` | `view.api_traffic` |
 | `space i d` | `integrations.show_details` |
 | `space i h` | `tools.htop` |
 | `space i r` | `tools.btop` |

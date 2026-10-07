@@ -155,7 +155,7 @@ fn sourceOf(app: *App) CommandError!PaneId {
         .editor => active,
         .outline => |*o| o.source,
         .md_preview => app.diag.fail(app.frame.allocator(), "outline: not for a preview", .{}),
-        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .files, .zon, .session_changes => error.NotAnEditor,
+        .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .api_traffic, .files, .zon, .session_changes => error.NotAnEditor,
     };
 }
 

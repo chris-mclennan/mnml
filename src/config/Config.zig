@@ -240,12 +240,12 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
-/// // changed (railmove): the activity bar's eleven rows as the config
+/// // changed (railmove): the activity bar's twelve rows as the config
 /// names them — `ui.rail.hidden` lists the ones the bar leaves out.
 /// The tags are `ui/activity_bar.zig`'s `Section.rail`, spelled here
 /// so the config layer does not import a painter; a unit test there
 /// keeps the two lists the same.
-pub const RailSection = enum { explorer, search, git, debug, integrations, sessions, http, notes, todos, findings, scripts };
+pub const RailSection = enum { explorer, search, git, debug, integrations, sessions, http, notes, todos, findings, scripts, api_traffic };
 /// `ui.rail` — the activity bar's MEMBERSHIP (`app/activity_bar.zig`).
 /// The two strips are split by kind: the activity bar holds panels,
 /// the launcher dock (`ui.dock`) holds launchers. This and
@@ -257,7 +257,11 @@ pub const Rail = struct {
     /// takes one back; *Show on dock instead* writes here AND pins the
     /// section's `view.activity_*` command onto `ui.dock.pins`, where
     /// the dock lists it as a pinned panel.
-    hidden: []const RailSection = &.{},
+    ///
+    /// API traffic starts here: a dashboard most people open now and
+    /// then, from View or its chords, not a column they live in. The
+    /// gear's *Show hidden sections ▸* puts its row on the bar.
+    hidden: []const RailSection = &.{.api_traffic},
 };
 /// // changed (sidebar-autohide): the side columns' own three words.
 /// `always` docks the column (the shipped look); `auto` hides it and
@@ -1386,7 +1390,20 @@ pub const Integrations = struct {
     /// which are told so (`MNML_BROKER=0`) rather than left to open a
     /// socket nobody is on.
     broker: bool = true,
+    /// The window the API TRAFFIC pane opens on (`view.api_traffic`):
+    /// the header's totals, the timeline and the Who table all cover
+    /// it. `w` in the pane walks it; this is where it starts.
+    api_traffic_window: ApiTrafficWindow = .hour,
+    /// A `.warn` toast when new 429s land for an API — the fleet's
+    /// `api-usage/<UTC day>.throttles.jsonl` and mnml's own request
+    /// log — at most one per service per five minutes. Off keeps the
+    /// API TRAFFIC pane's NOW line and stops the toasts (and the
+    /// background look that feeds them).
+    throttle_toasts: bool = true,
 };
+
+/// `integrations.api_traffic_window`: the last hour, day or week.
+pub const ApiTrafficWindow = enum { hour, day, week };
 
 /// `<data root>/requests/<service>.jsonl` — one JSON line per request
 /// an integration makes. Reaches every integration mnml starts as

@@ -187,7 +187,7 @@ const brand_rows = [_]MenuItem{
 const file_recent_row = 3;
 /// The View menu's full-screen row is index `view_fullscreen_row`: its
 /// label reads the way out while inside (`zen.title`).
-const view_fullscreen_row = 8;
+const view_fullscreen_row = 9;
 /// The Window menu's auto-equalize row is index `window_auto_equalize_row`:
 /// its tick reads `ui.auto_equalize_splits` per open.
 const window_auto_equalize_row = 7;
@@ -237,6 +237,7 @@ const view_rows = [_]MenuItem{
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "File browser pane", .action = .{ .command = .@"files.open" } },
     .{ .icon = "\u{F0770}", .icon_ascii = "/", .label = "Dual file panes (commander)", .action = .{ .command = .@"files.open_split" } },
     .{ .icon = "\u{F4B5}", .icon_ascii = ">", .label = "Command palette", .action = .{ .command = .palette } },
+    .{ .icon = "\u{F0E4}", .icon_ascii = "A", .label = "API traffic", .action = .{ .command = .@"view.api_traffic" } },
     sep(.{ .icon = "\u{EC02}", .icon_ascii = "|", .label = "Toggle left panel", .action = .{ .command = .@"view.toggle_tree" } }),
     .{ .icon = "\u{EC00}", .icon_ascii = "|", .label = "Toggle right panel", .action = .{ .command = .@"view.toggle_right_panel" } },
     // // changed (bottom-dock): Rust's own View row, back in the menu.
@@ -642,7 +643,8 @@ test "menu rows: ten menus with Rust's row counts; every row is a registered com
     try t.expectEqual(@as(usize, 10), Menu.count);
     // // changed (bottom-dock): View grew "Toggle bottom panel" (14).
     // // changed (layouts): View grew the "Layouts" submenu row (15).
-    const counts = [Menu.count]usize{ 3, 10, 6, 7, 15, 6, 6, 3, 15, 3 };
+    // // changed (api-traffic): View grew "API traffic" (16).
+    const counts = [Menu.count]usize{ 3, 10, 6, 7, 16, 6, 6, 3, 15, 3 };
     for (Menu.all, counts) |m, n| try t.expectEqual(n, rowsOf(m).len);
     const Check = struct {
         var missing: usize = 0;

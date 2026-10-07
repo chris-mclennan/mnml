@@ -83,6 +83,8 @@ pub fn surface(s: Section) ?Surface {
         .search => .{ .panel = .search },
         // // changed (lua-plumbing): a script's rail section.
         .script => .{ .panel = .script },
+        // The API TRAFFIC row opens a pane; it has no column.
+        .api_traffic => null,
     };
 }
 

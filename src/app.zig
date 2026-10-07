@@ -1473,6 +1473,9 @@ pub const App = struct {
     /// shared token bucket, so the pane on screen goes before the
     /// warmers and the batch scripts.
     broker: broker_app.State = .{},
+    /// The API TRAFFIC reader, its worker and its newest snapshot —
+    /// the App's, so the 429 toasts watch with no pane open.
+    api_traffic: @import("app/api_traffic.zig").State = .{},
     /// The menu bar: the open menu, where its words painted (`app/menu_bar.zig`).
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
@@ -2087,6 +2090,7 @@ pub const App = struct {
         // After the poller: its children were told where the sockets
         // are, and a broker torn down first would strand them.
         self.broker.deinit(gpa, self.io);
+        self.api_traffic.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.search_section.deinit(gpa, self.io);
         self.grep_picker.deinit(gpa, self.io);
@@ -3505,6 +3509,7 @@ pub const App = struct {
             .dock => |result| try dock.handle(self, result),
             .git => |result| try git_app.handle(self, result),
             .spend => |result| try spend.handle(self, result),
+            .api_traffic => |result| try @import("app/api_traffic.zig").handle(self, result),
             .usage => |result| try usage_pane.handle(self, result),
             .tests => |result| try tests_pane.handle(self, result),
             .grep => |result| try grep.handle(self, result),
@@ -3697,6 +3702,7 @@ pub const App = struct {
         integration_poll.tick(self);
         @import("app/integration_updates.zig").tick(self, now);
         broker_app.tick(self, now);
+        @import("app/api_traffic.zig").tick(self, now);
         if (self.click_echo) |e| if (now >= e.until_ms) {
             self.click_echo = null;
             self.needs_render = true;
@@ -3758,6 +3764,7 @@ pub const App = struct {
         if (jobs_mod.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (now_playing.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (sessions.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
+        if (@import("app/api_traffic.zig").nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (dock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (clock.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
         if (coverage.nextDeadlineMs(self)) |d| next = @min(next orelse std.math.maxInt(i64), d);
@@ -4137,6 +4144,9 @@ test {
     _ = @import("app/transfers.zig");
     _ = @import("ui/files_view.zig");
     _ = @import("ui/requests_view.zig");
+    _ = @import("ui/api_traffic_view.zig");
+    _ = @import("app/api_traffic.zig");
+    _ = @import("app/api_traffic_reader.zig");
 }
 
 test "run: an unimplemented command toasts and fails; a bad name toasts" {

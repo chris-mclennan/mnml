@@ -126,6 +126,12 @@ pub const rows = [_]Row{
         .body = "Walks the workspace again for TODO / FIXME / XXX / HACK / REVIEW markers and rebuilds the section's list now, rather than waiting for the throttled rescan that follows a file change. A large tree takes a moment; the header's ⟳ chip is the same row, and the sort chip orders what it finds.",
         .links = &.{ .{ .command = .{ .id = .@"todos.refresh", .label = "Rescan now" } }, .{ .command = .{ .id = .@"view.activity_todos", .label = "The TODOs section" } }, .{ .settings = .{ .row = copy.settingsRow("ui.todos_sort"), .label = "TODO sort in Settings" } } },
     } },
+    // ── API traffic ──
+    .{ .label = "mnml's own requests", .command = .@"integrations.requests", .entry = .{
+        .title = "mnml's own requests",
+        .body = "Opens the REQUESTS view: one row per request mnml's integrations made, newest first, with the status, the time and what it waited on. API TRAFFIC counts every program on the bucket but cannot say what one request was for; this is where a single call is read. Programs outside mnml write no lines here.",
+        .links = &.{ .{ .command = .{ .id = .@"integrations.requests", .label = "Open it" } }, .{ .command = .{ .id = .@"view.api_traffic", .label = "API traffic" } } },
+    } },
     // ── Scripts ──
     .{ .label = "Reload init.lua", .entry = .{
         .title = "Reload init.lua",
@@ -291,6 +297,17 @@ pub fn hide(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
         .title = try std.fmt.allocPrint(arena, "Hide {s} from the activity bar", .{label}),
         .body = try std.fmt.allocPrint(arena, "Takes the {s} row off the activity bar — `ui.rail.hidden` in the home config holds the list, so it stays off in every workspace — without closing the section if it is open now; its command still runs from the palette and any chord it has. *Activity bar: show every hidden section again* brings every hidden row back at once, and *Show on dock instead* is the other way to clear a row: the section goes onto the launcher dock, where it can be moved back.", .{label}),
         .links = &.{ .{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show the hidden sections again" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dock.mode"), .label = "Launcher dock in Settings" } } },
+    };
+}
+
+/// A child of the gear's *Show hidden sections ▸*: one hidden row back.
+pub fn showHidden(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
+    _ = app;
+    const label = s.meta().label;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Put {s} back on the activity bar", .{label}),
+        .body = try std.fmt.allocPrint(arena, "Takes {s} out of `ui.rail.hidden` in the home config, so its row is painted on the activity bar again, in its usual place, in every workspace. Nothing about the section itself changes; its command and chords opened it all along.", .{label}),
+        .links = &.{.{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show every hidden section" } }},
     };
 }
 

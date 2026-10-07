@@ -93,6 +93,11 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .body = "Something running in a pane wrote a command to mnml's file channel (`.mnml/ipc/command`) that can change more than the view — edit a buffer, write a file, start a process. Nothing has run. Click the box (or its Review button) for the full request and the answers: Allow once, Allow that class for the rest of this run, Deny, or Cancel to leave it waiting. Unanswered, it is denied after two minutes. Every answer is written to `.mnml/ipc/audit.jsonl`.",
         .links = &.{ .{ .command = .{ .id = .@"toast.run_action", .label = "Review it" } }, .{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }, ask },
     };
+    if (@import("../api_traffic.zig").isThrottleToast(app, id)) return .{
+        .title = "An API is throttling",
+        .body = "New 429s landed for this API — from the fleet's throttles file beside the shared buckets or from mnml's own requests — and the toast counts the last five minutes' by caller. There is one per service per five minutes however many arrive. Its button opens API TRAFFIC on that service: who is spending the budget, minute by minute, against the hourly limit.",
+        .links = &.{ .{ .command = .{ .id = .@"toast.run_action", .label = "Open API traffic" } }, .{ .settings = .{ .row = comptime copy.settingsRow("integrations.throttle_toasts"), .label = "Toast on 429s" } }, ask },
+    };
     if (id >= toast_mod.button_base) return .{
         .title = "Toast",
         .body = "A message from something that just happened — a save, a git result, an error from a server — in the bottom-right corner, kept in the message history after it fades so the bell can find it again. Click dismisses this one; right-click offers dismiss, copy the text, dismiss all. A red toast is an error and its full text is in the history if the line was cut.",
@@ -625,6 +630,12 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
             .title = "flaky tests",
             .body = "Tests that have both passed and failed across recent runs, with the ratio — the ones worth a second look before trusting a green run. Enter opens the test; the tests pane's runs feed it.",
             .links = &.{.{ .command = .{ .id = .@"test.rerun_failed", .label = "Rerun the failures" } }},
+        },
+        .api_traffic => .{
+            .title = "API traffic",
+            .body = "Who is spending each API's budget right now — mnml's panes, the statusline poller, a fleet's loops, a script — read from the files every process on the machine writes: the shared bucket's draws file, mnml's own request log and the bucket itself. A tab per service; the header is the window's totals, NOW the bucket and the broker, the timeline requests a minute stacked by program against the hourly limit, WHO one row per program. It reads on the dashboard cadence and never sends a request.",
+            .keys = &.{ .{ .chord = "Tab", .label = "Next service" }, .{ .chord = "←→", .label = "Walk the minutes" }, .{ .chord = "y", .label = "Copy the program's pid" }, .{ .chord = "r", .label = "Read again" } },
+            .links = &.{ .{ .command = .{ .id = .@"integrations.requests", .label = "mnml's own requests" } }, .{ .settings = .{ .row = comptime copy.settingsRow("integrations.api_traffic_window"), .label = "The window it opens on" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dashboard_refresh"), .label = "Dashboard refresh" } } },
         },
         .requests => .{
             .title = "request log",

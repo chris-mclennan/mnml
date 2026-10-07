@@ -384,6 +384,14 @@ fn family(app: *App, arena: Allocator, menu: []const u8, parent: ?[]const u8, it
     }
     // A pinned panel's row on the dock: the menu is the item's, the action names the section.
     if (item.action == .rail_from_dock) return try rail.fromDock(app, arena, item.action.rail_from_dock);
+    // The gear's *Show hidden sections ▸*: the parent, and one row per
+    // hidden section (API traffic's is there from the first launch).
+    if (item.action == .rail_show) return try rail.showHidden(app, arena, item.action.rail_show);
+    if (std.mem.eql(u8, label, "Show hidden sections") and item.submenu.len > 0) return .{
+        .title = "Show hidden sections",
+        .body = "The sections the activity bar leaves out (`ui.rail.hidden`), one row each — a click puts that row back on the bar. API traffic starts here; any row you hid with *Hide from activity bar* joins it. A hidden section still opens from its command, its chords and the menus.",
+        .links = &.{.{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show every hidden section" } }},
+    };
     if (std.mem.eql(u8, menu, "File")) if (parent) |p| if (std.mem.eql(u8, p, "Open recent file") and item.action == .command and menu_bar.isRecentId(item.action.command)) return try menu_bar.recentFile(app, arena, label);
     if (std.mem.eql(u8, menu, "Create…")) if (parent) |p| if (std.mem.eql(u8, p, "Integrations")) return try plus.integration(arena, label);
     if (item.action == .claude_account) return try claudeAccountRow(arena, item.action.claude_account);

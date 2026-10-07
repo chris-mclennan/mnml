@@ -123,6 +123,7 @@ const tests_view = @import("../ui/tests_view.zig");
 const flaky = @import("flaky.zig");
 const flaky_view = @import("../ui/flaky_view.zig");
 const requests_view = @import("../ui/requests_view.zig");
+const api_traffic_view = @import("../ui/api_traffic_view.zig");
 const grep_view = @import("../ui/grep_view.zig");
 const dap = @import("dap.zig");
 const debug_toolbar = @import("../ui/debug_toolbar.zig");
@@ -1371,6 +1372,8 @@ fn drawColumn(app: *App, ui: Ui, area: Rect, s: side_mod.Section) Allocator.Erro
         .search => try search_section.draw(app, ui, area),
         // // changed (lua-plumbing): a script's own rail section.
         .script => try script_section.draw(app, ui, area),
+        // A pane section: the rail row opens the pane, never a column.
+        .api_traffic => {},
     }
 }
 
@@ -1397,6 +1400,7 @@ pub fn paneIcon(app: *App, pane: *const app_mod.Pane, ascii: bool) icons.Icon {
         .grep => kindIcon(ascii, "\u{2315}", "\u{F0349}", p.yellow),
         .flaky => kindIcon(ascii, "\u{224B}", "\u{F0668}", p.purple),
         .requests => kindIcon(ascii, "\u{2194}", "\u{F0AEE}", p.cyan),
+        .api_traffic => kindIcon(ascii, "%", "\u{F0E4}", p.cyan),
         .outline => kindIcon(ascii, "\u{2325}", "\u{F01BD}", p.purple),
         .files => kindIcon(ascii, "\u{25A4}", "\u{F0770}", p.blue),
         .list => |*l| switch (l.kind) {
@@ -1824,6 +1828,10 @@ pub fn drawPaneContent(app: *App, ui: Ui, id: PaneId, full_rect: Rect) Allocator
         .requests => |*rp| {
             if (app.active == id) app.pane_rows = @max(rect.h, 1);
             requests_view.draw(ui, id, rect, rp, paneFocused(app, id));
+        },
+        .api_traffic => |*ap| {
+            if (app.active == id) app.pane_rows = @max(rect.h, 1);
+            api_traffic_view.draw(ui, id, rect, ap, paneFocused(app, id));
         },
         .files => |*f| try files_pane.draw(app, ui, id, f, rect),
         .image => |*im| try image_pane.draw(app, ui, id, im, rect),

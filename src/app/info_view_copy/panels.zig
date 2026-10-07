@@ -497,6 +497,9 @@ pub fn scriptHit(app: *App, arena: Allocator, pane: PaneId, id: u32) Allocator.E
         .links = &.{ .{ .command = .{ .id = .@"git.toggle_line_blame", .label = "Turn it off" } }, .{ .command = .{ .id = .@"git.blame_toggle", .label = "Blame every line in the gutter" } }, .{ .settings = .{ .row = comptime copy.settingsRow("editor.line_blame"), .label = "Current-line blame in Settings" } } },
     };
     if (p.* == .ai_usage) return try usagePane(app, arena, id);
+    // The API TRAFFIC pane's own parts, the window chip among them —
+    // before the generic chip reading below, which would call it a sort.
+    if (p.* == .api_traffic) return try @import("api_traffic.zig").entry(app, arena, &p.api_traffic, id);
     // The git graph's controls live above `0xF000_0000`, which the list
     // reading below would take for a kebab.
     if (p.* == .git_graph) if (git_graph.entry(id)) |e| return e;

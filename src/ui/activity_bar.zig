@@ -48,6 +48,9 @@ pub const Section = enum(u8) {
     findings,
     /// // changed (lua-track): what the scripts registered, with file:line.
     scripts,
+    /// Who is spending each API's budget (`view.api_traffic`): a pane,
+    /// not a column — the rail row opens it, as Outline's opens its.
+    api_traffic,
     /// // changed (lua-plumbing): a section a script registered
     /// (`mnml.section{}`) — one rail row per registered section, in the
     /// position its `after` names. The row is never painted when no
@@ -61,7 +64,7 @@ pub const Section = enum(u8) {
     /// // changed (sessions-merge): the AGENTS and CLOUD AGENTS rows are
     /// gone — the sessions table (`sessions.table`) and the cloud rows
     /// live in SESSIONS.
-    pub const rail = all[0..11];
+    pub const rail = all[0..12];
 
     pub const Meta = struct {
         /// The Nerd Font glyph (Rust's codepoint).
@@ -85,6 +88,7 @@ pub const Section = enum(u8) {
             .todos => .{ .glyph = "\u{f046}", .fallback = "O", .label = "TODOs" }, // nf-fa-check_square
             .findings => .{ .glyph = "\u{f1623}", .fallback = "F", .label = "Findings" }, // nf-md-file_search
             .scripts => .{ .glyph = "\u{f08b1}", .fallback = "L", .label = "Scripts" }, // nf-md-language_lua
+            .api_traffic => .{ .glyph = "\u{f0e4}", .fallback = "A", .label = "API traffic" }, // nf-fa-dashboard
             .script => .{ .glyph = "\u{f0331}", .fallback = "P", .label = "Script section" }, // nf-md-library (a script's own glyph overrides it)
             .diagnostics => .{ .glyph = "\u{f071}", .fallback = "!", .label = "Diagnostics" }, // nf-fa-warning (never on the rail)
             .outline => .{ .glyph = "\u{f01bd}", .fallback = "=", .label = "Outline" }, // nf-md-file_tree (never on the rail)
@@ -372,14 +376,15 @@ fn bold(s: Style) Style {
 const t = std.testing;
 const test_fixture = @import("test_fixture.zig");
 
-test "glyph table: eleven rail sections in Rust's order less the two that folded into SESSIONS, plus SCRIPTS (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
-    try t.expectEqual(@as(usize, 11), Section.rail.len);
-    try t.expectEqual(@as(usize, 14), Section.all.len);
+test "glyph table: twelve rail sections — Rust's order less the two that folded into SESSIONS, plus SCRIPTS and API TRAFFIC (and the two hidden ones), each glyph one codepoint with a one-character ASCII twin and a label" {
+    try t.expectEqual(@as(usize, 12), Section.rail.len);
+    try t.expectEqual(@as(usize, 15), Section.all.len);
     try t.expectEqual(Section.explorer, Section.rail[0]);
     try t.expectEqual(Section.findings, Section.rail[9]);
     try t.expectEqual(Section.scripts, Section.rail[10]);
-    try t.expectEqual(Section.script, Section.all[11]);
-    try t.expectEqual(Section.outline, Section.all[13]);
+    try t.expectEqual(Section.api_traffic, Section.rail[11]);
+    try t.expectEqual(Section.script, Section.all[12]);
+    try t.expectEqual(Section.outline, Section.all[14]);
     var seen_glyphs: [Section.all.len]u21 = undefined;
     for (Section.all, 0..) |s, i| {
         const m = s.meta();
@@ -482,15 +487,15 @@ test "draw: the pinned icons follow the sections on the same step, each a hit, i
     draw(fx.ui(), area, .{ .active = .explorer, .pins = &pins });
     const lay = layout(area, pins.len);
     try t.expectEqual(@as(u16, 2), lay.step);
-    try t.expectEqual(@as(u16, 24), lay.pinY(0).?);
-    try t.expectEqual(@as(u16, 26), lay.pinY(1).?);
-    try t.expectEqualStrings("\u{F1D00}", fx.cell(1, 24).char.grapheme);
-    try t.expectEqualStrings("\u{F0AEF}", fx.cell(1, 26).char.grapheme);
-    try t.expectEqual(fx.theme.palette.green, fx.cell(1, 24).style.fg);
-    try t.expectEqual(fx.theme.palette.red, fx.cell(1, 26).style.fg);
-    try t.expectEqual(@as(u16, 0), fx.hits.at(0, 24).?.rail.pin);
-    try t.expectEqual(@as(u16, 1), fx.hits.at(2, 26).?.rail.pin);
-    try t.expect(fx.hits.at(1, 28) == null);
+    try t.expectEqual(@as(u16, 26), lay.pinY(0).?);
+    try t.expectEqual(@as(u16, 28), lay.pinY(1).?);
+    try t.expectEqualStrings("\u{F1D00}", fx.cell(1, 26).char.grapheme);
+    try t.expectEqualStrings("\u{F0AEF}", fx.cell(1, 28).char.grapheme);
+    try t.expectEqual(fx.theme.palette.green, fx.cell(1, 26).style.fg);
+    try t.expectEqual(fx.theme.palette.red, fx.cell(1, 28).style.fg);
+    try t.expectEqual(@as(u16, 0), fx.hits.at(0, 26).?.rail.pin);
+    try t.expectEqual(@as(u16, 1), fx.hits.at(2, 28).?.rail.pin);
+    try t.expect(fx.hits.at(1, 30) == null);
     try t.expect(fx.hits.at(1, lay.gear_y.?).?.rail == .gear);
     // Six pins pack the rail: sections one row apart, pins right after.
     var six: [6]Pin = undefined;
@@ -499,16 +504,16 @@ test "draw: the pinned icons follow the sections on the same step, each a hit, i
     draw(fx.ui(), area, .{ .active = .explorer, .pins = &six });
     const dense = layout(area, six.len);
     try t.expectEqual(@as(u16, 1), dense.step);
-    try t.expectEqual(@as(u16, 13), dense.pinY(0).?);
-    try t.expectEqual(@as(u16, 18), dense.pinY(5).?);
-    try t.expectEqual(@as(u16, 5), fx.hits.at(1, 18).?.rail.pin);
+    try t.expectEqual(@as(u16, 14), dense.pinY(0).?);
+    try t.expectEqual(@as(u16, 19), dense.pinY(5).?);
+    try t.expectEqual(@as(u16, 5), fx.hits.at(1, 19).?.rail.pin);
     // ASCII: the twins.
     fx.hits.reset();
     var ui = fx.ui();
     ui.ascii = true;
     draw(ui, area, .{ .active = .explorer, .pins = &pins });
-    try t.expectEqualStrings("H", fx.cell(1, 24).char.grapheme);
-    try t.expectEqualStrings("B", fx.cell(1, 26).char.grapheme);
+    try t.expectEqualStrings("H", fx.cell(1, 26).char.grapheme);
+    try t.expectEqualStrings("B", fx.cell(1, 28).char.grapheme);
     // A short rail drops the pins before the gear.
     var short = try test_fixture.init(10, 14);
     defer short.deinit();
@@ -531,9 +536,10 @@ test "draw: a hidden section has no row and no hit anywhere; the rows after it c
     try t.expectEqual(Section.debug, fx.hits.at(1, lay.ordinalY(1).?).?.rail.section);
     try t.expectEqualStrings(indicator, fx.cell(0, lay.ordinalY(1).?).char.grapheme);
     try t.expectEqual(Section.scripts, fx.hits.at(1, lay.ordinalY(8).?).?.rail.section);
-    // The pin follows the nine that are painted, not the eleven.
-    try t.expectEqual(@as(u16, 0), fx.hits.at(1, lay.pinYAfter(9, 0).?).?.rail.pin);
-    try t.expect(fx.hits.at(1, lay.pinYAfter(11, 0).?) == null or fx.hits.at(1, lay.pinYAfter(11, 0).?).? != .rail);
+    try t.expectEqual(Section.api_traffic, fx.hits.at(1, lay.ordinalY(9).?).?.rail.section);
+    // The pin follows the ten that are painted, not the twelve.
+    try t.expectEqual(@as(u16, 0), fx.hits.at(1, lay.pinYAfter(10, 0).?).?.rail.pin);
+    try t.expect(fx.hits.at(1, lay.pinYAfter(12, 0).?) == null or fx.hits.at(1, lay.pinYAfter(12, 0).?).? != .rail);
     // No cell anywhere answers as the hidden two.
     for (fx.hits.items.items) |e| if (e.target == .rail and e.target.rail == .section) {
         try t.expect(e.target.rail.section != .search);
@@ -545,7 +551,7 @@ test "draw: a hidden section has no row and no hit anywhere; the rows after it c
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const order = try railOrder(arena.allocator(), &scripts, &hidden);
-    try t.expectEqual(@as(usize, 10), order.len);
+    try t.expectEqual(@as(usize, 11), order.len);
     try t.expectEqual(Section.explorer, order[0].section);
     try t.expectEqual(@as(u16, 0), order[1].script);
     try t.expectEqual(Section.debug, order[2].section);

@@ -290,7 +290,7 @@ otherwise. Copy what you need; leave the rest out.
         .menu_bar = .always, // .always | .auto | .hidden
         .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
         .rail = .{ // the activity bar's MEMBERSHIP — which rows it paints; `.activity_bar` above is whether it is there at all
-            .hidden = .{}, // sections the bar leaves out: .explorer | .search | .git | .debug | .integrations | .sessions | .http | .notes | .todos | .findings | .scripts. A hidden section keeps its command and its keys. "Hide from activity bar" on a row's right-click writes here; "Show hidden sections ▸" on the gear's menu takes one back; "Show on dock instead" writes here AND pins the section's `view.activity_*` command onto `.dock.pins`
+            .hidden = .{.api_traffic}, // sections the bar leaves out: .explorer | .search | .git | .debug | .integrations | .sessions | .http | .notes | .todos | .findings | .scripts | .api_traffic. API traffic starts hidden (View → API traffic and its chords open it; the gear's "Show hidden sections ▸" puts its row back). A hidden section keeps its command and its keys. "Hide from activity bar" on a row's right-click writes here; "Show hidden sections ▸" on the gear's menu takes one back; "Show on dock instead" writes here AND pins the section's `view.activity_*` command onto `.dock.pins`
         },
         .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
@@ -1135,6 +1135,19 @@ otherwise. Copy what you need; leave the rest out.
         // which are told so rather than left to open a socket nobody
         // is on. Unix sockets only: Windows has the file bucket.
         .broker = true,
+        // The window the API TRAFFIC pane (view.api_traffic) opens on:
+        // .hour, .day or .week. The header's totals, the timeline and
+        // the WHO table all cover it; `w` in the pane walks it without
+        // changing this. Settings → Integrations → API traffic window.
+        .api_traffic_window = .hour,
+        // A warning toast when new 429s land for an API — the fleet's
+        // api-usage/<UTC day>.throttles.jsonl beside the shared buckets
+        // and mnml's own request log — at most one per service per five
+        // minutes; its button opens API TRAFFIC on that service. The
+        // first read after start never toasts. Off keeps the pane's NOW
+        // line and stops the toasts and the background read behind them.
+        // Settings → Integrations → Toast on 429s.
+        .throttle_toasts = true,
     },
 
     // ── workspaces ─────────────────────────────────────────────────────

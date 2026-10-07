@@ -102,6 +102,11 @@ fn section(app: *App, arena: Allocator, s: Section) Allocator.Error!?Entry {
             .body = try std.fmt.allocPrint(arena, "Every command, section and hook the Lua scripts registered, each with the file and line it came from, plus the installed script packages. Click shows the section; right-click is its menu. The refresh chip (↺) reloads every script; a script that failed to load shows its error here rather than in a toast you may have missed.{s}", .{marked(app, .scripts)}),
             .links = &.{ .{ .command = .{ .id = .@"view.activity_scripts", .label = "Show scripts" } }, .{ .command = .{ .id = .@"script.reload", .label = "Reload" } }, .{ .command = .{ .id = .@"script.doctor", .label = "Script doctor" } } },
         },
+        .api_traffic => .{
+            .title = "API traffic — who is spending the budget",
+            .body = try std.fmt.allocPrint(arena, "Opens the API TRAFFIC pane: a tab per service with files, the shared bucket and the broker now, requests a minute stacked by program against the hourly limit, and a table of every program that drew — mnml's panes and the poller beside the fleet's loops and any script that appends to the draws file. It reads the files on the dashboard cadence and sends nothing. Right-click is the row's menu.{s}", .{marked(app, .api_traffic)}),
+            .links = &.{ .{ .command = .{ .id = .@"view.api_traffic", .label = "Open API traffic" } }, .{ .command = .{ .id = .@"integrations.requests", .label = "mnml's own requests" } } },
+        },
         .script => .{
             .title = "A script's section",
             .body = "A section a Lua script registered with `mnml.section{}` — its rows, filter, sort and folds are the script's to fill, and the rail row wears the glyph the script chose. Click shows it; right-click is its menu. When the script reloads the section is rebuilt, so a row you were on may move.",
