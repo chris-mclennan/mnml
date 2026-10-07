@@ -48,6 +48,24 @@
    "params": {},
    "canonical": "https://example.org/p?q=%EF%BF%BD%EF%BF%BDa",
    "file": "29d429ec45d232f4d9cc259aabbeb3a531c452bae4ca21fb78fb059d7bc6c314.json"
+  },
+  {
+   "url": "https://example.org/p?q=%E2%82a",
+   "params": {},
+   "canonical": "https://example.org/p?q=%EF%BF%BDa",
+   "file": "e515ec0b278d68ee513cee17e62d539b730dad03c10d146c2a726bd2eb567eb0.json"
+  },
+  {
+   "url": "https://example.org/p?q=%F0%9F%98",
+   "params": {},
+   "canonical": "https://example.org/p?q=%EF%BF%BD",
+   "file": "17a9e9d9052925680e0aa3f25a172839a8413b796774129aaef751584fa4740a.json"
+  },
+  {
+   "url": "https://example.org/p?q=%ED%A0%80",
+   "params": {},
+   "canonical": "https://example.org/p?q=%EF%BF%BD%EF%BF%BD%EF%BF%BD",
+   "file": "b09ed0af6f7d77d962bbea67fa693342e9e9f5b27fb546f41aa1bf881c4b6ff4.json"
   }
  ],
  "item_key": [
