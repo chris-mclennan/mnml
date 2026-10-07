@@ -15,30 +15,39 @@
 //! the token and `authHeader` writes the matching scheme, so neither
 //! the caller nor the user has to know which they hold.
 //!
-//! **The rule: `BITBUCKET_ACCESS_TOKEN` when it is set, else the token
-//! file** — with the one exception the paragraph above forces. An
-//! access token has no account, so the tabs that filter to *your* pull
-//! requests (`mine`, `reviewing`), `--values` and the workspace repo
-//! enumeration have nothing to filter by. When an account credential
-//! is available too, **reads take the account credential** and
-//! `BITBUCKET_ACCESS_TOKEN` stays the approve token. With only an
-//! access token exported, reads use it — `--check` then reports the
-//! workspace it reached instead of a person, and says that the `mine`
-//! tabs need `account_id` set in `config.zon`.
+//! **The rule: `<config dir>/token` when it is there, else the
+//! environment.** The file is mnml's own token. A shell commonly
+//! exports the machine-wide variables below for other tools, and
+//! Bitbucket counts its rate limit per token — so a pane that took the
+//! exported one would spend, and be throttled on, everybody else's
+//! budget. Present (and not empty), the file is the token for reads
+//! AND for the approve write, whatever the environment holds.
 //!
-//! In full, first hit wins within each list, the reference's three
-//! variables kept so a machine already exporting one keeps working:
+//! With no file, the environment answers, as it always did — with the
+//! one exception the paragraph above forces. An access token has no
+//! account, so the tabs that filter to *your* pull requests (`mine`,
+//! `reviewing`), `--values` and the workspace repo enumeration have
+//! nothing to filter by. When an account credential is available too,
+//! **reads take the account credential** and `BITBUCKET_ACCESS_TOKEN`
+//! stays the approve token. With only an access token — in the file or
+//! exported — reads use it; `--check` then reports the workspace it
+//! reached instead of a person, and says that the `mine` tabs need
+//! `account_id` set in `config.zon`.
 //!
-//!   1. `BITBUCKET_ACCESS_TOKEN` — the one to use
-//!   2. `BITBUCKET_API_TOKEN` — an Atlassian API token
-//!   3. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
-//!   4. `BITBUCKET_PERSONAL_TOKEN` — either kind, often exported as
+//! In full:
+//!
+//!   1. `<config dir>/token` — one line, `chmod 600`; read and approve
+//!   2. `BITBUCKET_ACCESS_TOKEN` — the approve token whenever it is set
+//!   3. `BITBUCKET_API_TOKEN` — an Atlassian API token
+//!   4. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
+//!   5. `BITBUCKET_PERSONAL_TOKEN` — either kind, often exported as
 //!      `email:token`; only the half after the colon is the token
-//!   5. `<config dir>/token` — one line, `chmod 600`
 //!
-//! …walked once for an account credential and, failing that, once for
-//! anything at all; the approve token is `BITBUCKET_ACCESS_TOKEN` when
-//! set and the read token otherwise.
+//! …the variables walked once for an account credential and, failing
+//! that, once for anything at all; with no file, the approve token is
+//! `BITBUCKET_ACCESS_TOKEN` when set and the read token otherwise. The
+//! reference's three variables are kept so a machine already exporting
+//! one keeps working.
 //!
 //! **A token is never printed.** `Source.label` names where it came
 //! from and `describe` says how long it is and which scheme it will go
@@ -50,10 +59,10 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const write_env_name = "BITBUCKET_ACCESS_TOKEN";
-/// In resolution order. `BITBUCKET_ACCESS_TOKEN` leads: set, it is the
-/// token, and the file below is what answers when it is not — except
-/// that the read pass prefers an account credential wherever it finds
-/// one, because an access token has no account to filter `mine` by.
+/// In resolution order, behind the token file. `BITBUCKET_ACCESS_TOKEN`
+/// leads — except that the read pass prefers an account credential
+/// wherever it finds one, because an access token has no account to
+/// filter `mine` by.
 pub const env_names = [_][]const u8{ write_env_name, "BITBUCKET_API_TOKEN", "BITBUCKET_APP_PASSWORD", "BITBUCKET_PERSONAL_TOKEN" };
 pub const file_name = "token";
 
@@ -164,12 +173,23 @@ pub fn resolve(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, conf
     errdefer arena.deinit();
     const a = arena.allocator();
     var out: Tokens = .{ .arena = undefined };
-    // Two passes. The first takes only an account credential, because
-    // reads want an account to filter `mine` / `reviewing` by and an
-    // access token has none. The second takes whatever is there, so a
-    // machine exporting nothing but `BITBUCKET_ACCESS_TOKEN` still
-    // reads — over Bearer, with the workspace standing in for the
-    // account.
+    // The file first, and whole: mnml's own token, for reads and for
+    // the approve write. An exported variable is some other tool's
+    // token, and Bitbucket's budget is per token.
+    if (readTokenFile(a, io, config_dir)) |pair| {
+        out.read = pair.token;
+        out.read_source = .{ .file = pair.path };
+        out.write = pair.token;
+        out.write_source = .same_as_read;
+        out.arena = arena;
+        return out;
+    } else |_| {}
+    // No file. Two passes over the environment. The first takes only
+    // an account credential, because reads want an account to filter
+    // `mine` / `reviewing` by and an access token has none. The second
+    // takes whatever is there, so a machine exporting nothing but
+    // `BITBUCKET_ACCESS_TOKEN` still reads — over Bearer, with the
+    // workspace standing in for the account.
     for ([_]bool{ true, false }) |account_only| {
         for (env_names) |name| {
             if (fromEnv(env, name)) |v| {
@@ -178,14 +198,6 @@ pub fn resolve(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, conf
                 out.read_source = .{ .env = name };
                 break;
             }
-        }
-        if (out.read.len == 0) {
-            if (readTokenFile(a, io, config_dir)) |pair| {
-                if (!account_only or kindOf(pair.token) == .account) {
-                    out.read = pair.token;
-                    out.read_source = .{ .file = pair.path };
-                }
-            } else |_| {}
         }
         if (out.read.len > 0) break;
     }
@@ -263,47 +275,66 @@ pub fn describe(gpa: Allocator, tk: *const Tokens) Allocator.Error![]u8 {
     return out.toOwnedSlice() catch error.OutOfMemory;
 }
 
+/// Whether `--check` must say `account_id` is missing before it asks
+/// anything: the token file holds an access token — which has no
+/// account — and `config.zon` names none.
+pub fn needsAccountId(tk: *const Tokens, account_id: []const u8) bool {
+    return tk.read_source == .file and tk.readKind() == .access_token and account_id.len == 0;
+}
+
+/// `--check`'s line for `needsAccountId`, naming the config to edit.
+/// Owned.
+pub fn accountIdHint(gpa: Allocator, config_path: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(gpa, "note: set `account_id` in {s} — the token file holds an access token, which has no account, and the `mine` / `reviewing` tabs need one\n", .{config_path});
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────
 
 const t = std.testing;
 const sdk_testing = @import("mnml_sdk").testing;
 
-test "BITBUCKET_ACCESS_TOKEN is the token when it is set, and the file is the token when it is not" {
+test "the token file is the token — reads and approve — over every variable; with no file the environment answers in its old order" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
-    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "from-the-file\n" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "ATCTTfile-fake-0001\n" });
     var env = std.process.Environ.Map.init(t.allocator);
     defer env.deinit();
-    // Unset: the file.
+    // Every variable a shell might export for other tools.
+    try env.put("BITBUCKET_API_TOKEN", "ATATTenv-api-fake");
+    try env.put("BITBUCKET_APP_PASSWORD", "env-app-pw-fake");
+    try env.put("BITBUCKET_PERSONAL_TOKEN", "me@x.com:ATATTenv-personal-fake");
+    try env.put("BITBUCKET_ACCESS_TOKEN", "ATCTTenv-access-fake");
+    // Present: the file, for reads AND the approve write — even though
+    // it is an access token and an account credential is exported.
     {
         var tk = try resolve(t.allocator, t.io, &env, dir);
         defer tk.deinit();
-        try t.expectEqualStrings("from-the-file", tk.read);
+        try t.expectEqualStrings("ATCTTfile-fake-0001", tk.read);
+        try t.expect(tk.read_source == .file);
         try t.expect(std.mem.endsWith(u8, tk.read_source.label(), "token"));
-        try t.expectEqualStrings("from-the-file", tk.write);
+        try t.expectEqualStrings("ATCTTfile-fake-0001", tk.write);
         try t.expectEqual(Source.same_as_read, tk.write_source);
+        try t.expectEqual(Kind.access_token, tk.readKind());
     }
-    // Set: it wins over the file and over every reference variable,
-    // and it is the approve token too.
-    try env.put("BITBUCKET_API_TOKEN", "api-tok");
-    try env.put("BITBUCKET_APP_PASSWORD", "app-pw");
-    try env.put("BITBUCKET_PERSONAL_TOKEN", "me@x.com:legacy");
-    try env.put("BITBUCKET_ACCESS_TOKEN", "access-tok");
+    // Absent: the environment, unchanged — an account credential for
+    // reads, BITBUCKET_ACCESS_TOKEN the approve token.
+    try tmp.dir.deleteFile(t.io, "token");
     {
         var tk = try resolve(t.allocator, t.io, &env, dir);
         defer tk.deinit();
-        try t.expectEqualStrings("access-tok", tk.read);
-        try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.read_source.label());
-        try t.expectEqualStrings("access-tok", tk.write);
+        try t.expectEqualStrings("ATATTenv-api-fake", tk.read);
+        try t.expectEqualStrings("BITBUCKET_API_TOKEN", tk.read_source.label());
+        try t.expectEqualStrings("ATCTTenv-access-fake", tk.write);
         try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.write_source.label());
     }
-    // Empty is not set.
+    // An empty variable is not set.
     try env.put("BITBUCKET_ACCESS_TOKEN", "");
     var tk = try resolve(t.allocator, t.io, &env, dir);
     defer tk.deinit();
-    try t.expectEqualStrings("api-tok", tk.read);
+    try t.expectEqualStrings("ATATTenv-api-fake", tk.read);
+    try t.expectEqual(Source.same_as_read, tk.write_source);
 }
 
 test "the reference's variables still resolve, under ACCESS_TOKEN, and email:token keeps only the token" {
@@ -357,10 +388,18 @@ test "the token file is read when the environment is empty, and an empty file is
         try t.expect(std.mem.endsWith(u8, tk.read_source.label(), "token"));
     }
     try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "\n" });
+    {
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expect(!tk.hasRead());
+        try t.expectEqualStrings("not set", tk.read_source.label());
+    }
+    // An empty file is no file: the environment still answers.
+    try env.put("BITBUCKET_ACCESS_TOKEN", "ATCTTenv-access-fake");
     var tk = try resolve(t.allocator, t.io, &env, dir);
     defer tk.deinit();
-    try t.expect(!tk.hasRead());
-    try t.expectEqualStrings("not set", tk.read_source.label());
+    try t.expectEqualStrings("ATCTTenv-access-fake", tk.read);
+    try t.expectEqualStrings("BITBUCKET_ACCESS_TOKEN", tk.read_source.label());
 }
 
 test "the scheme comes off the token's kind: an ATCTT access token is a Bearer, everything else is Basic" {
@@ -412,7 +451,7 @@ test "reads take an account credential when there is one, and BITBUCKET_ACCESS_T
     try t.expectEqual(Kind.access_token, tk.readKind());
 }
 
-test "an account token in the file beats an access token in the environment, because only one of them has an account" {
+test "an account token in the file is the approve token too: an exported access token is someone else's" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
@@ -425,7 +464,33 @@ test "an account token in the file beats an access token in the environment, bec
     defer tk.deinit();
     try t.expectEqualStrings("ATATTfrom-the-file", tk.read);
     try t.expect(std.mem.endsWith(u8, tk.read_source.label(), "token"));
-    try t.expectEqualStrings("ATCTTaccess", tk.write);
+    try t.expectEqualStrings("ATATTfrom-the-file", tk.write);
+    try t.expectEqual(Source.same_as_read, tk.write_source);
+    try t.expect(!needsAccountId(&tk, ""));
+}
+
+test "an access token in the file with no account_id is what --check warns about, and nothing else is" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "ATCTTfile-fake-0002\n" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    var tk = try resolve(t.allocator, t.io, &env, dir);
+    defer tk.deinit();
+    try t.expect(needsAccountId(&tk, ""));
+    try t.expect(!needsAccountId(&tk, "{fake-account}"));
+    const hint = try accountIdHint(t.allocator, "/cfg/config.zon");
+    defer t.allocator.free(hint);
+    try t.expectEqualStrings("note: set `account_id` in /cfg/config.zon — the token file holds an access token, which has no account, and the `mine` / `reviewing` tabs need one\n", hint);
+    // An exported access token is not the token file's case.
+    var exported = std.process.Environ.Map.init(t.allocator);
+    defer exported.deinit();
+    try exported.put("BITBUCKET_ACCESS_TOKEN", "ATCTTenv-access-fake");
+    var etk = try resolve(t.allocator, t.io, &exported, "/nonexistent");
+    defer etk.deinit();
+    try t.expect(!needsAccountId(&etk, ""));
 }
 
 test "the Basic header is the base64 of email:token" {

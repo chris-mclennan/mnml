@@ -91,9 +91,11 @@ pub const Tab = struct {
     mine_only: bool = false,
 };
 
-/// The shared bucket's knobs and where it lives (`ratelimit.zig`).
+/// The token's bucket: its knobs and where it lives (`ratelimit.zig`).
+/// The defaults are the measured preset (`ratelimit.config`); a value
+/// set here wins over it.
 pub const Rate = struct {
-    rate_per_sec: f64 = 0.22,
+    rate_per_sec: f64 = 1.2,
     capacity: f64 = 40.0,
     /// Attempts per request on a 429, retries included.
     max_attempts: u8 = 3,
@@ -103,7 +105,8 @@ pub const Rate = struct {
     /// The ceiling on that doubling. A `Retry-After` is honoured as the
     /// server sent it.
     max_backoff_secs: u32 = 30,
-    /// The state file; empty means the shared one (see `ratelimit.zig`).
+    /// The state file; empty means the token's own beside the shared
+    /// one (see `ratelimit.zig`). Set, it names the file outright.
     state_path: []const u8 = "",
 };
 
@@ -355,14 +358,17 @@ pub const template =
     \\// mnml-bitbucket — your Bitbucket Cloud workspace. The keys are the
     \\// reference's `mnml-forge-bitbucket.toml` keys by name.
     \\//
-    \\// No token goes in here: set BITBUCKET_API_TOKEN (or an app
-    \\// password / BITBUCKET_PERSONAL_TOKEN), or drop it in
-    \\// <this folder>/token — see the README's "Auth" section.
+    \\// No token goes in here: put mnml's own token in <this folder>/token
+    \\// (one line, chmod 600). When that file is there it is the token,
+    \\// for reads and approvals, whatever your shell exports; without it
+    \\// BITBUCKET_ACCESS_TOKEN, BITBUCKET_API_TOKEN, an app password or
+    \\// BITBUCKET_PERSONAL_TOKEN answer — see the README's "Auth" section.
     \\.{
     \\    .email = "you@example.com",
     \\    .workspace = "your-workspace-slug",
-    \\    // A scoped access token cannot read /2.0/user; name the account
-    \\    // here to skip that call.
+    \\    // An access token (ATCTT…) has no account, so it cannot read
+    \\    // /2.0/user: with one in the token file, name your account here
+    \\    // or the `mine` / `reviewing` tabs have nothing to filter by.
     \\    // .account_id = "",
     \\
     \\    // Auto-refresh in seconds; 0 disables (`r` still works). It
