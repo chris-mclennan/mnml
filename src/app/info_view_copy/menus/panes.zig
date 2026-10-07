@@ -15,6 +15,34 @@ const Entry = copy.Entry;
 const ask = copy.ask_link;
 
 pub const rows = [_]Row{
+    // ── the API TRAFFIC pane: a WHO row's menu (titled by the program)
+    // and the `window:` chip's (titled `Window`) ──
+    .{ .label = "Open in REQUESTS", .kind = .requests_for, .entry = .{
+        .title = "Open in REQUESTS",
+        .body = "Opens the REQUESTS view filtered to this program — every request mnml's own request log holds for it, with its status, its time and what it waited on. The request log is mnml's: a program outside mnml (a fleet loop, a script) draws on the bucket but writes no request lines, so for one of those the view opens empty and says nothing matched.",
+        .links = &.{ .{ .command = .{ .id = .@"integrations.requests", .label = "Every request" } }, .{ .command = .{ .id = .@"view.api_traffic", .label = "Back to API traffic" } } },
+    } },
+    .{ .label = "Copy pid", .prefix = true, .kind = .copy_text, .entry = .{
+        .title = "Copy pid",
+        .body = "Puts this program's process id on the clipboard — the newest one, when it drew from more than one process in the window (the pids column says `4200 +1`). It is the pid the draws line recorded; a process that has since exited leaves a pid nothing answers to, so check it with `ps` before acting on it.",
+        .keys = &.{.{ .chord = "y", .label = "Copy it from the row" }},
+        .links = &.{.{ .command = .{ .id = .@"view.api_traffic", .label = "API traffic" } }},
+    } },
+    .{ .menu = "Window", .label = "Last hour", .command = .@"view.api_traffic_window_hour", .entry = .{
+        .title = "Last hour",
+        .body = "Shows the last hour: one timeline column a minute, the header's totals and the WHO table over the same sixty minutes. It is the window to read a burst in — who spent the bucket down just now.",
+        .links = &.{ .{ .command = .{ .id = .@"view.api_traffic_window_hour", .label = "Show it" } }, .{ .settings = .{ .row = copy.settingsRow("integrations.api_traffic_window"), .label = "The window it opens on" } } },
+    } },
+    .{ .menu = "Window", .label = "Last 24 hours", .command = .@"view.api_traffic_window_day", .entry = .{
+        .title = "Last 24 hours",
+        .body = "Shows the last day: minutes grouped into as many columns as the pane has room for, each column's height the average requests a minute across it. A steady loop shows as a floor under everything else; a nightly job as one tower.",
+        .links = &.{ .{ .command = .{ .id = .@"view.api_traffic_window_day", .label = "Show it" } }, .{ .settings = .{ .row = copy.settingsRow("integrations.api_traffic_window"), .label = "The window it opens on" } } },
+    } },
+    .{ .menu = "Window", .label = "Last 7 days", .command = .@"view.api_traffic_window_week", .entry = .{
+        .title = "Last 7 days",
+        .body = "Shows the week, counted in ten-minute buckets — the furthest back the pane keeps. Each log keeps at most fifty thousand lines, so on a very busy bucket the oldest days can be thinner than they were.",
+        .links = &.{ .{ .command = .{ .id = .@"view.api_traffic_window_week", .label = "Show it" } }, .{ .settings = .{ .row = copy.settingsRow("integrations.api_traffic_window"), .label = "The window it opens on" } } },
+    } },
     // ── the editor body (`openEditorMenu`, titled `Editor`) ──
     // Cut / Copy / Paste are on a tree row too, running the FILE
     // clipboard, and the pty body's Paste runs the terminal's — the

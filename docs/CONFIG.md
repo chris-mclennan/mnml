@@ -1135,6 +1135,11 @@ otherwise. Copy what you need; leave the rest out.
         // which are told so rather than left to open a socket nobody
         // is on. Unix sockets only: Windows has the file bucket.
         .broker = true,
+        // The window the API TRAFFIC pane (view.api_traffic) opens on:
+        // .hour, .day or .week. The header's totals, the timeline and
+        // the WHO table all cover it; `w` in the pane walks it without
+        // changing this. Settings → Integrations → API traffic window.
+        .api_traffic_window = .hour,
     },
 
     // ── workspaces ─────────────────────────────────────────────────────

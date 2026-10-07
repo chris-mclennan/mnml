@@ -626,6 +626,12 @@ pub fn paneKind(kind: std.meta.Tag(app_mod.Pane)) Entry {
             .body = "Tests that have both passed and failed across recent runs, with the ratio — the ones worth a second look before trusting a green run. Enter opens the test; the tests pane's runs feed it.",
             .links = &.{.{ .command = .{ .id = .@"test.rerun_failed", .label = "Rerun the failures" } }},
         },
+        .api_traffic => .{
+            .title = "API traffic",
+            .body = "Who is spending each API's budget right now — mnml's panes, the statusline poller, a fleet's loops, a script — read from the files every process on the machine writes: the shared bucket's draws file, mnml's own request log and the bucket itself. A tab per service; the header is the window's totals, NOW the bucket and the broker, the timeline requests a minute stacked by program against the hourly limit, WHO one row per program. It reads on the dashboard cadence and never sends a request.",
+            .keys = &.{ .{ .chord = "Tab", .label = "Next service" }, .{ .chord = "←→", .label = "Walk the minutes" }, .{ .chord = "y", .label = "Copy the program's pid" }, .{ .chord = "r", .label = "Read again" } },
+            .links = &.{ .{ .command = .{ .id = .@"integrations.requests", .label = "mnml's own requests" } }, .{ .settings = .{ .row = comptime copy.settingsRow("integrations.api_traffic_window"), .label = "The window it opens on" } }, .{ .settings = .{ .row = comptime copy.settingsRow("ui.dashboard_refresh"), .label = "Dashboard refresh" } } },
+        },
         .requests => .{
             .title = "request log",
             .body = "Every HTTP send in order — method, URL, status, time — with the response opened on Enter and a replay from its row. The RECENT section in the HTTP panel is the short form; this is the whole log from `.rqst/history.jsonl`.",

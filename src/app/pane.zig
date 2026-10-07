@@ -38,6 +38,7 @@ const ai_apply = @import("ai_apply.zig");
 const tests_pane = @import("tests_pane.zig");
 const flaky = @import("flaky.zig");
 const requests_pane = @import("requests.zig");
+const api_traffic = @import("api_traffic.zig");
 const files_pane = @import("files_pane.zig");
 const zon_pane = @import("zon_pane.zig");
 const session_changes = @import("session_changes.zig");
@@ -255,6 +256,9 @@ pub const Pane = union(enum) {
     /// What every integration has been asking an API for, and what it
     /// cost (one at a time).
     requests: requests_pane.RequestsPane,
+    /// Who is spending each API's budget — every process's draws on the
+    /// shared bucket, by program (`view.api_traffic`, one at a time).
+    api_traffic: api_traffic.ApiTrafficPane,
     /// A directory listing (`files.open`); the trash is one too.
     files: FilesPane,
     /// A `.zon` file as a tree of fields, edited in place (`zon.view`).
@@ -277,6 +281,7 @@ pub const Pane = union(enum) {
             .tests => |*tp| tp.deinit(gpa, io),
             .flaky => |*fp| fp.deinit(),
             .requests => |*rp| rp.deinit(),
+            .api_traffic => |*ap| ap.deinit(io),
             .files => |*f| f.deinit(),
             .zon => |*z| z.deinit(),
             .session_changes => |*v| v.deinit(gpa),
@@ -330,6 +335,7 @@ pub const Pane = union(enum) {
             .tests => |*tp| return tp.title(),
             .flaky => |*fp| return fp.title(),
             .requests => |*rp| return rp.title(),
+            .api_traffic => |*ap| return ap.title(),
             .files => |*f| return f.title(),
             .zon => |*z| return z.title(),
             .session_changes => |*v| return v.title,
@@ -340,7 +346,7 @@ pub const Pane = union(enum) {
         return switch (self.*) {
             .editor => |*e| e.buf.doc.dirty,
             .zon => |*z| z.changed,
-            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .files, .session_changes => false,
+            .outline, .md_preview, .image, .cheatsheet, .list, .pty, .git_status, .diff, .git_graph, .ai, .sessions_table, .spend_report, .ai_usage, .grep, .debug, .request, .websocket, .browser, .script, .mount, .integrations, .ai_apply, .tests, .flaky, .requests, .api_traffic, .files, .session_changes => false,
         };
     }
 

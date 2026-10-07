@@ -1386,7 +1386,14 @@ pub const Integrations = struct {
     /// which are told so (`MNML_BROKER=0`) rather than left to open a
     /// socket nobody is on.
     broker: bool = true,
+    /// The window the API TRAFFIC pane opens on (`view.api_traffic`):
+    /// the header's totals, the timeline and the Who table all cover
+    /// it. `w` in the pane walks it; this is where it starts.
+    api_traffic_window: ApiTrafficWindow = .hour,
 };
+
+/// `integrations.api_traffic_window`: the last hour, day or week.
+pub const ApiTrafficWindow = enum { hour, day, week };
 
 /// `<data root>/requests/<service>.jsonl` — one JSON line per request
 /// an integration makes. Reaches every integration mnml starts as

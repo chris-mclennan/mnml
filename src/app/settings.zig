@@ -384,6 +384,7 @@ pub const rows = [_]RowSpec{
     // are config-file numbers (`sessions.refresh`, …). Last in the
     // section, so the rows above keep their places.
     .{ .path = "ui.dashboard_refresh", .label = "Dashboard refresh", .section = .integrations, .scope = .home },
+    .{ .path = "integrations.api_traffic_window", .label = "API traffic window", .section = .integrations, .scope = .home },
 };
 
 pub const reset_label = "Reset all to defaults";
@@ -2075,7 +2076,7 @@ test "the auto-equalize row sits in UI, offers off / on with off the default, an
     try t.expect(!app.cfg.ui.auto_equalize_splits);
 }
 
-test "the dashboard refresh row closes Integrations, offers auto / fast / slow / manual with auto the default, and round-trips ui.dashboard_refresh through the home config" {
+test "the dashboard refresh row sits at the end of Integrations, offers auto / fast / slow / manual with auto the default, and round-trips ui.dashboard_refresh through the home config" {
     const idx = comptime blk: {
         for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "ui.dashboard_refresh")) break :blk i;
         @compileError("no settings row for ui.dashboard_refresh");
@@ -2083,8 +2084,10 @@ test "the dashboard refresh row closes Integrations, offers auto / fast / slow /
     try t.expectEqual(Section.integrations, rows[idx].section);
     try t.expectEqual(Scope.home, rows[idx].scope);
     try t.expectEqualStrings("Dashboard refresh", rows[idx].label);
-    // The last Integrations row.
-    for (rows[idx + 1 ..]) |r| try t.expect(r.section != .integrations);
+    // The last Integrations row but one: the API traffic window, a
+    // knob of one dashboard, closes the section after it.
+    try t.expectEqualStrings("integrations.api_traffic_window", rows[idx + 1].path);
+    for (rows[idx + 2 ..]) |r| try t.expect(r.section != .integrations);
     try t.expectEqual(@as(usize, 4), options("ui.dashboard_refresh").len);
     try t.expectEqual(@as(usize, 0), comptime defaultIndex("ui.dashboard_refresh"));
 
@@ -2126,6 +2129,18 @@ test "the dashboard refresh row closes Integrations, offers auto / fast / slow /
     try t.expectEqual(config.Config.DashboardRefresh.auto, app.cfg.ui.dashboard_refresh);
 }
 
+test "the API traffic window row closes Integrations: last hour, day or week, the hour by default" {
+    const idx = comptime blk: {
+        for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "integrations.api_traffic_window")) break :blk i;
+        @compileError("no settings row for integrations.api_traffic_window");
+    };
+    try t.expectEqual(Section.integrations, rows[idx].section);
+    try t.expectEqual(Scope.home, rows[idx].scope);
+    try t.expectEqualStrings("API traffic window", rows[idx].label);
+    for (rows[idx + 1 ..]) |r| try t.expect(r.section != .integrations);
+    try t.expectEqual(@as(usize, 3), options("integrations.api_traffic_window").len);
+    try t.expectEqual(@as(usize, 0), comptime defaultIndex("integrations.api_traffic_window"));
+}
 test "view.settings_search opens the box with the filter holding the keys, and `fold` finds the row" {
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();

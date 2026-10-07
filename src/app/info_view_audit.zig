@@ -175,6 +175,7 @@ pub fn run(gpa: Allocator, io: Io, arena: Allocator, workspace: []const u8, data
     try walkTree(&w);
     try walkEditor(&w);
     try walkUsagePane(&w);
+    try walkApiTraffic(&w);
     try walkOverlays(&w);
     try walkMenus(&w);
     try walkGitGraph(&w);
@@ -409,6 +410,30 @@ fn walkUsagePane(w: *Walk) Allocator.Error!void {
     try w.probe("script_hit:usage:reauth", .{ .script_hit = .{ .pane = id, .id = usage_pane.hit_reauth_base } });
 }
 
+/// The API TRAFFIC pane's parts, on a seeded pane (`seedForAudit`):
+/// the header, both chips, a tab, the three headings, every NOW row, a
+/// legend swatch, the limit, every WHO column, a column and a row.
+fn walkApiTraffic(w: *Walk) Allocator.Error!void {
+    const traffic = @import("api_traffic.zig");
+    const id = try traffic.seedForAudit(w.app);
+    const T = struct {
+        fn at(pane: PaneId, n: u32) HitTarget {
+            return .{ .script_hit = .{ .pane = pane, .id = n } };
+        }
+    };
+    try w.probe("script_hit:api_traffic:title", T.at(id, traffic.hit_title));
+    try w.probe("script_hit:api_traffic:window_chip", T.at(id, hit.ListHit.chip(.sort)));
+    try w.probe("script_hit:api_traffic:refresh_chip", T.at(id, hit.ListHit.chip(.refresh)));
+    try w.probe("script_hit:api_traffic:tab", T.at(id, traffic.hit_tab_base));
+    inline for (comptime std.enums.values(traffic.Section)) |s| try w.probe("script_hit:api_traffic:section:" ++ @tagName(s), T.at(id, traffic.hit_section_base + @intFromEnum(s)));
+    inline for (comptime std.enums.values(traffic.NowRow)) |r| try w.probe("script_hit:api_traffic:now:" ++ @tagName(r), T.at(id, traffic.hit_now_base + @intFromEnum(r)));
+    try w.probe("script_hit:api_traffic:legend", T.at(id, traffic.hit_legend_base));
+    try w.probe("script_hit:api_traffic:limit", T.at(id, traffic.hit_limit));
+    inline for (comptime std.enums.values(traffic.WhoCol)) |c| try w.probe("script_hit:api_traffic:who_head:" ++ @tagName(c), T.at(id, traffic.hit_who_head_base + @intFromEnum(c)));
+    try w.probe("script_hit:api_traffic:column", T.at(id, traffic.hit_col_base + 59));
+    try w.probe("script_hit:api_traffic:row", T.at(id, traffic.hit_row_base));
+}
+
 fn walkOverlays(w: *Walk) Allocator.Error!void {
     const app = w.app;
     // Settings: every row, the option chip, the section names, the
@@ -624,6 +649,14 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         fn usagePane(a: *App) Allocator.Error!void {
             return usage_pane.openPaneMenu(a, 5, 5);
         }
+        fn apiTrafficRow(a: *App) Allocator.Error!void {
+            const traffic = @import("api_traffic.zig");
+            const id = traffic.find(a) orelse try traffic.seedForAudit(a);
+            return traffic.openRowMenu(a, traffic.get(a, id).?, 5, 5);
+        }
+        fn apiTrafficWindow(a: *App) Allocator.Error!void {
+            return @import("api_traffic.zig").openWindowMenu(a, 5, 5);
+        }
         fn usageAccount(a: *App) Allocator.Error!void {
             return usage_pane.openAccountMenu(a, "work", 5, 5);
         }
@@ -689,6 +722,8 @@ fn walkMenus(w: *Walk) Allocator.Error!void {
         .{ .name = "tree_row", .open = &Fns.tree },
         .{ .name = "usage_pane", .open = &Fns.usagePane },
         .{ .name = "usage_account", .open = &Fns.usageAccount },
+        .{ .name = "api_traffic_row", .open = &Fns.apiTrafficRow },
+        .{ .name = "api_traffic_window", .open = &Fns.apiTrafficWindow },
         .{ .name = "session_changes", .open = &Fns.sessionChanges },
         .{ .name = "tree_divider", .open = &Fns.treeDivider },
         .{ .name = "tree_divider_right", .open = &Fns.treeDividerRight },
