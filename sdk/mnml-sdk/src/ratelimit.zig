@@ -3,11 +3,21 @@
 //!
 //! An integration is never the only thing spending a host's API budget:
 //! three Jira panes, the statusline poller, a shell script and the Rust
-//! app can all be drawing on the same per-IP allowance at once, and the
-//! first any of them hears about it is a 429 that hits all of them. So
-//! the bucket does not live in a process — it lives in a file, and
-//! every process refills, spends and penalises it under an exclusive
-//! advisory lock.
+//! app can all be drawing on the same allowance at once, and the first
+//! any of them hears about it is a 429 that hits all of them. So the
+//! bucket does not live in a process — it lives in a file, and every
+//! process refills, spends and penalises it under an exclusive advisory
+//! lock.
+//!
+//! **Whose allowance.** Bitbucket Cloud counts per TOKEN, not per IP
+//! (measured 2026-10-07: a second token from the same machine got 200s
+//! while the first sat in a 429). So a service that opts in
+//! (`per_token_services`) can keep one bucket per credential —
+//! `<service>-ratelimit-<id>.json` beside the shared file, `<id>` the
+//! first 12 hex of a sha256 of the credential (`tokenId`). Everything
+//! with no credential to name, and every older client, stays on the
+//! shared `<service>-ratelimit.json`. Jira is not opted in: its limits
+//! were never measured.
 //!
 //! The file's six keys are a public format contract (`docs/SDK.md`):
 //!
@@ -15,9 +25,10 @@
 //!
 //! so mnml coordinates rather than races with any other tool on the
 //! machine that agrees to the file format — the Rust crate
-//! `mnml-ratelimit` is one. `Config.bitbucket`
-//! and `Config.jira` carry that crate's constants exactly; a service it
-//! has no preset for gets the Bitbucket one, as the crate does.
+//! `mnml-ratelimit` is one. `Config.jira` carries that crate's
+//! constants exactly; `Config.bitbucket` is the measured preset, past
+//! the crate's; a service with no preset gets `Config{}`, the crate's
+//! old Bitbucket constants.
 //!
 //!   * `acquire` refills from the wall clock, waits out a cooldown,
 //!     takes a token when there is one, and otherwise waits for one
@@ -39,7 +50,9 @@
 //! ```
 //!
 //! Seven keys, documented in `docs/SDK.md` as a contract, so anything
-//! else on the machine can append the same line and be counted. The
+//! else on the machine can append the same line and be counted — and
+//! an optional eighth, `"token_id"`, when the draw came out of a
+//! credential's own bucket. The
 //! state file itself is NEVER given a field for this: other writers of
 //! the format rewrite those six keys wholesale and a seventh would be
 //! dropped or choke them.
@@ -54,7 +67,12 @@
 //!   4. `~/.config/mnml/ratelimit/<service>.json`
 //!
 //! Nothing under the home directory is probed for: with neither
-//! variable set, the bucket is mnml's own.
+//! variable set, the bucket is mnml's own. A per-token bucket
+//! (`statePathFor`) sits in the directory 2–4 resolve, as
+//! `<service>-ratelimit-<id>.json`; an override (1) names the file
+//! outright and so stays the file, credential or not. The draws file
+//! stays one per service whichever bucket a draw came out of; its line
+//! carries the `token_id`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -77,21 +95,27 @@ pub const Config = struct {
     /// The longest one `acquire` may block before failing open.
     max_block_secs: f64 = 120.0,
 
-    /// Bitbucket Cloud's sustained budget is ~1000 requests an hour —
-    /// 0.278/s across every process on this IP. 0.22 leaves headroom
-    /// for an interactive pane while a loop runs.
+    /// Bitbucket Cloud counts per token, and is generous sustained and
+    /// strict in a burst. Measured 2026-10-07: 1,500 plain GETs in 19
+    /// minutes (1.3/s, at least 4,700 an hour) never met a 429; a burst
+    /// at ~9.6/s met one after 694 calls in 72 s, and it cleared inside
+    /// 30 s. Success responses carry no rate-limit headers for a
+    /// workspace token, so a 429 is the only signal. 1.2/s sits under
+    /// the sustained figure; 40 tokens of burst stays far under the
+    /// burst cap; a 429 with no useful `Retry-After` parks 30 s.
     pub const bitbucket: Config = .{
-        .rate = 0.22,
+        .rate = 1.2,
         .capacity = 40.0,
         .penalty_factor = 0.5,
         .min_rate = 0.05,
-        .default_cooldown_secs = 60.0,
+        .default_cooldown_secs = 30.0,
         .recover_factor = 1.02,
         .max_block_secs = 120.0,
     };
 
-    /// Jira Cloud is easier on sustained load than Bitbucket and
-    /// stricter on bursts, so: wider burst, comparable rate.
+    /// Jira Cloud's limits have not been measured; these are the Rust
+    /// crate's constants: a wider burst than its old Bitbucket preset,
+    /// a comparable rate.
     pub const jira: Config = .{
         .rate = 0.33,
         .capacity = 60.0,
@@ -103,12 +127,105 @@ pub const Config = struct {
     };
 };
 
-/// The preset for a service name, the Rust crate's mapping: anything
-/// without one draws on Bitbucket's, which is the tighter of the two.
+/// The preset for a service name. Anything without one gets `Config{}`
+/// — the Rust crate's old Bitbucket constants, the tightest there is —
+/// rather than the measured Bitbucket preset, which an unmeasured API
+/// has not earned.
 pub fn configFor(service: []const u8) Config {
     if (std.ascii.eqlIgnoreCase(service, "bitbucket")) return .bitbucket;
     if (std.ascii.eqlIgnoreCase(service, "jira")) return .jira;
-    return .bitbucket;
+    return .{};
+}
+
+// ─── a bucket per credential ─────────────────────────────────────────────
+
+/// The services whose limits are counted per token, so a credential
+/// may keep a bucket of its own (`statePathFor`). Opt-in: a service
+/// not listed always resolves the shared file. Jira can join once its
+/// limits are measured.
+pub const per_token_services = [_][]const u8{"bitbucket"};
+
+pub fn perToken(service: []const u8) bool {
+    for (per_token_services) |s| if (std.ascii.eqlIgnoreCase(s, service)) return true;
+    return false;
+}
+
+/// How many hex characters of the hash name a credential's bucket.
+pub const token_id_len = 12;
+/// The first `token_id_len` lowercase hex characters of a sha256.
+pub const TokenId = [token_id_len]u8;
+
+/// The id of these exact bytes — the hash rule's last step.
+pub fn tokenIdOfBytes(bytes: []const u8) TokenId {
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    return hex[0..token_id_len].*;
+}
+
+/// The id of a Basic credential held as its two halves: the hash of
+/// `user:secret` — one colon, no newline.
+pub fn tokenIdPair(user: []const u8, secret: []const u8) TokenId {
+    var h = std.crypto.hash.sha2.Sha256.init(.{});
+    h.update(user);
+    h.update(":");
+    h.update(secret);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    h.final(&digest);
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    return hex[0..token_id_len].*;
+}
+
+/// The id of a credential as a caller holds it: a bare token, or the
+/// `Authorization` value it goes out as. A leading `Bearer ` is
+/// stripped; a leading `Basic ` is stripped and its base64 decoded, so
+/// the header and the pair it was built from (`tokenIdPair`) name the
+/// same bucket. A Basic value that does not decode is hashed as it
+/// stands. Null when nothing is left to hash.
+pub fn tokenId(credential: []const u8) ?TokenId {
+    if (std.mem.startsWith(u8, credential, "Bearer ")) {
+        const rest = credential["Bearer ".len..];
+        return if (rest.len == 0) null else tokenIdOfBytes(rest);
+    }
+    if (std.mem.startsWith(u8, credential, "Basic ")) {
+        const rest = credential["Basic ".len..];
+        if (rest.len == 0) return null;
+        const dec = std.base64.standard.Decoder;
+        var buf: [2048]u8 = undefined;
+        const n = dec.calcSizeForSlice(rest) catch return tokenIdOfBytes(rest);
+        if (n > buf.len) return tokenIdOfBytes(rest);
+        dec.decode(buf[0..n], rest) catch return tokenIdOfBytes(rest);
+        return tokenIdOfBytes(buf[0..n]);
+    }
+    return if (credential.len == 0) null else tokenIdOfBytes(credential);
+}
+
+/// Where the bucket for this credential lives. A service in
+/// `per_token_services` with a credential gets
+/// `<service>-ratelimit-<id>.json` in the directory the shared file
+/// resolves to; anything else — no credential, a service not opted in,
+/// or `<SERVICE>_RATELIMIT_STATE` naming the file outright — gets the
+/// shared file (`statePath`), unchanged. Owned.
+pub fn statePathFor(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8, credential: ?[]const u8) Allocator.Error![]u8 {
+    const id: ?TokenId = if (credential) |c| tokenId(c) else null;
+    return statePathForId(gpa, io, env, service, id);
+}
+
+/// `statePathFor`, with the id already worked out. Owned.
+pub fn statePathForId(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8, id: ?TokenId) Allocator.Error![]u8 {
+    const shared = try statePath(gpa, io, env, service);
+    const tid = id orelse return shared;
+    if (!perToken(service)) return shared;
+    var name_buf: [max_service_len + "_RATELIMIT_STATE".len]u8 = undefined;
+    if (stateEnvName(&name_buf, service)) |name| {
+        if (nonEmpty(env.get(name)) != null) return shared;
+    }
+    defer gpa.free(shared);
+    var svc_buf: [max_service_len]u8 = undefined;
+    const own = try std.fmt.allocPrint(gpa, "{s}-ratelimit-{s}.json", .{ sanitize(&svc_buf, service), &tid });
+    const dir = std.fs.path.dirname(shared) orelse return own;
+    defer gpa.free(own);
+    return std.fs.path.join(gpa, &.{ dir, own });
 }
 
 /// The file's shape — the Python and Rust sides read and write the
@@ -333,6 +450,10 @@ pub const Limiter = struct {
     reason: []const u8 = "user",
     /// Off only in a test that must leave no file behind.
     draws: bool = true,
+    /// The credential this bucket is keyed on (`tokenId`), when it is
+    /// one of its own; every draw line carries it as `token_id`. Null
+    /// on the shared bucket, and the line then has no such key.
+    token_id: ?TokenId = null,
     /// Where the local broker for this service listens, when one was
     /// resolved (`forService` does it; `useBroker` is the test's way
     /// in). Owned. Empty means the socket is never tried and
@@ -391,6 +512,29 @@ pub const Limiter = struct {
         return l;
     }
 
+    /// The limiter for a service spent with this credential — a bare
+    /// token or the `Authorization` value it goes out as. A service in
+    /// `per_token_services` gets the credential's own bucket
+    /// (`statePathFor`) and draw lines naming its `token_id`; anything
+    /// else is exactly `forService`.
+    ///
+    /// The broker is attached only when the path is still the shared
+    /// file: the broker hands out tokens from the shared bucket, so a
+    /// limiter keyed on its own credential asking it would spend the
+    /// wrong budget.
+    pub fn forToken(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, service: []const u8, credential: ?[]const u8) Allocator.Error!Limiter {
+        const id: ?TokenId = if (!perToken(service)) null else if (credential) |c| tokenId(c) else null;
+        const p = try statePathForId(gpa, io, env, service, id);
+        defer gpa.free(p);
+        var l = try init(gpa, io, p, configFor(service));
+        errdefer l.deinit();
+        l.token_id = id;
+        const shared = try statePath(gpa, io, env, service);
+        defer gpa.free(shared);
+        if (std.mem.eql(u8, shared, p)) try l.attachBroker(env, service);
+        return l;
+    }
+
     /// Point this limiter at the broker socket the environment resolves
     /// for `service` — `forService`'s second half, for a pane that built
     /// its limiter on a path of its own (a configured `state_path`, a
@@ -430,9 +574,16 @@ pub const Limiter = struct {
         const path = (self.drawsPath(self.gpa) catch return) orelse return;
         defer self.gpa.free(path);
         var buf: [512]u8 = undefined;
+        // The optional eighth key: which credential's bucket this draw
+        // came out of. The file stays one per service either way.
+        var id_buf: [32]u8 = undefined;
+        const id_field: []const u8 = if (self.token_id) |id|
+            std.fmt.bufPrint(&id_buf, ",\"token_id\":\"{s}\"", .{&id}) catch ""
+        else
+            "";
         const line = std.fmt.bufPrint(
             &buf,
-            "{{\"ts\":{d:.3},\"pid\":{d},\"program\":\"{f}\",\"service\":\"{f}\",\"reason\":\"{f}\",\"wait_ms\":{d},\"tokens_after\":{d:.3}}}\n",
+            "{{\"ts\":{d:.3},\"pid\":{d},\"program\":\"{f}\",\"service\":\"{f}\",\"reason\":\"{f}\",\"wait_ms\":{d},\"tokens_after\":{d:.3}{s}}}\n",
             .{
                 nowSecs(self.io),
                 self.pid,
@@ -441,6 +592,7 @@ pub const Limiter = struct {
                 std.zig.fmtString(self.reason),
                 a.wait_ms,
                 @max(a.tokens_after, 0),
+                id_field,
             },
         ) catch return;
         if (std.fs.path.dirname(path)) |d| Io.Dir.cwd().createDirPath(self.io, d) catch {};
@@ -911,11 +1063,14 @@ pub const Retry = struct {
 const t = std.testing;
 const sdk_testing = @import("testing.zig");
 
-test "the presets are the Rust crate's constants, and an unknown service takes the tighter one" {
-    try t.expectApproxEqAbs(@as(f64, 0.22), Config.bitbucket.rate, 1e-12);
+test "Bitbucket's preset is the measured one, Jira's the Rust crate's, and an unknown service takes the tightest" {
+    // Measured 2026-10-07 (per token): 1.2/s sustained, a 40-token
+    // burst, 30 s parked after a 429; the floor a cut stops at is the
+    // crate's.
+    try t.expectApproxEqAbs(@as(f64, 1.2), Config.bitbucket.rate, 1e-12);
     try t.expectApproxEqAbs(@as(f64, 40.0), Config.bitbucket.capacity, 1e-12);
     try t.expectApproxEqAbs(@as(f64, 0.05), Config.bitbucket.min_rate, 1e-12);
-    try t.expectApproxEqAbs(@as(f64, 60.0), Config.bitbucket.default_cooldown_secs, 1e-12);
+    try t.expectApproxEqAbs(@as(f64, 30.0), Config.bitbucket.default_cooldown_secs, 1e-12);
     try t.expectApproxEqAbs(@as(f64, 0.33), Config.jira.rate, 1e-12);
     try t.expectApproxEqAbs(@as(f64, 60.0), Config.jira.capacity, 1e-12);
     try t.expectApproxEqAbs(@as(f64, 0.08), Config.jira.min_rate, 1e-12);
@@ -927,7 +1082,146 @@ test "the presets are the Rust crate's constants, and an unknown service takes t
     }
     try t.expectApproxEqAbs(Config.bitbucket.rate, configFor("bitbucket").rate, 1e-12);
     try t.expectApproxEqAbs(Config.jira.rate, configFor("Jira").rate, 1e-12);
-    try t.expectApproxEqAbs(Config.bitbucket.rate, configFor("something-else").rate, 1e-12);
+    // An API nobody measured does not inherit Bitbucket's measured
+    // rate: it gets the crate's old constants.
+    const unknown = configFor("something-else");
+    try t.expectApproxEqAbs(@as(f64, 0.22), unknown.rate, 1e-12);
+    try t.expectApproxEqAbs(@as(f64, 40.0), unknown.capacity, 1e-12);
+    try t.expectApproxEqAbs(@as(f64, 60.0), unknown.default_cooldown_secs, 1e-12);
+}
+
+test "a 429 with no Retry-After parks a Bitbucket bucket for the preset's 30 s" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "bitbucket-ratelimit.json" });
+    defer t.allocator.free(path);
+    var l = try Limiter.init(t.allocator, t.io, path, configFor("bitbucket"));
+    defer l.deinit();
+    l.penalize(null);
+    const st = l.status().?;
+    try t.expect(st.cooldown_remaining_secs > 28.0 and st.cooldown_remaining_secs <= 30.0);
+}
+
+test "the token id is the first 12 hex of a sha256 — pinned to two vectors" {
+    // Computed with Python's hashlib at the time the rule was written:
+    //   hashlib.sha256(b"abc").hexdigest()[:12]      == "ba7816bf8f01"
+    //   hashlib.sha256(b"me@x:pw").hexdigest()[:12]  == "0032469eec6d"
+    // Any other implementation of the contract must agree with these.
+    try t.expectEqualStrings("ba7816bf8f01", &tokenIdOfBytes("abc"));
+    try t.expectEqualStrings("0032469eec6d", &tokenIdPair("me@x", "pw"));
+    // A bare token, and the same token as a Bearer header, are one id.
+    try t.expectEqualStrings("ba7816bf8f01", &tokenId("abc").?);
+    try t.expectEqualStrings("ba7816bf8f01", &tokenId("Bearer abc").?);
+    // A Basic header is decoded first: `me@x:pw` is `bWVAeDpwdw==`.
+    try t.expectEqualStrings("0032469eec6d", &tokenId("Basic bWVAeDpwdw==").?);
+    // Nothing to hash is no id — the shared bucket, not a bucket for "".
+    try t.expect(tokenId("") == null);
+    try t.expect(tokenId("Bearer ") == null);
+    try t.expect(tokenId("Basic ") == null);
+}
+
+test "a per-token bucket sits beside the shared file; no credential, an override or Jira is the shared file" {
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/nonexistent-home");
+    try env.put("MNML_SHARED_STATE_DIR", "/shared");
+    {
+        const p = try statePathFor(t.allocator, t.io, &env, "bitbucket", "ATCTTfake-token-for-a-test");
+        defer t.allocator.free(p);
+        const id = tokenIdOfBytes("ATCTTfake-token-for-a-test");
+        const want = try std.fmt.allocPrint(t.allocator, "/shared/bitbucket-ratelimit-{s}.json", .{&id});
+        defer t.allocator.free(want);
+        try sdk_testing.expectPath(want, p);
+    }
+    // No credential, or an empty one: the shared file, unchanged.
+    for ([_]?[]const u8{ null, "" }) |cred| {
+        const p = try statePathFor(t.allocator, t.io, &env, "bitbucket", cred);
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/shared/bitbucket-ratelimit.json", p);
+    }
+    // Jira has not opted in: a credential changes nothing.
+    {
+        const p = try statePathFor(t.allocator, t.io, &env, "jira", "ATCTTfake-token-for-a-test");
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/shared/jira-ratelimit.json", p);
+    }
+    // Without a shared directory it is still beside the shared file.
+    try env.put("MNML_SHARED_STATE_DIR", "");
+    try env.put("MNML_DATA_ROOT", "/data");
+    {
+        const p = try statePathFor(t.allocator, t.io, &env, "bitbucket", "abc");
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/data/ratelimit/bitbucket-ratelimit-ba7816bf8f01.json", p);
+    }
+    // An override names the file outright, credential or not.
+    try env.put("BITBUCKET_RATELIMIT_STATE", "/tmp/named.json");
+    {
+        const p = try statePathFor(t.allocator, t.io, &env, "bitbucket", "abc");
+        defer t.allocator.free(p);
+        try sdk_testing.expectPath("/tmp/named.json", p);
+    }
+}
+
+test "a limiter for a token spends its own bucket, skips the shared broker, and names the token in its draws" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/nonexistent-home");
+    try env.put("MNML_SHARED_STATE_DIR", dir);
+
+    var mine = try Limiter.forToken(t.allocator, t.io, &env, "bitbucket", "Bearer abc");
+    defer mine.deinit();
+    try mine.identify("bitbucket", "mnml-bitbucket", 7);
+    // The broker serves the shared bucket; this one is not that.
+    try t.expectEqualStrings("", mine.broker_socket);
+    try t.expectApproxEqAbs(Config.bitbucket.rate, mine.cfg.rate, 1e-12);
+    try t.expect(mine.acquire());
+
+    // An older client, with no credential to name, on the shared file.
+    var old = try Limiter.forToken(t.allocator, t.io, &env, "bitbucket", null);
+    defer old.deinit();
+    try old.identify("bitbucket", "bb.py", 8);
+    try t.expect(old.acquire());
+    if (broker.supported) try t.expect(old.broker_socket.len > 0);
+
+    // Two buckets, one draws file.
+    const own = try std.fs.path.join(t.allocator, &.{ dir, "bitbucket-ratelimit-ba7816bf8f01.json" });
+    defer t.allocator.free(own);
+    const shared = try std.fs.path.join(t.allocator, &.{ dir, "bitbucket-ratelimit.json" });
+    defer t.allocator.free(shared);
+    try Io.Dir.cwd().access(t.io, own, .{});
+    try Io.Dir.cwd().access(t.io, shared, .{});
+    const a = (try mine.drawsPath(t.allocator)).?;
+    defer t.allocator.free(a);
+    const b = (try old.drawsPath(t.allocator)).?;
+    defer t.allocator.free(b);
+    try t.expectEqualStrings(a, b);
+    const text = try Io.Dir.cwd().readFileAlloc(t.io, a, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(text);
+    var it = std.mem.tokenizeScalar(u8, text, '\n');
+    const first = it.next().?;
+    const second = it.next().?;
+    try t.expect(std.mem.indexOf(u8, first, "\"token_id\":\"ba7816bf8f01\"") != null);
+    try t.expect(std.mem.indexOf(u8, second, "token_id") == null);
+    for ([_][]const u8{ first, second }) |line| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, t.allocator, line, .{});
+        parsed.deinit();
+    }
+    // The state file is still the six keys.
+    const st = try Io.Dir.cwd().readFileAlloc(t.io, own, t.allocator, .limited(4096));
+    defer t.allocator.free(st);
+    try t.expectEqual(@as(usize, 6), std.mem.count(u8, st, "\":"));
+
+    // Jira, asked the same way, is `forService`.
+    var jira = try Limiter.forToken(t.allocator, t.io, &env, "jira", "Bearer abc");
+    defer jira.deinit();
+    try t.expect(jira.token_id == null);
+    try t.expect(std.mem.endsWith(u8, jira.path, "jira-ratelimit.json"));
 }
 
 test "a state file written by the Rust crate reads back field for field" {
