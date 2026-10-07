@@ -148,6 +148,12 @@ pub const Client = struct {
     /// explains it. The call answers the 429 at once instead.
     wait_pauses: bool = true,
     user_agent: []const u8 = "mnml-jira",
+    /// The shared HTTP response cache (`mnml_sdk.http_cache`). The
+    /// pane reads a ticket's linked PRs through it, and every write
+    /// that lands on an issue moves the issue's change stamp, so no
+    /// process on the machine answers from what it held before. Null
+    /// in a test that does not ask for it.
+    http_cache: ?sdk.http_cache.Dir = null,
 
     pub fn init(gpa: Allocator, io: Io, base_url: []const u8, authorization: []const u8, api: ApiVersion) Client {
         return .{
@@ -202,12 +208,25 @@ pub const Client = struct {
                 .bucket_empty, .bucket_cooldown => |g| return synthetic(arena, 429, sdk.Budget.refusalText(g)),
             }
             const raw = try c.once(arena, method, url, body, reason, budget, read);
-            if (raw.status != 429) return raw;
+            if (raw.status != 429) {
+                if (!read) c.wrote(arena, url, raw.status);
+                return raw;
+            }
             const ra: ?u32 = if (raw.retry_after_secs) |x| @intFromFloat(x) else null;
             const delay = budget.throttled(attempt, ra);
             if (!c.wait_pauses or !budget.backoff.retries(attempt, read)) return raw;
             if (delay > budget.backoff.wait_in_request_secs) return raw;
         }
+    }
+
+    /// A write that landed on an issue: everything any process holds
+    /// about it was fetched before it, so its change stamp moves.
+    fn wrote(c: *Client, arena: Allocator, url: []const u8, status: u16) void {
+        if (status < 200 or status >= 300) return;
+        const d = c.http_cache orelse return;
+        const key = issueKeyOf(url);
+        if (key.len == 0) return;
+        _ = d.markChanged(arena, c.io, key, sdk.http_cache.changedNow(c.io));
     }
 
     /// A request refused because a pause is running: nothing went out,
@@ -781,6 +800,29 @@ pub fn unwatch(c: *Client, arena: Allocator, key: []const u8, account_id: []cons
     return voidCall(c, arena, .DELETE, url, null, .user);
 }
 
+/// The issue a REST URL is about — `ENG-2` from `…/rest/api/3/issue/ENG-2/comment`
+/// — or empty when it is about none.
+pub fn issueKeyOf(url: []const u8) []const u8 {
+    const path_end = std.mem.indexOfAny(u8, url, "?#") orelse url.len;
+    const path = url[0..path_end];
+    for ([_][]const u8{ "/rest/api/3/issue/", "/rest/api/2/issue/" }) |prefix| {
+        const at = std.mem.indexOf(u8, path, prefix) orelse continue;
+        const rest = path[at + prefix.len ..];
+        return rest[0 .. std.mem.indexOfScalar(u8, rest, '/') orelse rest.len];
+    }
+    return "";
+}
+
+/// The URL the dev-status call for `issue_id` asks — what the shared
+/// cache files its answer under, canonicalised.
+pub fn pullRequestsUrl(c: *const Client, arena: Allocator, issue_id: []const u8) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(
+        arena,
+        "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
+        .{ c.base_url, issue_id },
+    );
+}
+
 /// The PRs Atlassian's dev panel links to the issue (by numeric id).
 /// A 404 is "no dev info", not a failure.
 pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8, reason: Reason) CallError!Answer([]const model.LinkedPr) {
@@ -795,22 +837,23 @@ pub fn pullRequests(c: *Client, arena: Allocator, issue_id: []const u8, reason: 
     return .{ .ok = try parsePullRequests(arena, raw.body) };
 }
 
+/// One dev-status answer as it came off the wire: the body the tree
+/// reads, and the status it came with — only a 200 goes in the shared
+/// cache, whose entries are the server's own responses.
+pub const DevStatus = struct { body: []const u8, status: u16 };
+
 /// The same call, handing back the RESPONSE rather than the parsed
-/// list — what a cache files under the ticket's `updated` stamp so the
-/// next run can paint it without asking. Null when the site refused;
-/// a failure is never worth caching.
-pub fn pullRequestsRaw(c: *Client, arena: Allocator, issue_id: []const u8, reason: Reason) CallError!?[]const u8 {
-    const url = try std.fmt.allocPrint(
-        arena,
-        "{s}/rest/dev-status/latest/issue/detail?issueId={s}&applicationType=bitbucket&dataType=pullrequest",
-        .{ c.base_url, issue_id },
-    );
+/// list — what the shared cache files under the ticket's `updated`
+/// stamp so the next run can paint it without asking. Null when the
+/// site refused; a failure is never worth caching.
+pub fn pullRequestsRaw(c: *Client, arena: Allocator, issue_id: []const u8, reason: Reason) CallError!?DevStatus {
+    const url = try pullRequestsUrl(c, arena, issue_id);
     const raw = try c.request(arena, .GET, url, null, reason);
-    // A 404 is "no dev info", not a failure — and it is worth
-    // remembering, because it is the answer for most tickets.
-    if (raw.status == 404) return "{\"detail\":[{\"pullRequests\":[]}]}";
+    // A 404 is "no dev info", not a failure. It paints as an empty
+    // list; it is not a response the server sent, so it is not cached.
+    if (raw.status == 404) return .{ .body = "{\"detail\":[{\"pullRequests\":[]}]}", .status = 404 };
     if (raw.status < 200 or raw.status >= 300) return null;
-    return raw.body;
+    return .{ .body = raw.body, .status = raw.status };
 }
 
 /// A dev-status response as the tree's rows. The same parse whether it

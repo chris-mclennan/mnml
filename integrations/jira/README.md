@@ -264,6 +264,17 @@ Every row, chip, tab, picker entry and button is a click target sized
 to what it paints (`src/hit.zig`); a right click on a ticket row
 toggles its selection.
 
+**The shared response cache.** A ticket's linked pull requests (the
+dev-status call) are held in `http-cache/jira/` under the shared state
+dir (else the data root), one file per URL, under the ticket's key with
+its `updated` as the stamp — in a format any other tool on the machine
+that agrees to it reads and writes too (`docs/SDK.md`, "The shared HTTP
+response cache"). A ticket the search shows at the same `updated` costs
+no dev-status call, whichever process asked last. A transition,
+comment, assignee, fix-version or watch change marks the ticket
+changed, so it is asked about again. `MNML_HTTP_CACHE=0` turns it off;
+the old `<data root>/cache/jira/dev-status.json` is no longer read.
+
 ### The three Work tabs the scaffold ships
 
 `--write-config` writes seven tabs: four Work tabs — the three below,

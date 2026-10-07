@@ -401,10 +401,6 @@ pub const App = struct {
     /// Tickets whose linked PRs are not known yet, in the order their
     /// rows are on screen. `pumpPrs` takes the front one.
     pr_queue: std.ArrayListUnmanaged([]const u8) = .empty,
-    /// What the last run learned, keyed by each ticket's own `updated`
-    /// stamp (`mnml_sdk.store`). A ticket that has not moved costs no
-    /// request at all, this run or any later one. Null in a test.
-    pr_store: ?*sdk.Store = null,
     /// When each tab's listing last came back WHOLE, kept between
     /// runs so a delta window survives a restart. The entry's own
     /// `fetched_at` is the mark (`sdk.warm.SyncMarks`).
@@ -573,13 +569,6 @@ pub const App = struct {
         a.refresh.q.close(a.io);
         a.prs.q.close(a.io);
         a.looks.q.close(a.io);
-    }
-
-    /// Where a ticket's linked PRs are remembered between runs. Set by
-    /// the pane loop right after `init`; left null by a test, which
-    /// then simply pays for every one.
-    pub fn setPrStore(a: *App, st: *sdk.Store) void {
-        a.pr_store = st;
     }
 
     /// Where each tab's last WHOLE listing is dated. Without it every
@@ -1236,38 +1225,52 @@ pub const App = struct {
     /// Auto-expand the unresolved tickets, paint whatever the cache
     /// still stands behind, and queue the rest in screen order.
     ///
-    /// The cache is keyed on the ticket's OWN `updated` stamp, which
-    /// the search already carried: a ticket that has not moved since
-    /// the last run needs no request at all, this run or any later
-    /// one. That is what turns a refetch with nothing changed from
-    /// twenty-six requests into one.
+    /// The shared cache files each answer under the ticket's OWN
+    /// `updated` stamp, which the search already carried: a ticket that
+    /// has not moved since anything on this machine last asked needs
+    /// no request at all, this run or any later one. That is what turns
+    /// a refetch with nothing changed from twenty-six requests into one.
     fn seedPrs(a: *App, t: *TabState, st: *tree.State) Allocator.Error!void {
         a.pr_queue.clearRetainingCapacity();
-        var still_shown: std.ArrayListUnmanaged([]const u8) = .empty;
-        defer still_shown.deinit(a.gpa);
         for (t.issues) |iss| {
             if (!iss.isUnresolved()) continue;
             try st.setExpanded(iss.key, true);
             if (iss.id.len == 0) continue;
-            try still_shown.append(a.gpa, iss.key);
             if (st.prs(iss.key) != null) continue;
-            if (a.pr_store) |store| {
-                if (store.fresh(iss.key, iss.updated)) |body| {
-                    // A read the store answered: a hit on the budget's
-                    // ratio, the way a 304 is on the forge pane's.
-                    if (a.applyPrBody(st, iss.key, body)) {
-                        a.budget.noteHit();
-                        continue;
-                    } else |err| if (err == error.OutOfMemory) return err;
-                }
+            var scratch = std.heap.ArenaAllocator.init(a.gpa);
+            defer scratch.deinit();
+            if (a.heldPrBody(scratch.allocator(), iss)) |body| {
+                // A read the cache answered: a hit on the budget's
+                // ratio, the way a 304 is on the forge pane's.
+                if (a.applyPrBody(st, iss.key, body)) {
+                    a.budget.noteHit();
+                    continue;
+                } else |err| if (err == error.OutOfMemory) return err;
             }
             try a.pr_queue.append(a.gpa, try a.keep(iss.key));
         }
-        // The file tracks the tickets the tab still shows rather than
-        // every ticket ever seen.
-        if (a.pr_store) |store| {
-            store.retain(still_shown.items);
-            store.save();
+    }
+
+    /// The dev-status answer the shared cache holds for `iss`, when
+    /// `decide` calls it fresh: filed under the stamp the search just
+    /// carried, or inside the `valid_until` another writer chose — and
+    /// no write to the ticket since. On `arena`.
+    fn heldPrBody(a: *App, arena: Allocator, iss: Issue) ?[]const u8 {
+        const d = a.client.http_cache orelse return null;
+        const raw_url = jira.pullRequestsUrl(a.client, arena, iss.id) catch return null;
+        const url = sdk.http_cache.canonical(arena, raw_url, &.{}) catch return null;
+        const entry = d.load(arena, a.io, url);
+        const now_s = @as(f64, @floatFromInt(Io.Timestamp.now(a.io, .real).toMilliseconds())) / 1000.0;
+        switch (sdk.http_cache.decide(entry, now_s, d.changedAt(arena, a.io, iss.key), iss.updated)) {
+            .fresh => {
+                // Not a request — but a line, so the REQUESTS pane tells
+                // the whole story of what the tab cost.
+                if (a.client.log) |l| if (sdk.request_log.splitUrl(arena, raw_url)) |sp| {
+                    l.noteCacheHit("GET", sp.host, sp.path, entry.?.body.len);
+                } else |_| {};
+                return entry.?.body;
+            },
+            .revalidate, .miss => return null,
         }
     }
 
@@ -1351,11 +1354,24 @@ pub const App = struct {
         const ar = arena.allocator();
         const key = ar.dupe(u8, job.key) catch "";
         const updated = ar.dupe(u8, job.updated) catch "";
+        // Dated when the request LEFT, so a write stamped while it was
+        // in flight still makes the held answer stale.
+        const sent_at = sdk.http_cache.sentAt(client.io);
         const raw = jira.pullRequestsRaw(&client, ar, job.issue_id, .refresh) catch
             return .{ .arena = arena, .key = key, .updated = updated };
-        const body = raw orelse return .{ .arena = arena, .key = key, .updated = updated };
-        const list = jira.parsePullRequests(ar, body) catch &.{};
-        return .{ .arena = arena, .key = key, .updated = updated, .list = list, .body = body };
+        const got = raw orelse return .{ .arena = arena, .key = key, .updated = updated };
+        const list = jira.parsePullRequests(ar, got.body) catch &.{};
+        // Into the shared cache, from this worker rather than the paint
+        // loop: the ticket's key, its `updated` as the stamp, and
+        // `valid_until` 0 — the stamp is what makes it reusable.
+        if (got.status == 200) if (client.http_cache) |d| {
+            if (jira.pullRequestsUrl(&client, ar, job.issue_id)) |raw_url| {
+                if (sdk.http_cache.canonical(ar, raw_url, &.{})) |url| {
+                    _ = d.store(ar, client.io, .{ .url = url, .body = got.body, .key = key, .stamp = updated, .now = sent_at });
+                } else |_| {}
+            } else |_| {}
+        };
+        return .{ .arena = arena, .key = key, .updated = updated, .list = list, .body = got.body };
     }
 
     fn prWorker(io: Io, slot: *PrSlot, job: PrJob) Io.Cancelable!void {
@@ -1387,13 +1403,8 @@ pub const App = struct {
         const was = try a.focusedRow(scratch.allocator());
         try st.putPrs(res.key, res.list);
         if (was) |row| try a.keepCursorOn(scratch.allocator(), row);
-        // A failure is never cached: it must cost one retry, not a run.
-        if (res.body.len > 0 and res.updated.len > 0) {
-            if (a.pr_store) |store| {
-                try store.put(res.key, res.updated, res.body, Io.Timestamp.now(a.io, .real).toSeconds());
-                store.save();
-            }
-        }
+        // The shared cache was written by the worker that fetched it
+        // (`runPrJob`); a failure is never cached there.
     }
 
     /// The rows a delta leaves on screen: everything the tab already
@@ -4443,13 +4454,24 @@ pub const Harness = struct {
     /// one that poisons what it frees, which is the only way a test can
     /// see a pane still pointing at a listing that is over.
     pub fn startOn(cfg_in: config.Config, family: ?config.Family, gpa: Allocator) !*Harness {
+        return startFull(cfg_in, family, gpa, 0);
+    }
+
+    /// The Harness on a fixed port — what a test that runs the pane
+    /// twice against "the same Jira" needs, since the shared cache
+    /// files an answer under the URL it came from, port and all.
+    pub fn startOnPort(cfg_in: config.Config, family: ?config.Family, port: u16) !*Harness {
+        return startFull(cfg_in, family, testing.allocator, port);
+    }
+
+    fn startFull(cfg_in: config.Config, family: ?config.Family, gpa: Allocator, port: u16) !*Harness {
         const io = testing.io;
         const h = try testing.allocator.create(Harness);
         errdefer testing.allocator.destroy(h);
         h.store = try testing.allocator.create(jira.fake.Store);
         h.store.* = try jira.fake.Store.init(testing.allocator);
         h.server = try testing.allocator.create(Io.net.Server);
-        var addr: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+        var addr: Io.net.IpAddress = .{ .ip4 = .loopback(port) };
         h.server.* = try addr.listen(io, .{ .reuse_address = true });
         h.lb = .{ .store = h.store, .server = h.server };
         h.group = .init;
@@ -5692,18 +5714,23 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
     defer tmp.cleanup();
     var pbuf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
-    const cache_path = try std.fs.path.join(testing.allocator, &.{ dir, "dev-status.json" });
-    defer testing.allocator.free(cache_path);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ dir, "http-cache" });
+    defer testing.allocator.free(cache_root);
+    const shared: sdk.http_cache.Dir = .{ .root = cache_root, .service = "jira" };
+    // Every run below talks to "the same Jira": the cache files an
+    // answer under the URL it came from, so the port is held fixed —
+    // the first run takes one, the rest ask for it again.
+    var port: u16 = 0;
 
     // The first run: the search, then one dev-status per unresolved
     // ticket — behind the paint rather than in front of it, which is
-    // what `pr_queue` is, and cached under each ticket's `updated`.
+    // what `pr_queue` is, and filed in the shared cache under each
+    // ticket's `updated`.
     {
         const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
         defer h.stop();
-        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
-        defer cache.deinit();
-        h.app.setPrStore(&cache);
+        port = h.server.socket.address.getPort();
+        h.client.http_cache = shared;
         const before = h.store.requests;
         try h.app.ensureLoaded();
         const spent = h.store.requests - before;
@@ -5716,10 +5743,20 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
         defer arena.deinit();
         const r = (try h.app.treeRows(arena.allocator())).?;
         try testing.expect(r.rows[2] == .pr and r.rows[3] == .pr);
-        // And three tickets are now remembered, each under the stamp
-        // the search already carried.
-        try testing.expectEqual(@as(usize, 3), cache.entries.items.len);
-        try testing.expect(cache.get("ENG-2").?.stamp.len > 0);
+        // And three tickets are now held, one file each, each under the
+        // stamp the search already carried and the ticket's own key.
+        const iss = h.app.tab().issues;
+        var held: usize = 0;
+        for (iss) |i| {
+            if (!i.isUnresolved() or i.id.len == 0) continue;
+            const url = try sdk.http_cache.canonical(arena.allocator(), try jira.pullRequestsUrl(h.client, arena.allocator(), i.id), &.{});
+            const e = shared.load(arena.allocator(), testing.io, url).?;
+            try testing.expectEqualStrings(i.key, e.key);
+            try testing.expectEqualStrings(i.updated, e.stamp);
+            try testing.expectEqual(@as(f64, 0), e.valid_until);
+            held += 1;
+        }
+        try testing.expectEqual(@as(usize, 3), held);
     }
 
     // The next run, against the same unchanged Jira: the search still
@@ -5727,12 +5764,9 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
     // difference between a Work tab that opens and one that spends a
     // minute of the machine's budget doing it again.
     {
-        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        const h = try Harness.startOnPort(.{ .tabs = &work_tabs }, .work, port);
         defer h.stop();
-        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
-        defer cache.deinit();
-        try testing.expectEqual(@as(usize, 3), cache.entries.items.len);
-        h.app.setPrStore(&cache);
+        h.client.http_cache = shared;
         h.app.budget.configure(testing.io, .{ .label = "Jira", .service = "jira" });
         h.client.budget = &h.app.budget;
         const before = h.store.requests;
@@ -5740,8 +5774,7 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
         // /myself and the search. Nothing else.
         try testing.expectEqual(@as(usize, 2), h.store.requests - before);
         try testing.expectEqual(@as(usize, 0), h.app.pr_queue.items.len);
-        try testing.expectEqual(@as(u32, 3), cache.hits);
-        // And the budget's ratio says so: three reads the store answered,
+        // And the budget's ratio says so: three reads the cache answered,
         // two that carried a body (/myself and the search).
         const snap = h.app.budget.snapshot(h.app.nowSecs());
         try testing.expectEqual(@as(u32, 3), snap.hits);
@@ -5760,16 +5793,54 @@ test "a ticket that has not moved costs no dev-status call, this run or the next
     // A ticket the site has since moved is asked about again: the
     // cache is keyed on the SERVER's stamp, not on our own clock.
     {
-        const h = try Harness.start(.{ .tabs = &work_tabs }, .work);
+        const h = try Harness.startOnPort(.{ .tabs = &work_tabs }, .work, port);
         defer h.stop();
-        var cache = try sdk.Store.openAt(testing.allocator, testing.io, cache_path);
-        defer cache.deinit();
-        h.app.setPrStore(&cache);
+        h.client.http_cache = shared;
         h.store.find("ENG-2").?.updated = "2026-09-20T10:00:00.000+0000";
         const before = h.store.requests;
         try h.app.ensureLoaded();
         // /myself, the search, and ENG-2's dev-status — only ENG-2's.
         try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+    }
+
+    // A write this machine made to a ticket — here, a comment — moves
+    // the ticket's change stamp: what was held about it was fetched
+    // before, so it is asked about again even under the same `updated`.
+    {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        {
+            const hw = try Harness.startOnPort(.{ .tabs = &work_tabs }, .work, port);
+            defer hw.stop();
+            hw.client.http_cache = shared;
+            const posted = try jira.addComment(hw.client, arena.allocator(), "ENG-5", "looks good");
+            try testing.expect(posted == .ok);
+        }
+        try testing.expect(shared.changedAt(arena.allocator(), testing.io, "ENG-5") > 0);
+        // A second on, so the fetch below (rounded down) is dated after
+        // the change stamp (rounded up).
+        testing.io.sleep(.fromMilliseconds(1100), .awake) catch {};
+        // A fresh Jira that still carries ENG-5's old `updated` — the
+        // stamp the cache holds — and ENG-2's moved one from above.
+        {
+            const h = try Harness.startOnPort(.{ .tabs = &work_tabs }, .work, port);
+            defer h.stop();
+            h.client.http_cache = shared;
+            h.store.find("ENG-2").?.updated = "2026-09-20T10:00:00.000+0000";
+            const before = h.store.requests;
+            try h.app.ensureLoaded();
+            // /myself, the search, and ENG-5's dev-status: the stamp
+            // matched, the change stamp outranked it.
+            try testing.expectEqual(@as(usize, 3), h.store.requests - before);
+        }
+        // The refetch is dated after the write, so the next look is free.
+        const h2 = try Harness.startOnPort(.{ .tabs = &work_tabs }, .work, port);
+        defer h2.stop();
+        h2.client.http_cache = shared;
+        h2.store.find("ENG-2").?.updated = "2026-09-20T10:00:00.000+0000";
+        const before2 = h2.store.requests;
+        try h2.app.ensureLoaded();
+        try testing.expectEqual(@as(usize, 2), h2.store.requests - before2);
     }
 }
 
