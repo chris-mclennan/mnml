@@ -1,5 +1,11 @@
 //! What an integration already knows, kept between runs.
 //!
+//! **HTTP responses no longer live here.** They are in the shared
+//! response cache (`http_cache.zig`), one file per URL, which other
+//! processes on the machine read and write too. What still uses a
+//! `Store` is local bookkeeping keyed by a name of the integration's
+//! own — Jira's delta-window marks (`warm.SyncMarks`).
+//!
 //! A pane that asks the server for everything every time is slow for
 //! the same reason every time: the budget. `<data root>/cache/<service>/`
 //! holds what the last run learned, each entry under the SERVER's own

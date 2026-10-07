@@ -15,10 +15,14 @@
 //!   warm      the warmer: paced sending with interactive priority,
 //!             one warmer per service across processes, delta windows,
 //!             per-kind intervals and the budget floor
-//!   store     what an integration already knows, kept between runs:
-//!             `<data root>/cache/<service>/` keyed by the SERVER's
-//!             own `updated` stamp, so a pane paints on open and only
-//!             asks about what moved
+//!   store     small keyed records an integration keeps between
+//!             runs under `<data root>/cache/<service>/` — Jira's
+//!             delta-window marks; HTTP responses live in `http_cache`
+//!   http_cache
+//!             the shared HTTP response cache: one file per GET under
+//!             `http-cache/<service>/`, a public contract other tools
+//!             on the machine read and write too — fresh, revalidate
+//!             or miss, and change stamps after a write
 //!   cache     the recent-items cache: small typed records (tickets,
 //!             PRs, pipelines, releases) the integrations already
 //!             polled, shared under `recent/<source>/<kind>.json` for
@@ -148,6 +152,7 @@ pub const budget = @import("budget.zig");
 pub const feed = @import("feed.zig");
 pub const store = @import("store.zig");
 pub const cache = @import("cache.zig");
+pub const http_cache = @import("http_cache.zig");
 pub const warm = @import("warm.zig");
 pub const pane = @import("pane.zig");
 pub const zon_edit = @import("zon_edit.zig");
@@ -197,6 +202,7 @@ test {
     _ = feed;
     _ = store;
     _ = cache;
+    _ = http_cache;
     _ = warm;
     _ = pane;
     _ = zon_edit;

@@ -1905,8 +1905,18 @@ want from it into `~/.config/mnml`, by hand.
 ### What integrations see
 
 An integration inherits `MNML_DATA_ROOT` from the host, already
-resolved, so its config, cache, sync marks, etags and request log land
-under the same root as the host's.
+resolved, so its config, sync marks and request log land under the same
+root as the host's.
+
+The HTTP responses Bitbucket and Jira fetch are held in the shared
+response cache, `http-cache/<service>/` under the first of
+`$MNML_SHARED_STATE_DIR`, `$MNML_DATA_ROOT`, `~/.config/mnml` — one
+file per URL, in a format any other tool on the machine that agrees to
+it reads and writes too (`docs/SDK.md`, "The shared HTTP response
+cache"). `MNML_HTTP_CACHE=0` (or `off` / `false` / `no`) in an
+integration's environment turns it off for that process: every GET then
+goes out unconditional. `recent_items.enabled = false`
+(`MNML_RECENT_ITEMS=0`) does not touch it.
 
 The cross-process rate-limit bucket is meant to be one per machine. Its file is the first of these that applies
 (`sdk/mnml-sdk/src/ratelimit.zig`):

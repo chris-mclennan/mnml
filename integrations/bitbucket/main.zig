@@ -500,14 +500,13 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
 /// `$BITBUCKET_BASE_URL` — literally, or `@<path>` naming a file that
 /// holds it (the fake server writes its port there) — then the
 /// config's, then the real API.
-/// Bodies already held, filed under the server's own `ETag`
-/// (`mnml_sdk.store`). Shared between every process on the machine
-/// because it lives under the data root, which is the point: a second
-/// pane's first ask is conditional too.
-fn openEtagStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
-    const root = try sdk.request_log.dataRoot(gpa, env);
-    defer gpa.free(root);
-    return sdk.Store.open(gpa, io, root, ratelimit.service, "etags");
+/// The shared HTTP response cache (`mnml_sdk.http_cache`): one file
+/// per GET under `<shared root>/http-cache/bitbucket/`, read and
+/// written by every process on the machine that agrees to the format,
+/// so a second pane's — or another tool's — first ask is conditional,
+/// or not made at all. Null when `$MNML_HTTP_CACHE=0`.
+fn openHttpCache(gpa: Allocator, env: *const std.process.Environ.Map) Allocator.Error!?sdk.http_cache.Dir {
+    return sdk.http_cache.Dir.fromEnv(gpa, env, ratelimit.service);
 }
 
 /// `$BITBUCKET_BASE_URL` (`sdk.base_url`: literally, or `@<path>`
@@ -675,12 +674,9 @@ fn valuesCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *
     }
     var gate: sdk.warm.Gate = .forConfig(.{ .rate = s.loaded.config.rate.rate_per_sec, .capacity = s.loaded.config.rate.capacity });
     s.client.gate = &gate;
-    var etags = try openEtagStore(gpa, io, env);
-    defer {
-        etags.save();
-        etags.deinit();
-    }
-    s.client.etags = &etags;
+    const http_cache = try openHttpCache(gpa, env);
+    defer if (http_cache) |d| d.deinit(gpa);
+    s.client.http_cache = http_cache;
     // The unresolved-comment count is the poller's figure, and it is
     // paid for out of the same bucket — the cache is what keeps it to
     // one request per pull request that actually moved.
@@ -1156,15 +1152,12 @@ fn dumpCmd(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: A
     session.client.limiter = &session.limiter;
     session.client.log = &session.log;
     session.client.now_secs = nowSecs(io);
-    // A dump takes the same tag store a pane does, so what it measures
-    // is what a pane would have spent: the second run of the same dump
-    // is a run of conditional GETs.
-    var etags = try openEtagStore(gpa, io, env);
-    defer {
-        etags.save();
-        etags.deinit();
-    }
-    session.client.etags = &etags;
+    // A dump takes the same shared cache a pane does, so what it
+    // measures is what a pane would have spent: the second run of the
+    // same dump is a run of conditional GETs.
+    const http_cache = try openHttpCache(gpa, env);
+    defer if (http_cache) |d| d.deinit(gpa);
+    session.client.http_cache = http_cache;
 
     var cols: u16 = 120;
     var rows: u16 = 40;
@@ -1468,15 +1461,13 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, mount: *sdk
     defer cache.deinit();
     session.client.cache = &cache;
     session.client.now_secs = nowSecs(io);
-    // The server's own tags for the bodies already held: every GET
-    // that has one goes out conditional, and a 304 is a round trip
-    // that costs a token and no bytes.
-    var etags = try openEtagStore(gpa, io, env);
-    defer {
-        etags.save();
-        etags.deinit();
-    }
-    session.client.etags = &etags;
+    // The shared cache: a GET it holds goes out conditional (a 304 is
+    // a round trip that costs a token and no bytes), or — fresh by the
+    // writer's own `valid_until`, or filed under the listing's stamp —
+    // is not sent at all.
+    const http_cache = try openHttpCache(gpa, env);
+    defer if (http_cache) |d| d.deinit(gpa);
+    session.client.http_cache = http_cache;
     // One pacer for this service, so a burst of warm work is spread
     // one per `1/rate + margin` rather than draining the bucket in
     // front of a click.

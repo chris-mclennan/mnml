@@ -507,12 +507,13 @@ fn pane(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     app.recent_current_release = env.get(recent.current_release_env) orelse "";
     app.watch = .init(io, .issue, rd.cfg.refresh_interval_secs, rd.cfg.poll_max_secs, rd.cfg.feed, try sdk.feed.resolvePath(arena, env, config_dir, rd.cfg.feed.file));
     client.budget = &app.budget;
-    // What the last run learned about each ticket's linked PRs, keyed
-    // by the ticket's own `updated` stamp: a tab that has not moved
-    // paints them on open for nothing.
-    var pr_store = try openPrStore(gpa, io, env);
-    defer pr_store.deinit();
-    app.setPrStore(&pr_store);
+    // The shared HTTP response cache: each ticket's linked PRs filed
+    // under the ticket's own `updated` stamp, so a tab that has not
+    // moved paints them on open for nothing — whichever process on the
+    // machine asked last.
+    const http_cache = try sdk.http_cache.Dir.fromEnv(gpa, env, ratelimit.service);
+    defer if (http_cache) |d| d.deinit(gpa);
+    client.http_cache = http_cache;
     // And when each tab last came back whole, so `r` can ask only
     // about what has moved since.
     var sync_store = try openSyncStore(gpa, io, env);
@@ -1081,15 +1082,6 @@ fn openForgeLimiter(gpa: Allocator, io: Io, env: *const std.process.Environ.Map)
     return l;
 }
 
-/// Where a ticket's linked PRs are remembered between runs
-/// (`mnml_sdk.store`). Under the host's data root, beside everything
-/// else this integration keeps.
-fn openPrStore(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!sdk.Store {
-    const root = try sdk.request_log.dataRoot(gpa, env);
-    defer gpa.free(root);
-    return sdk.Store.open(gpa, io, root, ratelimit.service, "dev-status");
-}
-
 /// When each tab's listing last came back WHOLE — the mark a delta
 /// window is measured from, kept between runs so the first refetch
 /// after a restart is a window and not the whole thing again.
@@ -1393,11 +1385,11 @@ fn dump(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, arena: Allo
     });
     client.notice = &app.wait_notice;
     app.forge.notice = &app.wait_notice;
-    var pr_store = try openPrStore(gpa, io, env);
-    defer pr_store.deinit();
-    app.setPrStore(&pr_store);
     // A dump takes the same two caches the pane does, so what it
     // measures is what a pane would have spent.
+    const http_cache = try sdk.http_cache.Dir.fromEnv(gpa, env, ratelimit.service);
+    defer if (http_cache) |d| d.deinit(gpa);
+    client.http_cache = http_cache;
     var sync_store = try openSyncStore(gpa, io, env);
     defer sync_store.deinit();
     app.setSyncStore(&sync_store);

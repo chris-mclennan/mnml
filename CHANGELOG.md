@@ -10,6 +10,26 @@ as "an auth header written as a `{{VAR}}` reference", never as the header
 itself — GitHub scrubs secret-shaped substrings inside the build manifest and
 the release ships one file), and one line per change a user can see.
 
+## v0.3.6 (unreleased)
+
+### One response cache, shared with other tools
+
+- Bitbucket and Jira keep the responses they fetch in one shared cache,
+  `http-cache/` under `$MNML_SHARED_STATE_DIR` (else the data root):
+  one file per URL, in a published format that other tools on the same
+  machine can read and write too. A pull request or ticket that has not
+  moved since anything on the machine last asked about it costs no
+  request at all; a listing is asked again conditionally, so an
+  unchanged one costs a token and no bytes.
+- After you approve or withdraw an approval in Bitbucket, or transition,
+  comment, assign, set a fix version or watch a ticket in Jira, that
+  item is marked changed, so nothing answers from what it held before.
+- `MNML_HTTP_CACHE=0` turns the cache off for an integration.
+- Upgrading: the old `cache/bitbucket/etags.json` and
+  `cache/jira/dev-status.json` files are no longer read (or deleted).
+  The first open after upgrading costs one full request per URL.
+  Entries older than a week are swept, at most once a day.
+
 ## v0.3.5 (2026-10-06)
 
 ### One statusline chip per integration

@@ -880,7 +880,10 @@ pub const Worker = struct {
         var out: ReadinessResult = .{ .tab = tab, .key = k, .updated_on = try a.dupe(u8, updated_on) };
         var r: merge.Readiness = .{ .required = @max(required, 1), .checked = true };
 
-        var reply = try w.client.prDetail(w.gpa, key.workspace, key.repo, key.id);
+        // The detail under the listing's own `updated_on`: held under
+        // the same stamp, it is the server's word that nothing moved,
+        // and costs no request (`mnml_sdk.http_cache`).
+        var reply = try w.client.prDetailAt(w.gpa, key.workspace, key.repo, key.id, updated_on);
         defer reply.deinit(w.gpa);
         switch (reply) {
             .ok => |body| {
@@ -918,7 +921,7 @@ pub const Worker = struct {
             }
         }
         if (!counted) {
-            var creply = try w.client.prComments(w.gpa, key.workspace, key.repo, key.id);
+            var creply = try w.client.prCommentsAt(w.gpa, key.workspace, key.repo, key.id, updated_on);
             defer creply.deinit(w.gpa);
             if (creply == .ok) {
                 if (std.json.parseFromSliceLeaky(j.Value, a, creply.ok.bytes, .{})) |v| {
@@ -1118,7 +1121,10 @@ pub const Worker = struct {
                     });
                     continue;
                 }
-                var reply = try w.client.prComments(w.gpa, scope.workspace, m.repo, m.id);
+                // Under the listing's own stamp: another process that
+                // already read these comments since the PR last moved
+                // has paid for them.
+                var reply = try w.client.prCommentsAt(w.gpa, scope.workspace, m.repo, m.id, m.updated_on);
                 defer reply.deinit(w.gpa);
                 switch (reply) {
                     .ok => |body| {

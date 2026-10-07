@@ -3,8 +3,8 @@
 //! poll — one small typed record each, readable by the host and by any
 //! pane (`docs/SDK.md`, "Cache"; `docs/design/recent-items-cache.md`).
 //!
-//! `store` is an integration's private body cache keyed by the server's
-//! stamp; this is the shared one. One file per source and kind,
+//! `http_cache` holds whole responses, one file per URL; this holds one
+//! small typed record per item. One file per source and kind,
 //! `recent/<source>/<kind>.json`, under the first of:
 //!
 //!   1. `$MNML_SHARED_STATE_DIR/recent/`
@@ -127,10 +127,18 @@ pub fn bounds(k: Kind) Bounds {
 /// The `recent/` directory, in the module comment's order; null with no
 /// home at all. Owned.
 pub fn rootDir(gpa: Allocator, env: *const Map) Allocator.Error!?[]u8 {
-    if (nonEmpty(env.get("MNML_SHARED_STATE_DIR"))) |d| return try std.fs.path.join(gpa, &.{ d, "recent" });
-    if (nonEmpty(env.get("MNML_DATA_ROOT"))) |d| return try std.fs.path.join(gpa, &.{ d, "recent" });
+    return sharedDir(gpa, env, "recent");
+}
+
+/// `<base>/<name>`, `<base>` being the first of `$MNML_SHARED_STATE_DIR`,
+/// `$MNML_DATA_ROOT`, `~/.config/mnml` — the one rule every file shared
+/// between processes resolves by (`recent/` here, `http-cache/` in
+/// `http_cache.zig`). Null with no home at all. Owned.
+pub fn sharedDir(gpa: Allocator, env: *const Map, name: []const u8) Allocator.Error!?[]u8 {
+    if (nonEmpty(env.get("MNML_SHARED_STATE_DIR"))) |d| return try std.fs.path.join(gpa, &.{ d, name });
+    if (nonEmpty(env.get("MNML_DATA_ROOT"))) |d| return try std.fs.path.join(gpa, &.{ d, name });
     const home = nonEmpty(env.get("HOME")) orelse nonEmpty(env.get("USERPROFILE")) orelse return null;
-    return try std.fs.path.join(gpa, &.{ home, ".config", "mnml", "recent" });
+    return try std.fs.path.join(gpa, &.{ home, ".config", "mnml", name });
 }
 
 /// False when the host turned the cache off (`$MNML_RECENT_ITEMS=0`).
@@ -233,7 +241,8 @@ fn update(gpa: Allocator, io: Io, root: []const u8, opts: PutOptions, change: an
     return if (writeAtomic(a, io, path, text)) .written else .failed;
 }
 
-fn makeDir(io: Io, dir: []const u8) void {
+/// `dir` and its parents, 0700 where the platform has modes. Silent.
+pub fn makeDir(io: Io, dir: []const u8) void {
     if (builtin.os.tag == .windows) {
         Io.Dir.cwd().createDirPath(io, dir) catch {};
     } else {
@@ -265,6 +274,17 @@ fn filePerms() @FieldType(Io.Dir.CreateFileOptions, "permissions") {
 /// apart (a Windows reader holding the file open), then a silent skip.
 fn writeAtomic(a: Allocator, io: Io, path: []const u8, text: []const u8) bool {
     const tmp = std.fmt.allocPrint(a, "{s}.tmp.{d}", .{ path, pid() }) catch return false;
+    return writeVia(io, tmp, path, text);
+}
+
+/// Write `text` to `tmp` (0600), then rename it over `path`, so a
+/// reader sees the whole old file or the whole new one and never a
+/// part. `tmp` must be in `path`'s directory — a rename across
+/// filesystems is not atomic. On Windows the rename replaces an
+/// existing `path` (`Io.Dir.rename` sets `REPLACE_IF_EXISTS` with
+/// POSIX semantics, `MoveFileEx`'s replace). False, with `tmp` gone,
+/// on any failure.
+pub fn writeVia(io: Io, tmp: []const u8, path: []const u8, text: []const u8) bool {
     {
         const f = Io.Dir.cwd().createFile(io, tmp, .{ .truncate = true, .permissions = filePerms() }) catch return false;
         defer f.close(io);
@@ -282,7 +302,8 @@ fn writeAtomic(a: Allocator, io: Io, path: []const u8, text: []const u8) bool {
     return false;
 }
 
-fn pid() i64 {
+/// This process's id — what a temp file is named after.
+pub fn pid() i64 {
     if (comptime builtin.os.tag == .windows) return @intCast(std.os.windows.GetCurrentProcessId());
     return @intCast(std.c.getpid());
 }
