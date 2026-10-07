@@ -29,6 +29,25 @@ the release ships one file), and one line per change a user can see.
   `cache/jira/dev-status.json` files are no longer read (or deleted).
   The first open after upgrading costs one full request per URL.
   Entries older than a week are swept, at most once a day.
+### Installed integrations say when they are out of date
+
+- The Integrations section's Installed tab shows when a newer version
+  is in the Marketplace: `Jira Work  0.2.3 → 0.2.4 available`. The
+  row's right-click menu starts with *Update to 0.2.4*, which runs the
+  same install as the Marketplace tab; its hover says it in words. An
+  integration that is current looks as it did.
+- The tab label counts them: `Installed (11) · 2 updates` (`↑2` where
+  the column is narrow).
+- mnml checks quietly when it starts and every six hours after, and
+  when something new is published says so once: *Jira 0.2.4 and
+  Bitbucket 0.2.4 are available — Integrations ▸ Installed*. Not while
+  Dashboard refresh is Manual, Check for updates is off, or
+  `MNML_NO_UPDATE_CHECK=1`. Offline, it says nothing.
+- An mnml built from source (or any version with no release of its own)
+  now lists the newest published release's integrations in the
+  Marketplace, instead of nothing from the release index. The tag is
+  read from GitHub's latest-release redirect and remembered for 12
+  hours.
 
 ## v0.3.5 (2026-10-06)
 
