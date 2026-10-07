@@ -475,17 +475,25 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
         why.* = no_token_text;
         return error.NoToken;
     }
-    const state_path = if (loaded.config.rate.state_path.len > 0) try gpa.dupe(u8, loaded.config.rate.state_path) else try ratelimit.statePath(gpa, io, env);
-    defer gpa.free(state_path);
-    var limiter = try ratelimit.Limiter.init(gpa, io, state_path, .{ .rate = loaded.config.rate.rate_per_sec, .capacity = loaded.config.rate.capacity });
+    // Bitbucket's budget is per token, so the bucket is the read
+    // token's own — keyed on the header it goes out as, which is what
+    // any other process spending the same token hashes too.
+    const read_header = try auth.authHeader(gpa, loaded.config.email, tokens.read);
+    defer gpa.free(read_header);
+    var limiter = if (loaded.config.rate.state_path.len > 0) blk: {
+        // A configured path names the file outright. The broker, when
+        // mnml hosts one, is asked as before.
+        var l = try ratelimit.Limiter.init(gpa, io, loaded.config.rate.state_path, ratelimit.config);
+        errdefer l.deinit();
+        try l.attachBroker(env, ratelimit.service);
+        break :blk l;
+    } else try ratelimit.Limiter.forToken(gpa, io, env, ratelimit.service, read_header);
     errdefer limiter.deinit();
-    // So every draw on the shared bucket says who took it. Without
-    // this the bucket says only how much is left, which is the half of
-    // the answer that does not help.
+    limiter.cfg = ratelimit.configWith(loaded.config.rate.rate_per_sec, loaded.config.rate.capacity);
+    // So every draw on the bucket says who took it. Without this the
+    // bucket says only how much is left, which is the half of the
+    // answer that does not help.
     try limiter.identify(ratelimit.service, "mnml-bitbucket", sdk.warm.selfPid());
-    // And the broker, when mnml hosts one: a limiter built on the
-    // pane's own path (`.rate.state_path`) never asked it before.
-    try limiter.attachBroker(env, ratelimit.service);
     var log = try sdk.RequestLog.open(gpa, io, env, ratelimit.service, "mnml-bitbucket");
     errdefer log.deinit();
     var client = try api.Client.init(gpa, io, base_url, loaded.config.email, tokens.read, if (tokens.write_source == .env) tokens.write else "", loaded.config.rate);
@@ -539,7 +547,7 @@ var base_url_why: [1024]u8 = undefined;
 /// it listens. A test that proves the refusal does not sit out 5 s.
 const url_file_wait_ms: u32 = if (@import("builtin").is_test) 50 else 5000;
 
-const no_token_text = "no Bitbucket token: set BITBUCKET_ACCESS_TOKEN, or write it to <config dir>/token (BITBUCKET_API_TOKEN / BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN also resolve, in that order, between the two)";
+const no_token_text = "no Bitbucket token: write mnml's own to <config dir>/token (it wins when present), or set BITBUCKET_ACCESS_TOKEN (BITBUCKET_API_TOKEN / BITBUCKET_APP_PASSWORD / BITBUCKET_PERSONAL_TOKEN also resolve, in that order, after it)";
 
 fn nowSecs(io: Io) i64 {
     return Io.Timestamp.now(io, .real).toSeconds();
@@ -568,6 +576,15 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
     } else {
         try out.print("mnml-bitbucket · diagnostics\n\nAuth\n  ├─ {s}  ├─ email: {s}\n", .{ tk, c.email });
     }
+    // Said before anything is asked: the token file's access token has
+    // no account, and the tabs that filter to yours cannot work
+    // without one named. The probe below would only say it again.
+    const hinted = auth.needsAccountId(&s.tokens, c.account_id);
+    if (hinted) {
+        const hint = try auth.accountIdHint(gpa, s.loaded.path);
+        defer gpa.free(hint);
+        try out.print("{s}{s}", .{ if (full) "  ├─ " else "", hint });
+    }
     var progress: fetch.Progress = .{};
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id, c.workspace);
     defer worker.deinit();
@@ -591,7 +608,7 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         .account => try out.print("{s}whoami: {s} {s} (account_id: {s})\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name, if (who.account_id.len > 0) who.account_id else "<none>" }),
         .workspace => {
             try out.print("{s}workspace probe: {s} {s} reached — an access token has no account to ask about\n", .{ if (full) "  └─ " else "", if (full) "✓" else "ok —", who.display_name });
-            if (c.account_id.len == 0) try out.print("{s}set `account_id` in {s}: the `mine` / `reviewing` tabs and --values cannot resolve it from an access token\n", .{ if (full) "     " else "  note: ", s.loaded.path });
+            if (c.account_id.len == 0 and !hinted) try out.print("{s}set `account_id` in {s}: the `mine` / `reviewing` tabs and --values cannot resolve it from an access token\n", .{ if (full) "     " else "  note: ", s.loaded.path });
         },
     }
     if (full) {
@@ -2245,6 +2262,81 @@ test "a $BITBUCKET_BASE_URL=@file that never arrives refuses to start — no fal
     var s = try openSession(t.allocator, t.io, &env, &why);
     defer s.deinit(t.allocator);
     try t.expectEqualStrings("http://127.0.0.1:9", s.base_url);
+}
+
+test "with a token file, --check spends that token's own bucket against the fake: named, Bearer, hinted, and the env never used" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const fake = @import("tools/fake_bitbucket/server.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    try tmp.dir.createDirPath(t.io, "interop");
+    // An access token in the file, no account_id in the config.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "config.zon", .data = ".{ .email = \"me@example.com\", .workspace = \"acme\", .repos = .{\"api\"}, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "ATCTTfake-file-token-0003\n" });
+    const cfg_path = try std.fs.path.join(t.allocator, &.{ root, "config.zon" });
+    defer t.allocator.free(cfg_path);
+    const token_path = try std.fs.path.join(t.allocator, &.{ root, "token" });
+    defer t.allocator.free(token_path);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const interop = try std.fs.path.join(t.allocator, &.{ root, "interop" });
+    defer t.allocator.free(interop);
+
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_DATA_ROOT", data);
+    try env.put("MNML_BITBUCKET_CONFIG", cfg_path);
+    try env.put("MNML_SHARED_STATE_DIR", interop);
+    try env.put("MNML_BROKER", "0");
+    try env.put(base_url_env, base);
+    // What a shell exports for other tools: an ACCOUNT credential the
+    // old rule would have preferred for reads, and an access token it
+    // would have approved with. Neither may be used.
+    try env.put("BITBUCKET_API_TOKEN", "ATATTenv-account-fake");
+    try env.put("BITBUCKET_ACCESS_TOKEN", "ATCTTenv-access-fake");
+
+    var buf: Io.Writer.Allocating = .init(t.allocator);
+    defer buf.deinit();
+    try t.expectEqual(@as(u8, 0), try diagnose(t.allocator, t.io, &env, &buf.writer, false));
+    const text = buf.written();
+    // The source and the length — 25 chars — and not a byte of either
+    // token.
+    const want_source = try std.fmt.allocPrint(t.allocator, "token source: {s} (loaded, 25 chars, not shown)", .{token_path});
+    defer t.allocator.free(want_source);
+    t.expect(std.mem.indexOf(u8, text, want_source) != null) catch |err| {
+        std.debug.print("--check said:\n{s}\n", .{text});
+        return err;
+    };
+    try t.expect(std.mem.indexOf(u8, text, "approve token: the read token") != null);
+    try t.expect(std.mem.indexOf(u8, text, "fake-file-token") == null);
+    try t.expect(std.mem.indexOf(u8, text, "env-") == null);
+    // The account_id hint, once.
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, text, "set `account_id` in"));
+    try t.expect(std.mem.indexOf(u8, text, "the token file holds an access token") != null);
+    // The file's token went out on the wire, as a Bearer.
+    try t.expectEqual(fake.Credential.bearer_access_token, srv.snapshot().last_credential);
+
+    // The bucket is the token's own: sha256("ATCTTfake-file-token-0003")[:12],
+    // computed with Python's hashlib when this was written.
+    const own = try std.fs.path.join(t.allocator, &.{ interop, "bitbucket-ratelimit-24ff31a5fe5e.json" });
+    defer t.allocator.free(own);
+    try Io.Dir.cwd().access(t.io, own, .{});
+    const shared = try std.fs.path.join(t.allocator, &.{ interop, "bitbucket-ratelimit.json" });
+    defer t.allocator.free(shared);
+    try t.expectError(error.FileNotFound, Io.Dir.cwd().access(t.io, shared, .{}));
+    // One draws file for the service, naming the token's id.
+    const draws = try std.fs.path.join(t.allocator, &.{ interop, "bitbucket-draws.jsonl" });
+    defer t.allocator.free(draws);
+    const lines = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(lines);
+    try t.expect(std.mem.indexOf(u8, lines, "\"token_id\":\"24ff31a5fe5e\"") != null);
 }
 
 /// The pane on the offline fixture, for the SDK's design-language

@@ -436,7 +436,14 @@ pub const Client = struct {
                     // the pause is up — `waitOut` at the top of the loop
                     // is the wait. A write goes back to the pane.
                     const delay = budget.throttled(attempt, f.retry_after_secs);
-                    if (self.limiter) |l| l.penalize(@floatFromInt(delay));
+                    // Bitbucket sends no useful `Retry-After`; without
+                    // one the bucket parks for at least the preset's
+                    // cooldown (30 s — what a 429 took to clear when it
+                    // was measured), not the first, shorter backoff.
+                    if (self.limiter) |l| {
+                        const secs: f64 = @floatFromInt(delay);
+                        l.penalize(if (f.retry_after_secs != null) secs else @max(secs, l.cfg.default_cooldown_secs));
+                    }
                     if (!budget.backoff.retries(attempt, method == .GET)) return reply;
                     if (delay > budget.backoff.wait_in_request_secs) return reply;
                     reply.deinit(gpa);

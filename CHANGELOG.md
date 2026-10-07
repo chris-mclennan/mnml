@@ -29,6 +29,24 @@ the release ships one file), and one line per change a user can see.
   `cache/jira/dev-status.json` files are no longer read (or deleted).
   The first open after upgrading costs one full request per URL.
   Entries older than a week are swept, at most once a day.
+
+### Bitbucket: mnml's own token, and a budget of its own
+
+- mnml's Bitbucket token comes from the token file first: when
+  `token` is there beside the Bitbucket `config.zon`, it is the token
+  for reading and for approving, whatever your shell exports. The
+  `BITBUCKET_*` variables are only the fallback now.
+- Its budget is its own: Bitbucket counts its rate limit per token, so
+  mnml keeps a bucket per token, `bitbucket-ratelimit-<id>.json` beside
+  the shared one, and no longer queues behind other tools spending a
+  different token. A tool with no token to name stays on the shared
+  file.
+- The bucket rate is 1.2/s (was 0.22), with a 40-request burst and a
+  30-second pause after a 429 — Bitbucket's measured limits.
+- With an access token in the token file, `--check` says to set
+  `account_id` in `config.zon`, which the `mine` / `reviewing` tabs
+  need.
+
 ### Installed integrations say when they are out of date
 
 - The Integrations section's Installed tab shows when a newer version
