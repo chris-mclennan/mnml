@@ -574,7 +574,7 @@ pub fn handle(app: *App, result: *Result) Allocator.Error!void {
 
 /// One `.warn` toast per service per five minutes when new 429s landed:
 /// `Bitbucket throttled — 3 × 429 in the last 5 min (2 from widget.py,
-/// 1 from mnml-bitbucket) — API traffic`, its offer opening the pane on
+/// 1 from mnml-bitbucket)`; its button, "API traffic", opens the pane on
 /// that service. The first look after start finds no news.
 fn toastThrottles(app: *App, result: *const Result) Allocator.Error!void {
     if (!app.cfg.integrations.throttle_toasts) return;
@@ -606,7 +606,7 @@ pub fn throttleText(arena: Allocator, s: *const ServiceSnap) Allocator.Error![]c
     }
     var name = try arena.dupe(u8, s.service);
     if (name.len > 0) name[0] = std.ascii.toUpper(name[0]);
-    return std.fmt.allocPrint(arena, "{s} throttled — {d} × 429 in the last 5 min ({s}) — API traffic", .{ name, s.last5.n, who.items });
+    return std.fmt.allocPrint(arena, "{s} throttled — {d} × 429 in the last 5 min ({s})", .{ name, s.last5.n, who.items });
 }
 
 /// Whether toast `id` (a `.button` hit) is a throttle toast.
@@ -1057,7 +1057,7 @@ test "429 toasts coalesce: five new in two minutes is one toast with the counts,
     try app.handle(.{ .api_traffic = try throttleResult(&app, t0, 5, &.{ .{ .reason = "widget.py", .n = 3 }, .{ .reason = "mnml-bitbucket", .n = 2 } }) });
     try t.expectEqual(@as(usize, 1), throttleToasts(&app));
     const last = app.toasts.items[app.toasts.items.len - 1];
-    try t.expectEqualStrings("Bitbucket throttled — 5 × 429 in the last 5 min (3 from widget.py, 2 from mnml-bitbucket) — API traffic", last.text);
+    try t.expectEqualStrings("Bitbucket throttled — 5 × 429 in the last 5 min (3 from widget.py, 2 from mnml-bitbucket)", last.text);
     try t.expectEqual(app_mod.ToastLevel.warn, last.level);
     try t.expectEqualStrings("view.api_traffic_throttled", last.action.?.command.id);
     // More inside the window: held, not a toast per line.
