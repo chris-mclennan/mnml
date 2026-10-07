@@ -510,6 +510,8 @@ test "the rail: every section and the gear have a hit in columns 0..2; the indic
     // The border column beside it, in the tree's own rows.
     try t.expectEqualStrings("│", app.screen.readCell(3, 2).?.char.grapheme);
     for (Section.rail) |s| {
+        // API traffic's row starts hidden (`ui.rail.hidden`'s default).
+        if (isHidden(&app, s)) continue;
         const y = sectionRow(&app, s);
         try t.expectEqual(s, app.hits.at(0, y).?.rail.section);
         try t.expectEqual(s, app.hits.at(2, y).?.rail.section);
@@ -676,8 +678,11 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
         var loaded = try config_mod.load.load(t.allocator, t.io, .{ .workspace = app.workspace, .env = .{ .vars = &vars } });
         defer loaded.deinit();
         try t.expectEqualStrings(home, loaded.home_path.?);
-        try t.expectEqual(@as(usize, 1), loaded.config.ui.rail.hidden.len);
+        // TODOs, beside the API traffic row the default already hides —
+        // kept in the rail's order.
+        try t.expectEqual(@as(usize, 2), loaded.config.ui.rail.hidden.len);
         try t.expectEqual(Config.RailSection.todos, loaded.config.ui.rail.hidden[0]);
+        try t.expectEqual(Config.RailSection.api_traffic, loaded.config.ui.rail.hidden[1]);
     }
     // The command still opens it — hiding a row hides a row.
     try command.run(&app, .{ .static = .@"view.activity_todos" });
@@ -685,7 +690,7 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     try t.expectEqual(Section.todos, active(&app));
     // Hiding twice is a toast, not a second entry.
     try setHidden(&app, .todos, true);
-    try t.expectEqual(@as(usize, 1), app.cfg.ui.rail.hidden.len);
+    try t.expectEqual(@as(usize, 2), app.cfg.ui.rail.hidden.len);
     // Show on dock: NOTES leaves the bar and its command is pinned; the
     // dock lists it as a pinned panel wearing the section's glyph.
     try showOnDock(&app, .notes);
@@ -705,11 +710,12 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     // The hidden set is in the rail's order whatever the order of asking.
     try t.expectEqual(Config.RailSection.notes, app.cfg.ui.rail.hidden[0]);
     try t.expectEqual(Config.RailSection.todos, app.cfg.ui.rail.hidden[1]);
+    try t.expectEqual(Config.RailSection.api_traffic, app.cfg.ui.rail.hidden[2]);
     // Move back: unpinned, row restored; TODOs still hidden.
     try moveBackFromDock(&app, .notes);
     try t.expect(!isHidden(&app, .notes));
     try t.expect(!integrations.isPinnedToDock(&app, "view.activity_notes"));
-    try t.expectEqual(@as(usize, 1), app.cfg.ui.rail.hidden.len);
+    try t.expectEqual(@as(usize, 2), app.cfg.ui.rail.hidden.len);
     try app.render();
     try t.expect((try rowY(&app, railRect(&app), .notes)) != null);
     // The rail menu's two rows sit after the section's verbs, before
@@ -726,9 +732,10 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     try press(&app, 1, 36, .right);
     const g = app.overlay.menu;
     try t.expectEqualStrings("Show hidden sections", g.items[g.items.len - 1].label);
-    try t.expectEqual(@as(usize, 1), g.items[g.items.len - 1].submenu.len);
+    try t.expectEqual(@as(usize, 2), g.items[g.items.len - 1].submenu.len);
     try t.expectEqualStrings("TODOs", g.items[g.items.len - 1].submenu[0].label);
     try t.expectEqual(Section.todos, g.items[g.items.len - 1].submenu[0].action.rail_show);
+    try t.expectEqualStrings("API traffic", g.items[g.items.len - 1].submenu[1].label);
     try app.handle(.{ .key = app_mod.Key.named(.esc) });
     // `view.rail_show_sections` clears the set; the gear menu loses the row.
     try command.run(&app, .{ .static = .@"view.rail_show_sections" });
@@ -793,12 +800,12 @@ test "pinned icons: pinning an installed launcher paints its chip after the sect
     const text = try std.Io.Dir.cwd().readFileAlloc(app.io, home, t.allocator, .limited(64 * 1024));
     defer t.allocator.free(text);
     try t.expect(std.mem.indexOf(u8, text, ".activity_bar_pinned_integrations = .{\"htop\"}") != null);
-    // Painted after the last section (API traffic) on the rail's step,
-    // in green, with a pin hit.
+    // Painted after SCRIPTS on the rail's step, in green, with a pin
+    // hit — API traffic's row starts hidden, so SCRIPTS is the last.
     try app.render();
-    const lay = rail.layout(railRect(&app), 1);
-    const y = lay.pinY(0).?;
-    try t.expectEqual(lay.sectionY(.api_traffic).? + lay.step, y);
+    const lay = rail.layoutRows(railRect(&app), Section.rail.len - 1 + 1);
+    const y = lay.pinYAfter(Section.rail.len - 1, 0).?;
+    try t.expectEqual(lay.sectionY(.scripts).? + lay.step, y);
     try t.expectEqualStrings("\u{F1D00}", app.screen.readCell(1, y).?.char.grapheme);
     try t.expectEqual(app.theme.palette.green, app.screen.readCell(1, y).?.style.fg);
     try t.expectEqual(@as(u16, 0), app.hits.at(1, y).?.rail.pin);

@@ -69,13 +69,13 @@ the release ships one file), and one line per change a user can see.
 
 ### API traffic — who is spending the budget
 
-- A new pane, **API traffic** (`view.api_traffic`, `space i a` / `ctrl+k
-  i a`, View → API traffic, or the palette; its activity-bar row starts
-  hidden and the bar's own menu adds it), answers who
-  is spending a Jira or Bitbucket budget right now: mnml's panes, the
+- A new pane, **API traffic** (`view.api_traffic`, `space i a` /
+  `ctrl+k i a`, View → API traffic, or the palette), answers who is
+  spending a Jira or Bitbucket budget right now: mnml's panes, the
   statusline poller, and any loop or script on the machine that draws on
   the same shared bucket. It reads the files those programs already
-  write and sends nothing.
+  write and sends nothing. Its activity-bar row starts hidden; the
+  gear's *Show hidden sections ▸* puts it on the bar.
 - A tab per service. The header gives the window's requests, the share
   of mnml's requests that came back unchanged (`304`), the 429s and the
   cache hits. NOW shows the bucket's tokens, rate and cooldown, the

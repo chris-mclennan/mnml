@@ -300,6 +300,17 @@ pub fn hide(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
     };
 }
 
+/// A child of the gear's *Show hidden sections ▸*: one hidden row back.
+pub fn showHidden(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {
+    _ = app;
+    const label = s.meta().label;
+    return .{
+        .title = try std.fmt.allocPrint(arena, "Put {s} back on the activity bar", .{label}),
+        .body = try std.fmt.allocPrint(arena, "Takes {s} out of `ui.rail.hidden` in the home config, so its row is painted on the activity bar again, in its usual place, in every workspace. Nothing about the section itself changes; its command and chords opened it all along.", .{label}),
+        .links = &.{.{ .command = .{ .id = .@"view.rail_show_sections", .label = "Show every hidden section" } }},
+    };
+}
+
 /// `Show on dock instead` — the row moves from the bar onto the dock,
 /// both halves of the move written to the home config.
 pub fn toDock(app: *App, arena: Allocator, s: Section) Allocator.Error!Entry {

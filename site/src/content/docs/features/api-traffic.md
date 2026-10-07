@@ -12,8 +12,9 @@ chip says *that* the budget is low. The **API TRAFFIC** pane says
 
 Open it with `view.api_traffic` — `space i a` in the vim profile,
 `ctrl+k i a` (or `space i a`) in the standard one — from **View → API
-traffic**, or from its row on the activity bar (the gauge icon, under
-Scripts). It opens below the active pane; running the command again
+traffic**, or from the command palette. Its activity-bar row (a gauge,
+under Scripts) starts hidden: the gear's *Show hidden sections ▸* puts
+it on the bar, and `ui.rail.hidden` is where that is kept. It opens below the active pane; running the command again
 brings the same pane back and reads the files again.
 
 The pane only reads files. It never sends a request, so opening it in

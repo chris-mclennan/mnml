@@ -240,7 +240,7 @@ pub const MenuBar = enum { always, auto, hidden };
 /// a TODO for these three, with the menu bar's vocabulary). `auto`
 /// shows the rail while the pointer is in column 0 or on the rail.
 pub const ActivityBar = enum { always, auto, hidden };
-/// // changed (railmove): the activity bar's eleven rows as the config
+/// // changed (railmove): the activity bar's twelve rows as the config
 /// names them — `ui.rail.hidden` lists the ones the bar leaves out.
 /// The tags are `ui/activity_bar.zig`'s `Section.rail`, spelled here
 /// so the config layer does not import a painter; a unit test there
@@ -257,7 +257,11 @@ pub const Rail = struct {
     /// takes one back; *Show on dock instead* writes here AND pins the
     /// section's `view.activity_*` command onto `ui.dock.pins`, where
     /// the dock lists it as a pinned panel.
-    hidden: []const RailSection = &.{},
+    ///
+    /// API traffic starts here: a dashboard most people open now and
+    /// then, from View or its chords, not a column they live in. The
+    /// gear's *Show hidden sections ▸* puts its row on the bar.
+    hidden: []const RailSection = &.{.api_traffic},
 };
 /// // changed (sidebar-autohide): the side columns' own three words.
 /// `always` docks the column (the shipped look); `auto` hides it and

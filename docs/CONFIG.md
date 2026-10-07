@@ -290,7 +290,7 @@ otherwise. Copy what you need; leave the rest out.
         .menu_bar = .always, // .always | .auto | .hidden
         .activity_bar = .always, // .always | .auto (pointer in column 0 reveals) | .hidden
         .rail = .{ // the activity bar's MEMBERSHIP — which rows it paints; `.activity_bar` above is whether it is there at all
-            .hidden = .{}, // sections the bar leaves out: .explorer | .search | .git | .debug | .integrations | .sessions | .http | .notes | .todos | .findings | .scripts. A hidden section keeps its command and its keys. "Hide from activity bar" on a row's right-click writes here; "Show hidden sections ▸" on the gear's menu takes one back; "Show on dock instead" writes here AND pins the section's `view.activity_*` command onto `.dock.pins`
+            .hidden = .{.api_traffic}, // sections the bar leaves out: .explorer | .search | .git | .debug | .integrations | .sessions | .http | .notes | .todos | .findings | .scripts | .api_traffic. API traffic starts hidden (View → API traffic and its chords open it; the gear's "Show hidden sections ▸" puts its row back). A hidden section keeps its command and its keys. "Hide from activity bar" on a row's right-click writes here; "Show hidden sections ▸" on the gear's menu takes one back; "Show on dock instead" writes here AND pins the section's `view.activity_*` command onto `.dock.pins`
         },
         .debug_toolbar = .auto, // the step toolbar strip over the editor: .auto (while a debug session is live) | .always | .hidden
         .bufferline_diag_style = .count, // .count | .dot | .off
