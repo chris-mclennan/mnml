@@ -3695,6 +3695,7 @@ pub const App = struct {
         clock.tick(self);
         now_playing.tick(self, now);
         integration_poll.tick(self);
+        @import("app/integration_updates.zig").tick(self, now);
         broker_app.tick(self, now);
         if (self.click_echo) |e| if (now >= e.until_ms) {
             self.click_echo = null;
@@ -3931,6 +3932,7 @@ test {
     _ = @import("ui/integrations_view.zig");
     _ = @import("bridge/manifest.zig");
     _ = @import("app/marketplace.zig");
+    _ = @import("app/integration_updates.zig");
     _ = @import("app/marketplace_catalogue.zig");
     _ = @import("app/marketplace_release.zig");
     _ = @import("ui/mount_view.zig");

@@ -122,6 +122,7 @@ pub fn hint(ui: Ui, r: Rect, text: []const u8) void {
 pub const ascii_pairs = [_]struct { u: []const u8, a: []const u8 }{
     .{ .u = "\u{2190}\u{2192}", .a = "<- ->" }, // ←→
     .{ .u = "\u{2191}\u{2193}", .a = "up/down" }, // ↑↓
+    .{ .u = "\u{2191}", .a = "^" }, // ↑ (a count of updates waiting)
     .{ .u = "\u{2190}", .a = "<-" }, // ←
     .{ .u = "\u{2192}", .a = "->" }, // →
     .{ .u = "\u{23ce}", .a = "enter" }, // ⏎

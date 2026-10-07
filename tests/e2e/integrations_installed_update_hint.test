@@ -1,0 +1,35 @@
+# env: MNML_MARKETPLACE_CATALOGUE=cat/marketplace.zon
+# An installed integration behind the Marketplace says so on the
+# Installed tab: `0.1.0 → 0.2.0 available` after its version, the tab
+# label counts it, and its right-click menu leads with *Update to 0.2.0*,
+# which runs the Marketplace row's own install. The catalogue here is
+# the corpus's fake index (as integrations_marketplace_mnml.test): it
+# lists the prebuilt sample, so nothing is built or fetched.
+write cat/marketplace.zon ".{ .entries = .{ .{ .id = \"sample\", .label = \"Sample\", .description = \"The mnml-sdk sample: a live counter\", .category = \"sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+drag 30 5 70 5
+key i
+wait 2000
+expect screen contains "installed sample"
+# Current with the Marketplace: the row says its version and nothing more.
+command integrations.show_installed
+expect screen contains "Sample  0.1.0"
+expect screen lacks "available"
+expect screen lacks "update"
+# The catalogue moves ahead; a refresh reads it.
+write cat/marketplace.zon ".{ .entries = .{ .{ .id = \"sample\", .label = \"Sample\", .description = \"The mnml-sdk sample: a live counter\", .category = \"sample\", .version = \"0.2.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\" } } }"
+command marketplace.refresh
+wait 1000
+command integrations.show_installed
+expect screen contains "Sample  0.1.0 → 0.2.0 available"
+expect screen contains "Installed (5) · 1 update"
+# The row's menu (four first-party rows above it, three screen rows
+# each, under the menu bar): Update to 0.2.0, and Enter on it runs the
+# Marketplace row's install again.
+rightclick 6 17
+expect screen contains "Update to 0.2.0"
+expect screen contains "Uninstall"
+key enter
+wait 2000
+expect screen contains "installed sample"
