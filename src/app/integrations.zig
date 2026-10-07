@@ -2478,7 +2478,7 @@ fn openInstalledMenu(app: *App, virtual: usize, x: u16, y: u16) Allocator.Error!
         .{ .label = "Open manifest", .action = .{ .command = .@"integrations.show_manifest" }, .separator_before = true },
         .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } },
         openAsRow(app),
-        .{ .label = "Update (relink the binary)", .action = .{ .command = .@"integrations.update" }, .separator_before = true },
+        .{ .label = "Relink the binary", .action = .{ .command = .@"integrations.update" }, .separator_before = true },
     });
     // A row built from a folder on this machine can be built again from
     // it; the label says why when the build is behind this mnml's SDK.
