@@ -1,0 +1,299 @@
+{
+ "version": 1,
+ "canonical": [
+  {
+   "url": "https://API.Bitbucket.org:443/2.0/repositories/acme/widget/pullrequests/45#frag",
+   "params": {},
+   "canonical": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests/45",
+   "file": "22580bca7a268439c1d7603bb769b696ab807fc2497196234a1ade2d29e02d74.json"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests",
+   "params": {
+    "state": "OPEN",
+    "pagelen": 50,
+    "fields": "values.id,next"
+   },
+   "canonical": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests?fields=values.id%2Cnext&pagelen=50&state=OPEN",
+   "file": "bc066b683ae468646eef98cca10d8ce5ae4246ee526259d76ed3ed580d3f9fa2.json"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/x?b=2&a=1&a=0&q=",
+   "params": {},
+   "canonical": "https://api.bitbucket.org/2.0/x?a=0&a=1&b=2&q=",
+   "file": "af29c328ac03a99062a89d565a2f6ece44511b79959cb7a9893c67a754f553f2.json"
+  },
+  {
+   "url": "https://example.org/rest/api/3/search/jql",
+   "params": {
+    "jql": "project = ACME AND summary ~ \"a b\"",
+    "fields": [
+     "summary",
+     "status"
+    ]
+   },
+   "canonical": "https://example.org/rest/api/3/search/jql?fields=status&fields=summary&jql=project%20%3D%20ACME%20AND%20summary%20~%20%22a%20b%22",
+   "file": "aad1421a51042019d75497f4a249947f5b510202d8e27813ae145a79f12ba1cc.json"
+  },
+  {
+   "url": "https://example.org:8443/p",
+   "params": {
+    "t": "x~y z/é"
+   },
+   "canonical": "https://example.org:8443/p?t=x~y%20z%2F%C3%A9",
+   "file": "3bb581a8a88aa1160a505b8cdd69c4695467754bcdc66c77895e7397a7864ee0.json"
+  }
+ ],
+ "item_key": [
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/Acme/Widget/pullrequests/45",
+   "key": "acme/widget#45"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests/45/comments?pagelen=100",
+   "key": "acme/widget#45"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests/45/diff",
+   "key": "acme/widget#45"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pipelines/1203/steps",
+   "key": "acme/widget!1203"
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests",
+   "key": ""
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests/45x",
+   "key": ""
+  }
+ ],
+ "decide": [
+  {
+   "name": "no entry",
+   "entry": null,
+   "now": 1010,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "miss"
+  },
+  {
+   "name": "wrong version",
+   "entry": {
+    "version": 2,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 2000,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "miss"
+  },
+  {
+   "name": "inside valid_until",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "fresh"
+  },
+  {
+   "name": "float times read the same as integers",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000.0,
+    "valid_until": 1060.5,
+    "body": "{}"
+   },
+   "now": 1060,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "fresh"
+  },
+  {
+   "name": "expired with etag",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "\"abc\"",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1100,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "revalidate"
+  },
+  {
+   "name": "expired without etag",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1100,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "miss"
+  },
+  {
+   "name": "changed after fetch beats valid_until",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "\"abc\"",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 1005,
+   "stamp": "",
+   "expect": "revalidate"
+  },
+  {
+   "name": "changed after fetch, no etag",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 1005,
+   "stamp": "",
+   "expect": "miss"
+  },
+  {
+   "name": "changed before fetch is ignored",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 999,
+   "stamp": "",
+   "expect": "fresh"
+  },
+  {
+   "name": "matching stamp beats an expired valid_until",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "2026-10-06T12:00:00Z",
+    "fetched_at": 1000,
+    "valid_until": 0,
+    "body": "{}"
+   },
+   "now": 5000,
+   "changed_at": 0,
+   "stamp": "2026-10-06T12:00:00Z",
+   "expect": "fresh"
+  },
+  {
+   "name": "different stamp beats valid_until",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "\"abc\"",
+    "stamp": "2026-10-06T12:00:00Z",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 0,
+   "stamp": "2026-10-06T13:00:00Z",
+   "expect": "revalidate"
+  },
+  {
+   "name": "caller stamp but entry has none falls to valid_until",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 1060,
+    "body": "{}"
+   },
+   "now": 1010,
+   "changed_at": 0,
+   "stamp": "2026-10-06T12:00:00Z",
+   "expect": "fresh"
+  },
+  {
+   "name": "valid_until 0 always asks",
+   "entry": {
+    "version": 1,
+    "url": "https://api.bitbucket.org/2.0/x",
+    "key": "acme/widget#45",
+    "status": 200,
+    "etag": "\"abc\"",
+    "stamp": "",
+    "fetched_at": 1000,
+    "valid_until": 0,
+    "body": "{}"
+   },
+   "now": 1000,
+   "changed_at": 0,
+   "stamp": "",
+   "expect": "revalidate"
+  }
+ ]
+}
