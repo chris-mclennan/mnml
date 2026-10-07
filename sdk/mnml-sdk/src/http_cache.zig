@@ -247,21 +247,9 @@ fn unquote(a: Allocator, s: []const u8) Allocator.Error![]const u8 {
         }
     }
     if (std.unicode.utf8ValidateSlice(raw.items)) return raw.items;
-    var fixed: std.ArrayList(u8) = .empty;
-    var j: usize = 0;
-    while (j < raw.items.len) {
-        const n = std.unicode.utf8ByteSequenceLength(raw.items[j]) catch 0;
-        if (n > 0 and j + n <= raw.items.len) {
-            if (std.unicode.utf8Decode(raw.items[j .. j + n])) |_| {
-                try fixed.appendSlice(a, raw.items[j .. j + n]);
-                j += n;
-                continue;
-            } else |_| {}
-        }
-        try fixed.appendSlice(a, "\u{fffd}");
-        j += 1;
-    }
-    return fixed.items;
+    // One U+FFFD per maximal subpart (a cut-short sequence is one, not
+    // one per byte), which is what the reference decoder emits.
+    return std.fmt.allocPrint(a, "{f}", .{std.unicode.fmtUtf8(raw.items)});
 }
 
 fn isHex(c: u8) bool {
@@ -320,6 +308,22 @@ pub fn itemKey(gpa: Allocator, url: []const u8) Allocator.Error![]u8 {
 fn allDigits(s: []const u8) bool {
     for (s) |c| if (!std.ascii.isDigit(c)) return false;
     return s.len > 0;
+}
+
+// ─── what may be held ───────────────────────────────────────────────────
+
+/// Whether a Bitbucket canonical URL's answer is the same whichever
+/// credential asks, and so may go where every token on the machine
+/// reads it: under `/2.0/repositories/` only, and never with a `role=`
+/// parameter (`?role=member` lists what the caller can see). A `role`
+/// inside another parameter's value, such as a `q=` search, is held.
+/// `canon` is `canonical`'s output, so every query name is in one form.
+pub fn bitbucketShareable(canon: []const u8) bool {
+    const parts = split(canon);
+    if (!std.mem.startsWith(u8, parts.path, "/2.0/repositories/")) return false;
+    var it = std.mem.splitScalar(u8, parts.query, '&');
+    while (it.next()) |pair| if (std.mem.startsWith(u8, pair, "role=")) return false;
+    return true;
 }
 
 // ─── deciding ───────────────────────────────────────────────────────────
@@ -673,41 +677,75 @@ fn vectorParams(a: Allocator, v: Value) ![]Param {
     return out.items;
 }
 
-test "the shared vectors: every canonical URL and its file name" {
+/// Every section the vectors file carries, and how each one runs. A
+/// section not named here fails the test by name, so a re-vendor that
+/// adds one cannot pass by being skipped.
+const vector_sections = [_]struct { name: []const u8, run: *const fn (Allocator, []const Value) anyerror!void }{
+    .{ .name = "canonical", .run = runCanonical },
+    .{ .name = "item_key", .run = runItemKey },
+    .{ .name = "decide", .run = runDecide },
+    .{ .name = "bitbucket_never_held", .run = runNeverHeld },
+};
+
+test "the shared vectors: every section runs, and none is unknown" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const doc = try vectors(a);
-    const cases = doc.object.get("canonical").?.array.items;
-    try t.expect(cases.len >= 5);
+    var it = doc.object.iterator();
+    var ran: usize = 0;
+    sections: while (it.next()) |kv| {
+        const name = kv.key_ptr.*;
+        if (std.mem.eql(u8, name, "version")) {
+            if (kv.value_ptr.* != .integer or kv.value_ptr.integer != format_version) {
+                std.debug.print("vectors: version is not {d}\n", .{format_version});
+                return error.TestUnexpectedResult;
+            }
+            continue;
+        }
+        for (vector_sections) |s| {
+            if (!std.mem.eql(u8, s.name, name)) continue;
+            if (kv.value_ptr.* != .array or kv.value_ptr.array.items.len == 0) {
+                std.debug.print("vectors: section \"{s}\" has no cases\n", .{name});
+                return error.TestUnexpectedResult;
+            }
+            try s.run(a, kv.value_ptr.array.items);
+            ran += 1;
+            continue :sections;
+        }
+        std.debug.print("vectors: unknown section \"{s}\" — teach the test to run it\n", .{name});
+        return error.TestUnexpectedResult;
+    }
+    try t.expectEqual(vector_sections.len, ran);
+}
+
+fn runCanonical(a: Allocator, cases: []const Value) !void {
     for (cases) |c| {
         const o = c.object;
-        const got = try canonical(a, o.get("url").?.string, try vectorParams(a, o.get("params").?));
-        try t.expectEqualStrings(o.get("canonical").?.string, got);
+        const url = o.get("url").?.string;
+        const got = try canonical(a, url, try vectorParams(a, o.get("params").?));
         const name = fileName(got);
-        try t.expectEqualStrings(o.get("file").?.string, &name);
+        const want = o.get("canonical").?.string;
+        if (!std.mem.eql(u8, want, got) or !std.mem.eql(u8, o.get("file").?.string, &name)) {
+            std.debug.print("canonical case \"{s}\": want {s} ({s}), got {s} ({s})\n", .{ url, want, o.get("file").?.string, got, &name });
+            return error.TestExpectedEqual;
+        }
     }
 }
 
-test "the shared vectors: every item key" {
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const doc = try vectors(a);
-    const cases = doc.object.get("item_key").?.array.items;
-    try t.expect(cases.len >= 6);
+fn runItemKey(a: Allocator, cases: []const Value) !void {
     for (cases) |c| {
-        try t.expectEqualStrings(c.object.get("key").?.string, try itemKey(a, c.object.get("url").?.string));
+        const url = c.object.get("url").?.string;
+        const want = c.object.get("key").?.string;
+        const got = try itemKey(a, url);
+        if (!std.mem.eql(u8, want, got)) {
+            std.debug.print("item_key case \"{s}\": want \"{s}\", got \"{s}\"\n", .{ url, want, got });
+            return error.TestExpectedEqual;
+        }
     }
 }
 
-test "the shared vectors: every decision" {
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const doc = try vectors(a);
-    const cases = doc.object.get("decide").?.array.items;
-    try t.expect(cases.len >= 13);
+fn runDecide(_: Allocator, cases: []const Value) !void {
     for (cases) |c| {
         const o = c.object;
         const entry: ?Entry = if (o.get("entry").? == .null) null else entryFromValue(o.get("entry").?).?;
@@ -720,6 +758,30 @@ test "the shared vectors: every decision" {
             return error.TestExpectedEqual;
         }
     }
+}
+
+/// Run through `canonical` first, as every caller does.
+fn runNeverHeld(a: Allocator, cases: []const Value) !void {
+    for (cases) |c| {
+        const url = c.object.get("url").?.string;
+        const want_never = c.object.get("never_held").?.bool;
+        const held = bitbucketShareable(try canonical(a, url, &.{}));
+        if (held == want_never) {
+            std.debug.print("bitbucket_never_held case \"{s}\": want never_held={}, got {}\n", .{ url, want_never, !held });
+            return error.TestExpectedEqual;
+        }
+    }
+}
+
+test "canonical: bytes that are not UTF-8 become one U+FFFD per broken sequence" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // A cut-short three-byte sequence is one replacement; a cut-short
+    // four-byte one is one; an encoded surrogate is three.
+    try t.expectEqualStrings("https://example.org/p?q=%EF%BF%BDa", try canonical(a, "https://example.org/p?q=%E2%82a", &.{}));
+    try t.expectEqualStrings("https://example.org/p?r=%EF%BF%BD", try canonical(a, "https://example.org/p?r=%F0%9F%98", &.{}));
+    try t.expectEqualStrings("https://example.org/p?s=%EF%BF%BD%EF%BF%BD%EF%BF%BD", try canonical(a, "https://example.org/p?s=%ED%A0%80", &.{}));
 }
 
 test "canonical: credentials, a blank query, a lone name, plus as space, a broken escape" {
