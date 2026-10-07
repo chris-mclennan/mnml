@@ -89,6 +89,12 @@ the release ships one file), and one line per change a user can see.
   to it or copy its pid.
 - Settings → Integrations → **API traffic window** picks the window the
   pane opens on (`integrations.api_traffic_window`).
+- A warning toast when an API starts throttling: *Bitbucket throttled —
+  3 × 429 in the last 5 min (2 from widget.py, 1 from mnml-bitbucket)*,
+  at most one per service every five minutes, with a button that opens
+  API traffic on that service. The pane's NOW line counts the hour's
+  429s and who met them. Settings → Integrations → **Toast on 429s**
+  turns the toasts off (`integrations.throttle_toasts`).
 
 ## v0.3.5 (2026-10-06)
 

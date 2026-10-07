@@ -1140,6 +1140,14 @@ otherwise. Copy what you need; leave the rest out.
         // the WHO table all cover it; `w` in the pane walks it without
         // changing this. Settings → Integrations → API traffic window.
         .api_traffic_window = .hour,
+        // A warning toast when new 429s land for an API — the fleet's
+        // api-usage/<UTC day>.throttles.jsonl beside the shared buckets
+        // and mnml's own request log — at most one per service per five
+        // minutes; its button opens API TRAFFIC on that service. The
+        // first read after start never toasts. Off keeps the pane's NOW
+        // line and stops the toasts and the background read behind them.
+        // Settings → Integrations → Toast on 429s.
+        .throttle_toasts = true,
     },
 
     // ── workspaces ─────────────────────────────────────────────────────

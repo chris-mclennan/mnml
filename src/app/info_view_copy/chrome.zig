@@ -93,6 +93,11 @@ pub fn button(app: *App, arena: Allocator, id: u32) Allocator.Error!?Entry {
         .body = "Something running in a pane wrote a command to mnml's file channel (`.mnml/ipc/command`) that can change more than the view — edit a buffer, write a file, start a process. Nothing has run. Click the box (or its Review button) for the full request and the answers: Allow once, Allow that class for the rest of this run, Deny, or Cancel to leave it waiting. Unanswered, it is denied after two minutes. Every answer is written to `.mnml/ipc/audit.jsonl`.",
         .links = &.{ .{ .command = .{ .id = .@"toast.run_action", .label = "Review it" } }, .{ .command = .{ .id = .@"messages.show", .label = "Open the history" } }, ask },
     };
+    if (@import("../api_traffic.zig").isThrottleToast(app, id)) return .{
+        .title = "An API is throttling",
+        .body = "New 429s landed for this API — from the fleet's throttles file beside the shared buckets or from mnml's own requests — and the toast counts the last five minutes' by caller. There is one per service per five minutes however many arrive. Its button opens API TRAFFIC on that service: who is spending the budget, minute by minute, against the hourly limit.",
+        .links = &.{ .{ .command = .{ .id = .@"toast.run_action", .label = "Open API traffic" } }, .{ .settings = .{ .row = comptime copy.settingsRow("integrations.throttle_toasts"), .label = "Toast on 429s" } }, ask },
+    };
     if (id >= toast_mod.button_base) return .{
         .title = "Toast",
         .body = "A message from something that just happened — a save, a git result, an error from a server — in the bottom-right corner, kept in the message history after it fades so the bell can find it again. Click dismisses this one; right-click offers dismiss, copy the text, dismiss all. A red toast is an error and its full text is in the history if the line was cut.",

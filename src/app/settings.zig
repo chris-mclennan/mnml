@@ -385,6 +385,7 @@ pub const rows = [_]RowSpec{
     // section, so the rows above keep their places.
     .{ .path = "ui.dashboard_refresh", .label = "Dashboard refresh", .section = .integrations, .scope = .home },
     .{ .path = "integrations.api_traffic_window", .label = "API traffic window", .section = .integrations, .scope = .home },
+    .{ .path = "integrations.throttle_toasts", .label = "Toast on 429s", .section = .integrations, .scope = .home },
 };
 
 pub const reset_label = "Reset all to defaults";
@@ -2084,10 +2085,10 @@ test "the dashboard refresh row sits at the end of Integrations, offers auto / f
     try t.expectEqual(Section.integrations, rows[idx].section);
     try t.expectEqual(Scope.home, rows[idx].scope);
     try t.expectEqualStrings("Dashboard refresh", rows[idx].label);
-    // The last Integrations row but one: the API traffic window, a
-    // knob of one dashboard, closes the section after it.
+    // Then the API traffic pane's two knobs, which close the section.
     try t.expectEqualStrings("integrations.api_traffic_window", rows[idx + 1].path);
-    for (rows[idx + 2 ..]) |r| try t.expect(r.section != .integrations);
+    try t.expectEqualStrings("integrations.throttle_toasts", rows[idx + 2].path);
+    for (rows[idx + 3 ..]) |r| try t.expect(r.section != .integrations);
     try t.expectEqual(@as(usize, 4), options("ui.dashboard_refresh").len);
     try t.expectEqual(@as(usize, 0), comptime defaultIndex("ui.dashboard_refresh"));
 
@@ -2129,7 +2130,7 @@ test "the dashboard refresh row sits at the end of Integrations, offers auto / f
     try t.expectEqual(config.Config.DashboardRefresh.auto, app.cfg.ui.dashboard_refresh);
 }
 
-test "the API traffic window row closes Integrations: last hour, day or week, the hour by default" {
+test "the API traffic window row: last hour, day or week, the hour by default; the 429 toast row after it closes Integrations, on by default" {
     const idx = comptime blk: {
         for (rows, 0..) |r, i| if (std.mem.eql(u8, r.path, "integrations.api_traffic_window")) break :blk i;
         @compileError("no settings row for integrations.api_traffic_window");
@@ -2137,7 +2138,12 @@ test "the API traffic window row closes Integrations: last hour, day or week, th
     try t.expectEqual(Section.integrations, rows[idx].section);
     try t.expectEqual(Scope.home, rows[idx].scope);
     try t.expectEqualStrings("API traffic window", rows[idx].label);
-    for (rows[idx + 1 ..]) |r| try t.expect(r.section != .integrations);
+    try t.expectEqualStrings("integrations.throttle_toasts", rows[idx + 1].path);
+    try t.expectEqualStrings("Toast on 429s", rows[idx + 1].label);
+    try t.expectEqual(Section.integrations, rows[idx + 1].section);
+    for (rows[idx + 2 ..]) |r| try t.expect(r.section != .integrations);
+    // A switch's rows are off / on; on is the default.
+    try t.expectEqual(@as(usize, 1), comptime defaultIndex("integrations.throttle_toasts"));
     try t.expectEqual(@as(usize, 3), options("integrations.api_traffic_window").len);
     try t.expectEqual(@as(usize, 0), comptime defaultIndex("integrations.api_traffic_window"));
 }

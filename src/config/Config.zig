@@ -1394,6 +1394,12 @@ pub const Integrations = struct {
     /// the header's totals, the timeline and the Who table all cover
     /// it. `w` in the pane walks it; this is where it starts.
     api_traffic_window: ApiTrafficWindow = .hour,
+    /// A `.warn` toast when new 429s land for an API — the fleet's
+    /// `api-usage/<UTC day>.throttles.jsonl` and mnml's own request
+    /// log — at most one per service per five minutes. Off keeps the
+    /// API TRAFFIC pane's NOW line and stops the toasts (and the
+    /// background look that feeds them).
+    throttle_toasts: bool = true,
 };
 
 /// `integrations.api_traffic_window`: the last hour, day or week.

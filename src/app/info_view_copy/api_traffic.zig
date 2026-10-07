@@ -133,6 +133,14 @@ fn now(arena: Allocator, p: *const traffic.ApiTrafficPane, r: traffic.NowRow) Al
                 .missing => try std.fmt.allocPrint(arena, "The integration's config names an event file that is not there, so its pane polls. File: {s}.", .{n.feed.path}),
             },
         },
+        .throttles => .{
+            .title = "429s this hour",
+            .body = if (n.throttles.n == 0)
+                "Every 429 an API sent anybody on this machine in the last hour — none so far. They come from `api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, where the fleet writes each one, and from mnml's own request log."
+            else
+                try std.fmt.allocPrint(arena, "{d} 429s in the last hour for this API, the newest {d:.0}s ago, by caller. They come from `api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, where the fleet writes every one, and from mnml's own request log. New ones raise a warning toast — one per service per five minutes — unless `integrations.throttle_toasts` is off.", .{ n.throttles.n, n.throttles.last_age orelse 0 }),
+            .links = &.{ .{ .settings = .{ .row = copy.settingsRow("integrations.throttle_toasts"), .label = "Toast on 429s" } }, requests_link },
+        },
         .cache => .{
             .title = "The shared HTTP cache",
             .body = try std.fmt.allocPrint(arena, "Entries under `$MNML_SHARED_STATE_DIR/http-cache/{s}/`: responses one process fetched that another can answer from without spending a token. The row is only here when the directory exists.", .{s.service}),

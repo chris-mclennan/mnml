@@ -1473,6 +1473,9 @@ pub const App = struct {
     /// shared token bucket, so the pane on screen goes before the
     /// warmers and the batch scripts.
     broker: broker_app.State = .{},
+    /// The API TRAFFIC reader, its worker and its newest snapshot —
+    /// the App's, so the 429 toasts watch with no pane open.
+    api_traffic: @import("app/api_traffic.zig").State = .{},
     /// The menu bar: the open menu, where its words painted (`app/menu_bar.zig`).
     menu_bar: menu_bar.State = .{},
     /// `ui.click_echo`: the word under a click, underlined until `until_ms`.
@@ -2087,6 +2090,7 @@ pub const App = struct {
         // After the poller: its children were told where the sockets
         // are, and a broker torn down first would strand them.
         self.broker.deinit(gpa, self.io);
+        self.api_traffic.deinit(gpa, self.io);
         self.todos.deinit(gpa, self.io);
         self.search_section.deinit(gpa, self.io);
         self.grep_picker.deinit(gpa, self.io);

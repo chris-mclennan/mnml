@@ -153,6 +153,25 @@ pace or turns it to manual, where only `r` and the refresh chip read.
 **Settings → Integrations → API traffic window**
 (`integrations.api_traffic_window`) is the window the pane opens on.
 
+## Throttles
+
+Every 429 an API sends anybody on the machine is counted on the NOW
+line: `throttles  3 in the last hour · last 4m ago · widget.py (2),
+mnml-bitbucket (1)`. The fleet writes each one to
+`api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, and
+mnml's own 429s come from its request log; the pane reads today's file
+and yesterday's, so nothing written around midnight is missed.
+
+When new ones land, mnml raises one warning toast per service — *Bitbucket
+throttled — 3 × 429 in the last 5 min (2 from widget.py, 1 from
+mnml-bitbucket)* — and then stays quiet for five minutes however many
+more arrive. Its **API traffic** button opens the pane on that service.
+The 429s already in the files when mnml starts are history and never
+toast. The toasts watch the files every 30 seconds even with the pane
+closed. **Settings → Integrations → Toast on 429s**
+(`integrations.throttle_toasts`) turns them, and that watching, off; the
+NOW line still counts.
+
 ## Making your own programs show up
 
 Anything that spends from the same budget can be counted: append one

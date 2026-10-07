@@ -309,6 +309,13 @@ pub const ServiceReader = struct {
     requests: Tail = .{},
     draw_events: std.ArrayListUnmanaged(Event) = .empty,
     req_events: std.ArrayListUnmanaged(Event) = .empty,
+    /// Every 429 on the machine for this API: the fleet's throttles
+    /// file, and mnml's own request log's 429s folded in. `program` is
+    /// the caller.
+    throttles: std.ArrayListUnmanaged(Event) = .empty,
+    /// The 429s this look found that were not there at the last one —
+    /// empty on the reader's first look, which reads history, not news.
+    fresh: std.ArrayListUnmanaged(Event) = .empty,
     names: Names = .{},
 
     pub fn deinit(s: *ServiceReader, gpa: Allocator) void {
@@ -317,7 +324,16 @@ pub const ServiceReader = struct {
         s.requests.deinit(gpa);
         s.draw_events.deinit(gpa);
         s.req_events.deinit(gpa);
+        s.throttles.deinit(gpa);
+        s.fresh.deinit(gpa);
         s.names.deinit(gpa);
+    }
+
+    /// One 429 for this API, by `caller`; news when `fresh`.
+    pub fn noteThrottle(s: *ServiceReader, gpa: Allocator, ts: f64, caller: []const u8, fresh: bool) Allocator.Error!void {
+        const ev: Event = .{ .ts = ts, .program = try s.names.intern(gpa, caller), .status = 429 };
+        try s.throttles.append(gpa, ev);
+        if (fresh) try s.fresh.append(gpa, ev);
     }
 
     const DrawSink = struct {
@@ -338,6 +354,8 @@ pub const ServiceReader = struct {
     const ReqSink = struct {
         s: *ServiceReader,
         gpa: Allocator,
+        /// Whether a 429 read now is news (`fresh`).
+        news: bool,
         fn line(k: ReqSink, l: []const u8) Allocator.Error!void {
             const ts = jsonNumber(l, "ts") orelse return;
             if (jsonString(l, "path") == null) return;
@@ -355,6 +373,9 @@ pub const ServiceReader = struct {
                 .off_wire = hit or dry,
                 .cache_hit = hit or std.mem.eql(u8, cache, "hit"),
             });
+            // mnml's own 429s: the fleet's throttles file is the rest
+            // of the machine's, so the view is only whole with these.
+            if (status) |st| if (st == 429) try k.s.noteThrottle(k.gpa, ts, jsonString(l, "integration") orelse "mnml", k.news);
         }
     };
 
@@ -362,12 +383,12 @@ pub const ServiceReader = struct {
     /// window. Lines arrive oldest first per file but not across the
     /// two generations' seam, so the lists are sorted once a look adds
     /// anything out of order.
-    pub fn look(s: *ServiceReader, io: Io, gpa: Allocator, now: f64) Allocator.Error!void {
+    pub fn look(s: *ServiceReader, io: Io, gpa: Allocator, now: f64, news: bool) Allocator.Error!void {
         const d0 = s.draw_events.items.len;
         try s.draws.look(io, gpa, DrawSink{ .s = s, .gpa = gpa });
         settle(&s.draw_events, d0, now);
         const r0 = s.req_events.items.len;
-        try s.requests.look(io, gpa, ReqSink{ .s = s, .gpa = gpa });
+        try s.requests.look(io, gpa, ReqSink{ .s = s, .gpa = gpa, .news = news });
         settle(&s.req_events, r0, now);
     }
 
@@ -495,10 +516,34 @@ fn addService(gpa: Allocator, out: *std.ArrayListUnmanaged([]u8), name: []const 
 
 pub const Reader = struct {
     services: std.ArrayListUnmanaged(ServiceReader) = .empty,
+    /// `api-usage/<UTC day>.throttles.jsonl`, today's and yesterday's —
+    /// a line written just before midnight lands in a file that is
+    /// already yesterday's by the time it is read.
+    throttle_files: std.ArrayListUnmanaged(ThrottleFile) = .empty,
+    /// A look has completed: what the next one finds is news.
+    looked: bool = false,
 
     pub fn deinit(r: *Reader, gpa: Allocator) void {
         for (r.services.items) |*s| s.deinit(gpa);
         r.services.deinit(gpa);
+        for (r.throttle_files.items) |*f| f.tail.deinit(gpa);
+        r.throttle_files.deinit(gpa);
+    }
+
+    /// The service named `name`, made when it has no entry yet — a
+    /// throttles line can name an API no other file mentions.
+    fn ensure(r: *Reader, io: Io, gpa: Allocator, paths: Paths, name: []const u8) Allocator.Error!*ServiceReader {
+        if (r.find(name)) |s| return s;
+        var s: ServiceReader = .{ .service = try gpa.dupe(u8, name) };
+        errdefer s.deinit(gpa);
+        const d = try drawsPaths(gpa, io, paths.env, name);
+        s.draws.path = d[0];
+        s.draws.older = d[1];
+        const q = try requestLogPaths(gpa, paths.data_root, name);
+        s.requests.path = q[0];
+        s.requests.older = q[1];
+        try r.services.append(gpa, s);
+        return &r.services.items[r.services.items.len - 1];
     }
 
     pub fn find(r: *Reader, service: []const u8) ?*ServiceReader {
@@ -514,20 +559,112 @@ pub const Reader = struct {
             names.deinit(gpa);
         }
         try discover(gpa, io, paths, known, &names);
-        for (names.items) |name| if (r.find(name) == null) {
-            var s: ServiceReader = .{ .service = try gpa.dupe(u8, name) };
-            errdefer s.deinit(gpa);
-            const d = try drawsPaths(gpa, io, paths.env, name);
-            s.draws.path = d[0];
-            s.draws.older = d[1];
-            const q = try requestLogPaths(gpa, paths.data_root, name);
-            s.requests.path = q[0];
-            s.requests.older = q[1];
-            try r.services.append(gpa, s);
-        };
-        for (r.services.items) |*s| try s.look(io, gpa, now);
+        for (names.items) |name| _ = try r.ensure(io, gpa, paths, name);
+        const news = r.looked;
+        for (r.services.items) |*s| s.fresh.clearRetainingCapacity();
+        for (r.services.items) |*s| try s.look(io, gpa, now, news);
+        try r.lookThrottles(io, gpa, paths, now, news);
+        for (r.services.items) |*s| settle(&s.throttles, 0, now);
+        r.looked = true;
+    }
+
+    const ThrottleSink = struct {
+        r: *Reader,
+        io: Io,
+        gpa: Allocator,
+        paths: Paths,
+        news: bool,
+        fn line(k: ThrottleSink, l: []const u8) Allocator.Error!void {
+            const th = parseThrottle(l) orelse return;
+            if (!validService(th.api)) return;
+            const s = try k.r.ensure(k.io, k.gpa, k.paths, th.api);
+            try s.noteThrottle(k.gpa, th.ts, th.caller, k.news);
+        }
+    };
+
+    fn lookThrottles(r: *Reader, io: Io, gpa: Allocator, paths: Paths, now: f64, news: bool) Allocator.Error!void {
+        const today: i64 = @intFromFloat(@floor(now / 86400));
+        // Drop the days past yesterday; open today's and yesterday's.
+        var i: usize = 0;
+        while (i < r.throttle_files.items.len) {
+            if (r.throttle_files.items[i].day < today - 1) {
+                var gone = r.throttle_files.orderedRemove(i);
+                gone.tail.deinit(gpa);
+            } else i += 1;
+        }
+        const dir = (try throttlesDir(gpa, io, paths.env)) orelse return;
+        defer gpa.free(dir);
+        for ([_]i64{ today - 1, today }) |day| {
+            var have = false;
+            for (r.throttle_files.items) |f| have = have or f.day == day;
+            if (have) continue;
+            var date: [10]u8 = undefined;
+            const name = try std.fmt.allocPrint(gpa, "{s}.throttles.jsonl", .{sdk.budget.isoDate(&date, day)});
+            defer gpa.free(name);
+            const path = try std.fs.path.join(gpa, &.{ dir, name });
+            errdefer gpa.free(path);
+            // Nothing rotates these: one file a day is the rotation.
+            try r.throttle_files.append(gpa, .{ .day = day, .tail = .{ .path = path, .older = try gpa.dupe(u8, "") } });
+        }
+        for (r.throttle_files.items) |*f| try f.tail.look(io, gpa, ThrottleSink{ .r = r, .io = io, .gpa = gpa, .paths = paths, .news = news });
     }
 };
+
+pub const ThrottleFile = struct { day: i64, tail: Tail };
+
+/// `<interop dir>/api-usage` — beside the shared buckets, wherever the
+/// SDK resolves them. Owned; null when the directory cannot be named.
+pub fn throttlesDir(gpa: Allocator, io: Io, env: *const std.process.Environ.Map) Allocator.Error!?[]u8 {
+    const probe = try sdk.ratelimit.statePath(gpa, io, env, "probe");
+    defer gpa.free(probe);
+    const dir = std.fs.path.dirname(probe) orelse return null;
+    return try std.fs.path.join(gpa, &.{ dir, "api-usage" });
+}
+
+/// The request the old Bitbucket test suite leaked into the file; it
+/// was never a real 429.
+pub const leakage_where = "api.bitbucket.org/2.0/x";
+
+pub const Throttle = struct { ts: f64, api: []const u8, caller: []const u8 };
+
+/// One throttles line, or null for one that is not a usable 429: no
+/// stamp, no API, or the test leakage.
+pub fn parseThrottle(l: []const u8) ?Throttle {
+    if (jsonString(l, "where")) |w| if (std.mem.eql(u8, w, leakage_where)) return null;
+    const ts = jsonNumber(l, "ts") orelse (if (jsonString(l, "ts")) |iso| parseIso(iso) else null) orelse return null;
+    const api = jsonString(l, "api") orelse return null;
+    return .{ .ts = ts, .api = api, .caller = jsonString(l, "caller") orelse "unknown" };
+}
+
+/// `2026-10-07T14:03:22Z`, `…22.418+00:00`, `…22-05:00` as epoch
+/// seconds. Null for anything else.
+pub fn parseIso(s: []const u8) ?f64 {
+    if (s.len < 19 or s[4] != '-' or s[7] != '-' or (s[10] != 'T' and s[10] != ' ') or s[13] != ':' or s[16] != ':') return null;
+    const y = std.fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const mo = std.fmt.parseInt(u32, s[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(u32, s[8..10], 10) catch return null;
+    const h = std.fmt.parseInt(i64, s[11..13], 10) catch return null;
+    const mi = std.fmt.parseInt(i64, s[14..16], 10) catch return null;
+    const se = std.fmt.parseInt(i64, s[17..19], 10) catch return null;
+    if (mo < 1 or mo > 12 or d < 1 or d > 31) return null;
+    var frac: f64 = 0;
+    var i: usize = 19;
+    if (i < s.len and s[i] == '.') {
+        const start = i;
+        i += 1;
+        while (i < s.len and std.ascii.isDigit(s[i])) : (i += 1) {}
+        frac = std.fmt.parseFloat(f64, s[start..i]) catch 0;
+    }
+    var offset: i64 = 0;
+    if (i < s.len and (s[i] == '+' or s[i] == '-') and s.len >= i + 6) {
+        const oh = std.fmt.parseInt(i64, s[i + 1 .. i + 3], 10) catch return null;
+        const om = std.fmt.parseInt(i64, s[i + 4 .. i + 6], 10) catch return null;
+        offset = (oh * 3600 + om * 60) * @as(i64, if (s[i] == '-') -1 else 1);
+    }
+    const days = sdk.request_log.daysFromCivil(y, mo, d);
+    const secs = days * 86400 + h * 3600 + mi * 60 + se - offset;
+    return @as(f64, @floatFromInt(secs)) + frac;
+}
 
 // ─── the snapshot the view paints ────────────────────────────────────────
 
@@ -591,7 +728,44 @@ pub const Now = struct {
     /// Entries under `$MNML_SHARED_STATE_DIR/http-cache/<service>/`;
     /// null when there is no such directory.
     cache_entries: ?u32 = null,
+    throttles: Throttles = .{},
 };
+
+/// The 429s for one API in a span: how many, the newest's age, and who
+/// met them, the most first.
+pub const Throttles = struct {
+    n: u32 = 0,
+    /// Seconds since the newest one; null with none.
+    last_age: ?f64 = null,
+    by: []const Reason = &.{},
+};
+
+/// `events` inside the last `span` seconds, counted by caller.
+pub fn throttlesIn(arena: Allocator, gpa: Allocator, s: *const ServiceReader, events: []const Event, span: f64, now: f64) Allocator.Error!Throttles {
+    var out: Throttles = .{};
+    var counts: std.AutoArrayHashMapUnmanaged(u16, u32) = .empty;
+    defer counts.deinit(gpa);
+    var newest: f64 = 0;
+    for (events) |e| {
+        if (now - e.ts > span) continue;
+        out.n += 1;
+        newest = @max(newest, e.ts);
+        const gop = try counts.getOrPut(gpa, e.program);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* += 1;
+    }
+    if (out.n > 0) out.last_age = @max(now - newest, 0);
+    const by = try arena.alloc(Reason, counts.count());
+    for (counts.keys(), counts.values(), 0..) |k, v, i| by[i] = .{ .reason = try arena.dupe(u8, s.names.get(k)), .n = v };
+    std.mem.sort(Reason, by, {}, struct {
+        fn lt(_: void, a: Reason, b: Reason) bool {
+            if (a.n != b.n) return a.n > b.n;
+            return std.mem.order(u8, a.reason, b.reason) == .lt;
+        }
+    }.lt);
+    out.by = by;
+    return out;
+}
 
 pub const Reason = struct { reason: []const u8, n: u32 };
 
@@ -655,6 +829,11 @@ pub const ServiceSnap = struct {
     service: []const u8,
     source: Source = .none,
     now: Now = .{},
+    /// 429s this look found that the last one had not: what a toast is
+    /// about. Empty on the first look after start.
+    fresh: u32 = 0,
+    /// The last five minutes' 429s, by caller — the toast's words.
+    last5: Throttles = .{},
     windows: [Window.all.len]WinSnap = .{ .{ .window = .hour }, .{ .window = .day }, .{ .window = .week } },
 
     pub fn win(s: *const ServiceSnap, w: Window) *const WinSnap {
@@ -1059,7 +1238,7 @@ test "the Who table counts every program on the bucket, busiest first, with its 
     s.draws.older = try std.fs.path.join(t.allocator, &.{ root, "acme-draws.jsonl.1" });
     s.requests.path = try std.fs.path.join(t.allocator, &.{ root, "requests", "acme.jsonl" });
     s.requests.older = try std.fs.path.join(t.allocator, &.{ root, "requests", "acme.1.jsonl" });
-    try s.look(t.io, t.allocator, now);
+    try s.look(t.io, t.allocator, now, false);
     try t.expectEqual(Source.draws, s.source());
 
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
@@ -1115,7 +1294,7 @@ test "the timeline buckets per minute on the wall clock and stacks by program �
     s.draws.older = try std.fs.path.join(t.allocator, &.{ root, "acme-draws.jsonl.1" });
     s.requests.path = try std.fs.path.join(t.allocator, &.{ root, "none.jsonl" });
     s.requests.older = try std.fs.path.join(t.allocator, &.{ root, "none.1.jsonl" });
-    try s.look(t.io, t.allocator, now);
+    try s.look(t.io, t.allocator, now, false);
 
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -1157,7 +1336,7 @@ test "past seven programs the rest stack as one `other`, and the Who table still
     s.draws.older = try std.fs.path.join(t.allocator, &.{ root, "x.1" });
     s.requests.path = try std.fs.path.join(t.allocator, &.{ root, "y.jsonl" });
     s.requests.older = try std.fs.path.join(t.allocator, &.{ root, "y.1.jsonl" });
-    try s.look(t.io, t.allocator, now);
+    try s.look(t.io, t.allocator, now, false);
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
     const w = try buildWindow(arena_state.allocator(), t.allocator, &s, .hour, now);
@@ -1191,7 +1370,7 @@ test "with no draws file the request log is the source — its lines on the wire
     const q = try requestLogPaths(t.allocator, root, "acme");
     s.requests.path = q[0];
     s.requests.older = q[1];
-    try s.look(t.io, t.allocator, now);
+    try s.look(t.io, t.allocator, now, false);
     try t.expectEqual(Source.requests, s.source());
     var arena_state = std.heap.ArenaAllocator.init(t.allocator);
     defer arena_state.deinit();
@@ -1321,4 +1500,103 @@ test "the feed reads the integration's own config: no file is polling, a fresh o
     const mtime: f64 = @as(f64, @floatFromInt(st.mtime.toNanoseconds())) / 1e9;
     try t.expectEqual(FeedState.live, readFeed(t.io, a, paths, "acme", mtime + 5).state);
     try t.expectEqual(FeedState.stale, readFeed(t.io, a, paths, "acme", mtime + 180).state);
+}
+
+test "the throttles file: today's and yesterday's are read, the test leakage skipped, mnml's own 429s folded in; the first look is history and a later line is news" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    try tmp.dir.createDirPath(t.io, "shared/api-usage");
+    try tmp.dir.createDirPath(t.io, "data/requests");
+    // Ten minutes into a UTC day `d`.
+    const d: i64 = 20_700;
+    const now: f64 = @as(f64, @floatFromInt(d * 86400)) + 600;
+    var y_buf: [10]u8 = undefined;
+    var t_buf: [10]u8 = undefined;
+    const yesterday = sdk.budget.isoDate(&y_buf, d - 1);
+    const today = sdk.budget.isoDate(&t_buf, d);
+    const y_path = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{yesterday});
+    defer t.allocator.free(y_path);
+    const t_path = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{today});
+    defer t.allocator.free(t_path);
+    // Yesterday, ten seconds before midnight — an ISO stamp, the way a
+    // Python writer may put it.
+    const y_line = try std.fmt.allocPrint(t.allocator, "{{\"ts\": \"{s}T23:59:50Z\", \"api\": \"bitbucket\", \"caller\": \"widget.py\", \"status\": 429, \"where\": \"api.example.org/2.0/widgets\", \"reason\": null, \"headers\": {{}}}}\n", .{yesterday});
+    defer t.allocator.free(y_line);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = y_path, .data = y_line });
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    try text.print(t.allocator, "{{\"ts\":{d},\"api\":\"bitbucket\",\"caller\":\"widget.py\",\"status\":429,\"where\":\"api.example.org/2.0/widgets\"}}\n", .{now - 300});
+    try text.print(t.allocator, "{{\"ts\":{d},\"api\":\"jira\",\"caller\":\"sync-bot\",\"status\":429,\"where\":\"acme.example.org/rest/api/3/search\",\"reason\":\"jira-quota-tenant-based\"}}\n", .{now - 200});
+    // The old test suite's leakage: never a real 429.
+    try text.print(t.allocator, "{{\"ts\":{d},\"api\":\"bitbucket\",\"caller\":\"pytest\",\"status\":429,\"where\":\"api.bitbucket.org/2.0/x\"}}\n", .{now - 100});
+    try tmp.dir.writeFile(t.io, .{ .sub_path = t_path, .data = text.items });
+    // mnml's own 429, in its request log.
+    const req = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"service\":\"bitbucket\",\"integration\":\"mnml-bitbucket\",\"method\":\"GET\",\"host\":\"api.example.org\",\"path\":\"/2.0/widgets\",\"status\":429,\"reason\":\"poll\",\"wait_ms\":0}}\n", .{now - 50});
+    defer t.allocator.free(req);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "data/requests/bitbucket.jsonl", .data = req });
+
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    const shared = try std.fs.path.join(t.allocator, &.{ root, "shared" });
+    defer t.allocator.free(shared);
+    try env.put("MNML_SHARED_STATE_DIR", shared);
+    const data = try std.fs.path.join(t.allocator, &.{ root, "data" });
+    defer t.allocator.free(data);
+    const paths: Paths = .{ .data_root = data, .env = &env };
+    var rd: Reader = .{};
+    defer rd.deinit(t.allocator);
+
+    try rd.look(t.io, t.allocator, paths, &.{ "jira", "bitbucket" }, now);
+    const bb = rd.find("bitbucket").?;
+    // Yesterday's, today's, and mnml's own — not the leakage.
+    try t.expectEqual(@as(usize, 3), bb.throttles.items.len);
+    try t.expectEqual(@as(usize, 1), rd.find("jira").?.throttles.items.len);
+    // History, not news.
+    try t.expectEqual(@as(usize, 0), bb.fresh.items.len);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const hour = try throttlesIn(a, t.allocator, bb, bb.throttles.items, 3600, now);
+    try t.expectEqual(@as(u32, 3), hour.n);
+    try t.expectApproxEqAbs(@as(f64, 50), hour.last_age.?, 1e-6);
+    try t.expectEqualStrings("widget.py", hour.by[0].reason);
+    try t.expectEqual(@as(u32, 2), hour.by[0].n);
+    try t.expectEqualStrings("mnml-bitbucket", hour.by[1].reason);
+
+    // A line lands: the next look calls it news.
+    const more = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"bitbucket\",\"caller\":\"widget.py\",\"status\":429,\"where\":\"api.example.org/2.0/widgets\"}}\n", .{now + 5});
+    defer t.allocator.free(more);
+    try appendFile(tmp.dir, t_path, more);
+    try rd.look(t.io, t.allocator, paths, &.{ "jira", "bitbucket" }, now + 10);
+    try t.expectEqual(@as(usize, 1), bb.fresh.items.len);
+    try t.expectEqual(@as(usize, 4), bb.throttles.items.len);
+
+    // Across midnight: a line written late into what is now yesterday's
+    // file, and one in the new day's file — both news, neither twice.
+    const next_now = @as(f64, @floatFromInt((d + 1) * 86400)) + 30;
+    var n_buf: [10]u8 = undefined;
+    const n_path = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{sdk.budget.isoDate(&n_buf, d + 1)});
+    defer t.allocator.free(n_path);
+    const late = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"bitbucket\",\"caller\":\"cron.sh\",\"status\":429,\"where\":\"api.example.org/2.0/widgets\"}}\n", .{next_now - 40});
+    defer t.allocator.free(late);
+    try appendFile(tmp.dir, t_path, late);
+    const fresh_day = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"bitbucket\",\"caller\":\"cron.sh\",\"status\":429,\"where\":\"api.example.org/2.0/widgets\"}}\n", .{next_now - 10});
+    defer t.allocator.free(fresh_day);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = n_path, .data = fresh_day });
+    try rd.look(t.io, t.allocator, paths, &.{ "jira", "bitbucket" }, next_now);
+    try t.expectEqual(@as(usize, 2), bb.fresh.items.len);
+    try t.expectEqual(@as(usize, 6), bb.throttles.items.len);
+    // The day before yesterday is let go.
+    for (rd.throttle_files.items) |f| try t.expect(f.day >= d);
+}
+
+test "an ISO stamp reads as epoch seconds, with or without an offset or a fraction" {
+    try t.expectEqual(@as(f64, 0), parseIso("1970-01-01T00:00:00Z").?);
+    try t.expectApproxEqAbs(@as(f64, 86400.25), parseIso("1970-01-02T00:00:00.25+00:00").?, 1e-9);
+    try t.expectEqual(@as(f64, 3600), parseIso("1970-01-01T00:00:00-01:00").?);
+    try t.expect(parseIso("yesterday") == null);
+    try t.expect(parseThrottle("{\"ts\":5,\"api\":\"bitbucket\",\"where\":\"api.bitbucket.org/2.0/x\"}") == null);
+    try t.expectEqualStrings("unknown", parseThrottle("{\"ts\":5,\"api\":\"jira\"}").?.caller);
 }

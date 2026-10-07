@@ -106,7 +106,7 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *traffic.ApiTrafficPane, focuse
     // all of it drops the strip first, then NOW's detail rows.
     const total_h = rows_left(y, bottom);
     const hint_h: u16 = if (total_h >= 22) 1 else 0;
-    const now_h: u16 = if (total_h >= 14) 4 else if (total_h >= 8) 2 else 0;
+    const now_h: u16 = if (total_h >= 15) 5 else if (total_h >= 8) 2 else 0;
     const who_fixed: u16 = 2; // heading + column header
     const tl_fixed: u16 = 4; // heading + legend + axis + readout
     const room = total_h -| (now_h + who_fixed + hint_h + 3);
@@ -228,9 +228,19 @@ fn drawNow(ui: Ui, pane: PaneId, area: Rect, s: *const reader.ServiceSnap, now: 
     }
     if (area.h < 4) return 3;
 
-    // Broker · feed · cache, each its own hover.
+    // The 429s on the machine for this API, this hour.
     {
         const r = area.row(3);
+        const th = n.throttles;
+        const line = if (th.n == 0) "  throttles  none in the last hour" else ui.fmt("  throttles  {d} in the last hour · last {s} ago · {s}", .{ th.n, age(ui, th.last_age orelse 0), whoText(ui, th.by) });
+        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(line, r.w), if (th.n == 0) muted else warn);
+        ui.hit(r, nowHit(pane, .throttles));
+    }
+    if (area.h < 5) return 4;
+
+    // Broker · feed · cache, each its own hover.
+    {
+        const r = area.row(4);
         var x = r.x;
         const b = n.broker;
         const broker_text = switch (b.where) {
@@ -262,7 +272,20 @@ fn drawNow(ui: Ui, pane: PaneId, area: Rect, s: *const reader.ServiceSnap, now: 
             ui.hit(Rect.init(x, r.y, cw, 1), nowHit(pane, .cache));
         };
     }
-    return 4;
+    return 5;
+}
+
+/// `widget.py (2), mnml-bitbucket (1)` — the callers, the most first.
+fn whoText(ui: Ui, by: []const reader.Reason) []const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (by, 0..) |b, i| {
+        if (i == 4) {
+            out.appendSlice(ui.arena, ", …") catch {};
+            break;
+        }
+        out.print(ui.arena, "{s}{s} ({d})", .{ if (i > 0) ", " else "", b.reason, b.n }) catch return out.items;
+    }
+    return out.items;
 }
 
 /// `12s`, `4m`, `3h`, `2d`.
@@ -654,11 +677,9 @@ const Fixture = @import("test_fixture.zig");
 /// A pane with a hand-made result: two services, three programs on
 /// bitbucket — invented names only.
 fn fixturePane(now: f64) !traffic.ApiTrafficPane {
-    var env = std.process.Environ.Map.init(testing.allocator);
-    defer env.deinit();
-    var p = try traffic.ApiTrafficPane.init(testing.allocator, &env, "/data", "/ws", .hour);
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .hour);
     errdefer p.deinit(testing.io);
-    const r = try traffic.Result.create(testing.allocator, 0, 9);
+    const r = try traffic.Result.create(testing.allocator, 0);
     p.result = r;
     r.now = now;
     const a = r.arena.allocator();
@@ -694,6 +715,7 @@ fn fixturePane(now: f64) !traffic.ApiTrafficPane {
         .broker = .{ .where = .client, .queue = .{ 1, 0, 0, 2 } },
         .feed = .{ .state = .live, .quiet_secs = 12 },
         .cache_entries = 214,
+        .throttles = .{ .n = 3, .last_age = 240, .by = try a.dupe(reader.Reason, &.{ .{ .reason = "widget.py", .n = 2 }, .{ .reason = "mnml-bitbucket", .n = 1 } }) },
     };
     const jira: reader.ServiceSnap = .{ .service = "jira", .source = .draws };
     r.services = try a.dupe(reader.ServiceSnap, &.{ bb, jira });
@@ -705,6 +727,7 @@ test "the view paints the header line, the tabs, NOW, a stacked strip and the Wh
     const now: f64 = 1_790_000_000;
     var p = try fixturePane(now);
     defer p.deinit(testing.io);
+    defer p.result.?.destroy(testing.allocator);
     for ([_][2]u16{ .{ 80, 24 }, .{ 120, 40 }, .{ 200, 60 } }) |size| {
         var f = try Fixture.init(size[0], size[1]);
         defer f.deinit();
@@ -726,6 +749,7 @@ test "the view paints the header line, the tabs, NOW, a stacked strip and the Wh
             try f.expectContains("broker  up · queue 3 (1 interactive · 0 refresh · 0 warm · 2 batch)");
             try f.expectContains("feed live · 12s ago");
             try f.expectContains("cache 214 entries");
+            try f.expectContains("throttles  3 in the last hour · last 4m ago · widget.py (2), mnml-bitbucket (1)");
             try f.expectContains("TIMELINE");
             try f.expectContains("mnml-bitbucket (mnml)");
         }
@@ -736,6 +760,7 @@ test "the strip stacks the programs: the newest column's cells wear more than on
     const now: f64 = 1_790_000_000;
     var p = try fixturePane(now);
     defer p.deinit(testing.io);
+    defer p.result.?.destroy(testing.allocator);
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     draw(f.ui(), 9, f.full(), &p, true);
@@ -782,6 +807,7 @@ test "a picked column reads out its minute, its count and the split by program" 
     const now: f64 = 1_790_000_000;
     var p = try fixturePane(now);
     defer p.deinit(testing.io);
+    defer p.result.?.destroy(testing.allocator);
     var f = try Fixture.init(120, 40);
     defer f.deinit();
     p.column = reader.Window.hour.buckets() - 1;
@@ -803,15 +829,14 @@ test "the strip geometry: one column a minute when it fits, runs of minutes when
 }
 
 test "before the first look the pane says it is reading; with no services it says where the files would be" {
-    var env = std.process.Environ.Map.init(testing.allocator);
-    defer env.deinit();
-    var p = try traffic.ApiTrafficPane.init(testing.allocator, &env, "/data", "/ws", .hour);
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .hour);
     defer p.deinit(testing.io);
+    defer if (p.result) |r| r.destroy(testing.allocator);
     var f = try Fixture.init(100, 12);
     defer f.deinit();
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectContains("reading the draws and request logs");
-    p.result = try traffic.Result.create(testing.allocator, 0, 9);
+    p.result = try traffic.Result.create(testing.allocator, 0);
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectContains("no API traffic recorded on this machine yet");
 }
