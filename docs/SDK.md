@@ -1640,8 +1640,10 @@ machine that agrees to the format read and write the same files: each
 works alone, and on a machine with both they share entries by pointing
 at one directory. `sdk/mnml-sdk/src/testdata/http_cache_vectors.json` is
 the shared case file — canonical URLs with their file names, item keys,
-and decisions — vendored verbatim from the other implementation, and
-every case runs as a unit test here.
+decisions, and the Bitbucket URLs that are never held — vendored
+verbatim from the other implementation. Every case runs as a unit test
+here, and a section the test does not know fails it by name, so a
+re-vendor cannot pass by being skipped.
 
 **A cache is a hint.** Any read, parse or write failure costs a
 request, never a wrong answer and never an error.
@@ -1696,7 +1698,13 @@ Credentials never appear in a URL, so they never reach a key. Because
 every token on the machine shares the files, a writer holds only
 responses that are the same whichever credential asks: Bitbucket reads
 under `/2.0/repositories/` — never `/2.0/user`, a workspace probe, or
-a listing filtered by the caller's own `role=`.
+anything with a `role=` parameter, even under `/2.0/repositories/`
+(`?role=member` lists what the caller can see). A `role` inside another
+parameter's value, such as an encoded `q=` search, is still held.
+`sdk.http_cache.bitbucketShareable(canonical_url)` is that rule.
+
+Query bytes that do not decode as UTF-8 become U+FFFD, one per broken
+sequence: `?q=%FF%FEa` canonicalises to `?q=%EF%BF%BD%EF%BF%BDa`.
 
 ### A response file
 
@@ -1716,8 +1724,11 @@ a listing filtered by the caller's own `role=`.
 | `stamp` | the server's own last-changed value for `key` (`updated_on`, `updated`), when the writer knows it. A reader holding the same stamp from a cheap listing uses the entry with no request. |
 | `fetched_at` | when the body was last confirmed current (a 200, or a 304), epoch seconds — the time the request was **sent**, so a change stamped while it was in flight still makes the entry stale. |
 | `valid_until` | answer with no request until then; `0` means always ask first. |
-| `content_type` | optional: the response's `Content-Type`, written when known. |
+| `content_type` | optional: the response's `Content-Type`, written when known. Empty and absent both mean unknown. |
 | `body` | the response text. A writer skips bodies over 8 MB. |
+
+A reader ignores fields it does not know; a writer rewriting an entry
+after a `304` may keep them or drop them (mnml drops them).
 
 Times may be integers or decimals; a reader compares them as numbers.
 mnml writes integers: `fetched_at` rounded down, `changed_at` rounded

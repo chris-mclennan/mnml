@@ -42,6 +42,12 @@
    },
    "canonical": "https://example.org:8443/p?t=x~y%20z%2F%C3%A9",
    "file": "3bb581a8a88aa1160a505b8cdd69c4695467754bcdc66c77895e7397a7864ee0.json"
+  },
+  {
+   "url": "https://example.org/p?q=%FF%FEa",
+   "params": {},
+   "canonical": "https://example.org/p?q=%EF%BF%BD%EF%BF%BDa",
+   "file": "29d429ec45d232f4d9cc259aabbeb3a531c452bae4ca21fb78fb059d7bc6c314.json"
   }
  ],
  "item_key": [
@@ -294,6 +300,40 @@
    "changed_at": 0,
    "stamp": "",
    "expect": "revalidate"
+  }
+ ],
+ "bitbucket_never_held": [
+  {
+   "url": "https://api.bitbucket.org/2.0/user",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/user/emails",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme?role=member",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme?pagelen=10&role=contributor",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/users/%7Babc%7D",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/workspaces/acme/members",
+   "never_held": true
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme/widget/pullrequests/45",
+   "never_held": false
+  },
+  {
+   "url": "https://api.bitbucket.org/2.0/repositories/acme?q=name%20~%20%22xrole%3Dx%22",
+   "never_held": false
   }
  ]
 }

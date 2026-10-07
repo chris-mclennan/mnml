@@ -469,7 +469,7 @@ pub const Client = struct {
     fn heldFor(self: *Client, a: Allocator, url: []const u8, stamp: []const u8) ?Held {
         const d = self.http_cache orelse return null;
         const canon = sdk.http_cache.canonical(a, url, &.{}) catch return null;
-        if (!shareable(canon)) return null;
+        if (!sdk.http_cache.bitbucketShareable(canon)) return null;
         const key = sdk.http_cache.itemKey(a, canon) catch return null;
         const entry = d.load(a, self.io, canon);
         const now_s = @as(f64, @floatFromInt(Io.Timestamp.now(self.io, .real).toMilliseconds())) / 1000.0;
@@ -770,23 +770,6 @@ pub const Client = struct {
         return self.sendStamped(gpa, .GET, path, null, .read, stamp);
     }
 };
-
-/// Whether a canonical URL's answer is the same whichever credential
-/// asks, and so may go in a cache every token on the machine shares:
-/// repository content only (`/2.0/repositories/…`), never `/2.0/user`,
-/// a workspace probe, or a listing filtered by the caller's own role.
-pub fn shareable(canon: []const u8) bool {
-    const after_scheme = (std.mem.indexOf(u8, canon, "://") orelse return false) + 3;
-    const slash = std.mem.indexOfScalarPos(u8, canon, after_scheme, '/') orelse return false;
-    const rest = canon[slash..];
-    const q = std.mem.indexOfScalar(u8, rest, '?');
-    const path = rest[0 .. q orelse rest.len];
-    if (!std.mem.startsWith(u8, path, "/2.0/repositories/")) return false;
-    const query = if (q) |i| rest[i + 1 ..] else "";
-    var it = std.mem.splitScalar(u8, query, '&');
-    while (it.next()) |pair| if (std.mem.startsWith(u8, pair, "role=")) return false;
-    return true;
-}
 
 /// The URL is the pull request's own resource, not something under it.
 fn isPullRequestItself(canon: []const u8) bool {
@@ -1265,9 +1248,9 @@ test "an entry another writer holds inside its valid_until answers with no reque
     defer me.deinit(t.allocator);
     const user_url = try sdk.http_cache.canonical(a, try std.fmt.allocPrint(a, "{s}/user", .{base}), &.{});
     try t.expect(client.http_cache.?.load(a, t.io, user_url) == null);
-    try t.expect(!shareable(user_url));
-    try t.expect(!shareable("https://api.bitbucket.org/2.0/repositories/acme?pagelen=100&role=member"));
-    try t.expect(shareable("https://api.bitbucket.org/2.0/repositories/acme/api/pullrequests/7/comments?pagelen=50"));
+    try t.expect(!sdk.http_cache.bitbucketShareable(user_url));
+    try t.expect(!sdk.http_cache.bitbucketShareable("https://api.bitbucket.org/2.0/repositories/acme?pagelen=100&role=member"));
+    try t.expect(sdk.http_cache.bitbucketShareable("https://api.bitbucket.org/2.0/repositories/acme/api/pullrequests/7/comments?pagelen=50"));
 }
 
 test "a 429 on a write pauses the budget and goes back to the pane: a write is never asked twice" {

@@ -25,6 +25,8 @@ the release ships one file), and one line per change a user can see.
   comment, assign, set a fix version or watch a ticket in Jira, that
   item is marked changed, so nothing answers from what it held before.
 - `MNML_HTTP_CACHE=0` turns the cache off for an integration.
+- A URL whose query holds a cut-short UTF-8 character now names the
+  same cache file in mnml as in the other tools that share the cache.
 - Upgrading: the old `cache/bitbucket/etags.json` and
   `cache/jira/dev-status.json` files are no longer read (or deleted).
   The first open after upgrading costs one full request per URL.
