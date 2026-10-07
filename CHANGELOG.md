@@ -67,6 +67,29 @@ the release ships one file), and one line per change a user can see.
   read from GitHub's latest-release redirect and remembered for 12
   hours.
 
+### API traffic — who is spending the budget
+
+- A new pane, **API traffic** (`view.api_traffic`, `space i a` / `ctrl+k
+  i a`, View → API traffic, or the palette; its activity-bar row starts
+  hidden and the bar's own menu adds it), answers who
+  is spending a Jira or Bitbucket budget right now: mnml's panes, the
+  statusline poller, and any loop or script on the machine that draws on
+  the same shared bucket. It reads the files those programs already
+  write and sends nothing.
+- A tab per service. The header gives the window's requests, the share
+  of mnml's requests that came back unchanged (`304`), the 429s and the
+  cache hits. NOW shows the bucket's tokens, rate and cooldown, the
+  last hour against the hourly limit, the broker's queue, the event
+  feed and the shared cache.
+- The timeline shows requests a minute over the last hour, day or week,
+  stacked by program in its own colour, with the hourly limit drawn
+  across. Point at a column to read its minute and who drew in it.
+- WHO lists every program with its requests, share, top reason, worst
+  wait, last seen and pids. Right-click a row to open REQUESTS filtered
+  to it or copy its pid.
+- Settings → Integrations → **API traffic window** picks the window the
+  pane opens on (`integrations.api_traffic_window`).
+
 ## v0.3.5 (2026-10-06)
 
 ### One statusline chip per integration

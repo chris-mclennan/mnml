@@ -64,6 +64,10 @@ there for reviewing and fixing what they wrote.
   `.curl` files in your repository, environments, chains, mocks and
   history, and the same client on the command line.
 
+- **[API traffic](/docs/features/api-traffic)**: who is spending a
+  Jira or Bitbucket budget right now — mnml's panes beside your own loops
+  and scripts — by program and by minute, against the hourly limit.
+
 - **Tests and tasks**: run the whole suite, one file, or the test at the
   cursor with your project's own runner (Cargo, npm, pytest, Go, Zig and
   others), re-run only the failures, and run configured tasks in
