@@ -124,6 +124,8 @@ the release ships one file), and one line per change a user can see.
   `repos`, is ignored instead of fetched with your token; the status
   line says how many were ignored, once per session.
 - `mnml-bitbucket --diag` draws every Auth line as a branch of the tree.
+- Folding out an open pull request's builds says "source commit", not
+  "merge commit".
 
 ## v0.3.5 (2026-10-06)
 

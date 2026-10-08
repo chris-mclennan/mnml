@@ -220,6 +220,11 @@ pub fn patchPr(ts: *TabState, repo: []const u8, pr: model.PullRequest) bool {
     return false;
 }
 
+/// What a pull request's folded-out builds ran on, for the status line.
+pub fn prBuildsCommitWord(on_merge: bool) []const u8 {
+    return if (on_merge) "merge commit" else "source commit";
+}
+
 /// Is pull request `id` of `repo` among this tab's rows?
 pub fn listsPr(ts: *const TabState, repo: []const u8, id: i64) bool {
     switch (ts.data) {
@@ -1837,7 +1842,7 @@ pub const App = struct {
             app.dropPrPipelines(slug, pr.id);
         }
         app.setStatus("fetching builds for PR #{d} on {s}…", .{ pr.id, hash[0..@min(hash.len, 7)] });
-        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = hash, .updated_on = pr.updated_on } });
+        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = hash, .updated_on = pr.updated_on, .on_merge = pr.merge_commit.len > 0 } });
     }
 
     fn dropPrPipelines(app: *App, slug: []const u8, id: i64) void {
@@ -2839,7 +2844,9 @@ pub const App = struct {
                 if (p.error_text.len > 0) {
                     app.say(.err, "PR #{d} {s}", .{ p.id, p.error_text });
                 } else {
-                    app.setStatus("PR #{d}: {d} pipeline(s) on merge commit", .{ p.id, p.pipelines.len });
+                    // The commit it really asked about: a merged PR's
+                    // merge commit, an open one's source head.
+                    app.setStatus("PR #{d}: {d} pipeline(s) on {s}", .{ p.id, p.pipelines.len, prBuildsCommitWord(p.on_merge) });
                 }
             },
             .approve => |ap| {
@@ -4325,3 +4332,20 @@ test "a feed key for another workspace, or a repo outside `repos`, is never fetc
     try t.expect(r.srv.snapshot().served > served);
 }
 
+test "folding out an open PR's builds says source commit; a merged one's says merge commit" {
+    try t.expectEqualStrings("source commit", prBuildsCommitWord(false));
+    try t.expectEqualStrings("merge commit", prBuildsCommitWord(true));
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    // api, then #1234 (OPEN).
+    _ = try r.key("j");
+    _ = try r.key("enter");
+    try t.expect(std.mem.startsWith(u8, r.app.status.items, "PR #1234: "));
+    try t.expect(std.mem.endsWith(u8, r.app.status.items, " on source commit"));
+    try r.app.switchTab(1);
+    try r.drain();
+    _ = try r.key("g");
+    _ = try r.key("j");
+    _ = try r.key("enter");
+    try t.expect(std.mem.endsWith(u8, r.app.status.items, " on merge commit"));
+}

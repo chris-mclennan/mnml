@@ -67,7 +67,7 @@ pub const Job = struct {
         whoami,
         refresh: struct { tab: usize, spec: tabs.TabSpec, scope: ScopeInputs },
         detail: PrKey,
-        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8 = "" },
+        pr_pipelines: struct { tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8 = "", on_merge: bool = false },
         approve: struct { key: PrKey, withdraw: bool },
         /// May this pull request merge? One cached look per open PR,
         /// keyed by its `updated_on`.
@@ -167,6 +167,8 @@ pub const PrPipelinesResult = struct {
     /// the app can key what it stores by it.
     updated_on: []const u8 = "",
     error_text: []const u8 = "",
+    /// `hash` was the merge commit (a merged PR), not the source head.
+    on_merge: bool = false,
 };
 
 pub const ApproveResult = struct { key: PrKey, withdrew: bool, error_text: []const u8 = "" };
@@ -344,7 +346,7 @@ pub const Worker = struct {
             },
             .pr_changed => |c| .{ .pr_changed = try w.prChanged(a, c.tab, c.key) },
             .detail => |k| .{ .detail = try w.detail(a, k) },
-            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash, p.updated_on) },
+            .pr_pipelines => |p| .{ .pr_pipelines = try w.prPipelines(a, p.tab, p.workspace, p.slug, p.id, p.hash, p.updated_on, p.on_merge) },
             .approve => |ap| .{ .approve = try w.approve(a, ap.key, ap.withdraw) },
             .readiness => |r| .{ .readiness = try w.readiness(a, r.tab, r.key, r.updated_on, r.source_commit, r.required, r.known_build) },
             .values => |v| .{ .values = try w.values(a, v.scope, v.stale_after_days, v.excluded_branch_patterns, job.now_secs) },
@@ -830,8 +832,8 @@ pub const Worker = struct {
         return .{ .key = k, .pr = pr, .comments = comments };
     }
 
-    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8) Allocator.Error!PrPipelinesResult {
-        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id, .updated_on = try a.dupe(u8, updated_on) };
+    fn prPipelines(w: *Worker, a: Allocator, tab: usize, workspace: []const u8, slug: []const u8, id: i64, hash: []const u8, updated_on: []const u8, on_merge: bool) Allocator.Error!PrPipelinesResult {
+        const out: PrPipelinesResult = .{ .tab = tab, .slug = try a.dupe(u8, slug), .id = id, .updated_on = try a.dupe(u8, updated_on), .on_merge = on_merge };
         var reply = try w.client.listPipelines(w.gpa, workspace, slug, 60);
         defer reply.deinit(w.gpa);
         switch (reply) {
@@ -1181,7 +1183,7 @@ pub fn makeJobFor(gpa: Allocator, now_secs: i64, kind: Job.Kind, reason: ?api.Re
         .whoami => .whoami,
         .refresh => |r| .{ .refresh = .{ .tab = r.tab, .spec = try dupeSpec(a, r.spec), .scope = try dupeScope(a, r.scope) } },
         .detail => |k| .{ .detail = try dupeKey(a, k) },
-        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash), .updated_on = try a.dupe(u8, p.updated_on) } },
+        .pr_pipelines => |p| .{ .pr_pipelines = .{ .tab = p.tab, .workspace = try a.dupe(u8, p.workspace), .slug = try a.dupe(u8, p.slug), .id = p.id, .hash = try a.dupe(u8, p.hash), .updated_on = try a.dupe(u8, p.updated_on), .on_merge = p.on_merge } },
         .approve => |ap| .{ .approve = .{ .key = try dupeKey(a, ap.key), .withdraw = ap.withdraw } },
         .readiness => |r| .{ .readiness = .{
             .tab = r.tab,
