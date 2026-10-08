@@ -51,6 +51,7 @@ pub const notice_file = "marketplace" ++ std.fs.path.sep_str ++ "update-notice";
 
 pub const table = .{
     .@"integrations.update_from_marketplace" = &updateFromMarketplace,
+    .@"integrations.check_updates_now" = &checkNowCmd,
 };
 
 /// A newer version of an installed integration, and the Marketplace row
@@ -127,6 +128,7 @@ pub fn allowed(app: *const App) bool {
     if (!app.cfg.marketplace.enabled or !app.cfg.ui.check_updates) return false;
     if (app.cfg.ui.dashboard_refresh == .manual) return false;
     if (app.env.get("MNML_NO_UPDATE_CHECK")) |v| if (std.mem.eql(u8, v, "1")) return false;
+    if (app.offline() != .online) return false;
     return true;
 }
 
@@ -140,6 +142,62 @@ fn check(app: *App, now: i64) void {
     if (marketplace.sourceCount(app) == 0) return;
     marketplace.refresh(app) catch return;
     if (app.marketplace.fetching) app.marketplace.quiet = true;
+}
+
+// ─── checking now ───────────────────────────────────────────────────────
+
+/// `integrations.check_updates_now`: the quiet check's fetch, now, by
+/// hand — and when the listing lands, one toast that says what it found
+/// (`reportText`). The 6-hour clock starts again from here.
+fn checkNowCmd(app: *App) CommandError!void {
+    const off = app.offline();
+    if (off != .online) {
+        app.toast("integrations: {s} \u{2014} the update check does not reach the network", .{off.label()});
+        return;
+    }
+    if (!app.cfg.marketplace.enabled)
+        return app.diag.fail(app.frame.allocator(), "integrations: the Marketplace is off (marketplace.enabled), so there is nothing to check against", .{});
+    if (marketplace.sourceCount(app) == 0)
+        return app.diag.fail(app.frame.allocator(), "integrations: no Marketplace sources to check against (marketplace.sources)", .{});
+    try marketplace.refresh(app);
+    app.marketplace.report_check = true;
+    app.marketplace.checked_at_ms = App.nowMs(app.io);
+    app.toast("integrations: checking the Marketplace for updates\u{2026}", .{});
+}
+
+/// After a check somebody asked for: `3 integrations checked · 1 update:
+/// Jira 0.2.3 → 0.2.4` — counted by binary, so Jira's three chips are
+/// one integration — or `· all up to date`.
+pub fn reportText(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    var seen: std.ArrayListUnmanaged([]const u8) = .empty;
+    var updates: std.ArrayListUnmanaged(u8) = .empty;
+    var n_updates: usize = 0;
+    const arrow = if (app.cfg.ui.ascii_icons) "->" else "\u{2192}";
+    for (app.integrations.list) |*inst| {
+        if (inst.manifest.isLauncher() or inst.manifest.binary.len == 0) continue;
+        const name = integrations.programName(try integrations.expandEnv(app, arena, inst.manifest.binary));
+        const dup = for (seen.items) |o| {
+            if (std.mem.eql(u8, o, name)) break true;
+        } else false;
+        if (dup) continue;
+        try seen.append(arena, name);
+        const h = (try hintFor(app, arena, inst)) orelse continue;
+        const e = app.marketplace.entries[h.entry];
+        try updates.appendSlice(arena, if (n_updates == 0) ": " else ", ");
+        try updates.print(arena, "{s} {s} {s} {s}", .{ if (e.label.len > 0) e.label else e.id, inst.manifest.version, arrow, h.version });
+        n_updates += 1;
+    }
+    const n = seen.items.len;
+    const head = try std.fmt.allocPrint(arena, "{d} integration{s} checked \u{00b7} ", .{ n, if (n == 1) "" else "s" });
+    if (n_updates == 0) return std.fmt.allocPrint(arena, "{s}all up to date", .{head});
+    return std.fmt.allocPrint(arena, "{s}{d} update{s}{s}", .{ head, n_updates, if (n_updates == 1) "" else "s", updates.items });
+}
+
+/// The listing a check somebody asked for has landed: say what it found.
+pub fn reportCheck(app: *App) Allocator.Error!void {
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    app.toast("{s}", .{try reportText(app, arena_state.allocator())});
 }
 
 // ─── the startup note ───────────────────────────────────────────────────
@@ -196,10 +254,16 @@ pub fn noteText(arena: Allocator, list: []const Behind, ascii: bool) Allocator.E
 /// The Installed row's *Update to <version>*: queue the Marketplace
 /// row's install — the same one its Install runs.
 fn updateFromMarketplace(app: *App) CommandError!void {
-    const st = &app.integrations;
     const arena = app.frame.allocator();
     const i = (try integrations.focusedRow(app)) orelse
         return app.diag.fail(arena, "integrations: pick an installed integration first", .{});
+    return updateAt(app, i);
+}
+
+/// *Update to* for installed row `i` (an index into the list).
+pub fn updateAt(app: *App, i: usize) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
     if (i >= st.list.len) return;
     const inst = &st.list[i];
     const hint = (try hintFor(app, arena, inst)) orelse
@@ -461,4 +525,100 @@ test "the quiet check runs only where it may: the terminal loop's mnml, not unde
     try testing.expectEqual(@as(?i64, 1000), app.marketplace.checked_at_ms);
     tick(&app, 1000 + check_interval_ms);
     try testing.expectEqual(@as(?i64, 1000 + check_interval_ms), app.marketplace.checked_at_ms);
+}
+
+test "integrations.check_updates_now runs the check and, when the listing lands, says what it found: counted by binary, one update named with both versions — or all up to date" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    app.marketplace.entries = &index_rows;
+    const a = app.frame.allocator();
+    // Jira's two chips are one binary: three integrations, Jira behind.
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} 1 update: Jira 0.2.3 \u{2192} 0.2.4", try reportText(&app, a));
+    var rows = index_rows;
+    rows[0].version = "0.2.3";
+    app.marketplace.entries = &rows;
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} all up to date", try reportText(&app, a));
+    rows[0].version = "0.2.4";
+    rows[1].version = "0.2.5";
+    app.cfg.ui.ascii_icons = true;
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} 2 updates: Bitbucket 0.2.4 -> 0.2.5, Jira 0.2.3 -> 0.2.4", try reportText(&app, a));
+}
+
+test "integrations.check_updates_now under the offline switch says so and fetches nothing" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    try app.env.put("MNML_OFFLINE", "1");
+    app.marketplace.live = true;
+    try testing.expect(!allowed(&app));
+    try command.run(&app, .{ .static = .@"integrations.check_updates_now" });
+    try testing.expect(!app.marketplace.fetching);
+    try testing.expect(!app.marketplace.report_check);
+    try testing.expectEqualStrings("integrations: offline (MNML_OFFLINE=1) \u{2014} the update check does not reach the network", app.lastToast().?);
+}
+
+test "the Details pane of an integration behind the Marketplace says both versions and offers Update to; Relink is called Relink; `i` on the row updates; the Marketplace row's menu reads the binary, not the slug" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    try app.resize(200, 30);
+    app.marketplace.entries = &index_rows;
+    // An install is running, so an update queues rather than downloads.
+    app.marketplace.installing = try testing.allocator.dupe(u8, "busy");
+    try integrations.openDetail(&app, .{ .installed = "jira_work" });
+    {
+        const text = try screenText(&app);
+        defer testing.allocator.free(text);
+        try testing.expect(std.mem.indexOf(u8, text, "installed 0.2.3 \u{00b7} 0.2.4 available") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Update to 0.2.4 ]") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Relink the binary ]") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Update ]") == null);
+    }
+    // The tab wears the name, not the id.
+    try testing.expectEqualStrings("Jira Work", app.panes.get(app.panes.findKind(.integrations).?).?.title());
+    // Current with the Marketplace: Relink only.
+    try integrations.openDetail(&app, .{ .installed = "bitbucket_prs" });
+    {
+        const text = try screenText(&app);
+        defer testing.allocator.free(text);
+        try testing.expect(std.mem.indexOf(u8, text, "available") == null);
+        try testing.expect(std.mem.indexOf(u8, text, "Update to") == null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Relink the binary ]") != null);
+    }
+    // `i` on the behind row is its Update to: the Marketplace row queues.
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    const jira = try rowOf(&app, "Jira Work");
+    try integrations.rowMouse(&app, jira, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    closeMenu(&app);
+    try testing.expect(try integrations.handleKey(&app, .{ .code = .{ .char = 'i' } }));
+    try testing.expectEqual(@as(usize, 1), app.marketplace.queue.items.len);
+    try testing.expectEqualStrings("jira", app.marketplace.queue.items[0]);
+    // The Marketplace's Jira row is installed by its binary (jira_work,
+    // jira_boards), not by the slug `jira`: its menu offers the update.
+    try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    app.marketplace.entries = &index_rows;
+    try integrations.rowMouse(&app, try mktRow(&app, "jira"), .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Update to 0.2.4", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+    // Bitbucket's row: installed and current — Reinstall, not Install.
+    try integrations.rowMouse(&app, try mktRow(&app, "bitbucket"), .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    try testing.expectEqualStrings("Reinstall", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+}
+
+/// The Marketplace tab's visible index of the row for entry `id`.
+fn mktRow(app: *App, id: []const u8) !u32 {
+    var v: usize = 0;
+    while (try integrations.entryAt(app, v)) |e| : (v += 1) {
+        if (e < app.marketplace.entries.len and std.mem.eql(u8, app.marketplace.entries[e].id, id)) return @intCast(v);
+    }
+    return error.TestUnexpectedResult;
 }

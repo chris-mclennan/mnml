@@ -1,0 +1,17 @@
+# env: MNML_OFFLINE=1
+# env: MNML_MARKETPLACE_CATALOGUE=cat/marketplace.zon
+# Offline, the Marketplace is what is bundled: the catalogue's rows list
+# and Install links the binary that is already on this machine and runs
+# its `--install` — no download (nothing under
+# `<data root>/integrations/<id>/bin`, where a release download lands).
+# What `--demo` offers: its bundled Jira and Bitbucket, from the bundle.
+write cat/marketplace.zon ".{ .entries = .{ .{ .id = \"sample\", .label = \"Sample\", .description = \"The mnml-sdk sample: a live counter\", .category = \"sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\" } } }"
+command integrations.show_marketplace
+expect within 5000 screen contains "Mkt (1)"
+drag 30 5 70 5
+expect screen contains "Sample"
+key i
+expect within 15000 screen contains "installed sample"
+shell test -e "$MNML_DATA_ROOT/bin/$(basename "$MNML_SAMPLE_INTEGRATION")" && test ! -e "$MNML_DATA_ROOT/integrations/sample/bin"
+command integrations.show_installed
+expect screen contains "Sample  0.1.0"

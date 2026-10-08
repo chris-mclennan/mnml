@@ -49,6 +49,43 @@ the release ships one file), and one line per change a user can see.
   `account_id` in `config.zon`, which the `mine` / `reviewing` tabs
   need.
 
+### Integrations: offline means offline, and the chips say what they did
+
+- `--demo` (and `MNML_OFFLINE=1`) now sends nothing off this machine:
+  the Marketplace lists and installs only the integrations that came
+  with mnml, the update checks say "offline" instead of asking GitHub,
+  and any other request to a host that is not this machine is refused
+  with a clear message. mnml never read the proxy variables, so a proxy
+  that refuses never covered it; this switch does.
+- A statusline poll that stepped aside to save the shared API budget
+  says "skipped — under budget, next in 5m" in the Jobs list instead of
+  "published", and a chip that has no figure yet shows `—` rather than
+  `…` for minutes. The budget is now read the way every program sharing
+  it reads it, so a config asking for a bigger bucket than the shared
+  one no longer makes every poll step aside, and a chip's hover no
+  longer says "cut from" when nothing was ever throttled.
+- An integration chip's hover keeps its lines: the summary, each count
+  and the budget each on their own line in the info box, with a gap
+  where the integration left one, instead of one run-on sentence.
+- "Integrations: check the Marketplace for updates now" runs the update
+  check right away and says what it found ("3 integrations checked ·
+  1 update: Jira 0.2.3 → 0.2.4"); it used to say updates did not exist.
+- An installed integration's Details pane says "installed 0.2.3 · 0.2.4
+  available" and offers *Update to 0.2.4* when the Marketplace has a
+  newer one; the button that only relinks is called *Relink the binary*,
+  in the pane and in the palette. `i` on an out-of-date Installed row
+  updates it. The Marketplace's Jira and Bitbucket rows offer
+  *Reinstall* or *Update to* once installed, not *Install*, and a
+  Details tab is titled by name, not by id.
+- Toasts about integrations speak in names: "Jira Work chip hidden — the
+  statusline's Segments menu brings it back", "Relinked Jira Work 0.2.4
+  — mnml-jira → zig-out/bin/mnml-jira", "API traffic: shown on the
+  activity bar", and a failed poll's chip names the integration
+  ("✗ jira_work: exit 1"). An installed integration's chip menu no
+  longer offers *Pin to dock*: it is on the dock already.
+- In a narrow INTEGRATIONS column a row's version, badge and source are
+  shown whole or left off, never cut to `first-part` or a lone `✓`.
+
 ### Installed integrations say when they are out of date
 
 - The Integrations section's Installed tab shows when a newer version

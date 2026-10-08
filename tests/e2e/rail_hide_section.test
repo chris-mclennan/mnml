@@ -41,7 +41,7 @@ key down
 key right
 expect screen contains "TODOs"
 key enter
-expect screen contains "TODOs: back on the activity bar"
+expect screen contains "TODOs: shown on the activity bar"
 rightclick 1 18
 expect screen contains "Show TODOs"
 key esc

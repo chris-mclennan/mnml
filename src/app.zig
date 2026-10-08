@@ -122,6 +122,7 @@ const marketplace = @import("app/marketplace.zig");
 const font_scan = @import("app/font_scan.zig");
 const glyph_audit = @import("app/glyph_audit.zig");
 const http_parse = @import("http/parse.zig");
+const http_offline = @import("http/offline.zig");
 const scripting = @import("scripting/lua.zig");
 const script_api = @import("scripting/api.zig");
 const cmd_script = @import("app/cmd_script.zig");
@@ -2256,6 +2257,17 @@ pub const App = struct {
         return Io.Timestamp.now(io, .awake).toMilliseconds();
     }
 
+    /// The offline switch as this App sees it (`http/offline.zig`): the
+    /// process's (`--demo`, `MNML_OFFLINE=1` at launch), else this App's
+    /// own environment — a `.test` file's `# env: MNML_OFFLINE=1`. mnml's
+    /// own fetches (the Marketplace, the update checks) ask it before
+    /// they start; `.online` means they may.
+    pub fn offline(self: *const App) http_offline.Reason {
+        const r = http_offline.reason();
+        if (r != .online) return r;
+        return http_offline.fromEnv(&self.env);
+    }
+
     // ─── toasts ───
 
     fn freeToast(gpa: Allocator, t: Toast) void {
@@ -3957,6 +3969,7 @@ test {
     _ = @import("http/parse.zig");
     _ = @import("http/env.zig");
     _ = @import("http/client.zig");
+    _ = @import("http/offline.zig");
     _ = @import("http/mock.zig");
     _ = @import("http/history.zig");
     _ = @import("http/cookies.zig");

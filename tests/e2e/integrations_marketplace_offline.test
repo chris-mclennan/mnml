@@ -1,0 +1,26 @@
+# env: MNML_OFFLINE=1
+# env: MNML_MARKETPLACE_INDEX=http://127.0.0.1:${SERVE_PORT}/integrations.json
+# The offline switch (`--demo`, MNML_OFFLINE=1; src/http/offline.zig):
+# the Marketplace fetches nothing. A release index — even one a server
+# here would answer — is a problem line, not a request, so its row never
+# lists; Install has nothing to download; and both update checks say
+# "offline" instead of asking anyone. The server answers with the index
+# the release-index test installs from: were it asked, `[app] Sample`
+# and its description would be on screen.
+shell mkdir -p pkg/mnml-sample-any && cp "$MNML_SAMPLE_INTEGRATION" pkg/mnml-sample-any/ && (cd pkg && tar -cf - mnml-sample-any | xz -1 > ../mnml-sample.tar.xz)
+shell sum=$( (sha256sum mnml-sample.tar.xz 2>/dev/null || shasum -a 256 mnml-sample.tar.xz) | cut -d' ' -f1 ) && sdk=$(sed -n 's/^ *\.version = "\([^"]*\)".*/\1/p' "$MNML_REPO/sdk/mnml-sdk/build.zig.zon" | head -1) && a='' && for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu; do a="$a${a:+,}{\"target\":\"$t\",\"name\":\"mnml-sample-$t.tar.xz\",\"url\":\"http://127.0.0.1:${SERVE_PORT}/mnml-sample.tar.xz\",\"sha256\":\"$sum\"}"; done && printf '{"schema":1,"mnml":"0.0.0","sdk":"%s","integrations":[{"id":"sample","label":"Sample","description":"The sample, from a release index","version":"0.1.0","sdk":"%s","binary":"mnml-sample","tag":"sample-v0.1.0","assets":[%s]}]}' "$sdk" "$sdk" "$a" > integrations.json
+serve 0 200 @file integrations.json
+command integrations.show_marketplace
+expect within 5000 screen contains "offline (MNML_OFFLINE=1)"
+expect screen contains "not fetched"
+wait 500
+expect screen lacks "The sample, from a release index"
+expect screen lacks "[app] Sample"
+# Nothing was downloaded or linked.
+shell test ! -e "$MNML_DATA_ROOT/integrations/sample" && test ! -e "$MNML_DATA_ROOT/bin/mnml-sample"
+# The integrations' update check, by hand: it says why it does not run.
+command integrations.check_updates_now
+expect screen contains "the update check does not reach the network"
+# mnml's own: GitHub is not asked.
+command app.check_updates
+expect screen contains "update check: offline (MNML_OFFLINE=1)"

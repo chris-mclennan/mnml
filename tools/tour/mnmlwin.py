@@ -73,7 +73,13 @@ def base_env(home, tmp):
         # statusline (`app/coverage.zig`).
         "MNML_ARTIFACTS_HOME": home,
         "MNML_SESSIONS_HOME": home,
-        # A proxy that refuses, for anything that would reach the network.
+        # mnml's own requests: the offline switch (`src/http/offline.zig`)
+        # refuses every send off this machine — the Marketplace lists only
+        # its bundled catalogue, the update checks are not asked. mnml
+        # reads no proxy variables, so the proxy below does not cover it.
+        "MNML_OFFLINE": "1",
+        # A proxy that refuses, for the children that honour one (curl,
+        # git, an integration's own client).
         "HTTPS_PROXY": "http://127.0.0.1:9",
         "HTTP_PROXY": "http://127.0.0.1:9",
         "ALL_PROXY": "http://127.0.0.1:9",

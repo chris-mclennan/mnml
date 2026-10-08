@@ -934,7 +934,7 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.dev_install", .title = "Integrations: install the focused Dev folder (build if needed, then --install)", .group = "integrations" },
     .{ .id = "integrations.dev_rebuild", .title = "Integrations: rebuild + reinstall the focused Dev folder", .group = "integrations" },
     .{ .id = "marketplace.refresh", .title = "Marketplace: refresh (fetch published apps + community launchers)", .group = "integrations" },
-    .{ .id = "integrations.check_updates_now", .title = "Integrations: check for updates now (bypass 6h auto-tick)", .group = "integrations" },
+    .{ .id = "integrations.check_updates_now", .title = "Integrations: check the Marketplace for updates now", .group = "integrations" },
     .{ .id = "integrations.fire_auto_updates_now", .title = "Integrations: fire auto-updates now (opt-in per config)", .group = "integrations" },
     .{ .id = "marketplace.open_detail_focused", .title = "Marketplace: open details for right-clicked entry", .group = "integrations" },
     .{ .id = "marketplace.install_focused", .title = "Marketplace: install right-clicked entry", .group = "integrations" },
@@ -942,14 +942,14 @@ pub const specs = [_]Spec{
     // Zig-only (add-source): the one prompt behind the `+ source` chip,
     // the Marketplace tab's menu and the first-launch wizard's row.
     .{ .id = "marketplace.add_source", .title = "Marketplace: add a private source (a folder or owner/repo)", .group = "integrations" },
-    .{ .id = "integrations.update", .title = "Integrations: update — relink <data root>/bin at the binary's current home", .group = "integrations" },
+    .{ .id = "integrations.update", .title = "Integrations: relink the binary — <data root>/bin at its current home", .group = "integrations" },
     // Zig-only (sdk-currency): an integration built from a folder on this
     // machine, rebuilt against the SDK this mnml carries.
     .{ .id = "integrations.rebuild_stale", .title = "Integrations: rebuild every local integration built on an older SDK", .group = "integrations" },
     .{ .id = "integrations.rebuild_focused", .title = "Integrations: rebuild the focused integration from its folder", .group = "integrations" },
     // Zig-only (installed-update-hint): the Installed row's *Update to
     // <version>* — the Marketplace row's own install.
-    .{ .id = "integrations.update_from_marketplace", .title = "Integrations: update the focused integration to the Marketplace's newer version", .group = "integrations" },
+    .{ .id = "integrations.update_from_marketplace", .title = "Integrations: update to the newest release — the Marketplace's newer version", .group = "integrations" },
     .{ .id = "coverage.chip_show_both", .title = "Coverage chip: show Feature + Code", .group = "view" },
     .{ .id = "coverage.chip_show_feature", .title = "Coverage chip: show Feature only", .group = "view" },
     .{ .id = "coverage.chip_show_code", .title = "Coverage chip: show Code (Istanbul) only", .group = "view" },

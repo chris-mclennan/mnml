@@ -92,7 +92,6 @@ pub const table = .{
     .@"integrations.glyph_builder" = cutRunner(cut_glyph_svg),
     .@"integrations.patch_nerd_font_svg" = cutRunner(cut_glyph_svg),
     .@"integrations.edit_codex_glyph" = cutRunner(cut_glyph_svg),
-    .@"integrations.check_updates_now" = cutRunner(cut_integration_updates),
     .@"integrations.fire_auto_updates_now" = cutRunner(cut_integration_updates),
     .@"audio.airplay_music" = cutRunner(cut_audio),
     .@"audio.restore_output" = cutRunner(cut_audio),
@@ -124,7 +123,7 @@ pub const table = .{
 const cut_forge = "the cross-host PR picker returns with the Zig forge integrations (docs/PARITY.md § Git)";
 const cut_glyph_svg = "the per-integration glyph builder and its SVG preview are cut — SVG-to-font itself is not: `view.terminal_glyph_custom` bakes one (docs/PARITY.md § Headless, IPC & extensibility)";
 const cut_audio = "now-playing, Sonos and mixr control are cut from mnml 0.3 (docs/PARITY.md § UI & theming)";
-const cut_integration_updates = "the cargo / git integration auto-updater is not in mnml 0.3 — Zig integrations reinstall with `<integration> --install`; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
+const cut_integration_updates = "automatic installs of updates — the 6-hour check marks what is behind on the Installed tab (`integrations.check_updates_now` checks now) and the row's *Update to* installs it; `integrations.auto_update_*` keys are accepted and ignored (docs/PARITY.md § Headless, IPC & extensibility)";
 
 /// A command that was cut on purpose: the reason, and where the ledger
 /// records it, as one toast. Fails so a keybinding does not look like it
@@ -1102,12 +1101,11 @@ test "keys.doctor opens the wizard on its Keyboard section" {
     try t.expect(app.focus == .overlay);
 }
 
-test "the Codex glyph editor and the integration auto-updater are cut: each fails with the ledger toast" {
+test "the Codex glyph editor and installing updates on their own are cut: each fails with the ledger toast, which points at the check that is not cut" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();
     const ids = [_]command.CommandId{
         .@"integrations.edit_codex_glyph",
-        .@"integrations.check_updates_now",
         .@"integrations.fire_auto_updates_now",
     };
     for (ids) |id| {
@@ -1116,6 +1114,7 @@ test "the Codex glyph editor and the integration auto-updater are cut: each fail
         try t.expect(std.mem.indexOf(u8, app.lastToast().?, "docs/PARITY.md") != null);
     }
     try t.expect(std.mem.indexOf(u8, app.lastToast().?, "auto_update_*") != null);
+    try t.expect(std.mem.indexOf(u8, app.lastToast().?, "integrations.check_updates_now") != null);
 }
 
 test "small commands: recent jumps, scratch from the register, fold navigation, gf, char info, the registers picker, tools on PATH" {

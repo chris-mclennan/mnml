@@ -887,8 +887,24 @@ pub fn toggleHidden(app: *App, key: []const u8) Allocator.Error!void {
     if (!hid) try app.statusline_hidden.append(gpa, try gpa.dupe(u8, key));
     const settings = @import("settings.zig");
     _ = try settings.persist(app, .home, &.{ "statusline", "hidden" }, @as([]const []const u8, app.statusline_hidden.items));
-    app.toast("statusline: {s} {s} (statusline.hidden)", .{ key, if (hid) "shown again" else "hidden" });
+    const name = chipName(app, key);
+    if (hid)
+        app.toast("{s} chip shown", .{name})
+    else
+        app.toast("{s} chip hidden \u{2014} the statusline's Segments menu brings it back", .{name});
     app.needs_render = true;
+}
+
+/// What a toast calls the chip `key` names: a built-in's label
+/// (`Branch`), an integration's own label (`Jira Work`) for one of its
+/// chips, else the key as the file holds it.
+pub fn chipName(app: *const App, key: []const u8) []const u8 {
+    for (named) |n| if (std.mem.eql(u8, n.key, key)) return n.label;
+    const dot = std.mem.indexOfScalar(u8, key, '.') orelse return key;
+    for (app.integrations.list) |*inst| {
+        if (std.mem.eql(u8, inst.id(), key[0..dot]) and inst.manifest.label.len > 0) return inst.manifest.label;
+    }
+    return key;
 }
 
 // ─── ordering segments ───────────────────────────────────────────────────
@@ -2603,6 +2619,9 @@ test "statusline.hidden: the bar's Segments menu ticks what is shown; a toggle t
     try b.app.handle(.{ .key = app_mod.Key.named(.esc) });
 
     try toggleHidden(&b.app, "clock");
+    // The toast names the chip in words and the way back — not the key
+    // and the config path (hunt6).
+    try testing.expectEqualStrings("Clock chip hidden \u{2014} the statusline's Segments menu brings it back", b.app.lastToast().?);
     _ = try b.row(y);
     try testing.expect(b.colOf(y, SegId.clock.raw()) == null);
     const cfg_text = try std.Io.Dir.cwd().readFileAlloc(testing.io, try std.fs.path.join(b.app.frame.allocator(), &.{ b.root, "config.zon" }), testing.allocator, .unlimited);

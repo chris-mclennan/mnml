@@ -488,10 +488,16 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
         ms.dim = true;
         x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt(" ({s} not installed)", .{bin}), right -| x), ms);
     }
+    // After the label, each extra — the version, the badge, the source —
+    // is painted whole or not at all, and once one does not fit nothing
+    // after it is tried: `first-part` or a lone `✓` cut at the column's
+    // edge read as words that are not there (hunt6). The label itself
+    // carries the ellipsis (`clipStr` above).
+    var whole: Whole = .{ .ui = ui, .y = r1.y, .right = right, .x = &x };
     if (e.update.len > 0)
         x += paintUpdate(ui, x, r1.y, right, e.version, e.update, style)
     else if (e.version.len > 0)
-        x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{e.version}), Theme.withFg(style, t.muted.fg));
+        whole.put(ui.fmt("  {s}", .{e.version}), Theme.withFg(style, t.muted.fg));
     if (e.badge) |b| {
         const fg: Color = switch (b) {
             .official, .installed_here => t.palette.green,
@@ -500,7 +506,7 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
             .dev => t.palette.orange,
             .first_party => t.palette.teal,
         };
-        x += ui.putStr(x, r1.y, right -| x, ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
+        whole.put(ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
     }
     if (e.state) |st| {
         const fg: Color = switch (st) {
@@ -508,12 +514,12 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
             .update => t.palette.yellow,
             .not_installed => t.muted.fg,
         };
-        x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt("  {s}", .{st.text()}), right -| x), Theme.withFg(style, fg));
+        whole.put(ui.fmt("  {s}", .{st.text()}), Theme.withFg(style, fg));
     }
     if (e.source.len > 0) {
         var ss = Theme.withFg(style, t.muted.fg);
         ss.dim = true;
-        x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt("  ({s})", .{e.source}), right -| x), ss);
+        whole.put(ui.fmt("  ({s})", .{e.source}), ss);
     }
     if (e.installing) {
         const note: []const u8 = if (ui.ascii) "installing..." else "installing…";
@@ -533,6 +539,25 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
 /// then the current version (`  ↑0.2.4`): the newer number is the one
 /// thing the row must not lose, and the shipped 26-cell column, a chip
 /// glyph and a two-word label leave it about ten cells.
+/// A row's trailing extras, left to right: each painted whole when it
+/// fits before `right`, else it and everything after it are dropped.
+const Whole = struct {
+    ui: Ui,
+    y: u16,
+    right: u16,
+    x: *u16,
+    full: bool = false,
+
+    fn put(w: *Whole, text: []const u8, style: Style) void {
+        if (w.full) return;
+        if (w.ui.width(text) > w.right -| w.x.*) {
+            w.full = true;
+            return;
+        }
+        w.x.* += w.ui.putStr(w.x.*, w.y, w.right -| w.x.*, text, style);
+    }
+};
+
 fn paintUpdate(ui: Ui, x0: u16, y: u16, right: u16, current: []const u8, newer: []const u8, style: Style) u16 {
     const t = ui.theme;
     const muted = Theme.withFg(style, t.muted.fg);
@@ -858,6 +883,33 @@ test "a mnml-catalogue row paints its version, badge and install state — insta
     defer g.deinit();
     _ = drawSection(g.ui(), g.full(), sectionProps(&plain, &scroll, .marketplace));
     try g.expectContains("[launcher] btop  \u{2713} Official  (acme)");
+}
+
+test "a narrow row drops the extras that do not fit whole — never `first-part` or a lone ✓ at the edge — and the label carries the ellipsis" {
+    var scroll: usize = 0;
+    // The Marketplace at 36 cells: the badge does not fit after the version.
+    var f = try Fixture.init(36, 8);
+    defer f.deinit();
+    const mkt = [_]Entry{
+        .{ .kind = .app, .label = "Jira", .version = "0.2.5", .badge = .official, .source = "mnml", .line2 = "Jira", .dim = true },
+        .{ .kind = .app, .label = "Bitbucket", .version = "0.2.4", .badge = .official, .source = "mnml", .line2 = "PRs" },
+    };
+    _ = drawSection(f.ui(), f.full(), sectionProps(&mkt, &scroll, .marketplace));
+    try f.expectContains("[installed] Jira  0.2.5");
+    try f.expectLacks("Offi");
+    try f.expectLacks("0.2.4  \u{2713}");
+    // The Installed tab narrower than `Browser  first-party`: the badge
+    // goes whole, where it used to read `first-par`.
+    var g = try Fixture.init(20, 10);
+    defer g.deinit();
+    const inst = [_]Entry{
+        .{ .kind = .installed, .label = "Browser", .badge = .first_party, .line2 = "browser" },
+        .{ .kind = .installed, .label = "A label far too long for the column", .line2 = "x" },
+    };
+    _ = drawSection(g.ui(), g.full(), sectionProps(&inst, &scroll, .installed));
+    try g.expectLacks("first");
+    try g.expectContains("Browser");
+    try g.expectContains("A label far too l\u{2026}");
 }
 
 test "an Installed row behind the Marketplace: ` → 0.2.4 available` after its version, the arrow and number in the attention colour; a short row keeps the number; the label counts updates at every tier" {

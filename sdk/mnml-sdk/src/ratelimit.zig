@@ -398,10 +398,18 @@ pub const Status = struct {
     /// The wording is here rather than in each integration so two
     /// chips drawing on two buckets read the same way. Written into
     /// `buf`.
+    /// The bucket has met a 429: a throttle is counted, or one is dated.
+    pub fn penalized(st: Status) bool {
+        return st.throttles > 0 or st.last_429_age_secs != null;
+    }
+
     pub fn describe(st: Status, buf: []u8) []const u8 {
         var w: std.Io.Writer = .fixed(buf);
         w.print("budget: {d:.1} of {d:.0} tokens · {d:.2}/s", .{ st.tokens, st.capacity, st.rate }) catch return buf[0..w.end];
-        if (st.rate < st.baseline_rate - 0.001) w.print(" (cut from {d:.2})", .{st.baseline_rate}) catch {};
+        // "cut from" means a 429 cut it: a rate merely below this
+        // process's baseline — another writer's lower preset, a config
+        // that asks for less — is not a throttle and says nothing.
+        if (st.penalized() and st.rate < st.baseline_rate - 0.001) w.print(" (cut from {d:.2})", .{st.baseline_rate}) catch {};
         if (st.throttles > 0) w.print(" · {d} throttle{s}", .{ st.throttles, if (st.throttles == 1) "" else "s" }) catch {};
         if (st.last_429_age_secs) |age| {
             var abuf: [24]u8 = undefined;
@@ -798,7 +806,26 @@ pub const Limiter = struct {
         }{ .cfg = self.cfg, .cd = if (retry_after_secs) |s| (if (s > 0) s else self.cfg.default_cooldown_secs) else self.cfg.default_cooldown_secs }) catch {};
     }
 
-    /// A snapshot for `--diag`; null when the file cannot be read.
+    /// The bucket as the FILE stands for it, which every process
+    /// sharing it reads alike: the file carries tokens and a rate but no
+    /// burst, and the burst it stands for is the service's preset
+    /// (`configFor` — what `budget.Bucket` reads a legacy file with).
+    /// This process's config can only ask for less: a `.rate` block of
+    /// `1000 / 1000` (the demo's, the corpus's) does not make a bucket
+    /// that another writer keeps at the preset's 40 a bucket of 1000 —
+    /// read that way, 40 tokens were 4 % of it and every poll gave way.
+    /// Without a service name (never `identify`d) the config is all
+    /// there is.
+    pub fn sharedView(self: *const Limiter) struct { capacity: f64, rate: f64 } {
+        if (self.service.len == 0) return .{ .capacity = self.cfg.capacity, .rate = self.cfg.rate };
+        const preset = configFor(self.service);
+        return .{ .capacity = @min(self.cfg.capacity, preset.capacity), .rate = @min(self.cfg.rate, preset.rate) };
+    }
+
+    /// A snapshot for `--diag`, a chip's hover and the warmers' budget
+    /// test; null when the file cannot be read. Capacity and baseline are
+    /// the file's (`sharedView`), tokens and rate the file's own, so the
+    /// four agree whoever else is drawing.
     pub fn status(self: *Limiter) ?Status {
         const now = nowSecs(self.io);
         var snap: State = .{};
@@ -809,11 +836,12 @@ pub const Limiter = struct {
                 return 0.0;
             }
         }{ .out = &snap }) catch return null;
+        const view = self.sharedView();
         return .{
-            .tokens = snap.tokens,
-            .capacity = self.cfg.capacity,
+            .tokens = @min(snap.tokens, view.capacity),
+            .capacity = view.capacity,
             .rate = snap.rate,
-            .baseline_rate = self.cfg.rate,
+            .baseline_rate = view.rate,
             .throttles = snap.throttles,
             .cooldown_remaining_secs = @max(snap.cooldown_until - now, 0.0),
             .last_429_age_secs = if (snap.last_429 > 0) @max(now - snap.last_429, 0.0) else null,
@@ -1444,6 +1472,53 @@ test "the status a live bucket reports carries the age of its last 429" {
     try t.expect(after.last_429_age_secs.? < 5.0);
     try t.expectEqual(@as(u32, 1), after.throttles);
     try t.expect(std.mem.indexOf(u8, after.describe(&buf), "last 429") != null);
+}
+
+test "a config that asks for more than the shared file stands for reads the file's bucket: 40 of 40, not 40 of 1000 — and nothing says `cut from` without a 429" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    const path = try std.fs.path.join(t.allocator, &.{ dir, "bitbucket-ratelimit.json" });
+    defer t.allocator.free(path);
+    // Another writer keeps the file at Bitbucket's preset: 40 tokens, 1.2/s.
+    {
+        var preset = try Limiter.init(t.allocator, t.io, path, .bitbucket);
+        defer preset.deinit();
+        try preset.identify("bitbucket", "other", 1);
+        preset.draws = false;
+        try t.expect(preset.acquire());
+    }
+    // This one's config says 1000 / 1000 (the demo's `.rate` block).
+    var cfg = Config.bitbucket;
+    cfg.rate = 1000;
+    cfg.capacity = 1000;
+    var mine = try Limiter.init(t.allocator, t.io, path, cfg);
+    defer mine.deinit();
+    mine.draws = false;
+    // Unnamed, the config is all there is.
+    try t.expectApproxEqAbs(@as(f64, 1000), mine.status().?.capacity, 1e-9);
+    try mine.identify("bitbucket", "mnml-bitbucket", 2);
+    const st = mine.status().?;
+    try t.expectApproxEqAbs(@as(f64, 40), st.capacity, 1e-9);
+    try t.expectApproxEqAbs(@as(f64, 1.2), st.baseline_rate, 1e-9);
+    try t.expect(st.tokens <= st.capacity);
+    try t.expect(st.tokens / st.capacity > 0.9);
+    // So a `--values` poll does not give way to a full bucket.
+    try t.expect(!@import("warm.zig").underBudget(st));
+    var buf: [160]u8 = undefined;
+    const line = st.describe(&buf);
+    try t.expect(std.mem.indexOf(u8, line, "of 40 tokens") != null);
+    try t.expect(std.mem.indexOf(u8, line, "cut from") == null);
+    // A config that asks for LESS is its own: 10 of burst reads 10.
+    var low = Config.bitbucket;
+    low.capacity = 10;
+    low.rate = 0.5;
+    mine.cfg = low;
+    try t.expectApproxEqAbs(@as(f64, 10), mine.status().?.capacity, 1e-9);
+    // A rate below the baseline with no 429 is not a cut.
+    try t.expect(std.mem.indexOf(u8, (Status{ .tokens = 59, .capacity = 60, .rate = 0.33, .baseline_rate = 1000, .throttles = 0, .cooldown_remaining_secs = 0 }).describe(&buf), "cut from") == null);
+    try t.expect(std.mem.indexOf(u8, (Status{ .tokens = 0, .capacity = 60, .rate = 0.16, .baseline_rate = 0.33, .throttles = 1, .cooldown_remaining_secs = 0, .last_429_age_secs = 30 }).describe(&buf), "(cut from 0.33)") != null);
 }
 
 test "a wait a person would notice becomes one line; a wait they would not is dropped" {

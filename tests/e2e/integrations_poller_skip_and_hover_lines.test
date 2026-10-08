@@ -1,0 +1,48 @@
+# width: 120
+# height: 40
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_INTEGRATION_POLL=1
+# env: POLL_SCRIPT=${MNML_E2E_WORKSPACE}/poller.sh
+# env: SKIP_SCRIPT=${MNML_E2E_WORKSPACE}/skipper.sh
+# Two stand-in integrations on the statusline poller (hunt6):
+#
+#   * Acme publishes its chip with a hover of LINES — a summary, a
+#     second count, a blank line, the bucket — the way mnml-jira and
+#     mnml-bitbucket do. The info view keeps each line a line and the
+#     blank one a gap; it used to flatten them into one run-on sentence
+#     ("of yours 1 waiting on you budget: …").
+#   * Skipper's `--values` gives way to the budget the way the real ones
+#     do: `{"skipped":"poll_skipped_budget"}` on stdout, exit 0, nothing
+#     published. The JOBS list says "skipped — under budget", not
+#     "published", and its chip does not sit at `…` for minutes: after a
+#     run that published nothing it reads `—`.
+write poller.sh "#!/bin/sh\nmkdir -p \"$MNML_IPC_DIR\"\nprintf '{\"cmd\":\"statusline-set-segment\",\"id\":\"acme_prs.count\",\"text\":\"ACME 2\",\"color\":\"green\",\"tooltip\":\"Acme PRs\\\\n2 open of yours\\\\n1 waiting on you\\\\n\\\\nbudget: 30 of 40 tokens\"}\\n' >> \"$MNML_IPC_DIR/command\"\n"
+write skipper.sh "#!/bin/sh\nprintf '{\"skipped\":\"poll_skipped_budget\"}\\n'\nexit 0\n"
+shell chmod +x poller.sh skipper.sh
+write market/acme_prs.zon ".{ .id = \"acme_prs\", .label = \"Acme PRs\", .version = \"0.1.0\", .binary = \"$POLL_SCRIPT\", .description = \"a stand-in integration with a values source\", .statusline = .{ .{ .id = \"count\", .text = \"ACME …\", .color = \"green\" } }, .values_sources = .{ .{ .id = \"acme_values\", .command = \"$POLL_SCRIPT --values\", .poll_interval_secs = 1 } } }"
+write market/skipper.zon ".{ .id = \"skipper\", .label = \"Skipper\", .version = \"0.1.0\", .binary = \"$SKIP_SCRIPT\", .description = \"a stand-in that always gives way\", .statusline = .{ .{ .id = \"n\", .text = \"SKIP …\", .color = \"cyan\" } }, .values_sources = .{ .{ .id = \"skip_values\", .command = \"$SKIP_SCRIPT --values\", .poll_interval_secs = 1 } } }"
+command integrations.show_marketplace
+drag 30 5 70 5
+key i
+expect within 5000 screen contains "installed acme_prs"
+key down
+key down
+key down
+key i
+expect within 5000 screen contains "installed skipper"
+expect within 8000 screen contains "ACME 2"
+# The skipped run published nothing: the resting `…` settles to `—`.
+expect within 8000 screen contains "SKIP —"
+expect screen lacks "SKIP …"
+command jobs.show
+expect within 3000 screen contains "skipped — under budget"
+key esc
+# Acme's chip hover in the info view: the publisher's first line is the
+# title, then each line its own row and the blank line a gap — never
+# one paragraph ("of yours 1 waiting on you budget: …").
+hover 62 38
+expect within 3000 screen contains "2 open of yours"
+expect screen contains "1 waiting on you"
+expect screen contains "budget: 30 of 40 tokens"
+expect screen lacks "yours 1 waiting"
+expect screen lacks "you budget"

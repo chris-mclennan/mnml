@@ -41,6 +41,9 @@ pub fn main(init: std.process.Init) !u8 {
     const gpa = init.gpa;
     const io = init.io;
     const env = init.environ_map;
+    // The offline switch (`http/offline.zig`): `--demo`'s re-executed
+    // process and `MNML_OFFLINE=1` send nothing off this machine.
+    @import("http/offline.zig").set(@import("http/offline.zig").fromEnv(env));
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const args = try init.minimal.args.toSlice(arena_state.allocator());

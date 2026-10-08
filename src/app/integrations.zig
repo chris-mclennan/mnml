@@ -526,6 +526,9 @@ pub const IntegrationsPane = struct {
     target: Target,
     /// The focused action button.
     cursor: usize = 0,
+    /// The entry's name as the list shows it (`Bitbucket PRs`), what the
+    /// tab is titled; gpa-owned, empty when there was none to read.
+    label: []u8 = &.{},
 
     pub const Target = union(enum) {
         /// A manifest id.
@@ -557,9 +560,12 @@ pub const IntegrationsPane = struct {
 
     pub fn deinit(self: *IntegrationsPane, gpa: Allocator) void {
         gpa.free(self.target.key());
+        gpa.free(self.label);
+        self.label = &.{};
     }
 
     pub fn title(self: *const IntegrationsPane) []const u8 {
+        if (self.label.len > 0) return self.label;
         return switch (self.target) {
             .dev => |d| std.fs.path.basename(d),
             inline else => |s| s,
@@ -912,6 +918,16 @@ pub fn catalogueState(app: *App, arena: Allocator, binary: []const u8, version: 
         state = .installed;
     }
     return state;
+}
+
+/// A Marketplace row's state against what is installed: a catalogue or
+/// release row is one BINARY (Jira's row is `jira`; what its
+/// `--install` wrote is `jira_work`, `jira_boards`, …), so it is read
+/// off the binary (`catalogueState`); a launcher or an app row by its id.
+/// What the row's tag, its menu and its detail pane's buttons all say.
+pub fn entryState(app: *App, arena: Allocator, e: marketplace.Entry) Allocator.Error!catalogue.State {
+    if (e.kind == .builtin or e.kind == .release) return catalogueState(app, arena, e.binary, e.version);
+    return if (app.integrations.find(e.id) != null) .installed else .not_installed;
 }
 
 /// The program a binary names: its file name, and on Windows without
@@ -1650,7 +1666,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
         try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
         try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
-        try items.append(app.gpa, try dockPinRow(app, chip.id));
+        if (try dockPinRow(app, chip.id)) |pin_row| try items.append(app.gpa, pin_row);
         try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
         try items.append(app.gpa, openAsRow(app));
     } else {
@@ -1682,16 +1698,21 @@ fn openIconMenu(app: *App, chip: Chip, x: u16, y: u16) Allocator.Error!void {
             try items.append(app.gpa, .{ .label = "Add to activity bar", .action = .{ .command = .@"integrations.pin_to_activity_bar" } });
     }
     // // changed (launcher-dock): the dock's row, beside the rail's.
-    try items.append(app.gpa, try dockPinRow(app, chip.id));
+    if (try dockPinRow(app, chip.id)) |pin_row| try items.append(app.gpa, pin_row);
     try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
     try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
 }
 
 /// The Pin to / Unpin from dock row for a chip — the one row every
 /// chip menu grows so the dock is reachable from wherever a chip is.
-fn dockPinRow(app: *App, chip_id: []const u8) Allocator.Error!command.MenuItem {
+fn dockPinRow(app: *App, chip_id: []const u8) Allocator.Error!?command.MenuItem {
     const cmd_id = (try chipCommandId(app, chip_id)) orelse "";
     const on = isPinnedToDock(app, cmd_id);
+    // An installed integration is on the dock already (`Chip.on_dock`),
+    // and a pin of the command its item runs is dropped there: a *Pin*
+    // row would change nothing, and *Unpin* could not take it off. Only
+    // a pin written before that rule gets its *Unpin*, to clean it up.
+    if (!on) if (try findChip(app, app.frame.allocator(), chip_id)) |c| if (c.on_dock) return null;
     return .{
         .label = if (on) "Unpin from dock" else "Pin to dock",
         .action = .{ .command = if (on) .@"integrations.unpin_from_dock" else .@"integrations.pin_to_dock" },
@@ -1802,7 +1823,7 @@ fn unpinDockCmd(app: *App) CommandError!void {
 pub fn pinDockId(app: *App, id: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     if (isPinnedToDock(app, id)) {
-        app.toast("{s} is already on the dock", .{id});
+        app.toast("{s} is already on the dock", .{try dockName(app, id)});
         return;
     }
     if (command.resolve(app, id) == null) return app.diag.fail(arena, "dock: no such command: {s}", .{id});
@@ -1811,20 +1832,39 @@ pub fn pinDockId(app: *App, id: []const u8) CommandError!void {
     @memcpy(next[0..old.len], old);
     next[old.len] = id;
     try setDockPins(app, next);
-    app.toast("{s}: pinned to the dock", .{id});
+    app.toast("{s}: pinned to the dock", .{try dockName(app, id)});
 }
 
 /// Drop a command id from `ui.dock.pins` and write it home.
 pub fn unpinDockId(app: *App, id: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     if (!isPinnedToDock(app, id)) {
-        app.toast("{s} is not pinned to the dock", .{id});
+        app.toast("{s} is not pinned to the dock", .{try dockName(app, id)});
         return;
     }
     var next: std.ArrayListUnmanaged([]const u8) = .empty;
     for (app.cfg.ui.dock.pins) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
     try setDockPins(app, next.items);
-    app.toast("{s}: unpinned from the dock", .{id});
+    app.toast("{s}: unpinned from the dock", .{try dockName(app, id)});
+}
+
+/// What a dock toast calls command `id`: the chip that runs it by its
+/// name (`Jira Work`), else the command's title, else the id itself.
+fn dockName(app: *App, id: []const u8) Allocator.Error![]const u8 {
+    const arena = app.frame.allocator();
+    for (try allChips(app, arena)) |c| {
+        const run = switch (c.action) {
+            .named => |n| n,
+            .dyn => |slot| if (app.dyn_commands.at(slot)) |d| d.id else continue,
+            .none => continue,
+        };
+        if (std.mem.eql(u8, run, id) and c.tooltip.len > 0) return c.tooltip;
+    }
+    if (command.resolve(app, id)) |ref| switch (ref) {
+        .static => |cid| return command.title(cid),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |d| return d.title,
+    };
+    return id;
 }
 
 /// The new `ui.dock.pins`, gpa-owned by the state and persisted home.
@@ -2247,7 +2287,15 @@ fn refreshTab(app: *App) CommandError!void {
 /// `i`: install the focused marketplace or dev entry.
 fn installFocused(app: *App) CommandError!void {
     switch (app.integrations.tab) {
-        .installed => return app.diag.fail(app.frame.allocator(), "integrations: already installed — the Marketplace and Dev tabs install", .{}),
+        // A row behind the Marketplace: `i` is its *Update to*.
+        .installed => {
+            const arena = app.frame.allocator();
+            if (try focusedRow(app)) |i| if (i < app.integrations.list.len) {
+                if (try integration_updates.hintFor(app, arena, &app.integrations.list[i]) != null)
+                    return integration_updates.updateAt(app, i);
+            };
+            return app.diag.fail(arena, "integrations: already installed and up to date \u{2014} the Marketplace and Dev tabs install", .{});
+        },
         .marketplace => return command.run(app, .{ .static = .@"marketplace.install_focused" }),
         .dev => return devInstallCmd(app),
     }
@@ -2380,14 +2428,21 @@ fn openEntryMenu(app: *App, idx: usize, x: u16, y: u16) Allocator.Error!void {
             if (idx >= app.marketplace.entries.len) return;
             st.menu_row = .{ .tab = .marketplace, .idx = idx };
             const e = app.marketplace.entries[idx];
-            const installed = st.find(e.id) != null;
+            // The menu owns its strings (`openOwned`): *Update to <version>*.
+            var mem = std.heap.ArenaAllocator.init(app.gpa);
+            errdefer mem.deinit();
+            const install_label: []const u8 = switch (try entryState(app, app.frame.allocator(), e)) {
+                .not_installed => "Install",
+                .installed => "Reinstall",
+                .update => try std.fmt.allocPrint(mem.allocator(), "Update to {s}", .{e.version}),
+            };
             const items = try app.gpa.dupe(command.MenuItem, &.{
-                .{ .label = if (installed) "Reinstall" else "Install", .action = .{ .command = .@"marketplace.install_focused" } },
+                .{ .label = install_label, .action = .{ .command = .@"marketplace.install_focused" } },
                 .{ .label = "Details", .action = .{ .command = .@"marketplace.open_detail_focused" } },
                 .{ .label = "Copy id", .action = .{ .command = .@"marketplace.copy_id_focused" } },
             });
             errdefer app.gpa.free(items);
-            try app.openMenu(e.label, items, x, y);
+            try context_menus.openOwned(app, try mem.allocator().dupe(u8, e.label), items, x, y, mem);
         },
         .dev => {
             if (idx >= st.dev.len) return;
@@ -2614,7 +2669,7 @@ fn entryRow(app: *App, arena: Allocator, idx: usize) Allocator.Error!view.Entry 
             // A release-index row is one binary too.
             const by_binary = e.kind == .builtin or e.kind == .release;
             const state: ?catalogue.State = if (by_binary) try catalogueState(app, arena, e.binary, e.version) else null;
-            const installed = if (state) |s2| s2 != .not_installed else st.find(e.id) != null;
+            const installed = try entryState(app, arena, e) != .not_installed;
             return .{
                 .glyph = e.glyph,
                 .fallback = e.fallback,
@@ -2673,6 +2728,8 @@ fn activeDetail(app: *App) ?struct { id: PaneId, p: *IntegrationsPane } {
 
 /// Open (or refocus) the detail pane on `target`.
 pub fn openDetail(app: *App, target: IntegrationsPane.TargetRef) CommandError!void {
+    const label = try app.gpa.dupe(u8, detailLabel(app, target));
+    errdefer app.gpa.free(label);
     // One detail pane at a time: retarget an open one.
     if (app.panes.findKind(.integrations)) |id| {
         const p = &app.panes.get(id).?.integrations;
@@ -2683,6 +2740,7 @@ pub fn openDetail(app: *App, target: IntegrationsPane.TargetRef) CommandError!vo
             .marketplace => .{ .marketplace = copy },
             .dev => .{ .dev = copy },
         };
+        p.label = label;
         p.cursor = 0;
         app.showPane(id);
         return;
@@ -2694,8 +2752,19 @@ pub fn openDetail(app: *App, target: IntegrationsPane.TargetRef) CommandError!vo
         .marketplace => .{ .marketplace = copy },
         .dev => .{ .dev = copy },
     };
-    const id = try app.panes.add(.{ .integrations = .{ .target = owned } });
+    const id = try app.panes.add(.{ .integrations = .{ .target = owned, .label = label } });
     app.showPane(id);
+}
+
+/// The name the list shows for `target` — the detail tab's title.
+/// Empty when it is not listed (the title falls back to the id).
+fn detailLabel(app: *App, target: IntegrationsPane.TargetRef) []const u8 {
+    const st = &app.integrations;
+    return switch (target) {
+        .installed => |id| if (st.find(id)) |i| st.list[i].manifest.label else "",
+        .marketplace => |id| if (marketplace.find(app, id)) |i| app.marketplace.entries[i].label else "",
+        .dev => |key| if (st.findDev(key)) |i| st.dev[i].manifest.label else "",
+    };
 }
 
 /// The row a command acts on: the menu's, the detail pane's, else the
@@ -3074,7 +3143,7 @@ fn updateAt(app: *App, i: usize) CommandError!void {
     if (inst.manifest.isLauncher())
         return app.diag.fail(arena, "integrations: {s} is a launcher \u{2014} it has no binary to relink", .{inst.id()});
     if (app.data_root.len == 0) return app.diag.fail(arena, "integrations: no data root to link into", .{});
-    const id = try arena.dupe(u8, inst.id());
+    const name = try arena.dupe(u8, if (inst.manifest.label.len > 0) inst.manifest.label else inst.id());
     const version = try arena.dupe(u8, inst.manifest.version);
     const binary = try expandEnv(app, arena, inst.manifest.binary);
     const path_var = app.env.get("PATH") orelse "";
@@ -3085,12 +3154,15 @@ fn updateAt(app: *App, i: usize) CommandError!void {
         error.OutOfMemory => return error.OutOfMemory,
         error.LinkFailed => return app.diag.fail(arena, "integrations: cannot link {s} into {s}/bin", .{ target, app.relPath(app.data_root) }),
     };
-    const shown = try arena.dupe(u8, app.relPath(link));
+    // Relinked, not updated: the version is the one it had. The link's
+    // name and its target, each as the workspace or ~ shortens it.
+    const shown = try arena.dupe(u8, std.fs.path.basename(link));
+    const to = try arena.dupe(u8, app.relPath(target));
     try refresh(app);
     if (version.len > 0)
-        app.toast("updated {s} {s} \u{2014} {s} \u{2192} {s}", .{ id, version, shown, target })
+        app.toast("Relinked {s} {s} \u{2014} {s} \u{2192} {s}", .{ name, version, shown, to })
     else
-        app.toast("updated {s} \u{2014} {s} \u{2192} {s}", .{ id, shown, target });
+        app.toast("Relinked {s} \u{2014} {s} \u{2192} {s}", .{ name, shown, to });
 }
 
 // ─── rebuilding against this SDK ────────────────────────────────────────
@@ -3286,21 +3358,26 @@ const Button = enum {
     edit_manifest,
     copy_id,
     refresh,
-    update,
+    /// *Update to <version>*: an installed integration behind the
+    /// Marketplace — the Installed row's own *Update to*.
+    update_to,
+    /// *Relink the binary*: `<data root>/bin` at the binary's current home.
+    relink,
     uninstall,
     install,
     reinstall,
     build,
     rebuild,
 
-    fn label(b: Button, app: *App, p: *const IntegrationsPane) []const u8 {
+    fn label(b: Button, app: *App, p: *const IntegrationsPane, arena: Allocator) Allocator.Error![]const u8 {
         return switch (b) {
             .open => "Open",
             .toggle => if (p.target == .installed) (if (app.integrations.find(p.target.installed)) |i| (if (app.integrations.list[i].enabled()) "Disable" else "Enable") else "Enable") else "Enable",
             .edit_manifest => "Edit manifest",
             .copy_id => "Copy id",
             .refresh => "Refresh",
-            .update => "Update",
+            .update_to => if (try detailHint(app, arena, p)) |h| try std.fmt.allocPrint(arena, "Update to {s}", .{h.version}) else "Update",
+            .relink => "Relink the binary",
             .uninstall => "Uninstall",
             .install => "Install",
             .reinstall => "Reinstall",
@@ -3310,15 +3387,34 @@ const Button = enum {
     }
 };
 
+/// The newer Marketplace version of the installed integration a detail
+/// pane shows, or null (not behind, not installed, another target).
+fn detailHint(app: *App, arena: Allocator, p: *const IntegrationsPane) Allocator.Error!?integration_updates.Hint {
+    const id = switch (p.target) {
+        .installed => |id| id,
+        else => return null,
+    };
+    const i = app.integrations.find(id) orelse return null;
+    return integration_updates.hintFor(app, arena, &app.integrations.list[i]);
+}
+
 fn buttonsFor(app: *App, p: *const IntegrationsPane) []const Button {
     const st = &app.integrations;
     return switch (p.target) {
-        // A launcher has no binary to relink, so no Update button.
+        // A launcher has no binary to relink, so no Relink button; one
+        // behind the Marketplace puts *Update to* right after Open, where
+        // a narrow pane still shows it.
         .installed => |id| if (st.find(id)) |i| (if (st.list[i].manifest.isLauncher())
             @as([]const Button, &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall })
+        else if ((detailHint(app, app.frame.allocator(), p) catch null) != null)
+            @as([]const Button, &.{ .open, .update_to, .toggle, .edit_manifest, .copy_id, .refresh, .relink, .uninstall })
         else
-            @as([]const Button, &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .update, .uninstall })) else &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
-        .marketplace => |id| if (st.find(id) != null) &.{ .reinstall, .copy_id, .refresh } else &.{ .install, .copy_id, .refresh },
+            @as([]const Button, &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .relink, .uninstall })) else &.{ .open, .toggle, .edit_manifest, .copy_id, .refresh, .uninstall },
+        // Read off the binary, as the row's tag is (`entryState`).
+        .marketplace => |id| if (marketplace.find(app, id)) |i| (if ((entryState(app, app.frame.allocator(), app.marketplace.entries[i]) catch .not_installed) != .not_installed)
+            @as([]const Button, &.{ .reinstall, .copy_id, .refresh })
+        else
+            @as([]const Button, &.{ .install, .copy_id, .refresh })) else &.{ .install, .copy_id, .refresh },
         .dev => |key| if (st.findDev(key)) |i| blk: {
             const d = &st.dev[i];
             const have = st.find(d.id()) != null;
@@ -3344,7 +3440,8 @@ fn fireButton(app: *App, p: *IntegrationsPane) CommandError!void {
         .edit_manifest => return showManifest(app),
         .copy_id => return copyId(app),
         .refresh => return refreshCmd(app),
-        .update => if (try focusedRow(app)) |i| return updateAt(app, i),
+        .update_to => return command.run(app, .{ .static = .@"integrations.update_from_marketplace" }),
+        .relink => if (try focusedRow(app)) |i| return updateAt(app, i),
         .uninstall => if (try focusedRow(app)) |i| return removeAt(app, i),
         .install, .reinstall => switch (p.target) {
             .marketplace => return command.run(app, .{ .static = .@"marketplace.install_focused" }),
@@ -3404,7 +3501,7 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
     if (app.active == id) app.pane_rows = @max(rect.h, 1);
     const buttons = buttonsFor(app, p);
     const labels = try ui.arena.alloc([]const u8, buttons.len);
-    for (buttons, 0..) |b, i| labels[i] = b.label(app, p);
+    for (buttons, 0..) |b, i| labels[i] = try b.label(app, p, ui.arena);
     if (p.cursor >= labels.len) p.cursor = labels.len -| 1;
     var props: view.DetailProps = .{ .label = "", .id = p.target.key(), .buttons = labels, .cursor = p.cursor, .focused = focused };
     switch (p.target) {
@@ -3413,6 +3510,10 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
             fillManifest(ui.arena, &props, inst.manifest);
             props.origin = ui.fmt("installed · {s}", .{app.relPath(inst.path)});
             props.status = if (!inst.binary_found) "binary missing" else if (!inst.enabled()) "disabled" else null;
+            // Behind the Marketplace: the newer version, in the title line.
+            if (props.status == null) if (try integration_updates.hintFor(app, ui.arena, inst)) |h| {
+                props.status = ui.fmt("installed {s} \u{00b7} {s} available", .{ inst.manifest.version, h.version });
+            };
         } else {
             props.label = mid;
             props.description = "not installed — was it uninstalled?";
@@ -3427,10 +3528,13 @@ pub fn draw(app: *App, ui: Ui, id: PaneId, p: *IntegrationsPane, rect: Rect) All
             props.color = e.color;
             props.origin = ui.fmt("marketplace · {s} ({s}){s}", .{ e.source, @tagName(e.kind), if (e.private) " · private" else if (e.official) " · official" else "" });
             props.binary = e.url;
-            if (st.find(mid)) |k| {
-                fillManifest(ui.arena, &props, st.list[k].manifest);
-                props.status = "installed";
-            }
+            if (st.find(mid)) |k| fillManifest(ui.arena, &props, st.list[k].manifest);
+            // Read off the binary, as the row's tag is (`entryState`).
+            props.status = switch (try entryState(app, ui.arena, e)) {
+                .not_installed => null,
+                .installed => "installed",
+                .update => "installed \u{00b7} update available",
+            };
             if (app.marketplace.installing) |cur| if (std.mem.eql(u8, cur, mid)) {
                 props.status = if (ui.ascii) "installing..." else "installing…";
             };
@@ -4084,7 +4188,8 @@ test "the section: Installed lists the manifest in the Rust row shape, the tabs 
     try testing.expectEqualStrings("hello", app.clipboard.text());
     try testing.expect(try handleKey(&app, .{ .code = .{ .char = 'd' } }));
     const id = app.panes.findKind(.integrations).?;
-    try testing.expectEqualStrings("hello", app.panes.get(id).?.title());
+    // The tab is titled by the name the list shows, not the raw id.
+    try testing.expectEqualStrings("Hello", app.panes.get(id).?.title());
     testing.allocator.free(txt);
     txt = try screenText(&app);
     try testing.expect(std.mem.indexOf(u8, txt, "[ Open ]  [ Disable ]  [ Edit manifest ]") != null);
@@ -4453,11 +4558,11 @@ test "a fresh data root: the four rows are on the Installed tab at the SHIPPED c
     try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
     try testing.expect(std.mem.indexOf(u8, txt, "Inst (4)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Nothing installed yet") == null);
-    // 26 cells: the short label leaves room for the whole badge; the
-    // long ones clip it, the way every badge of this section clips
-    // (`scripts_marketplace_default.test` pins the same for `✓ Offi…`).
+    // 26 cells: the short label leaves room for the whole badge; a
+    // long one drops it whole rather than cutting it to `first-`.
     try testing.expect(std.mem.indexOf(u8, txt, "Browser  first-party") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)  first-") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)  first") == null);
     try testing.expect(std.mem.indexOf(u8, txt, "browser.open") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Claude Code (hidden)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "not logged in") != null);
@@ -4925,4 +5030,39 @@ test "a rebuild toasts the SDK the fresh manifest carries: one that is still beh
     try testing.expect(std.mem.indexOf(u8, said, "rebuilt against SDK " ++ host_sdk) == null);
     try testing.expect(std.mem.indexOf(u8, said, "still on SDK 0.0.1") != null);
     try testing.expect(std.mem.indexOf(u8, said, "mnml-sdk") != null);
+}
+
+test "Relink the binary says relinked, by the integration's name, with short paths — never `updated` and an id" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest; // the link is a symlink
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.createDirPath(testing.io, "tools");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tools/mnml-acme", .data = "#!/bin/sh\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/acme_work.zon", .data = ".{ .id = \"acme_work\", .label = \"Acme Work\", .version = \"0.2.4\", .binary = \"$ACME_BIN\" }" });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const bin = try std.fs.path.join(testing.allocator, &.{ root, "tools", "mnml-acme" });
+    defer testing.allocator.free(bin);
+    try env.put("ACME_BIN", bin);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 24, .env = &env });
+    defer app.deinit();
+    try refresh(&app);
+    const i = app.integrations.find("acme_work").?;
+    try updateAt(&app, i);
+    const toast = app.lastToast().?;
+    try testing.expectEqualStrings("Relinked Acme Work 0.2.4 \u{2014} mnml-acme \u{2192} tools" ++ std.fs.path.sep_str ++ "mnml-acme", toast);
+    try testing.expect(std.mem.indexOf(u8, toast, root) == null);
+}
+
+test "a chip's hide and show toasts name it in words, and say how to bring it back" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
+    defer app.deinit();
+    const statusline = @import("statusline.zig");
+    try testing.expectEqualStrings("Branch", statusline.chipName(&app, "branch"));
+    try testing.expectEqualStrings("Clock", statusline.chipName(&app, "clock"));
+    // A key no installed integration answers to stays as the file holds it.
+    try testing.expectEqualStrings("gone_integration.chip", statusline.chipName(&app, "gone_integration.chip"));
 }

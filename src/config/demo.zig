@@ -14,6 +14,12 @@
 //!   BITBUCKET_ACCESS_TOKEN  the Bitbucket fake's token again, for the
 //!                         Jira pane's linked pull requests
 //!   MNML_NO_UPDATE_CHECK  1     (no release probe)
+//!   MNML_OFFLINE          1     the offline switch (`http/offline.zig`):
+//!                         nothing mnml sends leaves this machine — the
+//!                         Marketplace lists only the bundled catalogue
+//!                         and installs from it, the update checks say
+//!                         "offline". The re-executed process also turns
+//!                         the switch on from `MNML_DEMO` itself.
 //!   MNML_OPEN_URL         none  (a link opens nothing)
 //!   MNML_AGENTS_PGID      a group nobody is in, so the agents scan sees
 //!                         the demo's own sessions and not the machine's
@@ -124,7 +130,7 @@ pub fn extraSet(arena: Allocator, root: []const u8, path: ?[]const u8, host_data
     const dir = try std.fs.path.join(arena, &.{ root, state_dir });
     const bin = try std.fs.path.join(arena, &.{ dir, "bin" });
     const new_path = if (path) |p| (if (p.len > 0) try std.fmt.allocPrint(arena, "{s}{c}{s}", .{ bin, std.fs.path.delimiter, p }) else bin) else bin;
-    const out = try arena.alloc([2][]const u8, if (host_data_root != null) 14 else 13);
+    const out = try arena.alloc([2][]const u8, if (host_data_root != null) 15 else 14);
     out[0] = .{ env_var, try std.fs.path.join(arena, &.{ root, workspace_name }) };
     out[1] = .{ "PATH", new_path };
     out[2] = .{ "JIRA_BASE_URL", try std.fmt.allocPrint(arena, "@{s}", .{try std.fs.path.join(arena, &.{ dir, "jira.url" })}) };
@@ -142,7 +148,8 @@ pub fn extraSet(arena: Allocator, root: []const u8, path: ?[]const u8, host_data
     // default: the fake's token under that name too, in place of the
     // real one `unset` drops (the forge is the fake, `BITBUCKET_BASE_URL`).
     out[12] = .{ "BITBUCKET_ACCESS_TOKEN", bitbucket_token };
-    if (host_data_root) |d| out[13] = .{ host_data_root_env, d };
+    out[13] = .{ "MNML_OFFLINE", "1" };
+    if (host_data_root) |d| out[14] = .{ host_data_root_env, d };
     return out;
 }
 
@@ -618,6 +625,7 @@ test "demo: the re-exec's variables: the workspace, the shims first on PATH, the
     // Jira's linked pull requests read this name: the fake's token, not a gap.
     try t.expectEqualStrings(bitbucket_token, env.get("BITBUCKET_ACCESS_TOKEN").?);
     try t.expectEqualStrings("1", env.get("MNML_NO_UPDATE_CHECK").?);
+    try t.expectEqualStrings("1", env.get("MNML_OFFLINE").?);
     try t.expectEqualStrings("none", env.get("MNML_OPEN_URL").?);
     try t.expectEqualStrings(agents_pgid, env.get("MNML_AGENTS_PGID").?);
     // No PATH at all: the shims are the whole of it.

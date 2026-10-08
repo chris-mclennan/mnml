@@ -444,6 +444,7 @@ pub fn pageWsUrl(gpa: Allocator, io: Io, port: u16, stop: ?*const std.atomic.Val
 }
 
 fn fetchJsonTargets(gpa: Allocator, io: Io, url: []const u8) !?[]u8 {
+    if (@import("../http/offline.zig").gate(url) != null) return null;
     var client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer client.deinit();
     var sink: Io.Writer.Allocating = .init(gpa);

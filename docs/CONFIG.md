@@ -2066,6 +2066,7 @@ On top of the sandbox's variables the re-exec sets these, and drops
 | `BITBUCKET_ACCESS_TOKEN` | the Bitbucket fake's token again — the name the Jira pane's linked pull requests read (your real one is dropped first) |
 | `JIRA_RATELIMIT_STATE` / `BITBUCKET_RATELIMIT_STATE` | files under `<root>/demo/` |
 | `MNML_NO_UPDATE_CHECK` | `1` |
+| `MNML_OFFLINE` | `1` — the offline switch: nothing mnml sends leaves this machine (loopback, where the fakes listen, still answers); the Marketplace lists and installs only its bundled catalogue, the update checks answer "offline" |
 | `MNML_OPEN_URL` | `none` — a link opens nothing |
 | `MNML_AGENTS_PGID` | a process group nobody is in: the agents scan sees the demo's sessions, not the machine's |
 | `GIT_CEILING_DIRECTORIES` | `<root>` |
