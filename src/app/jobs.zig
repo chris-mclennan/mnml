@@ -439,10 +439,17 @@ pub fn chip(arena: Allocator, reg: *Registry, now_ms: i64, ascii: bool, mode: Ch
     if (reg.heldFailure(now_ms)) |j| {
         const words = j.detail orelse j.label;
         const mark = if (ascii) jobs_view.failed_ascii else jobs_view.failed_glyph;
-        const short = try std.fmt.allocPrint(arena, " {s} {s} ", .{ mark, j.kind.word() });
+        // An integration's poll names which integration failed — its
+        // label leads with the id (`jira_work --values (…)`) — rather
+        // than the kind word every integration shares.
+        const who: []const u8 = if (j.kind == .integration and j.label.len > 0)
+            j.label[0 .. std.mem.indexOfScalar(u8, j.label, ' ') orelse j.label.len]
+        else
+            j.kind.word();
+        const short = try std.fmt.allocPrint(arena, " {s} {s} ", .{ mark, who });
         if (owned_elsewhere != null and owned_elsewhere.? == j.kind) return .{ .text = short, .tone = .failed };
         return .{
-            .text = try std.fmt.allocPrint(arena, " {s} {s}: {s} ", .{ mark, j.kind.word(), try clipText(arena, words, chip_text_max, ascii) }),
+            .text = try std.fmt.allocPrint(arena, " {s} {s}: {s} ", .{ mark, who, try clipText(arena, words, chip_text_max, ascii) }),
             .tone = .failed,
             .short = short,
         };
@@ -796,6 +803,20 @@ test "chip: spinner and count while running, the failure dimmed after, nothing i
     // Past the hold the chip goes; `always` keeps its idle face.
     try testing.expect(try chip(a, &r, 200 + fail_hold_ms, false, .auto, null) == null);
     try testing.expectEqualStrings(" jobs ", (try chip(a, &r, 200 + fail_hold_ms, false, .always, null)).?.text);
+}
+
+test "chip: a failed integration poll names the integration, not the kind word every integration shares" {
+    const gpa = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var r: Registry = .{};
+    defer r.deinit(gpa);
+    const j = try r.begin(gpa, 0, .{ .kind = .integration, .key = 3, .label = "jira_work --values (jira_work_values)" });
+    try r.end(gpa, 100, j, Outcome.fail("exit 1 \u{2014} backing off"));
+    const c = (try chip(a, &r, 200, false, .auto, null)).?;
+    try testing.expectEqualStrings(" \u{2717} jira_work: exit 1 \u{2014} backing off ", c.text);
+    try testing.expectEqualStrings(" \u{2717} jira_work ", c.short.?);
 }
 
 test "rows: RUNNING with a Cancel row where there is a way to stop, then FINISHED newest first" {

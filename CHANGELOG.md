@@ -77,6 +77,12 @@ the release ships one file), and one line per change a user can see.
   updates it. The Marketplace's Jira and Bitbucket rows offer
   *Reinstall* or *Update to* once installed, not *Install*, and a
   Details tab is titled by name, not by id.
+- Toasts about integrations speak in names: "Jira Work chip hidden — the
+  statusline's Segments menu brings it back", "Relinked Jira Work 0.2.4
+  — mnml-jira → zig-out/bin/mnml-jira", "API traffic: shown on the
+  activity bar", and a failed poll's chip names the integration
+  ("✗ jira_work: exit 1"). An installed integration's chip menu no
+  longer offers *Pin to dock*: it is on the dock already.
 
 ### Installed integrations say when they are out of date
 

@@ -1666,7 +1666,7 @@ pub fn openPinMenu(app: *App, i: usize, x: u16, y: u16) Allocator.Error!void {
         try items.append(app.gpa, .{ .label = if (inst.enabled()) "Disable" else "Enable", .action = .{ .command = .@"integrations.toggle_enabled" } });
         try items.append(app.gpa, .{ .label = if (on_bar) "Hide from top bar" else "Show on top bar", .action = .{ .command = .@"integrations.toggle_palette_bar" } });
         try items.append(app.gpa, .{ .label = "Remove from activity bar", .action = .{ .command = .@"integrations.unpin_from_activity_bar" } });
-        try items.append(app.gpa, try dockPinRow(app, chip.id));
+        if (try dockPinRow(app, chip.id)) |pin_row| try items.append(app.gpa, pin_row);
         try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .command = .@"integrations.copy_id" } });
         try items.append(app.gpa, openAsRow(app));
     } else {
@@ -1698,16 +1698,21 @@ fn openIconMenu(app: *App, chip: Chip, x: u16, y: u16) Allocator.Error!void {
             try items.append(app.gpa, .{ .label = "Add to activity bar", .action = .{ .command = .@"integrations.pin_to_activity_bar" } });
     }
     // // changed (launcher-dock): the dock's row, beside the rail's.
-    try items.append(app.gpa, try dockPinRow(app, chip.id));
+    if (try dockPinRow(app, chip.id)) |pin_row| try items.append(app.gpa, pin_row);
     try items.append(app.gpa, .{ .label = "Copy id", .action = .{ .copy_text = chip.id } });
     try app.openMenu(chip.tooltip, try items.toOwnedSlice(app.gpa), x, y);
 }
 
 /// The Pin to / Unpin from dock row for a chip — the one row every
 /// chip menu grows so the dock is reachable from wherever a chip is.
-fn dockPinRow(app: *App, chip_id: []const u8) Allocator.Error!command.MenuItem {
+fn dockPinRow(app: *App, chip_id: []const u8) Allocator.Error!?command.MenuItem {
     const cmd_id = (try chipCommandId(app, chip_id)) orelse "";
     const on = isPinnedToDock(app, cmd_id);
+    // An installed integration is on the dock already (`Chip.on_dock`),
+    // and a pin of the command its item runs is dropped there: a *Pin*
+    // row would change nothing, and *Unpin* could not take it off. Only
+    // a pin written before that rule gets its *Unpin*, to clean it up.
+    if (!on) if (try findChip(app, app.frame.allocator(), chip_id)) |c| if (c.on_dock) return null;
     return .{
         .label = if (on) "Unpin from dock" else "Pin to dock",
         .action = .{ .command = if (on) .@"integrations.unpin_from_dock" else .@"integrations.pin_to_dock" },
@@ -1818,7 +1823,7 @@ fn unpinDockCmd(app: *App) CommandError!void {
 pub fn pinDockId(app: *App, id: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     if (isPinnedToDock(app, id)) {
-        app.toast("{s} is already on the dock", .{id});
+        app.toast("{s} is already on the dock", .{try dockName(app, id)});
         return;
     }
     if (command.resolve(app, id) == null) return app.diag.fail(arena, "dock: no such command: {s}", .{id});
@@ -1827,20 +1832,39 @@ pub fn pinDockId(app: *App, id: []const u8) CommandError!void {
     @memcpy(next[0..old.len], old);
     next[old.len] = id;
     try setDockPins(app, next);
-    app.toast("{s}: pinned to the dock", .{id});
+    app.toast("{s}: pinned to the dock", .{try dockName(app, id)});
 }
 
 /// Drop a command id from `ui.dock.pins` and write it home.
 pub fn unpinDockId(app: *App, id: []const u8) CommandError!void {
     const arena = app.frame.allocator();
     if (!isPinnedToDock(app, id)) {
-        app.toast("{s} is not pinned to the dock", .{id});
+        app.toast("{s} is not pinned to the dock", .{try dockName(app, id)});
         return;
     }
     var next: std.ArrayListUnmanaged([]const u8) = .empty;
     for (app.cfg.ui.dock.pins) |p| if (!std.mem.eql(u8, p, id)) try next.append(arena, p);
     try setDockPins(app, next.items);
-    app.toast("{s}: unpinned from the dock", .{id});
+    app.toast("{s}: unpinned from the dock", .{try dockName(app, id)});
+}
+
+/// What a dock toast calls command `id`: the chip that runs it by its
+/// name (`Jira Work`), else the command's title, else the id itself.
+fn dockName(app: *App, id: []const u8) Allocator.Error![]const u8 {
+    const arena = app.frame.allocator();
+    for (try allChips(app, arena)) |c| {
+        const run = switch (c.action) {
+            .named => |n| n,
+            .dyn => |slot| if (app.dyn_commands.at(slot)) |d| d.id else continue,
+            .none => continue,
+        };
+        if (std.mem.eql(u8, run, id) and c.tooltip.len > 0) return c.tooltip;
+    }
+    if (command.resolve(app, id)) |ref| switch (ref) {
+        .static => |cid| return command.title(cid),
+        .dyn => |slot| if (app.dyn_commands.at(slot)) |d| return d.title,
+    };
+    return id;
 }
 
 /// The new `ui.dock.pins`, gpa-owned by the state and persisted home.
@@ -3119,7 +3143,7 @@ fn updateAt(app: *App, i: usize) CommandError!void {
     if (inst.manifest.isLauncher())
         return app.diag.fail(arena, "integrations: {s} is a launcher \u{2014} it has no binary to relink", .{inst.id()});
     if (app.data_root.len == 0) return app.diag.fail(arena, "integrations: no data root to link into", .{});
-    const id = try arena.dupe(u8, inst.id());
+    const name = try arena.dupe(u8, if (inst.manifest.label.len > 0) inst.manifest.label else inst.id());
     const version = try arena.dupe(u8, inst.manifest.version);
     const binary = try expandEnv(app, arena, inst.manifest.binary);
     const path_var = app.env.get("PATH") orelse "";
@@ -3130,12 +3154,15 @@ fn updateAt(app: *App, i: usize) CommandError!void {
         error.OutOfMemory => return error.OutOfMemory,
         error.LinkFailed => return app.diag.fail(arena, "integrations: cannot link {s} into {s}/bin", .{ target, app.relPath(app.data_root) }),
     };
-    const shown = try arena.dupe(u8, app.relPath(link));
+    // Relinked, not updated: the version is the one it had. The link's
+    // name and its target, each as the workspace or ~ shortens it.
+    const shown = try arena.dupe(u8, std.fs.path.basename(link));
+    const to = try arena.dupe(u8, app.relPath(target));
     try refresh(app);
     if (version.len > 0)
-        app.toast("updated {s} {s} \u{2014} {s} \u{2192} {s}", .{ id, version, shown, target })
+        app.toast("Relinked {s} {s} \u{2014} {s} \u{2192} {s}", .{ name, version, shown, to })
     else
-        app.toast("updated {s} \u{2014} {s} \u{2192} {s}", .{ id, shown, target });
+        app.toast("Relinked {s} \u{2014} {s} \u{2192} {s}", .{ name, shown, to });
 }
 
 // ─── rebuilding against this SDK ────────────────────────────────────────
@@ -5003,4 +5030,39 @@ test "a rebuild toasts the SDK the fresh manifest carries: one that is still beh
     try testing.expect(std.mem.indexOf(u8, said, "rebuilt against SDK " ++ host_sdk) == null);
     try testing.expect(std.mem.indexOf(u8, said, "still on SDK 0.0.1") != null);
     try testing.expect(std.mem.indexOf(u8, said, "mnml-sdk") != null);
+}
+
+test "Relink the binary says relinked, by the integration's name, with short paths — never `updated` and an id" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest; // the link is a symlink
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    try tmp.dir.createDirPath(testing.io, "integrations");
+    try tmp.dir.createDirPath(testing.io, "tools");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tools/mnml-acme", .data = "#!/bin/sh\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "integrations/acme_work.zon", .data = ".{ .id = \"acme_work\", .label = \"Acme Work\", .version = \"0.2.4\", .binary = \"$ACME_BIN\" }" });
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    const bin = try std.fs.path.join(testing.allocator, &.{ root, "tools", "mnml-acme" });
+    defer testing.allocator.free(bin);
+    try env.put("ACME_BIN", bin);
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 120, .rows = 24, .env = &env });
+    defer app.deinit();
+    try refresh(&app);
+    const i = app.integrations.find("acme_work").?;
+    try updateAt(&app, i);
+    const toast = app.lastToast().?;
+    try testing.expectEqualStrings("Relinked Acme Work 0.2.4 \u{2014} mnml-acme \u{2192} tools" ++ std.fs.path.sep_str ++ "mnml-acme", toast);
+    try testing.expect(std.mem.indexOf(u8, toast, root) == null);
+}
+
+test "a chip's hide and show toasts name it in words, and say how to bring it back" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 24 });
+    defer app.deinit();
+    const statusline = @import("statusline.zig");
+    try testing.expectEqualStrings("Branch", statusline.chipName(&app, "branch"));
+    try testing.expectEqualStrings("Clock", statusline.chipName(&app, "clock"));
+    // A key no installed integration answers to stays as the file holds it.
+    try testing.expectEqualStrings("gone_integration.chip", statusline.chipName(&app, "gone_integration.chip"));
 }
