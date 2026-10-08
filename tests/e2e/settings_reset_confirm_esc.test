@@ -1,0 +1,28 @@
+# width: 120
+# height: 40
+# Settings' "Reset all" ask sits on top of the list and owns the keys:
+# an arrow pressed inside it never reaches the rows beneath, its Esc
+# closes the ask alone, and the Esc after that is Settings' own cancel —
+# every edit made before goes back, on disk too.
+write .mnml/config.zon ".{ .ui = .{ .tree_width = 40 } }\n"
+write a.txt "alpha\n"
+open a.txt
+key ctrl+,
+key right
+expect file .mnml/config.zon contains "line_numbers = false"
+key end
+key right
+expect screen contains "Reset every setting to its default?"
+key left
+key down
+key right
+expect screen contains "Reset every setting to its default?"
+expect screen contains "▸ Reset all to defaults"
+key esc
+expect screen lacks "Reset every setting to its default?"
+expect screen contains "▸ Reset all to defaults"
+expect file .mnml/config.zon contains "line_numbers = false"
+key esc
+expect screen lacks "Reset all to defaults"
+expect file .mnml/config.zon lacks "line_numbers"
+expect file .mnml/config.zon contains "tree_width = 40"
