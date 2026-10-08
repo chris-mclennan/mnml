@@ -175,6 +175,9 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- At narrow widths the statusline makes room for its right-hand chips
+  by shortening the left ones, counting the separators too, so the
+  workspace chip is no longer cut to its first letter.
 - The file picker's preview paints code on one background; each
   highlighted word used to sit in a dark box of the editor's colour.
 - A tab strip that narrows (a split, a resize) keeps the active tab on
