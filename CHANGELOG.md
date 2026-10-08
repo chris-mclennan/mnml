@@ -103,6 +103,10 @@ the release ships one file), and one line per change a user can see.
 - `mnml-bitbucket … >> log` and `mnml-jira … >> log` append to the log
   again. They wrote from the start of the file, over what was there, so
   a cron or launchd `--prefetch >> log` lost its older lines.
+- Rotating an event feed file (moving it aside and starting a new one)
+  is noticed whatever the new file's size; before, a new file that was
+  not smaller than the old one lost its first events. Bitbucket and
+  Jira both.
 
 ## v0.3.5 (2026-10-06)
 

@@ -573,7 +573,9 @@ and how many quiet polls in a row got it there.
 
 Anything may append one JSON line per change —
 `{"kind":"pr","key":"api#1234","at":1790000000,"source":"relay"}` — and the pane fetches only that pull request (its row is replaced in place; one that has left the listing, or joined it, costs one conditional GET of the listing instead), once however many lines
-name it, through the same budget as everything else. While the file is
+name it, through the same budget as everything else. Moving the file aside and starting a new one
+(rotation) is noticed whatever the new file's size: it is read from its
+first byte. While the file is
 live the chip says `· feed` and the listing is only swept every
 `sweep_secs`, in case a line was lost. If the file goes missing, or has
 had no line (an event or a `{"kind":"heartbeat",…}`) for `stale_secs`,

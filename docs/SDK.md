@@ -1381,9 +1381,13 @@ The rules a reader follows, so a writer knows what it can rely on:
 - A pull request that no longer belongs to the listing on screen (merged
   out of an open list), or is not in it yet, costs one conditional GET
   of the listing instead of the item.
-- The file may be truncated or replaced at any time (rotation): a size
-  below the reader's offset starts it over from the first byte. A file
-  that disappears and comes back is read from its first byte.
+- The file may be truncated or replaced at any time (rotation). The
+  reader starts over from the first byte when the file at the path is
+  another file (its inode — Windows' file index — changed: moved aside
+  and a new one written, whatever its size), when it is smaller than
+  the reader's offset (truncated in place), or when its modification
+  time went backwards. A file that disappears and comes back is read
+  from its first byte.
 - Kinds other than the ones a pane wants are ignored by that pane. The
   Bitbucket pane reads `pr`; the Jira pane reads `issue`. Both may share
   one file.

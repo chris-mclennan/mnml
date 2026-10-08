@@ -1,0 +1,32 @@
+# width: 120
+# height: 40
+# Rotating the event feed — move it aside, start a new one — is a new
+# file whatever its size. Here the new file is LONGER than the old one
+# (one heartbeat): a reader that only compared sizes read it from the
+# old offset, mid-line, lost its first event, and #1234 kept its old
+# title until the 10-minute sweep.
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+write feed.jsonl "{\"kind\":\"heartbeat\",\"at\":1}\n"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 1, .poll_max_secs = 1, .feed = .{ .file = \"feed.jsonl\", .stale_secs = 300, .sweep_secs = 600 }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 30000 screen contains "(2 repos · 3 PRs)"
+expect within 3000 screen contains "· feed"
+wait 2000
+shell curl -s -o /dev/null -X POST --data-binary 'Rotated title' "$(cat bb.url | sed 's#/2.0$##')/__retitle/1234"
+shell mv feed.jsonl feed.jsonl.1 && printf '%s\n' '{"kind":"pr","key":"api#1234","at":1790000000,"source":"rotator"}' > feed.tmp && mv feed.tmp feed.jsonl
+expect within 10000 screen contains "Rotated title"
+expect file wire.jsonl contains "pullrequests/1234"

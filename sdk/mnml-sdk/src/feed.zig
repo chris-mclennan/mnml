@@ -243,6 +243,14 @@ pub const FileFeed = struct {
     /// end: what was in the file before the pane opened is history the
     /// pane's own first load already covers.
     offset: u64 = 0,
+    /// The file `offset` belongs to: its identity (inode, or Windows'
+    /// file index) and modification time at the last look. A rotated
+    /// feed — moved aside and started afresh — is a new file whatever
+    /// its size, and a size check alone reads a same-size or larger
+    /// replacement from the old offset, mid-line, losing its first
+    /// events.
+    inode: ?Io.File.INode = null,
+    mtime_ns: i96 = 0,
     opened: bool = false,
     missing: bool = true,
     /// When the writer last proved it was alive: a line of any kind,
@@ -321,6 +329,10 @@ pub const FileFeed = struct {
         const st = file.stat(io) catch return &.{};
         const was_missing = f.missing;
         f.missing = false;
+        const prev_inode = f.inode;
+        const prev_mtime = f.mtime_ns;
+        f.inode = st.inode;
+        f.mtime_ns = st.mtime.nanoseconds;
         if (!f.opened) {
             // The first look: history is skipped, and the writer is
             // as alive as the file's last write says.
@@ -330,8 +342,12 @@ pub const FileFeed = struct {
             return &.{};
         }
         if (was_missing and f.last_line_ms == 0) f.last_line_ms = st.mtime.toMilliseconds();
-        // Truncated or replaced: start over.
-        if (st.size < f.offset) f.offset = 0;
+        // Start over when this is not the file the offset counts into:
+        // another file at the path (rotated: moved aside, a new one
+        // written), truncated in place (smaller), or put back with an
+        // older modification time than the one last read.
+        const replaced = if (prev_inode) |i| i != st.inode else false;
+        if (replaced or st.size < f.offset or st.mtime.nanoseconds < prev_mtime) f.offset = 0;
         if (st.size == f.offset) return &.{};
         const want: usize = @intCast(@min(st.size - f.offset, max_read));
         const buf = try a.alloc(u8, want);
@@ -692,6 +708,54 @@ test "the file feed skips history, reads complete lines by offset, coalesces by 
     const again = try f.look(a, now + 4);
     try t.expectEqual(@as(usize, 1), again.len);
     try t.expectEqualStrings("api#5", again[0].key);
+}
+
+test "a rotated feed is a new file, whatever its size: same size, larger, truncated in place, and plain appends" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [1100]u8 = undefined;
+    const p = try tmpPath(&tmp, &pbuf, "feed.jsonl");
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const now = Io.Timestamp.now(t.io, .real).toMilliseconds();
+    try appendTo(tmp.dir, "feed.jsonl", "{\"kind\":\"heartbeat\",\"at\":1}\n");
+    var f: FileFeed = .init(t.io, p, .pr, 300);
+    try t.expectEqual(@as(usize, 0), (try f.look(a, now)).len);
+
+    // The control: plain appends are read once each, by offset.
+    try appendTo(tmp.dir, "feed.jsonl", "{\"kind\":\"pr\",\"key\":\"api#1\",\"at\":1}\n");
+    const appended = try f.look(a, now + 1);
+    try t.expectEqual(@as(usize, 1), appended.len);
+    try t.expectEqualStrings("api#1", appended[0].key);
+
+    // Rotated to a file of exactly the size already read: moved aside,
+    // a new one written in its place. Its line is news.
+    const same = "{\"kind\":\"heartbeat\",\"at\":1}\n{\"kind\":\"pr\",\"key\":\"api#2\",\"at\":1}\n";
+    try t.expectEqual(f.offset, same.len);
+    try tmp.dir.rename("feed.jsonl", tmp.dir, "feed.jsonl.1", t.io);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "feed.jsonl", .data = same });
+    const rot_same = try f.look(a, now + 2);
+    try t.expectEqual(@as(usize, 1), rot_same.len);
+    try t.expectEqualStrings("api#2", rot_same[0].key);
+
+    // Rotated to a larger one: read from its first byte, not from the
+    // old offset in the middle of its first line.
+    try tmp.dir.rename("feed.jsonl", tmp.dir, "feed.jsonl.2", t.io);
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "feed.jsonl", .data = "{\"kind\":\"pr\",\"key\":\"api#1234\",\"at\":1790000000,\"source\":\"rotator\"}\n{\"kind\":\"pr\",\"key\":\"web#7\",\"at\":1790000001}\n" });
+    const rot_big = try f.look(a, now + 3);
+    try t.expectEqual(@as(usize, 2), rot_big.len);
+    try t.expectEqualStrings("api#1234", rot_big[0].key);
+    try t.expectEqualStrings("web#7", rot_big[1].key);
+    try t.expectEqualStrings("rotator", f.source());
+
+    // Truncated in place (the same file, smaller): from the start.
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "feed.jsonl", .data = "{\"kind\":\"pr\",\"key\":\"api#9\",\"at\":2}\n" });
+    const trunc = try f.look(a, now + 4);
+    try t.expectEqual(@as(usize, 1), trunc.len);
+    try t.expectEqualStrings("api#9", trunc[0].key);
+    // And nothing twice.
+    try t.expectEqual(@as(usize, 0), (try f.look(a, now + 5)).len);
 }
 
 test "the file feed goes stale when nobody writes, comes back on a heartbeat, and is missing when the file is" {
