@@ -62,8 +62,16 @@ recorded (`.verify/look/current`).
   under `<worktree>/.verify/look/<ws>/`. Nothing lands in `~/.config/mnml`,
   `~/.claude` or the real `HOME`: the app is `env -i`-launched with a
   private `HOME` (ghostty starts commands through `login(1)`, which resets
-  `HOME` to the real one — the wrapper puts it back), a clean `PATH`, and a
-  proxy that refuses, so nothing reaches the network.
+  `HOME` to the real one — the wrapper puts it back) and a clean `PATH`.
+  What keeps mnml's own requests off the network is the offline switch,
+  `MNML_OFFLINE=1` (`src/http/offline.zig`; `--demo` turns it on too):
+  every send to a host that is not loopback is refused before a socket
+  opens, the Marketplace lists only its bundled catalogue and installs
+  from it, and the update checks answer "offline". mnml reads no proxy
+  variables, so the wrapper's refusing proxy (`HTTPS_PROXY` and friends)
+  covers only the children that honour one — curl, git, a shell command
+  — not mnml itself. Loopback still goes out: the demo's fakes and a
+  `serve` step's server live there.
 * **The window is the agent's; the user's mnml is never touched.** Not
   driven, not stopped, not restarted, not screenshot. `look.sh` and
   `mnml-drive` only ever act on the pid and window id `launch` recorded;
@@ -89,7 +97,8 @@ statusline shows the ` sandbox ` chip and the data root starts empty.
 The driver's `config.zon` rides along as the explicit `--config` layer,
 so the channel still works; the app removes the directory when `quit`
 ends it. It is an extra, not a replacement for the private `HOME`: the
-wrapper's `env -i`, clean `PATH` and refusing proxy still apply.
+wrapper's `env -i`, clean `PATH`, offline switch and refusing proxy
+still apply.
 
 `launch --env KEY=VALUE` (repeatable) adds to the app's environment —
 a stand-in `claude` ahead of the clean `PATH`, a fake manifest's

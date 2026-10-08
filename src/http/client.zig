@@ -34,6 +34,7 @@ const Allocator = std.mem.Allocator;
 const parse = @import("parse.zig");
 const cookies_mod = @import("cookies.zig");
 const insecure_mod = @import("insecure.zig");
+pub const offline = @import("offline.zig");
 
 pub const Header = parse.Header;
 pub const Request = parse.Request;
@@ -287,6 +288,8 @@ pub const SendOptions = struct {
 /// transport failure — that is the `.err` outcome. OOM is the one error.
 pub fn send(gpa: Allocator, io: Io, req: *const Request, opts: SendOptions) Allocator.Error!Outcome {
     if (try urlRefusal(gpa, req.url)) |msg| return .{ .err = msg };
+    // The offline switch (`offline.zig`): no socket off this machine.
+    if (offline.gate(req.url)) |r| return .{ .err = try offline.message(gpa, r, req.url) };
     const t = Transport.fromRequest(req, opts.transport);
     if (t.timeout_ms) |ms| if (ms > 0) return sendWithDeadline(gpa, io, req, opts, t, ms);
     return sendGuarded(gpa, io, req, opts, t);

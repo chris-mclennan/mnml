@@ -49,6 +49,15 @@ the release ships one file), and one line per change a user can see.
   `account_id` in `config.zon`, which the `mine` / `reviewing` tabs
   need.
 
+### Integrations: offline means offline, and the chips say what they did
+
+- `--demo` (and `MNML_OFFLINE=1`) now sends nothing off this machine:
+  the Marketplace lists and installs only the integrations that came
+  with mnml, the update checks say "offline" instead of asking GitHub,
+  and any other request to a host that is not this machine is refused
+  with a clear message. mnml never read the proxy variables, so a proxy
+  that refuses never covered it; this switch does.
+
 ### Installed integrations say when they are out of date
 
 - The Integrations section's Installed tab shows when a newer version

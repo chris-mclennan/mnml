@@ -28,6 +28,7 @@ CURRENT = os.path.join(LOOK, "current")
 # `--env` never replaces these (docs/LOOK.md, *Own data root*).
 PROTECTED_ENV = ("HOME", "TMPDIR", "MNML_DATA_ROOT", "MNML_IPC_DIR",
                  "MNML_ARTIFACTS_HOME", "MNML_SESSIONS_HOME",
+                 "MNML_OFFLINE",
                  "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY")
 
 

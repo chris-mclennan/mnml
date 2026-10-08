@@ -127,6 +127,7 @@ pub fn allowed(app: *const App) bool {
     if (!app.cfg.marketplace.enabled or !app.cfg.ui.check_updates) return false;
     if (app.cfg.ui.dashboard_refresh == .manual) return false;
     if (app.env.get("MNML_NO_UPDATE_CHECK")) |v| if (std.mem.eql(u8, v, "1")) return false;
+    if (app.offline() != .online) return false;
     return true;
 }
 

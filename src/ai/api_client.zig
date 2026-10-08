@@ -10,6 +10,8 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+/// The offline switch every sender asks (`http/offline.zig`).
+const offline = @import("../http/offline.zig");
 
 pub const endpoint = "https://api.anthropic.com/v1/messages";
 /// The environment variable that points every Messages request at
@@ -302,6 +304,7 @@ pub const PostError = error{ OutOfMemory, Canceled, Failed };
 /// `std.http.Client.fetch`, spelled out so the `retry-after` header of
 /// a rate-limited answer can be read before the body is.
 pub fn post(gpa: Allocator, io: Io, url: []const u8, api_key: []const u8, body: []const u8) PostError!Response {
+    if (offline.gate(url) != null) return error.Failed;
     return postInner(gpa, io, url, api_key, body) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,

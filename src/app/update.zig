@@ -7,7 +7,9 @@
 //! D3 as usual: the worker owns nothing of the app but its own `State`
 //! and the event queue; it parks its answer under a mutex and posts a
 //! `.timer` so the loop wakes; `tick` takes the answer on the UI thread.
-//! `MNML_NO_UPDATE_CHECK=1` skips the automatic check.
+//! `MNML_NO_UPDATE_CHECK=1` skips the automatic check; the offline
+//! switch (`--demo`, `MNML_OFFLINE=1`, `http/offline.zig`) skips both
+//! and the command says so.
 
 const std = @import("std");
 const Io = std.Io;
@@ -81,6 +83,7 @@ pub const State = struct {
 pub fn startupCheck(app: *App) void {
     if (!app.cfg.ui.check_updates) return;
     if (app.env.get("MNML_NO_UPDATE_CHECK")) |v| if (std.mem.eql(u8, v, "1")) return;
+    if (app.offline() != .online) return;
     start(app, false) catch {};
 }
 
@@ -89,6 +92,9 @@ pub const table = .{
 };
 
 fn checkCmd(app: *App) CommandError!void {
+    // Offline (`http/offline.zig`): say so rather than ask GitHub.
+    if (app.offline() != .online)
+        return app.toast("update check: {s} — GitHub is not asked; {s} lists the releases", .{ app.offline().label(), releases_url });
     try start(app, true);
     app.toast("checking {s} for a newer release…", .{repo});
 }
@@ -265,4 +271,15 @@ test "the startup hook never starts the update check: headless, the .test runner
     try t.expect(app.env.get("MNML_NO_UPDATE_CHECK") == null);
     app.hooks.emit(&app, .startup);
     try t.expect(!app.update.started);
+}
+
+test "offline (`--demo`, MNML_OFFLINE=1): neither the startup check nor app.check_updates asks GitHub, and the command says why" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 20 });
+    defer app.deinit();
+    try app.env.put("MNML_OFFLINE", "1");
+    startupCheck(&app);
+    try t.expect(!app.update.started);
+    try @import("../core/command.zig").run(&app, .{ .static = .@"app.check_updates" });
+    try t.expect(!app.update.started);
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "update check: offline (MNML_OFFLINE=1)"));
 }

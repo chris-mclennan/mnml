@@ -90,6 +90,9 @@ const event = @import("../core/event.zig");
 const config = @import("../config/root.zig");
 const Config = config.Config;
 const http_client = @import("../http/client.zig");
+const http_offline = http_client.offline;
+const ai_api = @import("../ai/api_client.zig");
+const ai_usage = @import("../ai/usage.zig");
 const http_parse = @import("../http/parse.zig");
 const manifest_mod = @import("../bridge/manifest.zig");
 const integrations = @import("integrations.zig");
@@ -166,6 +169,20 @@ pub const SourceSpec = struct {
     /// release_index: where the resolved tag is cached
     /// (`<data root>/marketplace/latest-release`); empty without a data root.
     latest_cache: []u8 = &.{},
+    /// The offline switch was on when the listing started
+    /// (`App.offline`): a source that needs the network lists nothing
+    /// and says so — only what is bundled is offered.
+    offline: http_offline.Reason = .online,
+
+    /// Whether listing this source needs the network: a release index,
+    /// a GitHub source. The catalogue and a local folder do not.
+    pub fn needsNetwork(s: SourceSpec) bool {
+        return switch (s.kind) {
+            .release_index => s.path.len > 0 or s.latest_template.len > 0,
+            .launcher_folder, .monorepo_apps => true,
+            .mnml, .local_folder, .crates => false,
+        };
+    }
 
     fn deinit(s: SourceSpec, gpa: Allocator) void {
         gpa.free(s.id);
@@ -350,7 +367,7 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         try out.append(gpa, spec);
         overridden = true;
     };
-    if (overridden) return out.toOwnedSlice(gpa);
+    if (overridden) return markOffline(app, try out.toOwnedSlice(gpa));
     if (app.cfg.marketplace.use_defaults) {
         // This mnml's release index leads — what was released for this
         // version is the first thing the tab lists — then the
@@ -391,7 +408,15 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
         errdefer gpa.free(root);
         try out.append(gpa, .{ .id = try gpa.dupe(u8, "local"), .kind = .local_folder, .repo = try gpa.dupe(u8, ""), .path = root });
     }
-    return out.toOwnedSlice(gpa);
+    return markOffline(app, try out.toOwnedSlice(gpa));
+}
+
+/// Stamp the offline switch on every spec, so the worker lists a source
+/// that needs the network as a problem line rather than fetching it.
+fn markOffline(app: *App, specs: []SourceSpec) []SourceSpec {
+    const r = app.offline();
+    for (specs) |*s| s.offline = r;
+    return specs;
 }
 
 /// Whether a default release index falls back to the newest published
@@ -399,6 +424,8 @@ pub fn sources(app: *App, gpa: Allocator) Allocator.Error![]SourceSpec {
 /// no `MNML_MARKETPLACE_CATALOGUE` naming the rows by hand.
 fn latestFallback(app: *App) bool {
     if (!app.marketplace.live) return false;
+    // Offline (`--demo`, `MNML_OFFLINE=1`): no newest-release lookup.
+    if (app.offline() != .online) return false;
     if (app.env.get("MNML_MARKETPLACE_CATALOGUE")) |v| if (v.len > 0) return false;
     return true;
 }
@@ -691,6 +718,10 @@ fn dropShadowedBuiltins(entries: *std.ArrayListUnmanaged(Entry)) void {
 }
 
 fn listSource(io: Io, gpa: Allocator, arena: Allocator, api: []const u8, s: SourceSpec, fetcher: release.Fetcher, now_ms: i64, entries: *std.ArrayListUnmanaged(Entry), problems: *std.ArrayListUnmanaged([]const u8)) Allocator.Error!void {
+    if (s.offline != .online and s.needsNetwork()) {
+        try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: {s} — not fetched; only what is bundled is listed", .{ s.id, s.offline.label() }));
+        return;
+    }
     switch (s.kind) {
         .crates => {
             try problems.append(arena, try std.fmt.allocPrint(arena, "{s}: crates.io sources are not searched — integrations are Zig packages now", .{s.id}));
@@ -1449,6 +1480,8 @@ pub fn install(app: *App, idx: usize) CommandError!void {
 
 fn startJob(app: *App, e: Entry, rebuild: bool) CommandError!void {
     const st = &app.marketplace;
+    if (app.offline() != .online and entryNeedsNetwork(e))
+        return app.diag.fail(app.frame.allocator(), "marketplace: {s} — {s} is a download; only bundled integrations install", .{ app.offline().label(), e.label });
     if (st.installing != null) return app.diag.fail(app.frame.allocator(), "marketplace: an install is already running", .{});
     if (app.data_root.len == 0) return app.diag.fail(app.frame.allocator(), "marketplace: no data root to install into", .{});
     const gpa = app.gpa;
@@ -1483,6 +1516,18 @@ fn startJob(app: *App, e: Entry, rebuild: bool) CommandError!void {
         app.toast("rebuilding {s} against SDK {s}…", .{ e.id, sdk_version })
     else
         app.toast("marketplace: installing {s}…", .{e.id});
+}
+
+/// Whether installing `e` reaches the network: a release download, a
+/// repo clone, a manifest fetched by URL. A catalogue binary and a
+/// local folder install from this machine.
+pub fn entryNeedsNetwork(e: Entry) bool {
+    return switch (e.kind) {
+        .release => true,
+        .builtin => false,
+        .app => !std.fs.path.isAbsolute(e.url),
+        .launcher => std.mem.indexOf(u8, e.url, "://") != null,
+    };
 }
 
 /// The SDK this mnml carries — what a rebuild stamps.
@@ -2154,6 +2199,98 @@ test "a source build in the terminal loop reads the NEWEST published release's i
     // A catalogue named by hand is the rows; nothing is looked up.
     try app.env.put("MNML_MARKETPLACE_CATALOGUE", "cat.zon");
     try testing.expectEqual(@as(usize, 1), sourceCount(&app));
+}
+
+test "offline (`--demo`, MNML_OFFLINE=1): the terminal loop's Marketplace resolves no newest release, a configured index is a problem line not a fetch, the bundled catalogue is the listing, and a download refuses to start" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(io, &pbuf)];
+
+    const latest = "https://github.com/chris-mclennan/mnml/releases/latest";
+    const index = "https://example.org/integrations.json";
+    const sha = release.sha256Hex("x");
+    var fake: release.FakeFetcher = .{ .routes = &.{
+        .{ .url = latest, .body = "https://github.com/chris-mclennan/mnml/releases/tag/v0.3.5" },
+        .{ .url = index, .body = try release.demoIndex(arena, "http://127.0.0.1:1", release.host_sdk, &sha, &sha) },
+    } };
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MNML_OFFLINE", "1");
+    var cfg: Config = .{};
+    cfg.marketplace.sources = &.{.{ .release_index = .{ .id = "releases", .url = index } }};
+    var app = try App.initWith(gpa, io, .{ .cfg = cfg, .workspace = root, .data_root = root, .cols = 100, .rows = 20, .env = &env });
+    defer app.deinit();
+    app.marketplace.fetcher = fake.fetcher();
+    // The terminal loop's mnml, which online reads the newest release.
+    app.marketplace.live = true;
+    try testing.expectEqual(http_offline.Reason.env, app.offline());
+    {
+        const specs = try sources(&app, gpa);
+        defer {
+            for (specs) |sp| sp.deinit(gpa);
+            gpa.free(specs);
+        }
+        for (specs) |sp| {
+            try testing.expectEqual(@as(usize, 0), sp.latest_template.len);
+            try testing.expectEqual(http_offline.Reason.env, sp.offline);
+        }
+    }
+    try refresh(&app);
+    try settle(&app);
+    // Nothing was asked of the fetcher: no redirect, no index.
+    try testing.expectEqual(@as(u32, 0), fake.hitsOf(latest));
+    try testing.expectEqual(@as(u32, 0), fake.hitsOf(index));
+    try testing.expectEqual(@as(usize, 1), app.marketplace.problems.len);
+    try testing.expectEqualStrings("releases: offline (MNML_OFFLINE=1) \u{2014} not fetched; only what is bundled is listed", app.marketplace.problems[0]);
+    // The shipped catalogue is the listing: Jira installs from the bundle.
+    const jira = find(&app, "jira").?;
+    try testing.expectEqual(Kind.builtin, app.marketplace.entries[jira].kind);
+    try testing.expect(!entryNeedsNetwork(app.marketplace.entries[jira]));
+    // A release row (were one listed) does not start its download.
+    const row: Entry = .{ .source = "releases", .kind = .release, .id = "demo", .label = "Demo", .description = "", .url = "https://example.org/mnml-demo.tar.xz" };
+    try testing.expect(entryNeedsNetwork(row));
+    try testing.expectError(error.Failed, startJob(&app, row, false));
+    try testing.expect(std.mem.indexOf(u8, app.diag.msg.?, "offline (MNML_OFFLINE=1)") != null);
+    try testing.expect(app.marketplace.installing == null);
+}
+
+test "the offline switch: every sender refuses a host off this machine before a socket opens, and loopback still goes out" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    http_offline.set(.demo);
+    defer http_offline.set(.online);
+    const before = http_offline.refused();
+    // The client every mnml fetch goes through.
+    {
+        var req = try http_parse.Request.init(gpa);
+        defer req.deinit(gpa);
+        try req.setUrl(gpa, "https://api.github.com/repos/chris-mclennan/mnml/releases/latest");
+        var outcome = try http_client.send(gpa, io, &req, .{});
+        defer outcome.deinit(gpa);
+        try testing.expect(outcome == .err);
+        try testing.expect(std.mem.startsWith(u8, outcome.err, "offline (demo): "));
+    }
+    // The Marketplace's listing fetch, a release download, the newest-release lookup.
+    try testing.expect(std.mem.indexOf(u8, (try fetch(gpa, io, arena, "https://api.github.com/repos/a/b/contents/apps")).err, "offline (demo)") != null);
+    try testing.expect(std.mem.indexOf(u8, (try release.http.get(null, gpa, io, arena, "https://github.com/a/b/releases/download/v1/x.tar.xz")).err, "offline (demo)") != null);
+    try testing.expect(std.mem.indexOf(u8, (try release.http.redirect(null, gpa, io, arena, "https://github.com/a/b/releases/latest")).err, "offline (demo)") != null);
+    // The two senders that drive `std.http.Client` themselves.
+    try testing.expectError(error.Failed, ai_api.post(gpa, io, ai_api.endpoint, "k", "{}"));
+    try testing.expectError(error.Failed, ai_usage.httpGet(gpa, io, arena, ai_usage.usage_url, "t"));
+    try testing.expectEqual(before + 6, http_offline.refused());
+    // Loopback is not the network: the gate passes it (the send itself
+    // fails on the closed port, which is not a refusal).
+    try testing.expect(http_offline.gate("http://127.0.0.1:1/integrations.json") == null);
+    try testing.expectEqual(before + 6, http_offline.refused());
 }
 
 test "a build whose own release's index 404s reads the newest one's; a non-404 failure is reported as it is; the quiet check toasts no problem" {

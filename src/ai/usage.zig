@@ -50,6 +50,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+/// The offline switch every sender asks (`http/offline.zig`).
+const offline = @import("../http/offline.zig");
 
 pub const fixture_env = "MNML_CLAUDE_USAGE_FIXTURE";
 pub const usage_url = "https://api.anthropic.com/api/oauth/usage";
@@ -818,6 +820,7 @@ pub fn httpPostJson(gpa: Allocator, io: Io, arena: Allocator, url: []const u8, p
 }
 
 fn httpDo(gpa: Allocator, io: Io, arena: Allocator, method: std.http.Method, url: []const u8, extra: []const std.http.Header, payload: ?[]const u8) HttpError!HttpReply {
+    if (offline.gate(url) != null) return error.Failed;
     var client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer client.deinit();
     const uri = std.Uri.parse(url) catch return error.Failed;

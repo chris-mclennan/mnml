@@ -613,6 +613,8 @@ fn fetchWorker(events: *event.EventQueue, io: Io, gpa: Allocator, url: []u8, cac
 pub fn fetchLatest(app: *App) Allocator.Error!void {
     const st = &app.fonts;
     if (st.latest != null or st.fetching) return;
+    // Offline (`--demo`, `MNML_OFFLINE=1`): the header omits the version.
+    if (app.offline() != .online) return;
     const gpa = app.gpa;
     const url = try std.fmt.allocPrint(gpa, "{s}{s}", .{ apiBase(app), latest_url_path });
     errdefer gpa.free(url);

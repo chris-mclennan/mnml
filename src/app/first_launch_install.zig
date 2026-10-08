@@ -197,6 +197,8 @@ pub fn codeBundlePresent(app: *App) bool {
 /// Space on the Nerd Font section with "no" answered: run the install
 /// in a pane; the hint waits for the pane.
 pub fn installNerdFont(app: *App) CommandError!void {
+    // Offline (`http/offline.zig`): the installers download; not run.
+    if (app.offline() != .online) return app.toast("{s} \u{2014} the installer downloads, so it is not run", .{app.offline().label()});
     const line = nerdFontCommand(host_os) orelse {
         app.toast("No auto-install for this OS — download Symbols Nerd Font Mono from https://www.nerdfonts.com", .{});
         return;
@@ -208,6 +210,8 @@ pub fn installNerdFont(app: *App) CommandError!void {
 
 /// Space on the Claude Code + Codex section: the missing ones' installers.
 pub fn installAiClis(app: *App) CommandError!void {
+    // Offline (`http/offline.zig`): the installers download; not run.
+    if (app.offline() != .online) return app.toast("{s} \u{2014} the installer downloads, so it is not run", .{app.offline().label()});
     const arena = app.frame.allocator();
     const line = (try aiCliCommand(arena, host_os, !claudeInstalled(app), !codexInstalled(app))) orelse {
         app.toast("Claude Code + Codex already installed.", .{});
