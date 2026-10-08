@@ -173,6 +173,11 @@ the release ships one file), and one line per change a user can see.
   draw on a bucket named by `BITBUCKET_RATELIMIT_STATE` no longer
   carries a `token_id`, and the README names the right rate-bucket file
   for an account credential.
+### Small fixes
+
+- Pressing Enter in the "Quit mnml?" box with unsaved work takes the
+  focused Cancel, as before, and now says so in a toast that names the
+  keys that save or quit.
 
 ## v0.3.5 (2026-10-06)
 

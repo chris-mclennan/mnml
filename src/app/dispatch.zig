@@ -1943,7 +1943,11 @@ fn acceptConfirm(app: *App, purpose: app_mod.ConfirmPurpose, choice: usize) Allo
                 app.quit = true;
             },
             1 => app.quit = true,
-            else => {},
+            // Cancel is the focused button, so Enter lands here. Say so,
+            // as the delete box does: a box that vanishes with nothing
+            // saved and nothing quit reads as a key that did nothing.
+            // (Esc closes the box without reaching here and stays silent.)
+            else => app.toast("cancelled — nothing saved, mnml stays open; `s` saves all, `q` quits", .{}),
         },
         // // changed (quit-confirm): the clean box is two choices —
         // Quit, then Cancel — so 0 is the quit and anything else stays.
