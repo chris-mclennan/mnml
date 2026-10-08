@@ -1373,3 +1373,17 @@ fn appendFile(dir: std.Io.Dir, sub: []const u8, data: []const u8) !void {
     defer f.close(t.io);
     try f.writePositionalAll(t.io, data, try f.length(t.io));
 }
+
+test "the throttles row's hover says the newest 429's age the way the row does" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const id = try seedForAudit(&app);
+    const p = get(&app, id).?;
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The seed's newest 429 is 240 s old: the row says `4m ago`.
+    const e = try @import("info_view_copy/api_traffic.zig").entry(&app, a, p, hit_now_base + @intFromEnum(NowRow.throttles));
+    try t.expect(std.mem.indexOf(u8, e.body, "the newest 4m ago") != null);
+    try t.expect(std.mem.indexOf(u8, e.body, "240s") == null);
+}

@@ -352,6 +352,16 @@ pub fn wholeSecs(v: f64) u64 {
     return @intFromFloat(v);
 }
 
+/// `12s`, `4m`, `3h`, `2d` into `buf` — every age the pane shows,
+/// its hovers included, so the same moment reads the same everywhere.
+pub fn ageText(buf: []u8, secs: f64) []const u8 {
+    const s = wholeSecs(secs);
+    if (s < 60) return std.fmt.bufPrint(buf, "{d}s", .{s}) catch "?";
+    if (s < 3600) return std.fmt.bufPrint(buf, "{d}m", .{s / 60}) catch "?";
+    if (s < 86400) return std.fmt.bufPrint(buf, "{d}h", .{s / 3600}) catch "?";
+    return std.fmt.bufPrint(buf, "{d}d", .{s / 86400}) catch "?";
+}
+
 /// `@floor(v)` as an i64, clamped to ±10^15; NaN is 0.
 pub fn floorI64(v: f64) i64 {
     if (std.math.isNan(v)) return 0;

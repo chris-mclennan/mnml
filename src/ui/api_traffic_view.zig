@@ -349,11 +349,8 @@ fn whoText(ui: Ui, by: []const reader.Reason) []const u8 {
 
 /// `12s`, `4m`, `3h`, `2d`.
 pub fn age(ui: Ui, secs: f64) []const u8 {
-    const s = reader.wholeSecs(secs);
-    if (s < 60) return ui.fmt("{d}s", .{s});
-    if (s < 3600) return ui.fmt("{d}m", .{s / 60});
-    if (s < 86400) return ui.fmt("{d}h", .{s / 3600});
-    return ui.fmt("{d}d", .{s / 86400});
+    var buf: [32]u8 = undefined;
+    return ui.fmt("{s}", .{reader.ageText(&buf, secs)});
 }
 
 /// `14:07` on the local clock, or `Mon 14:00` on the week's strip.

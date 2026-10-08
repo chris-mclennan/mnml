@@ -104,6 +104,7 @@ fn section(s: traffic.Section) Entry {
 fn now(arena: Allocator, p: *const traffic.ApiTrafficPane, r: traffic.NowRow) Allocator.Error!Entry {
     const s = p.current() orelse return header(arena, p);
     const n = s.now;
+    var age_buf: [32]u8 = undefined;
     return switch (r) {
         .bucket => try bucketRow(arena, p, 0),
         .hour => .{
@@ -138,7 +139,7 @@ fn now(arena: Allocator, p: *const traffic.ApiTrafficPane, r: traffic.NowRow) Al
             .body = if (n.throttles.n == 0)
                 "Every 429 an API sent anybody on this machine in the last hour — none so far. They come from `api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, where the fleet writes each one, and from mnml's own request log."
             else
-                try std.fmt.allocPrint(arena, "{d} 429s in the last hour for this API, the newest {d:.0}s ago, by caller. They come from `api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, where the fleet writes every one, and from mnml's own request log. New ones raise a warning toast — one per service per five minutes — unless `integrations.throttle_toasts` is off.", .{ n.throttles.n, n.throttles.last_age orelse 0 }),
+                try std.fmt.allocPrint(arena, "{d} 429s in the last hour for this API, the newest {s} ago, by caller. They come from `api-usage/<UTC day>.throttles.jsonl` beside the shared buckets, where the fleet writes every one, and from mnml's own request log. New ones raise a warning toast — one per service per five minutes — unless `integrations.throttle_toasts` is off.", .{ n.throttles.n, try arena.dupe(u8, reader.ageText(&age_buf, n.throttles.last_age orelse 0)) }),
             .links = &.{ .{ .settings = .{ .row = copy.settingsRow("integrations.throttle_toasts"), .label = "Toast on 429s" } }, requests_link },
         },
         .cache => .{
