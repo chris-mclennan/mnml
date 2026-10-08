@@ -2646,3 +2646,12 @@ test "vim: a count on iw / aw / iW / aW / is / as / ip / ap takes that many obje
     // (Neovim leaves the cursor on `b`; mnml at the object's start).
     try vim("d5iw", "|a b\n", "|a b\n");
 }
+
+test "vim Insert: Tab with spaces reaches the next tab stop" {
+    // Neovim with expandtab fills to the next multiple of the tab stop
+    // (nvchad-probe at its 2: `ab  x`, `abc x`); the harness's stop is 4.
+    try vim("A<tab>x<esc>", "|ab\n", "ab  |x\n");
+    try vim("A<tab>x<esc>", "|abc\n", "abc |x\n");
+    try vim("A<tab>x<esc>", "|abcd\n", "abcd    |x\n");
+    try vim("0a<tab>x<esc>", "|abcd\n", "a   |xbcd\n");
+}

@@ -232,6 +232,12 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         // ── insert ──
         .insert_char => |c| try insert.insertChar(ed, c, out),
         .insert_str => |s| try insert.insertStr(ed, s, out),
+        .insert_soft_tab => |w| {
+            const width = @max(w, 1);
+            const n = width - ed.vcolAtByte(ed.cursor) % width;
+            var buf: [64]u8 = @splat(' ');
+            try insert.insertStr(ed, buf[0..@min(n, buf.len)], out);
+        },
         .insert_char_from_line => |p| try insert.insertCharFromLine(ed, p.above, out),
         .insert_newline => try insert.insertNewline(ed, out),
         .insert_newline_below => try insert.insertNewlineBelow(ed, out),
@@ -431,14 +437,14 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .move_sentence = .{ .forward = false } },                            .move_buffer_start,                                              .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
         .{ .move_to_col = 4 },                                                  .{ .set_cursor_byte = 7 },                                       .page_up,                                                                                                        .page_down,
         .half_page_up,                                                          .half_page_down,                                                 .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
-        .{ .extend_by_object = .around_word },                                  .{ .extend_by_object = .inner_paragraph },                       .{ .extend_by_object = .inner_sentence },                                                                        .{ .extend_by_object = .quote_marks },
-        .select_clear_inclusive,                                                .select_start,                                                   .select_clear,                                                                                                   .select_line,
-        .select_line_to_end,                                                    .select_all,                                                     .select_word,                                                                                                    .select_inner_word,
-        .select_around_word,                                                    .select_inner_big_word,                                          .select_around_big_word,                                                                                         .{ .select_inner_quote = '"' },
-        .{ .select_around_quote = '"' },                                        .{ .select_inner_bracket = '(' },                                .{ .select_around_bracket = '(' },                                                                               .select_inner_paragraph,
-        .select_around_paragraph,                                               .select_inner_tag,                                               .select_around_tag,                                                                                              .{ .restore_last_selection = .charwise },
-        .swap_anchor_cursor,                                                    .move_cursor_to_selection_start,                                 .normalize_linewise_selection,                                                                                   .normalize_linewise_selection_inner,
-        .make_selection_inclusive,
+        .{ .insert_soft_tab = 4 },                                              .{ .extend_by_object = .around_word },                           .{ .extend_by_object = .inner_paragraph },                                                                       .{ .extend_by_object = .inner_sentence },
+        .{ .extend_by_object = .quote_marks },                                  .select_clear_inclusive,                                         .select_start,                                                                                                   .select_clear,
+        .select_line,                                                           .select_line_to_end,                                             .select_all,                                                                                                     .select_word,
+        .select_inner_word,                                                     .select_around_word,                                             .select_inner_big_word,                                                                                          .select_around_big_word,
+        .{ .select_inner_quote = '"' },                                         .{ .select_around_quote = '"' },                                 .{ .select_inner_bracket = '(' },                                                                                .{ .select_around_bracket = '(' },
+        .select_inner_paragraph,                                                .select_around_paragraph,                                        .select_inner_tag,                                                                                               .select_around_tag,
+        .{ .restore_last_selection = .charwise },                               .swap_anchor_cursor,                                             .move_cursor_to_selection_start,                                                                                 .normalize_linewise_selection,
+        .normalize_linewise_selection_inner,                                    .make_selection_inclusive,
         .{ .insert_char = 'é' },
         .paste_after_indent,                                                    .paste_before_indent,                                            .{ .insert_char = '\n' },
         .{ .insert_str = "世界" },

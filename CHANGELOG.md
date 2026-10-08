@@ -223,6 +223,8 @@ the release ships one file), and one line per change a user can see.
   `d3iw`, `c2aw`, `y2aw`, `v3iw`, `d2is`, `d2ap`. They used to act on
   one. `2i"` takes the string with its quotes. Asking for more objects
   than there are does nothing, as in Neovim.
+- In Insert, `Tab` with spaces fills to the next tab stop rather than
+  always typing four spaces.
 - The keymap parity page now says that `s` is flash-jump in mnml, not
   vim's substitute (`cl` substitutes), and that a count before it is
   ignored.

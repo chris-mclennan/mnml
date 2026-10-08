@@ -208,6 +208,9 @@ pub const EditOp = union(enum) {
     // ── insert ──
     insert_char: u21,
     insert_str: []const u8,
+    /// Insert `Tab` with spaces (vim's `expandtab`): spaces to the next
+    /// multiple of `width` display columns, not a fixed `width`.
+    insert_soft_tab: u32,
     insert_char_from_line: struct { above: bool },
     insert_newline,
     insert_newline_below,
@@ -324,7 +327,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(compat.unionFields(EditOp).len == 175);
+        std.debug.assert(compat.unionFields(EditOp).len == 176);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
