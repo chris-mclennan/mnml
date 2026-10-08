@@ -219,6 +219,10 @@ the release ships one file), and one line per change a user can see.
 - `gv` after leaving Visual with `Esc` (or `v`) reselects all of it; it
   used to come back one character short. `Ctrl-C` leaves Visual as `Esc`
   does — it used to act as `c` and start changing the selection.
+- A count on a word, sentence or paragraph object takes that many:
+  `d3iw`, `c2aw`, `y2aw`, `v3iw`, `d2is`, `d2ap`. They used to act on
+  one. `2i"` takes the string with its quotes. Asking for more objects
+  than there are does nothing, as in Neovim.
 
 ## v0.3.5 (2026-10-06)
 

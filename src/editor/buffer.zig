@@ -2623,3 +2623,26 @@ test "vim: gv after leaving charwise Visual with Esc, Ctrl-C or v has the whole 
     // The operator path keeps the same shape.
     try vim("wvey0gvd", "|abc def ghi\n", "abc | ghi\n");
 }
+
+test "vim: a count on iw / aw / iW / aW / is / as / ip / ap takes that many objects" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("d3iw", "|a b c d\n", "| c d\n");
+    try vim("3diw", "|a b c d\n", "| c d\n");
+    try vim("wd3iw", "|a b c d e\n", "a | d e\n");
+    try vim("d2aw", "|a b c d\n", "|c d\n");
+    try vim("y2aw$p", "|a b c d\n", "a b c da b| \n");
+    try vim("v3iwd", "|a b c d\n", "| c d\n");
+    try vim("v2awd", "|a b c d\n", "|c d\n");
+    try vim("c3iwX<esc>", "|a b c d\n", "|X c d\n");
+    try vim("d2iW", "|a.x b.y c\n", "|b.y c\n");
+    try vim("d2aW", "|a.x b.y c\n", "|c\n");
+    try vim("d2is", "|A b. C d. E f. G\n", "|C d. E f. G\n");
+    try vim("d2as", "|A b. C d. E f. G\n", "|E f. G\n");
+    try vim("d2ip", "|a\n\nb\n\nc\n", "|b\n\nc\n");
+    try vim("d2ap", "|a\n\nb\n\nc\n\nd\n", "|c\n\nd\n");
+    // `2i"` is the string with its quotes, no white space (`:help i"`).
+    try vim("fad2i\"", "|x \"a\" \"b\" y\n", "x | \"b\" y\n");
+    // More objects than the line holds: the command fails, nothing goes
+    // (Neovim leaves the cursor on `b`; mnml at the object's start).
+    try vim("d5iw", "|a b\n", "|a b\n");
+}

@@ -160,6 +160,13 @@ pub fn applyOne(ed: *Editor, op: EditOp, vp: usize, clip: *Clipboard, out: *Edit
         .select_start => select.selectStart(ed),
         .select_clear => select.selectClear(ed),
         .select_clear_inclusive => select.selectClearInclusive(ed),
+        .extend_by_object => |k| if (!select.extendByObject(ed, k)) {
+            // No further object: the command fails whole (`d5iw` on
+            // `a b`), the selection dropped at its start.
+            if (ed.anchor) |a| ed.cursor = @min(a, ed.cursor);
+            ed.anchor = null;
+            out.aborted = true;
+        },
         .remember_selection => ed.rememberSelection(),
         .select_line => select.selectLine(ed),
         .select_line_to_end => select.selectLineToEnd(ed),
@@ -424,6 +431,7 @@ test "property: cursor stays on a boundary and text stays valid UTF-8" {
         .{ .move_sentence = .{ .forward = false } },                            .move_buffer_start,                                              .move_buffer_end,                                                                                                .{ .move_to_line = 3 },
         .{ .move_to_col = 4 },                                                  .{ .set_cursor_byte = 7 },                                       .page_up,                                                                                                        .page_down,
         .half_page_up,                                                          .half_page_down,                                                 .{ .find_char_on_line = .{ .ch = 'a', .forward = true, .before = false, .inclusive = false, .repeat = false } }, .{ .find_char_on_line = .{ .ch = 'b', .forward = false, .before = true, .inclusive = true, .repeat = true } },
+        .{ .extend_by_object = .around_word },                                  .{ .extend_by_object = .inner_paragraph },                       .{ .extend_by_object = .inner_sentence },                                                                        .{ .extend_by_object = .quote_marks },
         .select_clear_inclusive,                                                .select_start,                                                   .select_clear,                                                                                                   .select_line,
         .select_line_to_end,                                                    .select_all,                                                     .select_word,                                                                                                    .select_inner_word,
         .select_around_word,                                                    .select_inner_big_word,                                          .select_around_big_word,                                                                                         .{ .select_inner_quote = '"' },

@@ -12,6 +12,7 @@ const input = @import("mod.zig");
 const Key = input.Key;
 const KeyCode = input.KeyCode;
 const EditOp = input.EditOp;
+const edit_op_mod = @import("../editor/edit_op.zig");
 const EditCtx = input.EditCtx;
 const InputResult = input.InputResult;
 const AppCommand = input.AppCommand;
@@ -462,6 +463,31 @@ pub const Vim = struct {
     fn pushDigit(self: *Vim, d: u32) void {
         const cur = self.count orelse 0;
         self.count = cur *| 10 +| d;
+    }
+
+    /// The objects a count extends rather than nests (brackets and tags
+    /// nest: `d2i(` is the second pair out).
+    fn countedObjectOf(op: EditOp) ?edit_op_mod.CountedObject {
+        return switch (op) {
+            .select_inner_word => .inner_word,
+            .select_around_word => .around_word,
+            .select_inner_big_word => .inner_big_word,
+            .select_around_big_word => .around_big_word,
+            .select_inner_sentence => .inner_sentence,
+            .select_around_sentence => .around_sentence,
+            .select_inner_paragraph => .inner_paragraph,
+            .select_around_paragraph => .around_paragraph,
+            // `2i"` is the string with its quotes and no white space
+            // (`:help i"`); a higher count is the same.
+            .select_inner_quote, .select_inner_smart_quote => .quote_marks,
+            else => null,
+        };
+    }
+
+    fn pushObjectCount(b: *Builder, op: EditOp, n: u32) Allocator.Error!void {
+        const k = countedObjectOf(op) orelse return;
+        if (k == .quote_marks) return b.push(.{ .extend_by_object = k });
+        try b.pushRepeated(.{ .extend_by_object = k }, n - 1);
     }
 
     /// The window and the cursor move together; the app knows the height.
@@ -1284,6 +1310,8 @@ pub const Vim = struct {
                 var b = Builder.init(arena);
                 // `2di{` / `d2it`: the count-th enclosing pair (`:help i{`).
                 if (counted and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
+                // `d3iw` / `y2aw` / `d2ap`: the object, then n-1 more.
+                if (n > 1) try pushObjectCount(&b, select_op, n);
                 // No object under the cursor (`ci(` outside parens): the
                 // operator is abandoned, not run on nothing.
                 try b.push(.abort_unless_selection);
@@ -2420,6 +2448,13 @@ pub const Vim = struct {
                 if (counted and n > 1 and op != .select_inner_bracket) return repeated(arena, op, n);
                 // `vip` / `vap` make the selection linewise (`:help v_ip`).
                 if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
+                // `v3iw` / `v2ap`: the object, then n-1 more.
+                if (n > 1 and countedObjectOf(op) != null) {
+                    var cb = Builder.init(arena);
+                    try cb.push(op);
+                    try pushObjectCount(&cb, op, n);
+                    return cb.finish();
+                }
                 // `vi{` over a body on its own lines takes the last line's
                 // break too, so `vi{d` leaves no empty line (`:help v_i{`).
                 if (op == .select_inner_bracket) {
