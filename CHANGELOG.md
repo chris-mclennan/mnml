@@ -223,6 +223,9 @@ the release ships one file), and one line per change a user can see.
   `d3iw`, `c2aw`, `y2aw`, `v3iw`, `d2is`, `d2ap`. They used to act on
   one. `2i"` takes the string with its quotes. Asking for more objects
   than there are does nothing, as in Neovim.
+- The keymap parity page now says that `s` is flash-jump in mnml, not
+  vim's substitute (`cl` substitutes), and that a count before it is
+  ignored.
 
 ## v0.3.5 (2026-10-06)
 
