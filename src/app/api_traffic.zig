@@ -851,10 +851,11 @@ pub fn openRowMenu(app: *App, p: *const ApiTrafficPane, x: u16, y: u16) Allocato
 
 /// The window chip's right-click: every window, the current one ticked.
 pub fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur: Window = if (find(app)) |id| (if (get(app, id)) |p| p.window else windowOf(app.cfg.integrations.api_traffic_window)) else windowOf(app.cfg.integrations.api_traffic_window);
     const rows = try context_menus.items(app, &.{
-        .{ .label = "Last hour", .action = .{ .command = .@"view.api_traffic_window_hour" } },
-        .{ .label = "Last 24 hours", .action = .{ .command = .@"view.api_traffic_window_day" } },
-        .{ .label = "Last 7 days", .action = .{ .command = .@"view.api_traffic_window_week" } },
+        .{ .label = "Last hour", .action = .{ .command = .@"view.api_traffic_window_hour" }, .checked = cur == .hour, .checkable = true },
+        .{ .label = "Last 24 hours", .action = .{ .command = .@"view.api_traffic_window_day" }, .checked = cur == .day, .checkable = true },
+        .{ .label = "Last 7 days", .action = .{ .command = .@"view.api_traffic_window_week" }, .checked = cur == .week, .checkable = true },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Window", rows, x, y);
@@ -1057,6 +1058,25 @@ test "the Who row's menu opens REQUESTS filtered to the program and copies its n
     try app.handle(.{ .api_traffic = r2 });
     try t.expectEqualStrings("mnml-bitbucket", app.overlay.menu.items[0].action.requests_for);
     try t.expectEqualStrings("4242", app.overlay.menu.items[1].action.copy_text);
+}
+
+test "the window chip's menu ticks the window the pane is on" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.api_traffic" });
+    const p = get(&app, find(&app).?).?;
+    setWindow(p, .day);
+    try openWindowMenu(&app, 5, 5);
+    const items = app.overlay.menu.items;
+    try t.expectEqual(@as(usize, 3), items.len);
+    try t.expect(!items[0].checked);
+    try t.expect(items[1].checked);
+    try t.expect(!items[2].checked);
+    var tries: usize = 0;
+    while (app.api_traffic.loading and tries < 200) : (tries += 1) {
+        try app.tick(app.now_ms);
+        if (app.api_traffic.loading) try t.io.sleep(.fromMilliseconds(10), .awake);
+    }
 }
 
 test "the cadence: a look at open, again when due while on screen, none off screen, none under manual" {
