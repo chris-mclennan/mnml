@@ -527,9 +527,13 @@ pub const Buffer = struct {
             // The run the two share up to the hull is equal by construction.
             var prefix: usize = @min(old.p, n);
             while (prefix < n and old.at(prefix) == now[prefix]) prefix += 1;
-            // A change that starts at a line's `\n` (a deleted last
-            // line) begins on the line after it, where the cursor was.
-            const changed = if (prefix < old_len and old.at(prefix) == '\n') prefix + 1 else prefix;
+            // A change that starts at a line's `\n` and runs to the end
+            // (a deleted last line) begins on the line after it, where
+            // the cursor was. A join also starts at a `\n`, but the text
+            // after it stays: that change begins on the first line.
+            var suffix: usize = 0;
+            while (suffix < n - prefix and old.at(old_len - 1 - suffix) == now[now.len - 1 - suffix]) suffix += 1;
+            const changed = if (prefix < old_len and old.at(prefix) == '\n' and suffix == 0) prefix + 1 else prefix;
             const changed_line_start = if (old.lastIndexOfScalar(changed, '\n')) |i| i + 1 else 0;
             const cursor_line_start = if (old.lastIndexOfScalar(cursor_before, '\n')) |i| i + 1 else 0;
             const typing = mode_before == .insert or mode_before == .replace or mode_before == .none;
@@ -2590,4 +2594,20 @@ test "vim: a count before and after an operator multiply — 2d2w is d4w, 2d2d f
     try vim("2dd", "|a\nb\nc\n", "|c\n");
     try vim("d2w", "|a b c d\n", "|c d\n");
     try vim("d10w", "|a b c d e f g h i j k l\n", "|k l\n");
+}
+
+test "vim: Visual J / gJ join every selected line, one undo step" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("VjjJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    try vim("vjjJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    try vim("VjjjJ", "|a\nb\nc\nd\n", "a b c| d\n");
+    try vim("VjjgJ", "|a\nb\nc\nd\n", "ab|c\nd\n");
+    try vim("vjjgJ", "|a\nb\nc\nd\n", "ab|c\nd\n");
+    // One line selected still joins two; the selection may run upwards.
+    try vim("VJ", "|a\nb\nc\n", "a| b\nc\n");
+    try vim("GkVkkJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    // `u` takes the whole join back and lands on the first line.
+    try vim("VjjJu", "|a\nb\nc\nd\n", "|a\nb\nc\nd\n");
+    // `gv` has the lines back (Neovim: `jVjJgvd` leaves `a` / `d`).
+    try vim("jVjJgvd", "|a\nb\nc\nd\n", "a\n|d\n");
 }

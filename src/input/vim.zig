@@ -2350,6 +2350,11 @@ pub const Vim = struct {
                     return ops(arena, &.{ w, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = true } } });
                 }
                 switch (c) {
+                    // `v_gJ`: the selected lines join with nothing between.
+                    'J' => {
+                        self.enterNormal();
+                        return ops(arena, &.{ .remember_selection, .{ .join_selection_lines = .{ .keep_space = false } }, .select_clear });
+                    },
                     'A' => {
                         // The alignment char arrives next; widen now so
                         // the last line is inside the range.
@@ -2586,7 +2591,7 @@ pub const Vim = struct {
             },
             'J' => {
                 self.enterNormal();
-                return ops(arena, &.{ .move_cursor_to_selection_start, .select_clear, .{ .join_lines = .{ .keep_space = true } } });
+                return ops(arena, &.{ .remember_selection, .{ .join_selection_lines = .{ .keep_space = true } }, .select_clear });
             },
             'p', 'P' => {
                 self.enterNormal();

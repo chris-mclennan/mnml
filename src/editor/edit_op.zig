@@ -252,6 +252,9 @@ pub const EditOp = union(enum) {
     move_line_down,
     duplicate_line,
     join_lines: struct { keep_space: bool },
+    /// Visual `J` / `gJ`: join every line from the anchor's to the
+    /// cursor's (at least two), one undo step (`:help v_J`).
+    join_selection_lines: struct { keep_space: bool },
     transform_selection_case: CaseTransform,
     /// Visual block `U` / `u` / `~`: the case inside the rectangle.
     block_case: CaseTransform,
@@ -310,7 +313,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(compat.unionFields(EditOp).len == 172);
+        std.debug.assert(compat.unionFields(EditOp).len == 173);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).

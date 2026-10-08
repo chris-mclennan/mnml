@@ -207,6 +207,8 @@ the release ships one file), and one line per change a user can see.
   in Insert used to send the keyboard to the tree. `Ctrl-L` in Insert
   types a form feed as Neovim does; `Ctrl-K` digraphs are not supported
   and the key does nothing.
+- Visual `J` joins every selected line, not just two, and Visual `gJ`
+  joins them with nothing between; `u` takes the join back in one step.
 
 ## v0.3.5 (2026-10-06)
 

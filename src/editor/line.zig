@@ -37,6 +37,22 @@ pub fn joinLines(ed: *Editor, keep_space: bool, out: *EditOutcome) Allocator.Err
     out.buffer_changed = true;
 }
 
+/// Visual `J` / `gJ`: every line from the anchor's to the cursor's joins
+/// into the first — the cursor's own line included, whatever its column
+/// (Visual is inclusive) — and two at least (`:help v_J`). One undo step.
+pub fn joinSelectionLines(ed: *Editor, keep_space: bool, out: *EditOutcome) Allocator.Error!void {
+    const a = ed.anchor orelse ed.cursor;
+    const la = ed.lineOfByte(a);
+    const lc = ed.lineOfByte(ed.cursor);
+    const first = @min(la, lc);
+    const joins = @max(@max(la, lc) - first, 1);
+    ed.anchor = null;
+    ed.cursor = ed.lineStart(first);
+    const tok = try ed.beginAtomic();
+    defer ed.endAtomic(tok);
+    for (0..joins) |_| try joinLines(ed, keep_space, out);
+}
+
 /// The lines a selection (or the cursor) touches, first..last inclusive.
 /// A selection ending exactly at a line start does not include that line.
 pub fn selectedLineRange(ed: *const Editor) [2]usize {
