@@ -1,0 +1,29 @@
+# Insert `Ctrl-A` types the text the last Insert typed (`:help i_CTRL-A`;
+# nvchad-probe: `Afoo<Esc>o<C-a><Esc>` on `x` -> `xfoo` / `foo`).
+# `Ctrl-R =` would read the expression register, which mnml does not
+# have: the line says so and the expression typed after it is dropped up
+# to its Enter, instead of landing in the buffer (it used to type
+# `2*21` and break the line on the Enter).
+write f.txt "x\n"
+open f.txt
+command editor.use_vim
+key A
+type foo
+key esc
+key o
+key ctrl+a
+key esc
+ex w
+expect file f.txt contains "xfoo\nfoo\n"
+key A
+type " "
+key ctrl+r
+type =
+expect screen contains "expression register not supported"
+type 2*21
+key enter
+type Z
+key esc
+ex w
+expect file f.txt contains "xfoo\nfoo Z\n"
+expect file f.txt lacks "2*21"

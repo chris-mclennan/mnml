@@ -185,6 +185,15 @@ pub const Vim = struct {
     pending_register: ?u21 = null,
     insert_waiting_for_register: bool = false,
     insert_literal_next: bool = false,
+    /// `i_CTRL-V` then digits (`:help i_CTRL-V_digit`): `065` is `A`,
+    /// `x41` / `u2014` / `U0001F600` / `o101` the same by base. The
+    /// code is typed once the most digits for the base are in, or a
+    /// key that is not one of its digits ends it early.
+    insert_literal_code: ?struct { base: u8, max_digits: u8, value: u32 = 0, digits: u8 = 0 } = null,
+    /// After `i_CTRL-R =`: mnml has no expression register, so the
+    /// expression typed after it is dropped, up to its Enter or Esc,
+    /// rather than landing in the buffer.
+    insert_dropping_expr: bool = false,
     /// Mirror of the buffer's macro state: decides what `q` does.
     is_recording_macro: bool = false,
     /// Insert `Ctrl+O`: one normal command, then back to insert.
@@ -219,9 +228,13 @@ pub const Vim = struct {
         self.use_tabs = cfg.use_tabs;
     }
 
-    /// What Tab types in insert / replace: one `\t` or a tab stop of spaces.
-    fn tabText(self: *const Vim, arena: Allocator) Allocator.Error![]const u8 {
-        return if (self.use_tabs) "\t" else try spaces(arena, self.tab_width);
+    /// A `Ctrl-V` code as a character; past Unicode, or a surrogate, is
+    /// U+FFFD.
+    fn literalCharFor(base: u8, v: u32) u21 {
+        // Decimal and octal codes are bytes: `300` is ÿ (Neovim).
+        if (base == 10 or base == 8) return @intCast(@min(v, 255));
+        if (v > 0x10FFFF or (v >= 0xD800 and v <= 0xDFFF)) return 0xFFFD;
+        return @intCast(v);
     }
 
     pub fn deinit(self: *Vim) void {
@@ -447,6 +460,8 @@ pub const Vim = struct {
     fn enterNormal(self: *Vim) void {
         self.vmode = .normal;
         self.resetPending();
+        self.insert_literal_code = null;
+        self.insert_dropping_expr = false;
         self.cmdline_open = false;
         self.cmdline.clearRetainingCapacity();
         self.cmdline_cursor = 0;
@@ -819,8 +834,52 @@ pub const Vim = struct {
 
     fn handleInsert(self: *Vim, key: Key, arena: Allocator) Allocator.Error!InputResult {
         const ctrl = key.mods.ctrl;
+        if (self.insert_dropping_expr) {
+            if (key.code == .enter or key.code == .esc or isCtrlChar(key, 'c')) self.insert_dropping_expr = false;
+            return .consumed;
+        }
+        if (self.insert_literal_code) |*lc| {
+            const digit: ?u32 = if (charOf(key)) |c| (if (key.mods.ctrl or key.mods.alt) null else std.fmt.charToDigit(@intCast(@min(c, 0x7F)), lc.base) catch null) else null;
+            if (digit) |d| {
+                lc.value = lc.value *% lc.base +% d;
+                lc.digits += 1;
+                if (lc.digits < lc.max_digits) return .consumed;
+                const v = lc.value;
+                const lc_base = lc.base;
+                self.insert_literal_code = null;
+                return ops(arena, &.{.{ .insert_char = literalCharFor(lc_base, v) }});
+            }
+            const done = lc.*;
+            self.insert_literal_code = null;
+            const rest = try self.handleInsert(key, arena);
+            if (done.digits == 0) return rest;
+            const typed: EditOp = .{ .insert_char = literalCharFor(done.base, done.value) };
+            return switch (rest) {
+                .ops => |list| blk: {
+                    const all = try arena.alloc(EditOp, list.len + 1);
+                    all[0] = typed;
+                    @memcpy(all[1..], list);
+                    break :blk .{ .ops = all };
+                },
+                else => ops(arena, &.{typed}),
+            };
+        }
         if (self.insert_literal_next) {
             self.insert_literal_next = false;
+            if (!key.mods.ctrl and !key.mods.alt) if (charOf(key)) |c| {
+                const code: ?@TypeOf(self.insert_literal_code.?) = switch (c) {
+                    '0'...'9' => .{ .base = 10, .max_digits = 3, .value = c - '0', .digits = 1 },
+                    'x', 'X' => .{ .base = 16, .max_digits = 2 },
+                    'u' => .{ .base = 16, .max_digits = 4 },
+                    'U' => .{ .base = 16, .max_digits = 8 },
+                    'o', 'O' => .{ .base = 8, .max_digits = 3 },
+                    else => null,
+                };
+                if (code) |cd| {
+                    self.insert_literal_code = cd;
+                    return .consumed;
+                }
+            };
             return switch (key.code) {
                 .char => |c| ops(arena, &.{.{ .insert_char = c }}),
                 .tab => ops(arena, &.{.{ .insert_char = '\t' }}),
@@ -840,6 +899,12 @@ pub const Vim = struct {
                     '/' => return runCmd(.@"editor.insert_last_search"),
                     ':' => return runCmd(.@"editor.insert_last_cmdline"),
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
+                    // No expression register: say so, and drop the
+                    // expression rather than type it into the buffer.
+                    '=' => {
+                        self.insert_dropping_expr = true;
+                        return .{ .app = .{ .ex_command = "echo expression register not supported" } };
+                    },
                     else => {},
                 }
                 const valid = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '"';
@@ -859,6 +924,8 @@ pub const Vim = struct {
                     self.insert_oneshot_normal = true;
                     return .consumed;
                 },
+                // `i_CTRL-A`: the text the last Insert typed, again.
+                'a' => return runCmd(.@"editor.insert_last_inserted"),
                 'n' => return runCmd(.@"editor.keyword_complete"),
                 'p' => return runCmd(.@"editor.keyword_complete_back"),
                 'f' => return runCmd(.@"picker.files"),

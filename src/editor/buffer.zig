@@ -2655,3 +2655,22 @@ test "vim Insert: Tab with spaces reaches the next tab stop" {
     try vim("A<tab>x<esc>", "|abcd\n", "abcd    |x\n");
     try vim("0a<tab>x<esc>", "|abcd\n", "a   |xbcd\n");
 }
+
+test "vim Insert: Ctrl-V and a code types that character" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("a<c-v>065<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>65y<esc>", "|ab\n", "aA|yb\n");
+    try vim("a<c-v>65<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>300<esc>", "|ab\n", "a|ÿb\n");
+    try vim("a<c-v>x41<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>u00e9<esc>", "|ab\n", "a|éb\n");
+    // A plain key after Ctrl-V is still itself.
+    try vim("a<c-v>z<esc>", "|ab\n", "a|zb\n");
+}
+
+test "vim Insert: Ctrl-R = drops the expression instead of typing it" {
+    // No expression register: the line says so (an `:echo`), and what is
+    // typed up to Enter or Esc never reaches the buffer.
+    try vim("A <c-r>=2*21<cr>Z<esc>", "|x\n", "x |Z\n");
+    try vim("A <c-r>=2*21<esc>Z<esc>", "|x\n", "x |Z\n");
+}
