@@ -324,12 +324,13 @@ fn paintFilter(p: *Painter, y: u16) Allocator.Error!void {
 
 fn paintBody(arena: Allocator, p: *Painter, body: Box) Allocator.Error!void {
     const app = p.app;
-    const split = app.detail_visible and body.w >= split_min_cols;
+    const shown = app.detailShown();
+    const split = shown and body.w >= split_min_cols;
     const list_w: u16 = if (split) @max(30, (body.w * list_share_pct) / 100) else body.w;
-    if (!app.detail_visible or split) {
+    if (!shown or split) {
         try paintList(arena, p, .{ .x = body.x, .y = body.y, .w = list_w, .h = body.h });
     }
-    if (app.detail_visible) {
+    if (shown) {
         const x: u16 = if (split) body.x + list_w + 1 else body.x;
         const w: u16 = if (split) body.w -| (list_w + 1) else body.w;
         if (split) p.c.vrule(body.x + list_w, body.y, body.h, .{ .fg = p.th.border });
@@ -1838,4 +1839,31 @@ test "the column header is the toolkit's, cell for cell what this pane painted b
             }
         }
     }
+}
+
+test "a Pipelines tab's footer describes the Pipelines tab, and a PR detail left open is hidden there, not halving it" {
+    const s = try Screen.init(140, 24, acme, .{});
+    defer s.deinit();
+    try s.key("3");
+    var scr = try s.draw();
+    const footer = scr[(std.mem.lastIndexOfScalar(u8, std.mem.trimEnd(u8, scr, "\n"), '\n') orelse 0)..];
+    try t.expect(has(footer, "Pipelines"));
+    try t.expect(!has(footer, "PRs"));
+    // A detail opened on a PR tab.
+    try s.key("1");
+    try t.expect(std.mem.startsWith(u8, s.rig.app.status.items, "Open + Draft"));
+    try s.key("j");
+    try s.key("d");
+    try t.expect(s.rig.app.detailShown());
+    try s.key("3");
+    try t.expect(!s.rig.app.detailShown());
+    scr = try s.draw();
+    try t.expect(!has(scr, "no PR focused"));
+    // The table has the whole width back: its DATE column is on screen.
+    try t.expect(has(scr, "DATE"));
+    // Esc on Pipelines does not close what it cannot see; back on the
+    // PR tab the detail is where it was.
+    try s.key("escape");
+    try s.key("1");
+    try t.expect(s.rig.app.detailShown());
 }

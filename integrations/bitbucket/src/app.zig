@@ -1209,7 +1209,14 @@ pub const App = struct {
     pub fn keyContext(app: *App, rows: []const tabs.VisibleRow) keymap.Context {
         const ts = app.activeTab();
         const on_row = ts.selected < rows.len and rows[ts.selected] != .show_more;
-        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detail_visible, .family = ts.spec.kind.family() };
+        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detailShown(), .family = ts.spec.kind.family() };
+    }
+
+    /// The PR detail panel is a pull-request tab's: on a pipelines tab
+    /// it is hidden (not closed — it is back on the next PR tab), so it
+    /// neither halves the table nor answers `Esc`.
+    pub fn detailShown(app: *App) bool {
+        return app.detail_visible and app.activeTab().spec.kind.family() == .prs;
     }
 
     // ─── input ───────────────────────────────────────────────────────
@@ -1335,13 +1342,13 @@ pub const App = struct {
                     app.filter.clearRetainingCapacity();
                     app.filter_caret = 0;
                     ts.selected = 0;
-                } else if (app.detail_visible) {
+                } else if (app.detailShown()) {
                     app.detail_visible = false;
                 }
             },
         }
         // The cursor moved with the detail open: fetch the new PR's.
-        if (app.detail_visible) {
+        if (app.detailShown()) {
             rows = (try app.visible(a)).rows;
             const after = app.focusedKey(rows);
             if (!sameKey(before, after)) {
@@ -2072,6 +2079,9 @@ pub const App = struct {
         app.detail_scroll = 0;
         const ts = app.activeTab();
         if ((!ts.fetched or ts.stale) and !ts.loading) try app.refreshTab(idx);
+        // The footer describes the tab on screen, not the last one that
+        // finished loading.
+        if (!ts.loading and ts.status.len > 0) app.setStatus("{s}", .{ts.status});
     }
 
     pub fn refreshActive(app: *App) Allocator.Error!void {

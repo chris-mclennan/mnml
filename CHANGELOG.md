@@ -126,6 +126,9 @@ the release ships one file), and one line per change a user can see.
 - `mnml-bitbucket --diag` draws every Auth line as a branch of the tree.
 - Folding out an open pull request's builds says "source commit", not
   "merge commit".
+- On a Bitbucket Pipelines tab the footer describes the Pipelines tab,
+  and a PR detail left open on another tab is hidden there instead of
+  taking half the table.
 
 ## v0.3.5 (2026-10-06)
 
