@@ -114,6 +114,17 @@ pub const Badge = enum {
             .first_party => "first-party",
         };
     }
+
+    /// The badge's mark alone, for a row with no room for its word:
+    /// `✓` is what "Official" means at a glance. Null for a badge that
+    /// is only a word — it is shown whole or not at all.
+    pub fn short(b: Badge, ascii: bool) ?[]const u8 {
+        return switch (b) {
+            .official => if (ascii) "+" else "\u{2713}",
+            .community => "~",
+            else => null,
+        };
+    }
 };
 
 /// One three-row entry, as the app hands it over.
@@ -489,8 +500,9 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
         x += ui.putStr(x, r1.y, right -| x, ui.clipStr(ui.fmt(" ({s} not installed)", .{bin}), right -| x), ms);
     }
     // After the label, each extra — the version, the badge, the source —
-    // is painted whole or not at all, and once one does not fit nothing
-    // after it is tried: `first-part` or a lone `✓` cut at the column's
+    // is painted whole, else in its short form (the Official badge's `✓`
+    // alone), else not at all, and once one does not fit whole nothing
+    // after it is tried: `first-part` or `✓ Offi` cut at the column's
     // edge read as words that are not there (hunt6). The label itself
     // carries the ellipsis (`clipStr` above).
     var whole: Whole = .{ .ui = ui, .y = r1.y, .right = right, .x = &x };
@@ -506,7 +518,7 @@ fn paintEntry(ui: Ui, r1: Rect, r2: Rect, e: Entry, style: Style) void {
             .dev => t.palette.orange,
             .first_party => t.palette.teal,
         };
-        whole.put(ui.fmt("  {s}", .{b.text(ui.ascii)}), Theme.withFg(style, fg));
+        whole.putOr(ui.fmt("  {s}", .{b.text(ui.ascii)}), if (b.short(ui.ascii)) |m| ui.fmt("  {s}", .{m}) else null, Theme.withFg(style, fg));
     }
     if (e.state) |st| {
         const fg: Color = switch (st) {
@@ -549,8 +561,17 @@ const Whole = struct {
     full: bool = false,
 
     fn put(w: *Whole, text: []const u8, style: Style) void {
+        w.putOr(text, null, style);
+    }
+
+    /// `text` when it fits, else its `short` form when that does (the
+    /// badge's mark alone), else nothing; a short form ends the run.
+    fn putOr(w: *Whole, text: []const u8, short: ?[]const u8, style: Style) void {
         if (w.full) return;
         if (w.ui.width(text) > w.right -| w.x.*) {
+            if (short) |sh| if (w.ui.width(sh) <= w.right -| w.x.*) {
+                w.x.* += w.ui.putStr(w.x.*, w.y, w.right -| w.x.*, sh, style);
+            };
             w.full = true;
             return;
         }
@@ -885,7 +906,7 @@ test "a mnml-catalogue row paints its version, badge and install state — insta
     try g.expectContains("[launcher] btop  \u{2713} Official  (acme)");
 }
 
-test "a narrow row drops the extras that do not fit whole — never `first-part` or a lone ✓ at the edge — and the label carries the ellipsis" {
+test "a narrow row keeps the Official badge as its ✓ alone and drops what has no short form — never `first-part` or `✓ Offi` at the edge — and the label carries the ellipsis" {
     var scroll: usize = 0;
     // The Marketplace at 36 cells: the badge does not fit after the version.
     var f = try Fixture.init(36, 8);
@@ -895,9 +916,9 @@ test "a narrow row drops the extras that do not fit whole — never `first-part`
         .{ .kind = .app, .label = "Bitbucket", .version = "0.2.4", .badge = .official, .source = "mnml", .line2 = "PRs" },
     };
     _ = drawSection(f.ui(), f.full(), sectionProps(&mkt, &scroll, .marketplace));
-    try f.expectContains("[installed] Jira  0.2.5");
+    // The word does not fit; the mark does — `✓` alone, never `✓ Offi`.
+    try f.expectContains("[installed] Jira  0.2.5  \u{2713}");
     try f.expectLacks("Offi");
-    try f.expectLacks("0.2.4  \u{2713}");
     // The Installed tab narrower than `Browser  first-party`: the badge
     // goes whole, where it used to read `first-par`.
     var g = try Fixture.init(20, 10);

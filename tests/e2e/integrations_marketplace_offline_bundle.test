@@ -8,6 +8,10 @@
 write cat/marketplace.zon ".{ .entries = .{ .{ .id = \"sample\", .label = \"Sample\", .description = \"The mnml-sdk sample: a live counter\", .category = \"sample\", .version = \"0.1.0\", .binary = \"$MNML_SAMPLE_INTEGRATION\" } } }"
 command integrations.show_marketplace
 expect within 5000 screen contains "Mkt (1)"
+# At the shipped `tree_width = 30` the `✓ Official` word does not fit
+# after the version: the badge is its mark alone, never cut mid-word.
+expect screen contains "Sample  0.1.0  ✓"
+expect screen lacks "Offi"
 drag 30 5 70 5
 expect screen contains "Sample"
 key i
