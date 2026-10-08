@@ -299,6 +299,69 @@ pub fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
+/// `"key":"…"` with its escapes decoded into `buf`, for a name the pane
+/// shows: `\"` `\\` `\/` and `\uXXXX` (a surrogate pair as one
+/// character, a lone half as U+FFFD); a control character, escaped or
+/// not, is a space. Cut at `buf.len`. Null when the key is not a string.
+pub fn jsonText(buf: []u8, line: []const u8, key: []const u8) ?[]const u8 {
+    return unescape(buf, jsonString(line, key) orelse return null);
+}
+
+/// The JSON string body `raw` decoded into `buf` (see `jsonText`).
+pub fn unescape(buf: []u8, raw: []const u8) []const u8 {
+    var o: usize = 0;
+    var i: usize = 0;
+    while (i < raw.len) {
+        var cp: u21 = raw[i];
+        if (raw[i] == '\\' and i + 1 < raw.len) {
+            const e = raw[i + 1];
+            i += 2;
+            cp = switch (e) {
+                'u' => blk: {
+                    const hi = hex4(raw, i) orelse break :blk 0xFFFD;
+                    i += 4;
+                    if (hi >= 0xD800 and hi <= 0xDBFF) {
+                        if (i + 1 < raw.len and raw[i] == '\\' and raw[i + 1] == 'u') if (hex4(raw, i + 2)) |lo| if (lo >= 0xDC00 and lo <= 0xDFFF) {
+                            i += 6;
+                            break :blk 0x10000 + ((@as(u21, hi) - 0xD800) << 10) + (lo - 0xDC00);
+                        };
+                        break :blk 0xFFFD;
+                    }
+                    if (hi >= 0xDC00 and hi <= 0xDFFF) break :blk 0xFFFD;
+                    break :blk hi;
+                },
+                'b', 'f', 'n', 'r', 't' => ' ',
+                else => e,
+            };
+            if (cp < 0x20 or cp == 0x7f) cp = ' ';
+            var tmp: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(cp, &tmp) catch 0;
+            if (o + n > buf.len) break;
+            @memcpy(buf[o .. o + n], tmp[0..n]);
+            o += n;
+            continue;
+        }
+        if (o >= buf.len) break;
+        buf[o] = if (raw[i] < 0x20 or raw[i] == 0x7f) ' ' else raw[i];
+        o += 1;
+        i += 1;
+    }
+    return buf[0..o];
+}
+
+fn hex4(raw: []const u8, at: usize) ?u16 {
+    if (at + 4 > raw.len) return null;
+    for (raw[at .. at + 4]) |c| if (!std.ascii.isHex(c)) return null;
+    return std.fmt.parseInt(u16, raw[at .. at + 4], 16) catch null;
+}
+
+/// A name for the pane: decoded, and `fallback` when it is missing or
+/// blank.
+fn nameOf(buf: []u8, line: []const u8, key: []const u8, fallback: []const u8) []const u8 {
+    const text = jsonText(buf, line, key) orelse return fallback;
+    return if (std.mem.trim(u8, text, " ").len == 0) fallback else text;
+}
+
 fn valueAfter(line: []const u8, key: []const u8) ?[]const u8 {
     var kbuf: [40]u8 = undefined;
     const needle = std.fmt.bufPrint(&kbuf, "\"{s}\"", .{key}) catch return null;
@@ -415,11 +478,13 @@ pub const ServiceReader = struct {
         gpa: Allocator,
         fn line(k: DrawSink, l: []const u8) Allocator.Error!void {
             const ts = saneTs(jsonNumber(l, "ts") orelse return) orelse return;
+            var name_buf: [256]u8 = undefined;
+            var reason_buf: [256]u8 = undefined;
             try k.s.draw_events.append(k.gpa, .{
                 .ts = ts,
                 .pid = @intCast(@min(clampU32(jsonNumber(l, "pid") orelse 0), std.math.maxInt(i32))),
-                .program = try k.s.names.intern(k.gpa, jsonString(l, "program") orelse "unknown"),
-                .reason = try k.s.names.intern(k.gpa, jsonString(l, "reason") orelse ""),
+                .program = try k.s.names.intern(k.gpa, nameOf(&name_buf, l, "program", "unknown")),
+                .reason = try k.s.names.intern(k.gpa, jsonText(&reason_buf, l, "reason") orelse ""),
                 .wait_ms = clampU32(jsonNumber(l, "wait_ms") orelse 0),
                 .token = if (jsonString(l, "token_id")) |id| (if (validTokenId(id)) try k.s.names.intern(k.gpa, id) else no_token) else no_token,
             });
@@ -434,6 +499,7 @@ pub const ServiceReader = struct {
         fn line(k: ReqSink, l: []const u8) Allocator.Error!void {
             const ts = saneTs(jsonNumber(l, "ts") orelse return) orelse return;
             if (jsonString(l, "path") == null) return;
+            var name_buf: [256]u8 = undefined;
             const reason = jsonString(l, "reason") orelse "";
             const cache = jsonString(l, "cache") orelse "none";
             const hit = std.mem.eql(u8, reason, "cache_hit");
@@ -441,7 +507,7 @@ pub const ServiceReader = struct {
             const status = jsonNumber(l, "status");
             try k.s.req_events.append(k.gpa, .{
                 .ts = ts,
-                .program = try k.s.names.intern(k.gpa, jsonString(l, "integration") orelse "mnml"),
+                .program = try k.s.names.intern(k.gpa, nameOf(&name_buf, l, "integration", "mnml")),
                 .reason = try k.s.names.intern(k.gpa, reason),
                 .wait_ms = clampU32(jsonNumber(l, "wait_ms") orelse 0),
                 .status = if (status) |st| @intCast(@min(clampU32(st), std.math.maxInt(u16))) else 0,
@@ -450,7 +516,7 @@ pub const ServiceReader = struct {
             });
             // mnml's own 429s: the fleet's throttles file is the rest
             // of the machine's, so the view is only whole with these.
-            if (status) |st| if (st == 429) try k.s.noteThrottle(k.gpa, ts, jsonString(l, "integration") orelse "mnml", k.news);
+            if (status) |st| if (st == 429) try k.s.noteThrottle(k.gpa, ts, nameOf(&name_buf, l, "integration", "mnml"), k.news);
         }
     };
 
@@ -657,7 +723,9 @@ pub const Reader = struct {
             const th = parseThrottle(l) orelse return;
             if (!validService(th.api)) return;
             const s = try k.r.ensure(k.io, k.gpa, k.paths, th.api);
-            try s.noteThrottle(k.gpa, th.ts, th.caller, k.news);
+            var caller_buf: [256]u8 = undefined;
+            const caller = nameOf(&caller_buf, l, "caller", "unknown");
+            try s.noteThrottle(k.gpa, th.ts, caller, k.news);
         }
     };
 
@@ -2009,4 +2077,21 @@ test "a per-token service lists every bucket file, the shared one first and the 
     try t.expectEqual(@as(u32, 1), hour[2].requests);
     try t.expectEqualStrings("fedcba987654", hour[3].token);
     try t.expectEqual(@as(u32, 0), hour[3].requests);
+}
+
+test "program names read as written: escapes decoded, a blank name is `unknown`, a control character a space" {
+    var s: ServiceReader = .{ .service = try t.allocator.dupe(u8, "acme") };
+    defer s.deinit(t.allocator);
+    const sink: ServiceReader.DrawSink = .{ .s = &s, .gpa = t.allocator };
+    try sink.line("{\"ts\":1789999990,\"program\":\"esc\\\"aped\\\\name\",\"pid\":3}");
+    try sink.line("{\"ts\":1789999991,\"program\":\"caf\\u00e9 \\ud83d\\ude00\"}");
+    try sink.line("{\"ts\":1789999992,\"program\":\"\",\"pid\":-5}");
+    try sink.line("{\"ts\":1789999993,\"program\":\"  \"}");
+    try sink.line("{\"ts\":1789999994,\"program\":\"a\\nb\\ud800c\"}");
+    const names = [_][]const u8{ "esc\"aped\\name", "café 😀", "unknown", "unknown", "a b\u{FFFD}c" };
+    for (s.draw_events.items, names) |e, want| try t.expectEqualStrings(want, s.names.get(e.program));
+    // A name longer than the buffer is cut, never past it.
+    var buf: [4]u8 = undefined;
+    try t.expectEqualStrings("caf", unescape(&buf, "caf\\u00e9"));
+    try t.expectEqualStrings("ab", unescape(&buf, "ab\\u"));
 }
