@@ -1,0 +1,24 @@
+# width: 120
+# height: 40
+# A leaf's tab strip re-fits its window when the strip narrows, so the
+# active tab stays on it. With a pinned tab first and a split halving
+# the strip, the window fitted for the full width used to stay put: the
+# left half showed only the pin and `‹ 1/4 ›`, the tab the pane was
+# showing nowhere on its strip.
+write README.md "# r\n"
+write src/app.ts "x\n"
+write src/main.zig "fn main() void {}\n"
+write package.json "{}\n"
+open README.md
+open src/app.ts
+open src/main.zig
+open package.json
+command buffer.pin_toggle
+open src/app.ts
+command view.split_right
+command view.focus_left
+expect pane "app.ts"
+# The left strip's window is the active tab's page, not the pin's.
+expect screen lacks "‹ 1/4 ›"
+expect screen contains "app.ts"
+expect screen contains "󰐕   ‹ 3/4 ›"

@@ -175,6 +175,9 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- A tab strip that narrows (a split, a resize) keeps the active tab on
+  it. With a pinned tab first, the left half of a split used to show
+  only the pin and the page counter.
 - The git view's working-tree column paints its buttons whole at
   120x40 and narrower: the section rows say "Unstaged (3)" so
   "Stage All" fits, the commit row says "Clear" rather than "Clea", and

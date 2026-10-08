@@ -1642,9 +1642,14 @@ fn drawStrip(app: *App, ui: Ui, layout: *app_mod.Layout, lid: layout_mod.NodeId,
         .focused = paneFocused(app, leaf.active),
         .session_nav = try sessionNav(app, leaf.active),
     };
-    if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active) {
+    const active_pos: usize = for (tabs, 0..) |tab, i| {
+        if (tab.active) break i;
+    } else 0;
+    if (leaf.strip_anchor == null or leaf.strip_anchor.? != leaf.active or leaf.strip_fit_w != strip.w or leaf.strip_fit_pos != active_pos) {
         opts.first = bufferline.fitActive(ui, strip, tabs, leaf.strip_first, opts);
         leaf.strip_anchor = leaf.active;
+        leaf.strip_fit_w = strip.w;
+        leaf.strip_fit_pos = active_pos;
     }
     const win = bufferline.draw(ui, strip, tabs, opts);
     leaf.strip_first = win.first;
