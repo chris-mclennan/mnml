@@ -117,7 +117,36 @@ pub const Shared = struct {
     runs: std.atomic.Value(u32) = .init(0),
     /// Cycles skipped because a pane was open.
     skipped: std.atomic.Value(u32) = .init(0),
+    /// The last run exited 0 having published nothing: its `--values`
+    /// said `{"skipped":"poll_skipped_budget"}` — the shared bucket was
+    /// under a quarter, and a poll is the thing that gives way.
+    last_skipped: std.atomic.Value(bool) = .init(false),
 };
+
+/// What `--values` prints, on stdout, when it gives way to the budget
+/// (`mnml_sdk.warm.skipped_budget`): exit 0, nothing fetched, nothing
+/// published.
+pub const skipped_word = @import("mnml_sdk").warm.skipped_budget;
+
+/// A chip still at its manifest's resting `…` this long after the
+/// poller started — or after its integration's first run finished
+/// without publishing — reads `—`: nothing is coming yet, and an
+/// ellipsis says something is.
+pub const placeholder_timeout_ms: i64 = 60_000;
+
+/// How a finished run reads in the JOBS list: `published`, `skipped —
+/// under budget, next in 5m`, `exit 1 — backing off`. Into `buf`.
+pub fn runWords(buf: []u8, code: i32, skipped: bool, next_secs: u32) []const u8 {
+    if (code < 0) return "could not start it";
+    if (code > 0) return std.fmt.bufPrint(buf, "exit {d} \u{2014} backing off", .{code}) catch "failed";
+    if (!skipped) return "published";
+    var nbuf: [16]u8 = undefined;
+    const next: []const u8 = if (next_secs >= 120)
+        std.fmt.bufPrint(&nbuf, "{d}m", .{next_secs / 60}) catch "?"
+    else
+        std.fmt.bufPrint(&nbuf, "{d}s", .{next_secs}) catch "?";
+    return std.fmt.bufPrint(buf, "skipped \u{2014} under budget, next in {s}", .{next}) catch "skipped";
+}
 
 /// One `values_sources` entry, resolved. Owned by the state's gpa and
 /// never moved: the worker holds a pointer.
@@ -162,6 +191,9 @@ pub const State = struct {
     jobs: std.ArrayListUnmanaged(*Job) = .empty,
     /// The workers are running. False after `stop`.
     running: bool = false,
+    /// When the workers last started (`App.now_ms`): the clock the
+    /// resting `…` is timed out against (`placeholder_timeout_ms`).
+    started_ms: i64 = 0,
 
     /// Cancel every worker, then free what they pointed at. In that
     /// order: a job freed under a live worker is a use-after-free, and
@@ -380,6 +412,9 @@ fn start(app: *App) void {
         st.group.concurrent(app.io, worker, .{ j, app.events, app.io }) catch continue;
     }
     st.running = true;
+    // The clock, not `app.now_ms`: a start during `App.init` runs
+    // before the first tick has set it, and 0 timed every chip out.
+    st.started_ms = App.nowMs(app.io);
 }
 
 /// One source, forever: wait out its stagger, then run, wait, run.
@@ -403,16 +438,20 @@ fn worker(job: *Job, events: *event.EventQueue, io: Io) Io.Cancelable!void {
             var label_buf: [160]u8 = undefined;
             const label = std.fmt.bufPrint(&label_buf, "{s} --values ({s})", .{ job.integration_id, job.source_id }) catch job.integration_id;
             jobs.post(events, io, events.gpa, .integration, job.job_key, .running, label);
-            const code = runOnce(job, io) catch |err| switch (err) {
+            const run = runOnce(job, io) catch |err| switch (err) {
                 error.Canceled => {
                     job.shared.in_flight.store(false, .release);
                     jobs.post(events, io, events.gpa, .integration, job.job_key, .cancelled, null);
                     return error.Canceled;
                 },
             };
-            var words_buf: [48]u8 = undefined;
-            const words: []const u8 = if (code == 0) "published" else if (code < 0) "could not start it" else std.fmt.bufPrint(&words_buf, "exit {d} — backing off", .{code}) catch "failed";
+            const code = run.code;
+            // A run that gave way to the budget exited 0 and published
+            // nothing: the list says so, and when it tries again.
+            var words_buf: [64]u8 = undefined;
+            const words = runWords(&words_buf, code, run.skipped, job.interval_secs);
             jobs.post(events, io, events.gpa, .integration, job.job_key, if (code == 0) .ok else .failed, words);
+            job.shared.last_skipped.store(code == 0 and run.skipped, .release);
             job.shared.in_flight.store(false, .release);
             job.shared.last_exit.store(code, .monotonic);
             job.shared.last_run_secs.store(Io.Timestamp.now(io, .real).toSeconds(), .monotonic);
@@ -444,30 +483,39 @@ fn waitSecs(job: *Job, io: Io, secs: u32) Io.Cancelable!void {
 
 /// The child, and its exit code. -1 when it could not be spawned at
 /// all, which is a failure like any other for the backoff.
-fn runOnce(job: *Job, io: Io) Io.Cancelable!i32 {
-    const code = try spawnAndWait(io, job.argv, job.cwd, &job.env);
+const Run = struct {
+    code: i32,
+    /// Its stdout said it gave way to the budget (`skipped_word`).
+    skipped: bool = false,
+};
+
+fn runOnce(job: *Job, io: Io) Io.Cancelable!Run {
+    const run = try spawnAndWait(io, job.argv, job.cwd, &job.env);
     if (job.prefetch_argv) |pa| {
-        if (code == 0) _ = try spawnAndWait(io, pa, job.cwd, &job.env);
+        if (run.code == 0 and !run.skipped) _ = try spawnAndWait(io, pa, job.cwd, &job.env);
     }
-    return code;
+    return run;
 }
 
-fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.process.Environ.Map) Io.Cancelable!i32 {
+/// The child, its exit code, and whether its stdout said it skipped.
+/// Its stdout is read to the end (only the head is kept), so a child
+/// that prints a lot never blocks on a full pipe.
+fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.process.Environ.Map) Io.Cancelable!Run {
     // The argv is `[][]u8` because the job owns it; the spawn wants
     // `[]const []const u8`.
     var stack: [16][]const u8 = undefined;
-    if (argv.len == 0 or argv.len > stack.len) return -1;
+    if (argv.len == 0 or argv.len > stack.len) return .{ .code = -1 };
     for (argv, 0..) |a, i| stack[i] = a;
     var child = std.process.spawn(io, .{
         .argv = stack[0..argv.len],
         .cwd = .{ .path = cwd },
         .environ_map = env,
         .stdin = .ignore,
-        .stdout = .ignore,
+        .stdout = .pipe,
         .stderr = .ignore,
     }) catch |err| switch (err) {
         error.Canceled => return error.Canceled,
-        else => return -1,
+        else => return .{ .code = -1 },
     };
     // Whatever happens next — a normal exit, a cancel mid-wait — the
     // child does not outlive this function. That is the whole of "no
@@ -477,6 +525,30 @@ fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.pro
     // and returns having done nothing. The pid is taken first and the
     // signal sent to it directly.
     const pid = child.id;
+    // The head of stdout, for the skip word; the rest is drained. A
+    // cancel lands in the read while the child runs and goes up — never
+    // into a `catch {}`, or the cancel would wait for the child.
+    var head: [256]u8 = undefined;
+    var head_len: usize = 0;
+    {
+        var rbuf: [512]u8 = undefined;
+        var rd = child.stdout.?.reader(io, &rbuf);
+        var chunk: [512]u8 = undefined;
+        while (true) {
+            const n = rd.interface.readSliceShort(&chunk) catch {
+                if (rd.err) |e| if (e == error.Canceled) {
+                    child_os.reapAbandoned(pid);
+                    return error.Canceled;
+                };
+                break;
+            };
+            if (n == 0) break;
+            const take = @min(n, head.len - head_len);
+            @memcpy(head[head_len..][0..take], chunk[0..take]);
+            head_len += take;
+            if (n < chunk.len) break;
+        }
+    }
     const term = child.wait(io) catch |err| switch (err) {
         error.Canceled => {
             child_os.reapAbandoned(pid);
@@ -484,12 +556,15 @@ fn spawnAndWait(io: Io, argv: []const []u8, cwd: []const u8, env: *const std.pro
         },
         else => {
             child_os.reapAbandoned(pid);
-            return -1;
+            return .{ .code = -1 };
         },
     };
-    return switch (term) {
-        .exited => |c| @intCast(c),
-        else => -1,
+    return .{
+        .code = switch (term) {
+            .exited => |c| @intCast(c),
+            else => -1,
+        },
+        .skipped = std.mem.indexOf(u8, head[0..head_len], skipped_word) != null,
     };
 }
 
@@ -503,6 +578,55 @@ pub fn tick(app: *App) void {
     for (st.jobs.items) |j| {
         j.shared.paused.store(paneOpenFor(app, j.integration_id), .release);
     }
+    settlePlaceholders(app);
+}
+
+/// A chip at its manifest's resting `…` that nothing will fill soon —
+/// its integration's first run has finished without publishing (gave
+/// way to the budget, or failed), or `placeholder_timeout_ms` has gone
+/// by since the poller started — reads `—`, and its hover says why.
+/// Only a resting chip is touched: a published (`live`) one already
+/// shows its last known figure. A rescan puts the `…` back; the next
+/// tick settles it again.
+pub fn settlePlaceholders(app: *App) void {
+    const st = &app.integration_poll;
+    if (!st.running) return;
+    const timed_out = app.now_ms - st.started_ms >= placeholder_timeout_ms;
+    for (app.ipc_fx.segments.items) |*seg| {
+        if (seg.live) continue;
+        const j = st.jobForSegment(seg.id) orelse continue;
+        // A run that published will be read off the channel in a
+        // moment; only one that gave way or failed settles early.
+        const gave_up = j.shared.runs.load(.acquire) > 0 and
+            (j.shared.last_skipped.load(.acquire) or j.shared.last_exit.load(.acquire) != 0);
+        if (!gave_up and !timed_out) continue;
+        settleOne(app.gpa, seg, j, app.cfg.ui.ascii_icons) catch {};
+    }
+}
+
+fn settleOne(gpa: Allocator, seg: *@import("../ipc/effects.zig").Segment, j: *const Job, ascii: bool) Allocator.Error!void {
+    const dots = "\u{2026}";
+    const stem = if (std.mem.endsWith(u8, seg.text, dots))
+        seg.text[0 .. seg.text.len - dots.len]
+    else if (std.mem.endsWith(u8, seg.text, "..."))
+        seg.text[0 .. seg.text.len - 3]
+    else
+        return;
+    const text = try std.fmt.allocPrint(gpa, "{s}{s}", .{ stem, if (ascii) "-" else "\u{2014}" });
+    errdefer gpa.free(text);
+    const why: []const u8 = if (j.shared.runs.load(.acquire) == 0)
+        "its first poll has not answered yet"
+    else if (j.shared.last_skipped.load(.acquire))
+        "its last poll gave way to the shared API budget (under a quarter left) and fetched nothing"
+    else if (j.shared.last_exit.load(.acquire) != 0)
+        "its last poll failed"
+    else
+        "its last poll published nothing";
+    const tip = try std.fmt.allocPrint(gpa, "No figure yet \u{2014} {s}.\nRefresh now asks again.", .{why});
+    gpa.free(seg.text);
+    seg.text = text;
+    if (seg.tooltip) |old| gpa.free(old);
+    seg.tooltip = tip;
 }
 
 /// The rule one mount pane is judged by: it belongs to this
@@ -825,6 +949,86 @@ test "stopping the poller cancels the worker and reaps its child: nothing outliv
     // ten seconds after the kill — was a zombie: the cancel's SIGIO had
     // landed in the reap's `waitpid` (`core/child.zig`, `reap`).
     try testing.expect(child_os.goneWithin(testing.io, pid, .fromSeconds(10)));
+}
+
+test "a finished run reads as what it did: published, skipped under budget with when it tries again, or the exit code" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("published", runWords(&buf, 0, false, 300));
+    try testing.expectEqualStrings("skipped \u{2014} under budget, next in 5m", runWords(&buf, 0, true, 300));
+    try testing.expectEqualStrings("skipped \u{2014} under budget, next in 90s", runWords(&buf, 0, true, 90));
+    try testing.expectEqualStrings("exit 1 \u{2014} backing off", runWords(&buf, 1, false, 300));
+    try testing.expectEqualStrings("could not start it", runWords(&buf, -1, false, 300));
+}
+
+test "a --values run that gave way to the budget is marked skipped, and its chip's resting … becomes — with the reason; a published chip is left as it is" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest; // the child is /bin/sh
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = pbuf[0..try tmp.dir.realPath(testing.io, &pbuf)];
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = root, .data_root = root, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    // What `mnml-bitbucket --values` prints when it gives way.
+    var argv = try testing.allocator.alloc([]u8, 3);
+    argv[0] = try testing.allocator.dupe(u8, "/bin/sh");
+    argv[1] = try testing.allocator.dupe(u8, "-c");
+    argv[2] = try testing.allocator.dupe(u8, "printf '{\"skipped\":\"" ++ skipped_word ++ "\"}\\n'; exit 0");
+    const job = try testing.allocator.create(Job);
+    job.* = .{
+        .integration_id = try testing.allocator.dupe(u8, "acme"),
+        .source_id = try testing.allocator.dupe(u8, "acme_values"),
+        .argv = argv,
+        .cwd = try testing.allocator.dupe(u8, root),
+        .env = std.process.Environ.Map.init(testing.allocator),
+        .interval_secs = 300,
+        .stagger_secs = 0,
+    };
+    try app.integration_poll.jobs.append(app.gpa, job);
+    try app.ipc_fx.setSegment(app.gpa, .{ .id = "acme.prs", .text = "A \u{2026}" });
+    try app.ipc_fx.setSegment(app.gpa, .{ .id = "acme.live", .text = "A 3", .live = true });
+    start(&app);
+    defer app.integration_poll.stop(app.gpa, app.io);
+    // Before the run finishes and before the timeout: still resting.
+    tick(&app);
+    var waited: usize = 0;
+    while (waited < 200 and job.shared.runs.load(.acquire) == 0) : (waited += 1) testing.io.sleep(.fromMilliseconds(25), .awake) catch {};
+    try testing.expect(job.shared.runs.load(.acquire) > 0);
+    try testing.expectEqual(@as(i32, 0), job.shared.last_exit.load(.acquire));
+    try testing.expect(job.shared.last_skipped.load(.acquire));
+    tick(&app);
+    const seg = app.ipc_fx.segments.items[app.ipc_fx.find("acme.prs").?];
+    try testing.expectEqualStrings("A \u{2014}", seg.text);
+    try testing.expect(std.mem.indexOf(u8, seg.tooltip.?, "gave way to the shared API budget") != null);
+    try testing.expectEqualStrings("A 3", app.ipc_fx.segments.items[app.ipc_fx.find("acme.live").?].text);
+}
+
+test "a chip still resting a minute after the poller started reads — even though no run has finished" {
+    var app = try App.initWith(testing.allocator, testing.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 24 });
+    defer app.deinit();
+    const job = try testing.allocator.create(Job);
+    job.* = .{
+        .integration_id = try testing.allocator.dupe(u8, "acme"),
+        .source_id = try testing.allocator.dupe(u8, "acme_values"),
+        .argv = &.{},
+        .cwd = try testing.allocator.dupe(u8, ""),
+        .env = std.process.Environ.Map.init(testing.allocator),
+        .interval_secs = 300,
+        .stagger_secs = 0,
+    };
+    try app.integration_poll.jobs.append(app.gpa, job);
+    try app.ipc_fx.setSegment(app.gpa, .{ .id = "acme.prs", .text = "A \u{2026}" });
+    // The workers "started" (none spawned: nothing to run) at t0.
+    app.integration_poll.running = true;
+    app.integration_poll.started_ms = 1_000;
+    app.now_ms = 1_000 + placeholder_timeout_ms - 1;
+    settlePlaceholders(&app);
+    try testing.expectEqualStrings("A \u{2026}", app.ipc_fx.segments.items[0].text);
+    app.now_ms = 1_000 + placeholder_timeout_ms;
+    app.cfg.ui.ascii_icons = true;
+    settlePlaceholders(&app);
+    try testing.expectEqualStrings("A -", app.ipc_fx.segments.items[0].text);
+    try testing.expect(std.mem.indexOf(u8, app.ipc_fx.segments.items[0].tooltip.?, "has not answered yet") != null);
+    app.integration_poll.running = false;
 }
 
 /// Whether that process is still there. A child the worker failed to

@@ -57,6 +57,13 @@ the release ships one file), and one line per change a user can see.
   and any other request to a host that is not this machine is refused
   with a clear message. mnml never read the proxy variables, so a proxy
   that refuses never covered it; this switch does.
+- A statusline poll that stepped aside to save the shared API budget
+  says "skipped — under budget, next in 5m" in the Jobs list instead of
+  "published", and a chip that has no figure yet shows `—` rather than
+  `…` for minutes. The budget is now read the way every program sharing
+  it reads it, so a config asking for a bigger bucket than the shared
+  one no longer makes every poll step aside, and a chip's hover no
+  longer says "cut from" when nothing was ever throttled.
 
 ### Installed integrations say when they are out of date
 
