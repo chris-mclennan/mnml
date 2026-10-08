@@ -4382,6 +4382,7 @@ pub fn handleAppCommand(app: *App, pane_id: PaneId, e: *EditorPane, cmd: input.A
             const d: i32 = @intCast(@min(fs.count, std.math.maxInt(i32)));
             try cmd_find.stepFind(app, if (fs.forward) d else -d);
         },
+        .page_scroll => |ps| try cmd_view.pageScroll(app, e, ps.kind, ps.count),
         .session_step => |ss| {
             const session_cycle = @import("session_cycle.zig");
             var i: u32 = 0;

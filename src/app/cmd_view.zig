@@ -790,11 +790,70 @@ fn cursorTo(app: *App, where: enum { center, top, bottom }) CommandError!void {
     const e = try app.requireEditor();
     const row = e.buf.editor.currentLine();
     const n_rows = @max(app.pane_rows, 1);
+    // `zz` puts the line on the middle row, the upper one of two
+    // (Neovim, 38 rows: `Gzz` on line 100 → top 82); `zt` / `zz` on the
+    // last lines leave blank rows below it until the cursor moves.
     e.view.scroll_line = @intCast(switch (where) {
         .top => row,
-        .center => row -| n_rows / 2,
+        .center => row -| (n_rows - 1) / 2,
         .bottom => row -| (n_rows - 1),
     });
+    e.view.pinAllowingTail(e.buf.editor.cursor);
+    app.needs_render = true;
+}
+
+/// vim's `Ctrl-D` / `Ctrl-U` / `Ctrl-F` / `Ctrl-B` (`:help scroll-down`),
+/// probed on Neovim 0.12.5 with a 38-row window: the window moves and
+/// the cursor moves the same number of lines (`Ctrl-D` from the top:
+/// top 20, cursor 20). `Ctrl-D` stops scrolling once the last line is
+/// on the bottom row and walks the cursor on; a count sets the amount
+/// for later ones too ('scroll'). `Ctrl-F` pages by the height less two
+/// with the cursor on the new top line, and onto the last line when the
+/// end already shows; `Ctrl-B` pages back with the cursor kept on screen.
+pub fn pageScroll(app: *App, e: *app_mod.EditorPane, kind: input.PageScroll, count: u32) Allocator.Error!void {
+    const ed = e.buf.editor;
+    const h: usize = @max(app.pane_rows, 1);
+    const last = ed.lineCount() - 1;
+    const top: usize = @min(e.view.scroll_line, last);
+    const row = @min(ed.currentLine(), last);
+    var new_top = top;
+    var new_row = row;
+    switch (kind) {
+        .half_down, .half_up => {
+            if (count > 0) e.view.scroll_amount = count;
+            const amt: usize = if (e.view.scroll_amount > 0) e.view.scroll_amount else @max(h / 2, 1);
+            if (kind == .half_down) {
+                if (row >= last) return;
+                const max_top = (last + 1) -| h;
+                new_top = @max(top, @min(top + amt, max_top));
+                new_row = @min(row + amt, last);
+            } else {
+                if (row == 0) return;
+                new_top = top -| amt;
+                new_row = row -| amt;
+            }
+        },
+        .page_down => {
+            const step = @max(h -| 2, 1) * @max(count, 1);
+            if (top + h - 1 >= last) {
+                if (top >= last) return;
+                new_top = last;
+            } else new_top = @min(top + step, last);
+            new_row = @max(row, new_top);
+        },
+        .page_up => {
+            if (top == 0) return;
+            const step = @max(h -| 2, 1) * @max(count, 1);
+            new_top = top -| step;
+            new_row = @min(row, @min(new_top + h - 1, last));
+        },
+    }
+    e.view.scroll_line = @intCast(new_top);
+    if (new_row != row) {
+        _ = try app.applyOps(e, &.{.{ .move_to_line_keep_col = new_row + 1 }});
+        e.buf.clampNormalCursor();
+    }
+    e.view.pinAllowingTail(ed.cursor);
     app.needs_render = true;
 }
 

@@ -554,7 +554,7 @@ pub const Buffer = struct {
     /// `eleven`). The goal column is untouched, so the next `j` / `k`
     /// still reaches the remembered column. Insert's one-shot `Ctrl-O`
     /// is exempt: there the cursor may sit past the end (`:help i_CTRL-O`).
-    fn clampNormalCursor(self: *Buffer) void {
+    pub fn clampNormalCursor(self: *Buffer) void {
         const v = switch (self.input) {
             .vim => |*v| v,
             .standard => return,
@@ -1493,9 +1493,9 @@ test "vim motions" {
     // A shorter line clamps onto its last char; the goal column survives.
     try vim("$k", "ab\n|abcdef", "a|b\nabcdef");
     try vim("$kj", "ab\n|abcdef", "ab\nabcde|f");
-    // Ctrl-F onto the last line: on a char, at the goal column (`G$<C-f>` → 13:22).
-    try vim("G$<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\ngamm|a");
-    try vim("<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\n|gamma");
+    // Ctrl-F / Ctrl-D move the window, which lives in the app: they are
+    // `page_scroll` app commands, covered by vim_paragraph_page.test
+    // (`G$<C-f>` → 13:22) and vim_page_keys_scroll_the_window.test.
     // `}` / `{`: the next EMPTY line after some text — the line just
     // below counts (`5G}` → 6), a blank-only line does not (`2G}` → 6
     // past a `"  "` line 3); at the end, the last line's last char.
@@ -1527,8 +1527,6 @@ test "vim motions" {
     try vim("Ta", "abcab|c", "abca|bc");
     try vim("3|", "|abcdef", "ab|cdef");
     try vim("50%", "|a\nb\nc\nd", "a\n|b\nc\nd");
-    try vim("<c-d>", "|a\nb\nc\nd\ne\nf\ng\nh", "a\nb\nc\nd\ne\n|f\ng\nh");
-    try vim("<c-f><c-b>", "|a\nb\nc", "|a\nb\nc");
     try vim("<c-right><c-left>", "|hello world", "|hello world");
     try vim("<end><home>", "|abc", "|abc");
 }

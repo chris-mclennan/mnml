@@ -76,6 +76,8 @@ pub const RepeatInsertKind = enum {
 /// A small, closed set of buffer/app-level intents the editor cannot
 /// express. Bigger features are registered commands; this stays tiny.
 /// String payloads live in the frame arena.
+pub const PageScroll = enum { half_down, half_up, page_down, page_up };
+
 pub const AppCommand = union(enum) {
     save,
     /// A vim `:` line — the interpreter lives in the app.
@@ -120,6 +122,10 @@ pub const AppCommand = union(enum) {
     /// `{count}]a` / `{count}[a`: `count` steps round the session ring
     /// (`ai.focus_next_session` / `_prev_session`, `app/session_cycle.zig`).
     session_step: struct { count: u32, forward: bool },
+    /// vim's `Ctrl-D` / `Ctrl-U` / `Ctrl-F` / `Ctrl-B`: the window scrolls
+    /// and the cursor moves with it (`:help CTRL-D`). The pane's height
+    /// lives in the app, so the app does both. `count` 0 = none typed.
+    page_scroll: struct { kind: PageScroll, count: u32 },
     /// `d'a` / `` y`a `` / `c'a`: `op` is `d`, `y` or `c`; `exact` is the
     /// backtick form (charwise, exclusive), else linewise to the mark's
     /// line. The buffer owns the mark, so it builds the range.
@@ -144,7 +150,7 @@ pub const AppCommand = union(enum) {
     script_operator: struct { ops: []const EditOp, index: u32, state: u16 = 0, linewise: bool = false },
 
     comptime {
-        std.debug.assert(compat.unionFields(AppCommand).len == 31);
+        std.debug.assert(compat.unionFields(AppCommand).len == 32);
     }
 };
 

@@ -209,6 +209,13 @@ the release ships one file), and one line per change a user can see.
   and the key does nothing.
 - Visual `J` joins every selected line, not just two, and Visual `gJ`
   joins them with nothing between; `u` takes the join back in one step.
+- `Ctrl-D`, `Ctrl-U`, `Ctrl-F` and `Ctrl-B` scroll the window as well
+  as the cursor, the way Neovim does: `Ctrl-D` moves both half a window,
+  `Ctrl-F` a window less two lines. Before, only the cursor moved and the
+  view followed once it ran off the edge. A count before `Ctrl-D` /
+  `Ctrl-U` sets how far they move from then on, as vim's `scroll` does.
+- `zz`, `zt` and `zb` on the last lines put them where asked, leaving
+  blank rows below the end the way Neovim does, until the cursor moves.
 
 ## v0.3.5 (2026-10-06)
 

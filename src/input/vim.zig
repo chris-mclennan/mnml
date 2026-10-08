@@ -464,6 +464,11 @@ pub const Vim = struct {
         self.count = cur *| 10 +| d;
     }
 
+    /// The window and the cursor move together; the app knows the height.
+    fn pageScroll(kind: input.PageScroll, count: u32) InputResult {
+        return .{ .app = .{ .page_scroll = .{ .kind = kind, .count = count } } };
+    }
+
     fn runCmd(id: CommandId) InputResult {
         return .{ .app = .{ .run_command = id } };
     }
@@ -1535,6 +1540,7 @@ pub const Vim = struct {
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
 
         const n = self.count1();
+        const typed_count: u32 = self.count orelse 0;
         switch (key.code) {
             .esc => {
                 self.resetPending();
@@ -1571,10 +1577,10 @@ pub const Vim = struct {
                             break :blk .consumed;
                         },
                         '^', '6' => runCmd(.@"buffer.last"),
-                        'd' => ops(arena, &.{.half_page_down}),
-                        'u' => ops(arena, &.{.half_page_up}),
-                        'f' => ops(arena, &.{.page_down}),
-                        'b' => ops(arena, &.{.page_up}),
+                        'd' => pageScroll(.half_down, typed_count),
+                        'u' => pageScroll(.half_up, typed_count),
+                        'f' => pageScroll(.page_down, typed_count),
+                        'b' => pageScroll(.page_up, typed_count),
                         'v' => blk: {
                             self.vmode = .visual_block;
                             break :blk ops(arena, &.{.block_select_start});
@@ -2468,17 +2474,17 @@ pub const Vim = struct {
                 return ops(arena, &.{ widen, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = false } } });
             }
             if (ch) |c| {
-                const scroll: ?EditOp = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
+                const scroll: ?input.PageScroll = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
                     'b' => .page_up,
                     'f' => .page_down,
-                    'u', 'y' => .half_page_up,
-                    'd', 'e' => .half_page_down,
+                    'u', 'y' => .half_up,
+                    'd', 'e' => .half_down,
                     else => null,
                 };
                 if (scroll) |s| {
-                    const n = self.count1();
+                    const typed: u32 = self.count orelse 0;
                     self.count = null;
-                    return repeated(arena, s, n);
+                    return pageScroll(s, typed);
                 }
             }
         }
