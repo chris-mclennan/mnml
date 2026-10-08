@@ -556,14 +556,22 @@ fn cellFor(bounds: []const f64, lo: f64) Cell {
     return .{ .fill = fill, .bottom = si, .top = if (above != null and bounds[above.? + 1] >= top_edge - 0.5) above else null };
 }
 
-/// Requests a bucket, averaged over the column's buckets.
+/// The buckets a column starting at bucket `first` really holds: a
+/// whole `span`, except the newest column, which stops at the window's
+/// last bucket — the one holding now. Never 0, so it divides.
+pub fn realBuckets(nb: usize, first: usize, span: usize) usize {
+    return @max(@min(span, nb -| first), 1);
+}
+
+/// Requests a bucket, averaged over the buckets the column holds — a
+/// partly-filled newest column is not drawn as if the rest were empty.
 fn colRate(w: *const reader.WinSnap, c: usize, span: usize) f64 {
     var n: u64 = 0;
     const first = c * span;
     var b = first;
     const nb = w.window.buckets();
     while (b < first + span and b < nb) : (b += 1) n += w.total(b);
-    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(span));
+    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(realBuckets(nb, first, span)));
 }
 
 fn seriesRate(w: *const reader.WinSnap, c: usize, span: usize, si: usize) f64 {
@@ -572,7 +580,7 @@ fn seriesRate(w: *const reader.WinSnap, c: usize, span: usize, si: usize) f64 {
     var b = first;
     const nb = w.window.buckets();
     while (b < first + span and b < nb) : (b += 1) n += w.at(b, si);
-    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(span));
+    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(realBuckets(nb, first, span)));
 }
 
 fn rateText(ui: Ui, v: f64) []const u8 {
@@ -592,7 +600,9 @@ pub fn readout(ui: Ui, p: *const traffic.ApiTrafficPane, w: *const reader.WinSna
     var b = first;
     while (b < first + span and b < nb) : (b += 1) n += w.total(b);
     if (span * @as(usize, @intCast(p.window.bucketSecs())) > 60) {
-        const to = from + @as(f64, @floatFromInt(span)) * bsecs;
+        // The column's last real bucket, and never past now.
+        const real_to = from + @as(f64, @floatFromInt(realBuckets(nb, first, span))) * bsecs;
+        const to = if (p.result) |r| @min(real_to, @max(r.now, from)) else real_to;
         out.print(ui.arena, "{s}–{s}", .{ clockText(ui, from, tz, with_day), clockText(ui, to, tz, false) }) catch return "";
     } else out.appendSlice(ui.arena, clockText(ui, from, tz, with_day)) catch return "";
     out.print(ui.arena, " · {d} request{s}", .{ n, if (n == 1) "" else "s" }) catch {};
@@ -948,4 +958,55 @@ test "NOW shows a row per bucket file, each its own tokens and 429s, and the hou
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectContains("  bucket  2.0/40 tokens · 0.60/s · no cooldown · last 429 30s ago · 9 throttles (token 0123…)");
     try f.expectContains("hour    10 of 4320 limit (0 %)");
+}
+
+test "on the week the newest column, only partly inside the window, is averaged over the buckets it has, and its readout ends now" {
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .week);
+    defer p.deinit(testing.io);
+    const r = try traffic.Result.create(testing.allocator, 0);
+    defer r.destroy(testing.allocator);
+    p.result = r;
+    const bsecs: f64 = @floatFromInt(reader.Window.week.bucketSecs());
+    // Five minutes into a ten-minute bucket.
+    const now: f64 = @floor(1_790_000_000 / bsecs) * bsecs + 300;
+    r.now = now;
+    const a = r.arena.allocator();
+    const nb = reader.Window.week.buckets();
+    const counts = try a.alloc(u32, nb);
+    @memset(counts, 0);
+    // 300 requests over the newest seven buckets, the hunt's numbers.
+    for (nb - 7..nb, 0..) |b, i| counts[b] = if (i < 6) 43 else 42;
+    var snap: reader.ServiceSnap = .{ .service = "bitbucket", .source = .draws };
+    const end = (@floor(now / bsecs) + 1) * bsecs;
+    snap.windows[@intFromEnum(reader.Window.week)] = .{
+        .window = .week,
+        .requests = 300,
+        .series = try a.dupe(reader.Series, &.{.{ .label = "widget.py" }}),
+        .counts = counts,
+        .start = end - @as(f64, @floatFromInt(nb)) * bsecs,
+        .who = try a.dupe(reader.WhoRow, &.{.{ .program = "widget.py", .requests = 300, .share_pct = 100 }}),
+    };
+    r.services = try a.dupe(reader.ServiceSnap, &.{snap});
+    p.service = try testing.allocator.dupe(u8, "bitbucket");
+    const w = p.currentWin().?;
+    // Thirteen buckets a column: the newest holds seven of them.
+    const g = geometry(nb, 78);
+    try testing.expectEqual(@as(usize, 13), g.span);
+    const last = g.cols - 1;
+    try testing.expectEqual(@as(usize, 7), nb - last * g.span);
+    try testing.expectApproxEqAbs(@as(f64, 300.0 / 7.0), colRate(w, last, g.span), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 300.0 / 7.0), seriesRate(w, last, g.span, 0), 1e-9);
+    // A full column is still its sum over the whole span.
+    try testing.expectApproxEqAbs(@as(f64, 0), colRate(w, last - 1, g.span), 1e-9);
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    const text = readout(f.ui(), &p, w, last * g.span, g.span, 0);
+    // From the column's first bucket to now, never past it.
+    const want_to = clockText(f.ui(), now, 0, false);
+    try testing.expect(std.mem.indexOf(u8, text, ui_dash(want_to, f.ui())) != null);
+    try testing.expect(std.mem.indexOf(u8, text, "300 requests") != null);
+}
+
+fn ui_dash(to: []const u8, ui: Ui) []const u8 {
+    return ui.fmt("–{s} ·", .{to});
 }

@@ -228,7 +228,10 @@ fn column(arena: Allocator, p: *const traffic.ApiTrafficPane, first: u32) Alloca
     const nb = p.window.buckets();
     const bsecs: f64 = @floatFromInt(p.window.bucketSecs());
     const from = w.start + @as(f64, @floatFromInt(first)) * bsecs;
-    const to = from + @as(f64, @floatFromInt(span)) * bsecs;
+    // The column's last real bucket, and never past now — the readout's
+    // own end (`api_traffic_view.readout`).
+    const real: f64 = @floatFromInt(@max(@min(span, nb -| first), 1));
+    const to = @min(from + real * bsecs, @max(r.now, from));
     const with_day = p.window != .hour;
     var total: u64 = 0;
     var b: usize = first;
