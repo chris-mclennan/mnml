@@ -120,6 +120,9 @@ the release ships one file), and one line per change a user can see.
 - A Bitbucket feed event that arrives while another tab is on screen
   updates the pull request on every tab that lists it, a Pipelines tab
   on screen included, instead of being spent on the wrong tab.
+- A Bitbucket feed line naming another workspace, or a repo outside
+  `repos`, is ignored instead of fetched with your token; the status
+  line says how many were ignored, once per session.
 
 ## v0.3.5 (2026-10-06)
 

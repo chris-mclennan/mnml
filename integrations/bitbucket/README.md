@@ -597,7 +597,11 @@ Anything may append one JSON line per change —
 name it, through the same budget as everything else. The answer lands
 in **every tab that lists pull requests**, whichever tab is on screen
 (a Pipelines tab included); a tab it has joined or left is asked again
-the next time it is shown. Moving the file aside and starting a new one
+the next time it is shown. A key naming another workspace — or, with
+`repos` set, a repo outside it — is never fetched: the file is shared,
+and a line in it is no reason to send this pane's token anywhere else.
+The status line says `feed: ignored N events for other workspaces`
+once per session. Moving the file aside and starting a new one
 (rotation) is noticed whatever the new file's size: it is read from its
 first byte. While the file is
 live the chip says `· feed` and the listing is only swept every

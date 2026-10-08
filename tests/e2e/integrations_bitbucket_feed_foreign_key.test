@@ -1,0 +1,33 @@
+# width: 120
+# height: 40
+# The feed file is shared and anything may append to it: a key naming
+# another workspace (`otherws/api#1234`), or a repo outside `repos`, is
+# never fetched with this pane's token. The status line says so once.
+# The control, `api#1234`, is fetched.
+# env: MNML_MARKETPLACE_LOCAL=market
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/bitbucket.zon
+# env: BITBUCKET_BASE_URL=@${MNML_E2E_WORKSPACE}/bb.url
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: BITBUCKET_API_TOKEN=corpus-read-token
+# env: MNML_WORKSPACE=${MNML_E2E_WORKSPACE}
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 180 --log-file wire.jsonl >/dev/null 2>&1 &
+write feed.jsonl "{\"kind\":\"heartbeat\",\"at\":1,\"source\":\"e2e\"}\n"
+write bitbucket.zon ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\", \"web\" }, .refresh_interval_secs = 1, .poll_max_secs = 1, .feed = .{ .file = \"feed.jsonl\", .stale_secs = 300, .sweep_secs = 600 }, .rate = .{ .rate_per_sec = 1000, .capacity = 1000 }, .tabs = .{ .{ .name = \"Open + Draft\", .kind = .workspace_open_prs } } }"
+write market/bitbucket_prs.zon ".{ .id = \"bitbucket_prs\", .label = \"Bitbucket PRs\", .version = \"0.2.0\", .binary = \"$MNML_BITBUCKET_INTEGRATION\", .args = .{ \"--only\", \"prs\" }, .description = \"Bitbucket: open + merged pull requests across the workspace\", .chip = .{ .glyph = \"\u{f00a8}\", .fallback = \"BP\", .color = \"blue\", .in_palette_bar = false }, .commands = .{ .{ .id = \"bitbucket_prs.open\", .title = \"Bitbucket PRs: open\" } } }"
+command integrations.show_marketplace
+expect screen contains "Mkt (1)"
+key i
+expect screen contains "installed bitbucket_prs"
+command integrations.open_as_tab
+command bitbucket_prs.open
+command view.toggle_tree
+command view.focus_pane
+expect within 30000 screen contains "(2 repos · 3 PRs)"
+expect within 3000 screen contains "· feed"
+wait 2000
+shell printf '%s\n' '{"kind":"pr","key":"otherws/api#1234","at":1790000000,"source":"e2e"}' '{"kind":"pr","key":"acme/secret#1234","at":1790000000,"source":"e2e"}' >> feed.jsonl
+expect within 5000 screen contains "feed: ignored 2 events for other workspaces"
+expect file wire.jsonl lacks "otherws"
+expect file wire.jsonl lacks "secret"
+shell printf '%s\n' '{"kind":"pr","key":"api#1234","at":1790000001,"source":"e2e"}' >> feed.jsonl
+expect within 10000 file wire.jsonl contains "acme/api/pullrequests/1234\""

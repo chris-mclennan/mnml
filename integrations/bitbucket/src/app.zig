@@ -506,6 +506,12 @@ pub const App = struct {
     /// `acme/api#12` are one) before its answer lands is not asked for
     /// twice.
     feed_in_flight: std.StringHashMapUnmanaged(void) = .empty,
+    /// Feed lines naming a workspace (or, with `repos` set, a repo) this
+    /// pane does not show: never fetched — a line in a shared file is
+    /// no reason to send this pane's token anywhere else. The status
+    /// line says so once per session.
+    feed_ignored: u32 = 0,
+    feed_ignored_said: bool = false,
     /// May each open pull request merge, keyed `slug#id`. Filled for
     /// the row the cursor lands on, one cached look each.
     readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
@@ -2089,15 +2095,21 @@ pub const App = struct {
     /// The pull requests an event feed named. Each is asked for once,
     /// alone, whichever tab is on screen — a Pipelines tab included —
     /// and the answer replaces its row in every tab that lists pull
-    /// requests (`.pr_changed` in `apply`).
+    /// requests (`.pr_changed` in `apply`). A key outside the
+    /// configured workspace (or repos) is not fetched at all.
     pub fn feedChanged(app: *App, changes: []const sdk.feed.Change) Allocator.Error!void {
         // The workspace a bare `api#12` means: the tab on screen's when
         // it lists pull requests, else the first one that does.
         const home: *TabState = if (app.activeTab().spec.kind.family() == .prs) app.activeTab() else for (app.tabs) |*tab| {
             if (tab.spec.kind.family() == .prs) break tab;
         } else return;
+        var ignored: u32 = 0;
         for (changes) |c| {
             const key = parseFeedKey(c.key, home.spec.workspace, app.config.workspace) orelse continue;
+            if (!app.feedKeyShown(key)) {
+                ignored += 1;
+                continue;
+            }
             // The detail the reader may have open for it is stale now.
             var kb: [256]u8 = undefined;
             const kt = keyText(&kb, key);
@@ -2111,6 +2123,26 @@ pub const App = struct {
             try app.enqueueFor(.{ .pr_changed = .{ .tab = app.active, .key = key } }, .delta);
             app.feed_fetches += 1;
         }
+        if (ignored > 0) {
+            app.feed_ignored += ignored;
+            if (!app.feed_ignored_said) {
+                app.feed_ignored_said = true;
+                app.setStatus("feed: ignored {d} event{s} for other workspaces", .{ app.feed_ignored, if (app.feed_ignored == 1) "" else "s" });
+            }
+        }
+    }
+
+    /// Does this pane show `key`'s workspace (the config's, or a tab's
+    /// own) — and, when `repos` narrows the config, its repo?
+    pub fn feedKeyShown(app: *const App, key: fetch.PrKey) bool {
+        const ws_ok = std.ascii.eqlIgnoreCase(key.workspace, app.config.workspace) or for (app.tabs) |tab| {
+            if (tab.spec.kind.family() == .prs and std.ascii.eqlIgnoreCase(tab.spec.workspace, key.workspace)) break true;
+        } else false;
+        if (!ws_ok) return false;
+        if (app.config.repos.len == 0) return true;
+        for (app.config.repos) |r| if (std.ascii.eqlIgnoreCase(r, key.repo)) return true;
+        for (app.tabs) |tab| if (tab.spec.repo.len > 0 and std.ascii.eqlIgnoreCase(tab.spec.repo, key.repo)) return true;
+        return false;
     }
 
     /// `api#12` or `acme/api#12`, as a pull request's key. The workspace
@@ -2124,6 +2156,8 @@ pub const App = struct {
         const repo = if (slash) |i| left[i + 1 ..] else left;
         const ws = if (slash) |i| left[0..i] else if (tab_workspace.len > 0) tab_workspace else default_workspace;
         if (repo.len == 0 or ws.len == 0) return null;
+        // One path segment each: `a/b/c#1` is not a key, it is a path.
+        if (std.mem.indexOfScalar(u8, ws, '/') != null) return null;
         return .{ .workspace = ws, .repo = repo, .id = id };
     }
 
@@ -4268,5 +4302,26 @@ test "a feed event lands in every tab that lists pull requests, whichever tab is
     try r.app.switchTab(0);
     try r.drain();
     try t.expect(!r.app.tabs[0].stale);
+}
+
+test "a feed key for another workspace, or a repo outside `repos`, is never fetched; the status line says so once" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const served = r.srv.snapshot().served;
+    try r.app.feedChanged(&.{ .{ .key = "otherws/api#1234" }, .{ .key = "acme/secret#1" }, .{ .key = "a/b/c#1" } });
+    try t.expectEqual(@as(u32, 0), r.app.feed_fetches);
+    try r.drain();
+    try t.expectEqual(served, r.srv.snapshot().served);
+    try t.expectEqualStrings("feed: ignored 2 events for other workspaces", r.app.status.items);
+    // Once per session: a later one is counted, not said again.
+    r.app.setStatus("something else", .{});
+    try r.app.feedChanged(&.{.{ .key = "otherws/web#7" }});
+    try t.expectEqual(@as(u32, 3), r.app.feed_ignored);
+    try t.expectEqualStrings("something else", r.app.status.items);
+    // The control: this workspace, a listed repo — case aside.
+    try r.app.feedChanged(&.{.{ .key = "ACME/api#1234" }});
+    try t.expectEqual(@as(u32, 1), r.app.feed_fetches);
+    try r.drain();
+    try t.expect(r.srv.snapshot().served > served);
 }
 

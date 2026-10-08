@@ -1388,6 +1388,9 @@ The rules a reader follows, so a writer knows what it can rely on:
   the reader's offset (truncated in place), or when its modification
   time went backwards. A file that disappears and comes back is read
   from its first byte.
+- A key outside what the pane shows — another workspace, or a repo the
+  config's `repos` leaves out — is not fetched: the file is shared, and
+  a line in it is no reason to send the pane's credential elsewhere.
 - Kinds other than the ones a pane wants are ignored by that pane. The
   Bitbucket pane reads `pr`; the Jira pane reads `issue`. Both may share
   one file.
