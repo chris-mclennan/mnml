@@ -123,6 +123,7 @@ the release ships one file), and one line per change a user can see.
 - A Bitbucket feed line naming another workspace, or a repo outside
   `repos`, is ignored instead of fetched with your token; the status
   line says how many were ignored, once per session.
+- `mnml-bitbucket --diag` draws every Auth line as a branch of the tree.
 
 ## v0.3.5 (2026-10-06)
 

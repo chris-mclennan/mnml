@@ -588,7 +588,11 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         try out.print("config: {s}\n{s}", .{ s.loaded.path, tk });
         try out.print("workspace: {s}\nemail: {s}\nrefresh_interval_secs: {d}\nscope: {s}\nrecent_window_days: {d}\n", .{ c.workspace, c.email, c.refresh_interval_secs, @tagName(c.scope), c.recent_window_days });
     } else {
-        try out.print("mnml-bitbucket · diagnostics\n\nAuth\n  ├─ {s}  ├─ email: {s}\n", .{ tk, c.email });
+        // The block is several lines; every one is a branch of the tree.
+        try out.writeAll("mnml-bitbucket · diagnostics\n\nAuth\n");
+        var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, tk, "\n"), '\n');
+        while (lines.next()) |l| try out.print("  ├─ {s}\n", .{l});
+        try out.print("  ├─ email: {s}\n", .{c.email});
     }
     // Said before anything is asked: the token file's access token has
     // no account, and the tabs that filter to yours cannot work
@@ -2467,6 +2471,34 @@ test "--check and --diag exit 1 when the probe fails — refused, a 500, a 429 �
         try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
         try t.expect(std.mem.indexOf(u8, rig.text(), "429") != null);
     }
+}
+
+test "--diag draws every line of its Auth block as a branch of the tree" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var rig: CheckRig = undefined;
+    try rig.init(base, fake_account_token);
+    defer rig.deinit();
+
+    try t.expectEqual(@as(u8, 0), try rig.check(true));
+    const diag = rig.text();
+    const auth_at = std.mem.indexOf(u8, diag, "Auth\n").?;
+    var lines = std.mem.splitScalar(u8, diag[auth_at + "Auth\n".len ..], '\n');
+    var n: usize = 0;
+    while (lines.next()) |l| {
+        if (l.len == 0) break;
+        if (!std.mem.startsWith(u8, l, "  ├─ ") and !std.mem.startsWith(u8, l, "  └─ ") and !std.mem.startsWith(u8, l, "     ")) {
+            std.debug.print("--diag said:\n{s}\n", .{diag});
+            return error.TestUnexpectedResult;
+        }
+        n += 1;
+    }
+    try t.expect(n >= 4);
+    try t.expect(std.mem.indexOf(u8, diag, "  ├─ auth scheme: ") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "  ├─ approve token: ") != null);
 }
 
 /// The pane on the offline fixture, for the SDK's design-language
