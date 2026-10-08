@@ -254,10 +254,16 @@ pub fn noteText(arena: Allocator, list: []const Behind, ascii: bool) Allocator.E
 /// The Installed row's *Update to <version>*: queue the Marketplace
 /// row's install — the same one its Install runs.
 fn updateFromMarketplace(app: *App) CommandError!void {
-    const st = &app.integrations;
     const arena = app.frame.allocator();
     const i = (try integrations.focusedRow(app)) orelse
         return app.diag.fail(arena, "integrations: pick an installed integration first", .{});
+    return updateAt(app, i);
+}
+
+/// *Update to* for installed row `i` (an index into the list).
+pub fn updateAt(app: *App, i: usize) CommandError!void {
+    const st = &app.integrations;
+    const arena = app.frame.allocator();
     if (i >= st.list.len) return;
     const inst = &st.list[i];
     const hint = (try hintFor(app, arena, inst)) orelse
@@ -556,3 +562,63 @@ test "integrations.check_updates_now under the offline switch says so and fetche
     try testing.expectEqualStrings("integrations: offline (MNML_OFFLINE=1) \u{2014} the update check does not reach the network", app.lastToast().?);
 }
 
+test "the Details pane of an integration behind the Marketplace says both versions and offers Update to; Relink is called Relink; `i` on the row updates; the Marketplace row's menu reads the binary, not the slug" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    try app.resize(200, 30);
+    app.marketplace.entries = &index_rows;
+    // An install is running, so an update queues rather than downloads.
+    app.marketplace.installing = try testing.allocator.dupe(u8, "busy");
+    try integrations.openDetail(&app, .{ .installed = "jira_work" });
+    {
+        const text = try screenText(&app);
+        defer testing.allocator.free(text);
+        try testing.expect(std.mem.indexOf(u8, text, "installed 0.2.3 \u{00b7} 0.2.4 available") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Update to 0.2.4 ]") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Relink the binary ]") != null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Update ]") == null);
+    }
+    // The tab wears the name, not the id.
+    try testing.expectEqualStrings("Jira Work", app.panes.get(app.panes.findKind(.integrations).?).?.title());
+    // Current with the Marketplace: Relink only.
+    try integrations.openDetail(&app, .{ .installed = "bitbucket_prs" });
+    {
+        const text = try screenText(&app);
+        defer testing.allocator.free(text);
+        try testing.expect(std.mem.indexOf(u8, text, "available") == null);
+        try testing.expect(std.mem.indexOf(u8, text, "Update to") == null);
+        try testing.expect(std.mem.indexOf(u8, text, "[ Relink the binary ]") != null);
+    }
+    // `i` on the behind row is its Update to: the Marketplace row queues.
+    try command.run(&app, .{ .static = .@"integrations.show_installed" });
+    const jira = try rowOf(&app, "Jira Work");
+    try integrations.rowMouse(&app, jira, .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    closeMenu(&app);
+    try testing.expect(try integrations.handleKey(&app, .{ .code = .{ .char = 'i' } }));
+    try testing.expectEqual(@as(usize, 1), app.marketplace.queue.items.len);
+    try testing.expectEqualStrings("jira", app.marketplace.queue.items[0]);
+    // The Marketplace's Jira row is installed by its binary (jira_work,
+    // jira_boards), not by the slug `jira`: its menu offers the update.
+    try command.run(&app, .{ .static = .@"integrations.show_marketplace" });
+    app.marketplace.entries = &index_rows;
+    try integrations.rowMouse(&app, try mktRow(&app, "jira"), .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    try testing.expect(app.overlay == .menu);
+    try testing.expectEqualStrings("Update to 0.2.4", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+    // Bitbucket's row: installed and current — Reinstall, not Install.
+    try integrations.rowMouse(&app, try mktRow(&app, "bitbucket"), .{ .kind = .press, .button = .right, .x = 5, .y = 5 });
+    try testing.expectEqualStrings("Reinstall", app.overlay.menu.items[0].label);
+    closeMenu(&app);
+}
+
+/// The Marketplace tab's visible index of the row for entry `id`.
+fn mktRow(app: *App, id: []const u8) !u32 {
+    var v: usize = 0;
+    while (try integrations.entryAt(app, v)) |e| : (v += 1) {
+        if (e < app.marketplace.entries.len and std.mem.eql(u8, app.marketplace.entries[e].id, id)) return @intCast(v);
+    }
+    return error.TestUnexpectedResult;
+}

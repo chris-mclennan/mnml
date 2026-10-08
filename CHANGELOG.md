@@ -70,6 +70,13 @@ the release ships one file), and one line per change a user can see.
 - "Integrations: check the Marketplace for updates now" runs the update
   check right away and says what it found ("3 integrations checked ·
   1 update: Jira 0.2.3 → 0.2.4"); it used to say updates did not exist.
+- An installed integration's Details pane says "installed 0.2.3 · 0.2.4
+  available" and offers *Update to 0.2.4* when the Marketplace has a
+  newer one; the button that only relinks is called *Relink the binary*,
+  in the pane and in the palette. `i` on an out-of-date Installed row
+  updates it. The Marketplace's Jira and Bitbucket rows offer
+  *Reinstall* or *Update to* once installed, not *Install*, and a
+  Details tab is titled by name, not by id.
 
 ### Installed integrations say when they are out of date
 
