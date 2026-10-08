@@ -283,9 +283,14 @@ pub const Vim = struct {
     /// Insert-mode `Ctrl+N` / `Ctrl+P` / `Ctrl+O` are vim's before they
     /// are the keymap's (lowercase only: `Ctrl+Shift+P` stays the palette).
     pub fn reservesKey(self: *const Vim, k: Key) bool {
-        if (self.vmode != .insert or !k.mods.ctrl or k.mods.alt or k.mods.super or k.mods.shift) return false;
+        const typing = self.vmode == .insert or self.vmode == .replace;
+        if (!typing or !k.mods.ctrl or k.mods.alt or k.mods.super or k.mods.shift) return false;
         return switch (k.code) {
-            .char => |c| c == 'n' or c == 'p' or c == 'o',
+            // `Ctrl-H` / `J` / `K` / `L` switch windows from Normal only:
+            // while typing they are vim's own (`i_CTRL-H` backspace,
+            // `i_CTRL-J` a line break), so the editor never stays in
+            // Insert with the keyboard gone to the tree.
+            .char => |c| c == 'h' or c == 'j' or c == 'k' or c == 'l' or (self.vmode == .insert and (c == 'n' or c == 'p' or c == 'o')),
             else => false,
         };
     }
@@ -854,6 +859,11 @@ pub const Vim = struct {
                     return .consumed;
                 },
                 'j' => return ops(arena, &.{.insert_newline}),
+                // `i_CTRL-L` types a form feed in Neovim (no 'insertmode');
+                // `i_CTRL-K`'s digraphs are not supported, and the key is
+                // taken so it never reaches the window chord.
+                'l' => return ops(arena, &.{.{ .insert_char = 0x0C }}),
+                'k' => return .consumed,
                 else => return .ignored,
             }
         }
@@ -883,6 +893,11 @@ pub const Vim = struct {
             self.enterNormal();
             return .consumed;
         }
+        // As in Insert: `Ctrl-H` steps back (restoring what was
+        // overwritten), `Ctrl-J` breaks the line.
+        if (isCtrlChar(key, 'h')) return ops(arena, &.{.replace_undo_one});
+        if (isCtrlChar(key, 'j')) return ops(arena, &.{.insert_newline});
+        if (isCtrlChar(key, 'k') or isCtrlChar(key, 'l')) return .consumed;
         return switch (key.code) {
             .esc => blk: {
                 self.enterNormal();

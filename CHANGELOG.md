@@ -201,6 +201,12 @@ the release ships one file), and one line per change a user can see.
 - A count before an operator and another after it multiply, as in
   Neovim: `2d3w` deletes six words and `2d2d` four lines. They used to
   run together, so `2d2d` deleted twenty-two lines.
+- In Insert and Replace, `Ctrl-H` is backspace and `Ctrl-J` a line
+  break, as in Neovim. The window keys `Ctrl-H/J/K/L` now move between
+  windows from Normal only; with the file tree showing, a `Ctrl-H` typed
+  in Insert used to send the keyboard to the tree. `Ctrl-L` in Insert
+  types a form feed as Neovim does; `Ctrl-K` digraphs are not supported
+  and the key does nothing.
 
 ## v0.3.5 (2026-10-06)
 
