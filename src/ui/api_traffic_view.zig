@@ -201,7 +201,7 @@ fn drawTabs(ui: Ui, pane: PaneId, row: Rect, p: *traffic.ApiTrafficPane, r: *con
 
 /// ` …+3 `: how many tabs the strip could not show.
 fn cueText(ui: Ui, hidden: usize) []const u8 {
-    return ui.fmt(" {s}+{d} ", .{ if (ui.ascii) "..." else "\u{2026}", hidden });
+    return ui.fmt(" {s}+{d} ", .{ ui.ellipsisText(), hidden });
 }
 
 /// The end of the run of tabs from `from` that fits in `avail` cells.
@@ -242,7 +242,7 @@ fn nowHit(pane: PaneId, row: traffic.NowRow) hit.HitTarget {
 /// `(shared)`, or `(token 0123…)` — which file a bucket row is.
 pub fn bucketName(ui: Ui, token: []const u8) []const u8 {
     if (token.len == 0) return "shared";
-    return ui.fmt("token {s}{s}", .{ token[0..@min(token.len, 4)], if (ui.ascii) "..." else "\u{2026}" });
+    return ui.fmt("token {s}{s}", .{ token[0..@min(token.len, 4)], ui.ellipsisText() });
 }
 
 /// One bucket file's row: its tokens, rate, cooldown and 429s. Alone,
