@@ -2507,9 +2507,11 @@ pub const Vim = struct {
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
         // `v2it`: the count rides on to the text object.
         if (!(ch == 'i' or ch == 'a')) self.count = null;
-        if (key.code == .esc) {
+        // `Esc` / `Ctrl-C` leave Visual; charwise remembers its last
+        // character too, so `gv` reselects all of it (`:help gv`).
+        if (key.code == .esc or isCtrlChar(key, 'c')) {
             self.enterNormal();
-            return ops(arena, &.{.select_clear});
+            return ops(arena, &.{if (linewise) .select_clear else .select_clear_inclusive});
         }
         const c = ch orelse return .consumed;
         switch (c) {
@@ -2519,7 +2521,7 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 self.enterNormal();
-                return ops(arena, &.{.select_clear});
+                return ops(arena, &.{.select_clear_inclusive});
             },
             'V' => {
                 if (linewise) {

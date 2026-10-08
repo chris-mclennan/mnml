@@ -22,6 +22,18 @@ pub fn selectClear(ed: *Editor) void {
     for (ed.extra_anchors.items) |*a| a.* = null;
 }
 
+/// Leave charwise Visual: what `gv` reselects is the inclusive range
+/// widened to half-open (`widenInclusive`) — one character is a
+/// selection too — the same shape `v…y` leaves behind.
+pub fn selectClearInclusive(ed: *Editor) void {
+    if (ed.anchor) |a| {
+        const w = widenInclusive(ed, a, ed.cursor);
+        if (w[0] != w[1]) ed.last_selection = w;
+    }
+    ed.anchor = null;
+    for (ed.extra_anchors.items) |*x| x.* = null;
+}
+
 pub fn selectAll(ed: *Editor) void {
     ed.anchor = 0;
     ed.cursor = ed.len();

@@ -2609,3 +2609,17 @@ test "vim: Visual J / gJ join every selected line, one undo step" {
     // `gv` has the lines back (Neovim: `jVjJgvd` leaves `a` / `d`).
     try vim("jVjJgvd", "|a\nb\nc\nd\n", "a\n|d\n");
 }
+
+test "vim: gv after leaving charwise Visual with Esc, Ctrl-C or v has the whole selection" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("wve<esc>0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("wvl<esc>0gvd", "|abc def ghi\n", "abc |f ghi\n");
+    try vim("wvee<esc>0gvy$p", "|abc def ghi\n", "abc def ghidef gh|i\n");
+    try vim("wvev0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("wve<c-c>0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("evb<esc>$gvd", "|abc def ghi\n", "| def ghi\n");
+    // One character is a selection too.
+    try vim("v<esc>jj0gvd", "|abc def\nghi\n", "|bc def\nghi\n");
+    // The operator path keeps the same shape.
+    try vim("wvey0gvd", "|abc def ghi\n", "abc | ghi\n");
+}

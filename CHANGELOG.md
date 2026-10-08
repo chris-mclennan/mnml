@@ -216,6 +216,9 @@ the release ships one file), and one line per change a user can see.
   `Ctrl-U` sets how far they move from then on, as vim's `scroll` does.
 - `zz`, `zt` and `zb` on the last lines put them where asked, leaving
   blank rows below the end the way Neovim does, until the cursor moves.
+- `gv` after leaving Visual with `Esc` (or `v`) reselects all of it; it
+  used to come back one character short. `Ctrl-C` leaves Visual as `Esc`
+  does — it used to act as `c` and start changing the selection.
 
 ## v0.3.5 (2026-10-06)
 
