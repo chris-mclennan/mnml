@@ -4558,11 +4558,11 @@ test "a fresh data root: the four rows are on the Installed tab at the SHIPPED c
     try testing.expectEqual(@as(usize, 0), app.integrations.list.len);
     try testing.expect(std.mem.indexOf(u8, txt, "Inst (4)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Nothing installed yet") == null);
-    // 26 cells: the short label leaves room for the whole badge; the
-    // long ones clip it, the way every badge of this section clips
-    // (`scripts_marketplace_default.test` pins the same for `✓ Offi…`).
+    // 26 cells: the short label leaves room for the whole badge; a
+    // long one drops it whole rather than cutting it to `first-`.
     try testing.expect(std.mem.indexOf(u8, txt, "Browser  first-party") != null);
-    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)  first-") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)") != null);
+    try testing.expect(std.mem.indexOf(u8, txt, "Codex (hidden)  first") == null);
     try testing.expect(std.mem.indexOf(u8, txt, "browser.open") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "Claude Code (hidden)") != null);
     try testing.expect(std.mem.indexOf(u8, txt, "not logged in") != null);

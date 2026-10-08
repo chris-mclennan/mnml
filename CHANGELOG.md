@@ -83,6 +83,8 @@ the release ships one file), and one line per change a user can see.
   activity bar", and a failed poll's chip names the integration
   ("✗ jira_work: exit 1"). An installed integration's chip menu no
   longer offers *Pin to dock*: it is on the dock already.
+- In a narrow INTEGRATIONS column a row's version, badge and source are
+  shown whole or left off, never cut to `first-part` or a lone `✓`.
 
 ### Installed integrations say when they are out of date
 
