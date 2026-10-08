@@ -2657,13 +2657,20 @@ fn mouseRoute(app: *App, m: Mouse, count: u16) Allocator.Error!void {
                     }
                     return;
                 }
+                // Reports count from the grid's first cell — where the
+                // last frame painted it, past the tab strip AND the focus
+                // rail. The hit rect holds both, and measuring from it
+                // put every click a column right of the pointer. A pane
+                // not painted yet falls back to the rect less the strip.
                 const r = hitRect(app, m.x, m.y) orelse return;
                 const strip: u16 = if (r.h >= 2) 1 else 0;
+                const b = p.body;
+                const origin: @TypeOf(p.body) = if (b.w > 0 and b.h > 0) b else .{ .x = r.x, .y = r.y + strip };
                 // A wheel batch reaches the child as the reports it was
                 // — one per event, never budgeted: the child owns its
                 // scrolling and asked for every report.
                 var reps: u16 = if (wheel) @max(count, 1) else 1;
-                while (reps > 0) : (reps -= 1) pty_pane.mouse(app, p, m, .{ .x = r.x, .y = r.y + strip });
+                while (reps > 0) : (reps -= 1) pty_pane.mouse(app, p, m, .{ .x = origin.x, .y = origin.y });
                 return;
             }
             if (wheel) return wheelOnPane(app, id, m, count);

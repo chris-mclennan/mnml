@@ -1,0 +1,18 @@
+# width: 120
+# height: 40
+# A terminal pane hands a mouse-tracking child the cell under the
+# pointer: the grid's first cell is column 1, row 1. The pane wears the
+# focus rail (`▌`, the default `ui.pane_rail = all`) one column left of
+# the grid, and reports used to be measured from the rail — every click
+# reached the child one column right. The split below the editor starts
+# its grid at row 21, column 1 (the rail is column 0).
+write a.txt "x\n"
+open a.txt
+command view.toggle_tree
+ex term sh -c "stty -echo -icanon -isig; printf '\033[?1000h\033[?1006hready\n'; exec cat -v"
+wait 500
+expect within 3000 screen contains "ready"
+click 1 22
+expect within 3000 screen contains "^[[<0;1;2M^[[<0;1;2m"
+click 9 24
+expect within 3000 screen contains "^[[<0;9;4M^[[<0;9;4m"

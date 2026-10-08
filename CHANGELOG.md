@@ -175,6 +175,9 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- A program in a terminal pane that tracks the mouse (vim, htop,
+  lazygit) is told the cell you clicked. Every click used to reach it
+  one column to the right.
 - Pressing Enter in the "Quit mnml?" box with unsaved work takes the
   focused Cancel, as before, and now says so in a toast that names the
   keys that save or quit.

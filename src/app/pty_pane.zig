@@ -2616,6 +2616,49 @@ test "the wheel over a pty: a child tracking the mouse gets every event of a bat
     try t.expect(std.mem.indexOf(u8, txt2, "95") != null);
 }
 
+/// Press and release the left button at the screen cell `x, y`.
+fn clickCell(app: *App, x: u16, y: u16) !void {
+    for ([_]key_mod.MouseKind{ .press, .release }) |kind|
+        try app.handle(.{ .mouse = .{ .x = x, .y = y, .kind = kind, .button = .left } });
+}
+
+test "a mouse report names the cell under the pointer: the grid's first cell is column 1, row 1 — past the focus rail, in a lone pane and in a right-hand split" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (!supported) return error.SkipZigTest;
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 80, .rows = 16 });
+    defer app.deinit();
+    app.tree.visible = false;
+    // The default: every pane wears the rail, so the grid starts a
+    // column right of the pane's rect.
+    try t.expectEqual(Config.PaneRail.all, app.cfg.ui.pane_rail);
+    // `cat -v` with echo off prints each SGR report it is sent.
+    const script = "stty -echo -icanon -isig; printf '\\033[?1000h\\033[?1006h'; echo ready; cat -v";
+    const a = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "a" });
+    try t.expect(try tickUntilScreen(&app, "ready", 5000));
+    const pa = app.panes.pty(a).?;
+    try t.expect(pa.encoding().mouse != .none);
+    try clickCell(&app, pa.body.x, pa.body.y);
+    try clickCell(&app, pa.body.x + 7, pa.body.y + 2);
+    try t.expect(try tickUntilScreen(&app, "<0;8;3m", 5000));
+    {
+        const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+        defer t.allocator.free(txt);
+        try t.expect(std.mem.indexOf(u8, txt, "^[[<0;1;1M^[[<0;1;1m") != null);
+        try t.expect(std.mem.indexOf(u8, txt, "^[[<0;8;3M^[[<0;8;3m") != null);
+    }
+    // A split to the right: its grid starts mid-screen, and the report
+    // still counts from that grid's own first cell.
+    const b = try open(&app, .{ .argv = &.{ "/bin/sh", "-c", script }, .label = "b", .placement = .right });
+    try t.expect(try tickUntilScreenCount(&app, "ready", 2, 5000));
+    const pb = app.panes.pty(b).?;
+    try t.expect(pb.body.x > 1);
+    try clickCell(&app, pb.body.x + 3, pb.body.y + 1);
+    try t.expect(try tickUntilScreen(&app, "<0;4;2m", 5000));
+    const txt = try screen_mod.toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    try t.expect(std.mem.indexOf(u8, txt, "^[[<0;4;2M^[[<0;4;2m") != null);
+}
+
 // ─── the accent (colors) ───────────────────────────────────────────────
 
 const Config = @import("../config/Config.zig");
