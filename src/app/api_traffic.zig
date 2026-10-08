@@ -218,9 +218,12 @@ pub const State = struct {
     /// When the last look started (`app.now_ms`); 0 before the first.
     last_ms: i64 = 0,
     coalescer: Coalescer = .{},
-    /// The service a toast's offer opens the pane on.
-    focus: [32]u8 = undefined,
-    focus_len: u8 = 0,
+    /// The service the newest throttle toast named, for
+    /// `view.api_traffic_throttled` alone. A toast's own button carries
+    /// its service (`ToastAction.api_traffic`), and a plain open never
+    /// reads this.
+    last_toasted: [32]u8 = undefined,
+    last_toasted_len: u8 = 0,
 
     /// Cancel the worker before anything it holds goes.
     pub fn deinit(st: *State, gpa: Allocator, io: Io) void {
@@ -308,9 +311,27 @@ pub fn windowOf(w: config.ApiTrafficWindow) Window {
 }
 
 /// `view.api_traffic`: the one pane, below the active pane; a refresh
-/// when it is already open. A throttle toast's offer names a service,
-/// and the pane opens on its tab.
+/// when it is already open, on the tab it was on.
 fn showCmd(app: *App) CommandError!void {
+    _ = try openPane(app);
+    try refresh(app);
+}
+
+/// The pane on `service`'s tab, then a read: a throttle toast's offer.
+/// The same tab keeps its cursor; another starts at the top.
+pub fn openOn(app: *App, service: []const u8) CommandError!void {
+    const p = try openPane(app);
+    if (!std.mem.eql(u8, p.service, service)) {
+        try setService(p, service);
+        p.cursor = 0;
+        p.scroll = 0;
+        p.column = null;
+    }
+    try refresh(app);
+}
+
+/// The one pane, made below the active pane when there is none, shown.
+fn openPane(app: *App) CommandError!*ApiTrafficPane {
     const st = &app.api_traffic;
     const id = find(app) orelse blk: {
         var pane = ApiTrafficPane.init(app.gpa, windowOf(app.cfg.integrations.api_traffic_window));
@@ -328,16 +349,10 @@ fn showCmd(app: *App) CommandError!void {
     };
     app.showPane(id);
     const p = get(app, id).?;
-    if (st.focus_len > 0) {
-        try setService(p, st.focus[0..st.focus_len]);
-        st.focus_len = 0;
-        p.cursor = 0;
-        p.scroll = 0;
-        p.column = null;
-    } else if (p.service.len == 0) {
+    if (p.service.len == 0) {
         if (st.result) |r| try pickBusiest(p, r);
     }
-    try refresh(app);
+    return p;
 }
 
 pub fn get(app: *App, id: PaneId) ?*ApiTrafficPane {
@@ -593,13 +608,13 @@ fn toastThrottles(app: *App, result: *const Result) Allocator.Error!void {
         const text = try throttleText(app.frame.allocator(), s);
         const label = try app.gpa.dupe(u8, "API traffic");
         errdefer app.gpa.free(label);
-        const id = try app.gpa.dupe(u8, "view.api_traffic_throttled");
-        errdefer app.gpa.free(id);
-        if (s.service.len <= st.focus.len) {
-            @memcpy(st.focus[0..s.service.len], s.service);
-            st.focus_len = @intCast(s.service.len);
+        const service = try app.gpa.dupe(u8, s.service);
+        errdefer app.gpa.free(service);
+        if (s.service.len <= st.last_toasted.len) {
+            @memcpy(st.last_toasted[0..s.service.len], s.service);
+            st.last_toasted_len = @intCast(s.service.len);
         }
-        try app.toastWithAction(.warn, .{ .command = .{ .label = label, .id = id } }, "{s}", .{text});
+        try app.toastWithAction(.warn, .{ .api_traffic = .{ .label = label, .service = service } }, "{s}", .{text});
     }
 }
 
@@ -625,13 +640,19 @@ pub fn isThrottleToast(app: *const App, id: u32) bool {
     const i = if (id >= toast_ui.close_base) id - toast_ui.close_base else if (id >= toast_ui.action_base) id - toast_ui.action_base else id - toast_ui.button_base;
     if (i >= app.toasts.items.len) return false;
     const a = app.toasts.items[app.toasts.items.len - 1 - i].action orelse return false;
-    return a == .command and std.mem.eql(u8, a.command.id, "view.api_traffic_throttled");
+    return a == .api_traffic;
 }
 
-/// `view.api_traffic_throttled`: the pane, on the service the last
-/// throttle toast named.
+/// `view.api_traffic_throttled`: the pane, on the service the newest
+/// throttle toast named (the palette's way to it once the toast has
+/// gone); a plain open before any toast.
 fn throttledCmd(app: *App) CommandError!void {
-    return showCmd(app);
+    const st = &app.api_traffic;
+    if (st.last_toasted_len == 0) return showCmd(app);
+    var buf: [32]u8 = undefined;
+    const n = st.last_toasted_len;
+    @memcpy(buf[0..n], st.last_toasted[0..n]);
+    return openOn(app, buf[0..n]);
 }
 
 fn pickBusiest(p: *ApiTrafficPane, result: *const Result) Allocator.Error!void {
@@ -1072,7 +1093,7 @@ test "429 toasts coalesce: five new in two minutes is one toast with the counts,
     const last = app.toasts.items[app.toasts.items.len - 1];
     try t.expectEqualStrings("Bitbucket throttled — 5 × 429 in the last 5 min (3 from widget.py, 2 from mnml-bitbucket)", last.text);
     try t.expectEqual(app_mod.ToastLevel.warn, last.level);
-    try t.expectEqualStrings("view.api_traffic_throttled", last.action.?.command.id);
+    try t.expectEqualStrings("bitbucket", last.action.?.api_traffic.service);
     // More inside the window: held, not a toast per line.
     try app.handle(.{ .api_traffic = try throttleResult(&app, t0 + 60, 1, &.{.{ .reason = "widget.py", .n = 6 }}) });
     try app.handle(.{ .api_traffic = try throttleResult(&app, t0 + 200, 2, &.{.{ .reason = "widget.py", .n = 8 }}) });
@@ -1208,4 +1229,55 @@ test "every numeric field of every file at its extremes: the worker reads it and
         try computeAt(t.io, t.allocator, job, r, clock);
         try paintAll(r);
     }
+}
+
+/// A result whose services each have `fresh` new 429s, one caller each.
+fn throttleResultFor(app: *App, now: f64, services: []const []const u8, fresh: u32) !*Result {
+    const r = try Result.create(t.allocator, app.api_traffic.generation);
+    const a = r.arena.allocator();
+    r.now = now;
+    const snaps = try a.alloc(ServiceSnap, services.len);
+    for (snaps, services) |*snap, name| {
+        snap.* = .{ .service = try a.dupe(u8, name), .source = .draws, .fresh = fresh };
+        snap.last5 = .{ .n = fresh, .last_age = 1, .by = try a.dupe(reader.Reason, &.{.{ .reason = "widget.py", .n = fresh }}) };
+        snap.now.throttles = snap.last5;
+    }
+    r.services = snaps;
+    return r;
+}
+
+fn toastFor(app: *const App, service_title: []const u8) ?ToastAction {
+    for (app.toasts.items) |tt| if (std.mem.startsWith(u8, tt.text, service_title)) return tt.action;
+    return null;
+}
+
+const ToastAction = app_mod.ToastAction;
+
+test "each throttle toast's button opens its own service, and a plain open keeps the tab the user is on" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const t0: f64 = 1_790_000_000;
+    // Two services throttled in one read: two toasts.
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0, &.{ "alphaapi", "betaapi" }, 0) });
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0 + 1, &.{ "alphaapi", "betaapi" }, 2) });
+    try t.expectEqual(@as(usize, 2), throttleToasts(&app));
+    // The FIRST toast's button: its own service, not the last one's.
+    try app.runToastAction(toastFor(&app, "Alphaapi").?);
+    const p = get(&app, find(&app).?).?;
+    try t.expectEqualStrings("alphaapi", p.service);
+    try app.runToastAction(toastFor(&app, "Betaapi").?);
+    try t.expectEqualStrings("betaapi", p.service);
+
+    // The user walks to another tab and moves the cursor; a toast for a
+    // third service comes and goes unclicked (the other two are inside
+    // their five quiet minutes).
+    try setService(p, "alphaapi");
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0 + 2, &.{ "alphaapi", "betaapi", "gammaapi" }, 1) });
+    try t.expect(toastFor(&app, "Gammaapi") != null);
+    p.cursor = 3;
+    // A plain open — the chord, the View menu, the rail row — reads
+    // again and stays where the user was.
+    try command.run(&app, .{ .static = .@"view.api_traffic" });
+    try t.expectEqualStrings("alphaapi", p.service);
+    try t.expectEqual(@as(usize, 3), p.cursor);
 }

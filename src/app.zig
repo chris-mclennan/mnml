@@ -1072,6 +1072,10 @@ pub const ToastAction = union(enum) {
     /// (`app/ipc_gate.zig`). The other offer the body click takes: the
     /// message IS the request.
     ipc_review: struct { label: []u8, request: u32 },
+    /// Open API TRAFFIC on one service (`app/api_traffic.zig`): a 429
+    /// toast's offer. The service travels with the toast, so two toasts
+    /// up at once each open their own.
+    api_traffic: struct { label: []u8, service: []u8 },
 
     pub fn label(self: ToastAction) []const u8 {
         return switch (self) {
@@ -1089,6 +1093,7 @@ pub const ToastAction = union(enum) {
                     .command => |c| gpa.free(c.id),
                     .open_url => |u| gpa.free(u.url),
                     .focus_session => |f| if (f.session_id) |sid| gpa.free(sid),
+                    .api_traffic => |at| gpa.free(at.service),
                     .restart, .ipc_review => {},
                 }
             },
@@ -2355,6 +2360,13 @@ pub const App = struct {
                 @import("app/git.zig").openExternal(self, url);
             },
             .ipc_review => |r| try @import("app/ipc_gate.zig").review(self, r.request),
+            .api_traffic => |a| {
+                const service = try self.frame.allocator().dupe(u8, a.service);
+                @import("app/api_traffic.zig").openOn(self, service) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => self.toast("could not open API traffic", .{}),
+                };
+            },
             .focus_session => |f| {
                 const sid: ?[]const u8 = if (f.session_id) |s| try self.frame.allocator().dupe(u8, s) else null;
                 @import("app/session_attention.zig").focus(self, f.pane, sid) catch |err| switch (err) {
