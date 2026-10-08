@@ -33,6 +33,11 @@ pub fn entry(app: *App, arena: Allocator, p: *const traffic.ApiTrafficPane, id: 
         .links = &.{.{ .settings = .{ .row = copy.settingsRow("ui.dashboard_refresh"), .label = "Dashboard refresh" } }},
     };
     if (id == traffic.hit_title) return header(arena, p);
+    if (id == traffic.hit_tab_more) return .{
+        .title = "More services",
+        .body = "Services whose tabs did not fit on this strip; the number counts them. Click shows the next one, or Tab walks every service — the strip always keeps the shown one's tab in view.",
+        .keys = &.{.{ .chord = "Tab", .label = "Next service" }},
+    };
     if (id >= traffic.hit_tab_base and id < traffic.hit_tab_base + traffic.max_tabs) return tab(arena, p, id - traffic.hit_tab_base);
     if (traffic.sectionOf(id)) |s| return section(s);
     if (traffic.bucketRowOf(id)) |i| return try bucketRow(arena, p, i);

@@ -79,6 +79,8 @@ pub const known = broker_app.services;
 pub const hit_title: u32 = 0x01;
 pub const hit_tab_base: u32 = 0x10;
 pub const max_tabs: u32 = 0x20;
+/// The tab strip's ` …+3 ` cue: the tabs that did not fit.
+pub const hit_tab_more: u32 = 0x30;
 pub const hit_now_base: u32 = 0x40;
 pub const hit_legend_base: u32 = 0x60;
 pub const hit_limit: u32 = 0x70;
@@ -269,6 +271,9 @@ pub const ApiTrafficPane = struct {
     /// Buckets per timeline column at the last paint — what a column's
     /// hit id (its first bucket) spans, for its hover.
     col_span: usize = 1,
+    /// The service index the tab strip's overflow cue shows when
+    /// clicked, at the last paint; null with every tab on screen.
+    more_tab: ?usize = null,
     was_shown: bool = false,
 
     pub fn init(gpa: Allocator, window: Window) ApiTrafficPane {
@@ -805,6 +810,18 @@ pub fn click(app: *App, id: PaneId, p: *ApiTrafficPane, hit_id: u32, m: Mouse) A
         if (row >= w.who.len) return;
         p.cursor = row;
         if (m.button == .right) return openRowMenu(app, p, m.x, m.y);
+        return;
+    }
+    if (hit_id == hit_tab_more) {
+        if (m.button != .left) return;
+        const r = p.result orelse return;
+        const i = p.more_tab orelse return;
+        if (i < r.services.len) {
+            try setService(p, r.services[i].service);
+            p.cursor = 0;
+            p.scroll = 0;
+            p.column = null;
+        }
         return;
     }
     if (hit_id >= hit_tab_base and hit_id < hit_tab_base + max_tabs) {

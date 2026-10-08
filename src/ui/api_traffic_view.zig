@@ -145,23 +145,75 @@ fn upper(ui: Ui, s: []const u8) []const u8 {
 }
 
 /// ` Bitbucket 412 ` per service with files; the active one is the
-/// accent pill, the others muted — the Integrations view's tabs.
-fn drawTabs(ui: Ui, pane: PaneId, row: Rect, p: *const traffic.ApiTrafficPane, r: *const traffic.Result) void {
+/// accent pill, the others muted — the Integrations view's tabs. When
+/// they do not all fit, the run shown always holds the active tab, and
+/// a ` …+3 ` cue at the end counts the rest; clicking it shows the next
+/// hidden one (`p.more_tab`).
+fn drawTabs(ui: Ui, pane: PaneId, row: Rect, p: *traffic.ApiTrafficPane, r: *const traffic.Result) void {
     const t = ui.theme;
     ui.fill(row, t.bg);
-    var x = row.x + 1;
+    p.more_tab = null;
+    const n = @min(r.services.len, traffic.max_tabs);
+    if (n == 0) return;
     const cur = p.current();
-    for (r.services, 0..) |*s, i| {
-        if (i >= traffic.max_tabs) break;
-        const name = titleCase(ui, s.service);
-        const text = ui.fmt(" {s} {d} ", .{ name, s.win(p.window).requests });
+    var texts: [traffic.max_tabs][]const u8 = undefined;
+    var active: usize = 0;
+    var total: u32 = 0;
+    for (r.services[0..n], 0..) |*s, i| {
+        texts[i] = ui.fmt(" {s} {d} ", .{ titleCase(ui, s.service), s.win(p.window).requests });
+        total += ui.width(texts[i]) + 1;
+        if (cur != null and std.mem.eql(u8, cur.?.service, s.service)) active = i;
+    }
+    const room: u32 = row.w -| 1;
+    var lo: usize = 0;
+    var hi: usize = n;
+    if (total > room) {
+        // The cue's room first, at its widest.
+        const avail = room -| (ui.width(cueText(ui, n)) + 1);
+        hi = fitFrom(ui, texts[0..n], 0, avail);
+        if (active >= hi) {
+            // Back from the active tab as far as it fits.
+            lo = active;
+            var used: u32 = ui.width(texts[active]) + 1;
+            while (lo > 0 and used + ui.width(texts[lo - 1]) + 1 <= avail) {
+                lo -= 1;
+                used += ui.width(texts[lo]) + 1;
+            }
+            hi = active + 1;
+        }
+    }
+    var x = row.x + 1;
+    for (texts[lo..hi], lo..) |text, i| {
         const tw = ui.width(text);
         if (x + tw > row.right()) break;
-        const active = cur != null and std.mem.eql(u8, cur.?.service, s.service);
-        const style = if (active) t.chip_active else Theme.onBg(t.muted, t.bg.bg);
+        const style = if (i == active) t.chip_active else Theme.onBg(t.muted, t.bg.bg);
         _ = chip.paintTarget(ui, x, row.y, tw, text, style, .{ .script_hit = .{ .pane = pane, .id = traffic.hit_tab_base + @as(u32, @intCast(i)) } });
         x += tw + 1;
     }
+    const hidden = n - (hi - lo);
+    if (hidden == 0) return;
+    const cue = cueText(ui, hidden);
+    const cw = ui.width(cue);
+    if (x + cw > row.right()) return;
+    p.more_tab = if (hi < n) hi else 0;
+    _ = chip.paintTarget(ui, x, row.y, cw, cue, Theme.onBg(t.muted, t.bg.bg), .{ .script_hit = .{ .pane = pane, .id = traffic.hit_tab_more } });
+}
+
+/// ` …+3 `: how many tabs the strip could not show.
+fn cueText(ui: Ui, hidden: usize) []const u8 {
+    return ui.fmt(" {s}+{d} ", .{ if (ui.ascii) "..." else "\u{2026}", hidden });
+}
+
+/// The end of the run of tabs from `from` that fits in `avail` cells.
+fn fitFrom(ui: Ui, texts: []const []const u8, from: usize, avail: u32) usize {
+    var used: u32 = 0;
+    var i = from;
+    while (i < texts.len) : (i += 1) {
+        const w = ui.width(texts[i]) + 1;
+        if (used + w > avail) break;
+        used += w;
+    }
+    return @max(i, from + 1);
 }
 
 /// The app-wide "this thing is that colour" mark (`list_panel`'s
@@ -1006,4 +1058,38 @@ test "on the week the newest column, only partly inside the window, is averaged 
 
 fn ui_dash(to: []const u8, ui: Ui) []const u8 {
     return ui.fmt("–{s} ·", .{to});
+}
+
+test "tabs that do not fit leave a `…+N` cue, and the shown service's tab is always on the strip" {
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .hour);
+    defer p.deinit(testing.io);
+    const r = try traffic.Result.create(testing.allocator, 0);
+    defer r.destroy(testing.allocator);
+    p.result = r;
+    const a = r.arena.allocator();
+    const names = [_][]const u8{ "jira", "bitbucket", "acmeapi", "widgetapi", "alphaapi", "betaapi", "deltaapi", "epsapi", "zetaapi", "etaapi" };
+    const snaps = try a.alloc(reader.ServiceSnap, names.len);
+    for (snaps, names) |*s, n| s.* = .{ .service = n };
+    r.services = snaps;
+    var f = try Fixture.init(60, 20);
+    defer f.deinit();
+    p.service = try testing.allocator.dupe(u8, "jira");
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains(" Jira 0 ");
+    try f.expectContains("\u{2026}+");
+    try testing.expect(p.more_tab != null);
+    // Walked to a service far past the edge: its tab is on the strip.
+    try traffic.stepTab(&p, -2);
+    try testing.expectEqualStrings("zetaapi", p.service);
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains(" Zetaapi 0 ");
+    try f.expectContains("\u{2026}+");
+    // Every tab hit stays inside the pane.
+    for (f.hits.items.items) |h| try testing.expect(h.rect.right() <= 60);
+    // All of them fit at 200 columns: no cue.
+    var wide = try Fixture.init(200, 20);
+    defer wide.deinit();
+    draw(wide.ui(), 9, wide.full(), &p, true);
+    try testing.expect(p.more_tab == null);
+    try wide.expectContains(" Etaapi 0");
 }
