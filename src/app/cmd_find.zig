@@ -160,6 +160,9 @@ pub fn openBar(app: *App, reverse: bool) CommandError!void {
     // The live preview starts from a blank slate; Esc restores the snapshot.
     tg.find().clear();
     app.find_bar = fb;
+    // The one-time ghost-text tip sits on the bar's rows; the bar the
+    // user just asked for wins.
+    app.dismissToast(@import("../ai/suggest.zig").hint_toast_id);
     app.focus = .overlay;
     app.needs_render = true;
 }

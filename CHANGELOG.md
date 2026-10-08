@@ -175,6 +175,9 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- The first-run tip about AI ghost-text suggestions goes away on its
+  own after a few seconds, and opening Find takes it down at once; it
+  used to stay over the find bar's toggles until closed by hand.
 - At narrow widths the statusline makes room for its right-hand chips
   by shortening the left ones, counting the separators too, so the
   workspace chip is no longer cut to its first letter.
