@@ -108,6 +108,13 @@ rate limit per token, so a pane that took the exported one would spend
 — and be throttled on — every other tool's budget. Give mnml a token of
 its own, in the file, and its budget is its own too (see Rate limiting).
 
+Only an **absent or empty** file falls through to the environment. A
+file that is there but cannot be read — no permission, a directory
+named `token` — is an error: `--check` says `token file exists but
+cannot be read: <path> (<why>)` and exits 1, and the pane shows the same
+line on its setup screen. It never quietly spends an exported token
+instead.
+
 Bitbucket takes two kinds of token and they are **not** interchangeable
 on the wire:
 

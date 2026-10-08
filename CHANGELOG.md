@@ -107,6 +107,10 @@ the release ships one file), and one line per change a user can see.
   is noticed whatever the new file's size; before, a new file that was
   not smaller than the old one lost its first events. Bitbucket and
   Jira both.
+- A Bitbucket token file that is there but cannot be read (no
+  permission, or a directory named `token`) is now an error that
+  `--check` and the pane name, instead of quietly using a token from
+  the environment. Only a missing or empty file falls back.
 
 ## v0.3.5 (2026-10-06)
 

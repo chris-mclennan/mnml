@@ -460,7 +460,7 @@ const Session = struct {
     }
 };
 
-const SessionError = error{ NoConfig, NoToken, BaseUrl } || Allocator.Error;
+const SessionError = error{ NoConfig, NoToken, TokenFile, BaseUrl } || Allocator.Error;
 
 /// Load everything a command needs; `why` explains a refusal.
 fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[]const u8) SessionError!Session {
@@ -473,6 +473,15 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
     var tokens = try auth.resolve(gpa, io, env, config_dir);
     errdefer tokens.deinit();
+    // The token file is there and is no token: that, not "no token",
+    // is the thing to fix — and the exported variables were rightly
+    // not consulted.
+    if (tokens.file_problem.len > 0) {
+        const n = @min(tokens.file_problem.len, token_file_why.len);
+        @memcpy(token_file_why[0..n], tokens.file_problem[0..n]);
+        why.* = token_file_why[0..n];
+        return error.TokenFile;
+    }
     if (!tokens.hasRead()) {
         why.* = no_token_text;
         return error.NoToken;
@@ -545,6 +554,9 @@ fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c
 
 const base_url_env = "BITBUCKET_BASE_URL";
 var base_url_why: [1024]u8 = undefined;
+/// `why` for `error.TokenFile`, copied out of the tokens' arena, which
+/// the failed session frees.
+var token_file_why: [1024]u8 = undefined;
 /// How long a missing `@<path>` is waited for: the fake writes it once
 /// it listens. A test that proves the refusal does not sit out 5 s.
 const url_file_wait_ms: u32 = if (@import("builtin").is_test) 50 else 5000;
@@ -2339,6 +2351,67 @@ test "with a token file, --check spends that token's own bucket against the fake
     const lines = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
     defer t.allocator.free(lines);
     try t.expect(std.mem.indexOf(u8, lines, "\"token_id\":\"24ff31a5fe5e\"") != null);
+}
+
+/// `--check` / `--diag` against the in-process fake, in a private
+/// directory: a token file, a config with four tabs (a workspace PR
+/// tab, a merged one, a pipelines one and a repo's merged PRs), every
+/// state path inside.
+const CheckRig = struct {
+    tmp: std.testing.TmpDir,
+    env: std.process.Environ.Map,
+    root_buf: [std.fs.max_path_bytes]u8 = undefined,
+    root: []const u8 = "",
+    out: Io.Writer.Allocating,
+
+    fn init(rig: *CheckRig, base: []const u8, token: ?[]const u8) !void {
+        rig.* = .{ .tmp = t.tmpDir(.{}), .env = .init(t.allocator), .out = .init(t.allocator) };
+        rig.root = rig.root_buf[0..try rig.tmp.dir.realPath(t.io, &rig.root_buf)];
+        try rig.tmp.dir.createDirPath(t.io, "interop");
+        try rig.tmp.dir.writeFile(t.io, .{ .sub_path = "config.zon", .data = ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{\"api\"}, .rate = .{ .max_attempts = 1 }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines }, .{ .name = \"api\", .kind = .pull_requests, .repo = \"api\", .state = .MERGED } } }" });
+        if (token) |tok| try rig.tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = tok });
+        inline for (.{ .{ "MNML_DATA_ROOT", "data" }, .{ "MNML_BITBUCKET_CONFIG", "config.zon" }, .{ "MNML_SHARED_STATE_DIR", "interop" } }) |kv| {
+            const p = try std.fs.path.join(t.allocator, &.{ rig.root, kv[1] });
+            defer t.allocator.free(p);
+            try rig.env.put(kv[0], p);
+        }
+        try rig.env.put("MNML_BROKER", "0");
+        try rig.env.put(base_url_env, base);
+    }
+
+    fn check(rig: *CheckRig, full: bool) !u8 {
+        rig.out.clearRetainingCapacity();
+        return diagnose(t.allocator, t.io, &rig.env, &rig.out.writer, full);
+    }
+
+    fn text(rig: *CheckRig) []const u8 {
+        return rig.out.written();
+    }
+
+    fn deinit(rig: *CheckRig) void {
+        rig.out.deinit();
+        rig.env.deinit();
+        rig.tmp.cleanup();
+    }
+};
+
+test "--check refuses a token file it cannot read and names it, rather than spend the exported token" {
+    var rig: CheckRig = undefined;
+    // Nothing is asked, so no server is needed.
+    try rig.init("http://127.0.0.1:1/2.0", null);
+    defer rig.deinit();
+    try rig.tmp.dir.createDirPath(t.io, "token");
+    try rig.env.put("BITBUCKET_PERSONAL_TOKEN", "x@acme.example:ATATTfakeEnvPersonal05");
+    try t.expectEqual(@as(u8, 1), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "TokenFile: token file exists but cannot be read") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "BITBUCKET_PERSONAL_TOKEN") == null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "Personal05") == null);
+    // With nothing exported the cause is the same — never "write a token
+    // file", which is already there.
+    _ = rig.env.swapRemove("BITBUCKET_PERSONAL_TOKEN");
+    try t.expectEqual(@as(u8, 1), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "token file exists but cannot be read") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "no Bitbucket token") == null);
 }
 
 /// The pane on the offline fixture, for the SDK's design-language

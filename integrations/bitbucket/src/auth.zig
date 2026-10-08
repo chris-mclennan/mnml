@@ -36,7 +36,11 @@
 //!
 //! In full:
 //!
-//!   1. `<config dir>/token` — one line, `chmod 600`; read and approve
+//!   1. `<config dir>/token` — one line, `chmod 600`; read and approve.
+//!      A file that is there but cannot be read (no permission, a
+//!      directory) is an error — never a silent fall through to the
+//!      environment, which would spend another tool's token. Only an
+//!      absent or empty file falls through.
 //!   2. `BITBUCKET_ACCESS_TOKEN` — the approve token whenever it is set
 //!   3. `BITBUCKET_API_TOKEN` — an Atlassian API token
 //!   4. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
@@ -139,6 +143,10 @@ pub const Tokens = struct {
     write: []const u8 = "",
     read_source: Source = .none,
     write_source: Source = .none,
+    /// Non-empty when `<config dir>/token` is there but is no token:
+    /// it cannot be read. The
+    /// environment is then NOT consulted — owned by `arena`.
+    file_problem: []const u8 = "",
     arena: std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Tokens) void {
@@ -176,14 +184,26 @@ pub fn resolve(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, conf
     // The file first, and whole: mnml's own token, for reads and for
     // the approve write. An exported variable is some other tool's
     // token, and Bitbucket's budget is per token.
-    if (readTokenFile(a, io, config_dir)) |pair| {
-        out.read = pair.token;
-        out.read_source = .{ .file = pair.path };
-        out.write = pair.token;
-        out.write_source = .same_as_read;
-        out.arena = arena;
-        return out;
-    } else |_| {}
+    switch (try readTokenFile(a, io, config_dir)) {
+        .token => |pair| {
+            out.read = pair.token;
+            out.read_source = .{ .file = pair.path };
+            out.write = pair.token;
+            out.write_source = .same_as_read;
+            out.arena = arena;
+            return out;
+        },
+        // There, and no token: say so, and do not reach for an
+        // exported one — that is the budget the file exists to keep
+        // out of.
+        .problem => |pair| {
+            out.read_source = .{ .file = pair.path };
+            out.file_problem = pair.token;
+            out.arena = arena;
+            return out;
+        },
+        .absent => {},
+    }
     // No file. Two passes over the environment. The first takes only
     // an account credential, because reads want an account to filter
     // `mine` / `reviewing` by and an access token has none. The second
@@ -220,12 +240,25 @@ fn fromEnv(env: *const std.process.Environ.Map, name: []const u8) ?[]const u8 {
 
 const FilePair = struct { token: []const u8, path: []const u8 };
 
-fn readTokenFile(a: Allocator, io: Io, dir: []const u8) !FilePair {
+const FileRead = union(enum) {
+    /// No file, or nothing but blank lines in it: the environment answers.
+    absent,
+    token: FilePair,
+    /// There, and not a token; `.token` is the reason, for `--check`
+    /// and the pane's setup screen.
+    problem: FilePair,
+};
+
+fn readTokenFile(a: Allocator, io: Io, dir: []const u8) Allocator.Error!FileRead {
     const p = try std.fs.path.join(a, &.{ dir, file_name });
-    const text = try Io.Dir.cwd().readFileAlloc(io, p, a, .limited(64 * 1024));
+    const text = Io.Dir.cwd().readFileAlloc(io, p, a, .limited(64 * 1024)) catch |e| switch (e) {
+        error.FileNotFound => return .absent,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .problem = .{ .path = p, .token = try std.fmt.allocPrint(a, "token file exists but cannot be read: {s} ({s})", .{ p, @errorName(e) }) } },
+    };
     const token = stripEmailPrefix(std.mem.trim(u8, text, " \t\r\n"));
-    if (token.len == 0) return error.Empty;
-    return .{ .token = token, .path = p };
+    if (token.len == 0) return .absent;
+    return .{ .token = .{ .token = token, .path = p } };
 }
 
 /// `Basic base64(email:token)`, owned.
@@ -260,6 +293,10 @@ pub fn describe(gpa: Allocator, tk: *const Tokens) Allocator.Error![]u8 {
     var out: Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     const w = &out.writer;
+    if (tk.file_problem.len > 0) {
+        w.print("token source: {s}\n", .{tk.file_problem}) catch return error.OutOfMemory;
+        return out.toOwnedSlice() catch error.OutOfMemory;
+    }
     w.print("token source: {s}", .{tk.read_source.label()}) catch return error.OutOfMemory;
     if (tk.hasRead()) w.print(" (loaded, {d} chars, not shown)", .{tk.read.len}) catch return error.OutOfMemory;
     if (tk.hasRead()) {
@@ -532,3 +569,47 @@ test "the diagnostic block names the source and the length and never the token" 
     try t.expect(std.mem.indexOf(u8, ftext, "approve token: the read token") != null);
     try t.expect(std.mem.indexOf(u8, ftext, "secret") == null);
 }
+
+test "a token file that is there and cannot be read is an error, never a fall-through to an exported token" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("BITBUCKET_PERSONAL_TOKEN", "x@acme.example:ATATTfakeEnvPersonal05");
+
+    // A directory named `token`.
+    try tmp.dir.createDirPath(t.io, "token");
+    {
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expect(!tk.hasRead());
+        try t.expect(std.mem.indexOf(u8, tk.file_problem, "token file exists but cannot be read") != null);
+        try t.expect(sdk_testing.pathContains(tk.file_problem, "/token"));
+        try t.expect(tk.read_source == .file);
+        const text = try describe(t.allocator, &tk);
+        defer t.allocator.free(text);
+        try t.expect(std.mem.startsWith(u8, text, "token source: token file exists but cannot be read"));
+        try t.expect(std.mem.indexOf(u8, text, "BITBUCKET_PERSONAL_TOKEN") == null);
+        try t.expect(std.mem.indexOf(u8, text, "Personal05") == null);
+    }
+    try tmp.dir.deleteDir(t.io, "token");
+
+    // Mode 000. Windows has no such mode, and root reads it anyway.
+    if (@import("builtin").os.tag == .windows) return;
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = "ATCTTfakeAccess0000000000000001\n" });
+    try tmp.dir.setFilePermissions(t.io, "token", @enumFromInt(0), .{});
+    defer tmp.dir.setFilePermissions(t.io, "token", @enumFromInt(0o600), .{}) catch {};
+    if (tmp.dir.readFileAlloc(t.io, "token", t.allocator, .limited(64))) |bytes| {
+        t.allocator.free(bytes);
+        return error.SkipZigTest; // running as root
+    } else |_| {}
+    var tk = try resolve(t.allocator, t.io, &env, dir);
+    defer tk.deinit();
+    try t.expect(!tk.hasRead());
+    try t.expect(std.mem.indexOf(u8, tk.file_problem, "token file exists but cannot be read") != null);
+    try t.expect(std.mem.indexOf(u8, tk.file_problem, "AccessDenied") != null or std.mem.indexOf(u8, tk.file_problem, "PermissionDenied") != null);
+    try t.expectEqualStrings("", tk.write);
+}
+
