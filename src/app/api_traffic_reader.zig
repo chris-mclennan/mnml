@@ -861,6 +861,17 @@ pub fn throttlesIn(arena: Allocator, gpa: Allocator, s: *const ServiceReader, ev
 
 pub const Reason = struct { reason: []const u8, n: u32 };
 
+/// How many of `events` are stamped inside the last `span` seconds —
+/// the same test `throttlesIn` counts by.
+pub fn countWithin(events: []const Event, span: f64, now: f64) u32 {
+    var n: u32 = 0;
+    for (events) |e| {
+        if (now - e.ts > span) continue;
+        n +|= 1;
+    }
+    return n;
+}
+
 pub const WhoRow = struct {
     program: []const u8,
     /// mnml's own: `mnml-…`, or the request log's integration names.

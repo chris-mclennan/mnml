@@ -542,7 +542,10 @@ pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) Comput
             .cache_entries = reader.countCache(io, gpa, &job.env, s.service),
             .throttles = try reader.throttlesIn(arena, gpa, s, s.throttles.items, 3600, now),
         };
-        snap.fresh = @intCast(s.fresh.items.len);
+        // News for a toast: the new lines stamped inside the toast's own
+        // window. One written late (a batching loop, yesterday's file
+        // read after midnight) updates NOW and never toasts.
+        snap.fresh = reader.countWithin(s.fresh.items, Coalescer.window_secs, now);
         snap.last5 = try reader.throttlesIn(arena, gpa, s, s.throttles.items, Coalescer.window_secs, now);
         try out.append(arena, snap);
     }
@@ -1280,4 +1283,53 @@ test "each throttle toast's button opens its own service, and a plain open keeps
     try command.run(&app, .{ .static = .@"view.api_traffic" });
     try t.expectEqualStrings("alphaapi", p.service);
     try t.expectEqual(@as(usize, 3), p.cursor);
+}
+
+test "a 429 line written late — stamped before the last five minutes — updates NOW but never raises a `0 × 429` toast" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.createDirPath(t.io, "shared/api-usage");
+    const now: f64 = 1_790_000_000;
+    var date: [10]u8 = undefined;
+    const tpath = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{sdk.budget.isoDate(&date, @divFloor(reader.floorI64(now), 86400))});
+    defer t.allocator.free(tpath);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = tpath, .data = "" });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const look = struct {
+        fn f(a: *App, j: *Job, at: f64) !void {
+            const r = try Result.create(t.allocator, a.api_traffic.generation);
+            computeAt(t.io, t.allocator, j, r, at) catch |err| {
+                r.destroy(t.allocator);
+                return err;
+            };
+            try a.handle(.{ .api_traffic = r });
+        }
+    }.f;
+    // The first look: history.
+    try look(&app, job, now);
+    // A line lands now, stamped fifteen minutes ago (a loop that
+    // batches its writes): news, but not inside the toast's window.
+    const late = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"acme\",\"caller\":\"widget.py\",\"status\":429}}\n", .{now - 900});
+    defer t.allocator.free(late);
+    try appendFile(fx.tmp.dir, tpath, late);
+    try look(&app, job, now + 5);
+    try t.expectEqual(@as(usize, 0), throttleToasts(&app));
+    // NOW still counts it.
+    try t.expectEqual(@as(u32, 1), app.api_traffic.result.?.find("acme").?.now.throttles.n);
+    // One stamped now: the toast, with a count that is not zero.
+    const fresh = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"acme\",\"caller\":\"widget.py\",\"status\":429}}\n", .{now + 8});
+    defer t.allocator.free(fresh);
+    try appendFile(fx.tmp.dir, tpath, fresh);
+    try look(&app, job, now + 10);
+    try t.expectEqual(@as(usize, 1), throttleToasts(&app));
+    try t.expectEqualStrings("Acme throttled — 1 × 429 in the last 5 min (1 from widget.py)", app.toasts.items[app.toasts.items.len - 1].text);
+}
+
+fn appendFile(dir: std.Io.Dir, sub: []const u8, data: []const u8) !void {
+    const f = try dir.createFile(t.io, sub, .{ .read = true, .truncate = false });
+    defer f.close(t.io);
+    try f.writePositionalAll(t.io, data, try f.length(t.io));
 }
