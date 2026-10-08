@@ -427,6 +427,8 @@ fn walkApiTraffic(w: *Walk) Allocator.Error!void {
     try w.probe("script_hit:api_traffic:tab", T.at(id, traffic.hit_tab_base));
     inline for (comptime std.enums.values(traffic.Section)) |s| try w.probe("script_hit:api_traffic:section:" ++ @tagName(s), T.at(id, traffic.hit_section_base + @intFromEnum(s)));
     inline for (comptime std.enums.values(traffic.NowRow)) |r| try w.probe("script_hit:api_traffic:now:" ++ @tagName(r), T.at(id, traffic.hit_now_base + @intFromEnum(r)));
+    try w.probe("script_hit:api_traffic:bucket:shared", T.at(id, traffic.hit_bucket_base));
+    try w.probe("script_hit:api_traffic:bucket:token", T.at(id, traffic.hit_bucket_base + 1));
     try w.probe("script_hit:api_traffic:legend", T.at(id, traffic.hit_legend_base));
     try w.probe("script_hit:api_traffic:limit", T.at(id, traffic.hit_limit));
     inline for (comptime std.enums.values(traffic.WhoCol)) |c| try w.probe("script_hit:api_traffic:who_head:" ++ @tagName(c), T.at(id, traffic.hit_who_head_base + @intFromEnum(c)));

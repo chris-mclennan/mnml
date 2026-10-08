@@ -14,7 +14,10 @@
 //!     mnml's own request log — the statuses (`304`, `429`) and cache
 //!     hits the draws file cannot say. With no draws file at all, it is
 //!     the source instead (its lines that reached the wire).
-//!   * `<interop dir>/<service>-ratelimit.json`: the six-key bucket.
+//!   * `<interop dir>/<service>-ratelimit.json`: the six-key bucket —
+//!     and, for a service whose limit is counted per token, one more
+//!     per token, `<service>-ratelimit-<id>.json` beside it. A draw out
+//!     of one of those names its `token_id`.
 //!
 //! Both logs are tailed by byte offset, complete lines only (the
 //! feed's and the IPC reader's rule). A file smaller than the offset
@@ -47,6 +50,8 @@ pub const max_series: usize = 7;
 pub const max_reasons: usize = 8;
 /// Pids a Who row keeps.
 pub const max_pids: usize = 8;
+/// Bucket files a service shows: the shared one and the tokens'.
+pub const max_buckets: usize = 8;
 
 /// The windows the pane offers: the header, the timeline and the Who
 /// table all read the selected one.
@@ -115,11 +120,24 @@ pub const Event = struct {
     wait_ms: u32 = 0,
     /// The request log's status; 0 for none (a failure, a draw line).
     status: u16 = 0,
+    /// The draw's `token_id`, interned; `no_token` for a draw out of
+    /// the shared bucket (and every request-log line).
+    token: u16 = no_token,
     /// The request log only: a line that never reached the wire (a
     /// `cache_hit`, a dry run).
     off_wire: bool = false,
     cache_hit: bool = false,
 };
+
+/// `Event.token` for a draw that names no token of its own.
+pub const no_token: u16 = std.math.maxInt(u16);
+
+/// A `token_id` as the SDK writes one: `token_id_len` lowercase hex.
+pub fn validTokenId(id: []const u8) bool {
+    if (id.len != sdk.ratelimit.token_id_len) return false;
+    for (id) |c| if (!(std.ascii.isDigit(c) or (c >= 'a' and c <= 'f'))) return false;
+    return true;
+}
 
 /// Strings seen in one service's logs, each kept once. A program that
 /// shows up ten thousand times is one entry here and a `u16` per line.
@@ -393,6 +411,7 @@ pub const ServiceReader = struct {
                 .program = try k.s.names.intern(k.gpa, jsonString(l, "program") orelse "unknown"),
                 .reason = try k.s.names.intern(k.gpa, jsonString(l, "reason") orelse ""),
                 .wait_ms = clampU32(jsonNumber(l, "wait_ms") orelse 0),
+                .token = if (jsonString(l, "token_id")) |id| (if (validTokenId(id)) try k.s.names.intern(k.gpa, id) else no_token) else no_token,
             });
         }
     };
@@ -732,6 +751,23 @@ pub const Bucket = struct {
     throttles: u32 = 0,
 };
 
+/// One bucket file of a service, as NOW shows it.
+pub const BucketRow = struct {
+    /// Empty for the shared `<service>-ratelimit.json`; else the token
+    /// id its file is named by.
+    token: []const u8 = "",
+    /// The file's base name.
+    file: []const u8 = "",
+    bucket: Bucket = .{},
+};
+
+/// This hour's requests out of one bucket: the draws naming `token`,
+/// or naming none for the shared one (`token` empty).
+pub const HourRow = struct {
+    token: []const u8 = "",
+    requests: u32 = 0,
+};
+
 pub const BrokerWhere = enum { unknown, off, hosted, client };
 
 pub const Broker = struct {
@@ -765,10 +801,15 @@ pub const Feed = struct {
 };
 
 pub const Now = struct {
-    /// Null: no bucket file (or one that is not one).
-    bucket: ?Bucket = null,
+    /// Every bucket file of the service, the shared one first, then the
+    /// tokens' by id. Empty: no bucket file (or none that is one).
+    buckets: []const BucketRow = &.{},
     /// Requests the source counts in the last hour, every program.
     hour_requests: u32 = 0,
+    /// The same hour per bucket: one row per bucket file and per token
+    /// the hour's draws name, the shared one first. Its limit is each
+    /// bucket's own, because the limit is counted per token.
+    hour_by: []const HourRow = &.{},
     /// The shared bucket's refill an hour — what an integration's
     /// `budget.hourly_budget` is set from (`rate_per_sec × 3600`).
     hourly_limit: u32 = 0,
@@ -1067,9 +1108,98 @@ pub fn buildWindow(arena: Allocator, gpa: Allocator, s: *const ServiceReader, w:
 pub fn readBucket(io: Io, gpa: Allocator, env: *const std.process.Environ.Map, service: []const u8, now: f64) ?Bucket {
     const path = sdk.ratelimit.statePath(gpa, io, env, service) catch return null;
     defer gpa.free(path);
+    return readBucketAt(io, gpa, path, service, now);
+}
+
+fn readBucketAt(io: Io, gpa: Allocator, path: []const u8, service: []const u8, now: f64) ?Bucket {
     const text = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024)) catch return null;
     defer gpa.free(text);
     return bucketOf(text, sdk.ratelimit.configFor(service).capacity, now);
+}
+
+/// Every bucket file of `service`, on `arena`: the shared
+/// `<service>-ratelimit.json`, then each token's
+/// `<service>-ratelimit-<id>.json` beside it, by id — where the SDK
+/// puts them (`statePathForId`). A service the SDK keeps one bucket for
+/// (not counted per token, or `<SERVICE>_RATELIMIT_STATE` naming the
+/// file outright) has only the one. At most `max_buckets`.
+pub fn readBuckets(io: Io, arena: Allocator, gpa: Allocator, env: *const std.process.Environ.Map, service: []const u8, now: f64) Allocator.Error![]const BucketRow {
+    var out: std.ArrayListUnmanaged(BucketRow) = .empty;
+    const shared = try sdk.ratelimit.statePath(gpa, io, env, service);
+    defer gpa.free(shared);
+    if (readBucketAt(io, gpa, shared, service, now)) |b| try out.append(arena, .{ .file = try arena.dupe(u8, std.fs.path.basename(shared)), .bucket = b });
+    // Where a token's file would go: the SDK's own answer, with an id
+    // that names nobody. The same path back means one bucket only.
+    const probe = try sdk.ratelimit.statePathForId(gpa, io, env, service, @as(sdk.ratelimit.TokenId, @splat('0')));
+    defer gpa.free(probe);
+    if (std.mem.eql(u8, probe, shared)) return out.items;
+    const dir_path = std.fs.path.dirname(probe) orelse return out.items;
+    // `<svc>-ratelimit-` and `.json` around the id, as the SDK spells
+    // the service (`sanitize`).
+    const probe_name = std.fs.path.basename(probe);
+    const prefix = probe_name[0 .. probe_name.len - sdk.ratelimit.token_id_len - ".json".len];
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close(io);
+    var ids: std.ArrayListUnmanaged([sdk.ratelimit.token_id_len]u8) = .empty;
+    defer ids.deinit(gpa);
+    var it = dir.iterate();
+    var seen: usize = 0;
+    while (it.next(io) catch null) |entry| {
+        seen += 1;
+        if (seen > 2000) break;
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+        if (name.len != prefix.len + sdk.ratelimit.token_id_len + ".json".len) continue;
+        if (!std.mem.startsWith(u8, name, prefix) or !std.mem.endsWith(u8, name, ".json")) continue;
+        const id = name[prefix.len..][0..sdk.ratelimit.token_id_len];
+        if (!validTokenId(id)) continue;
+        try ids.append(gpa, id.*);
+    }
+    std.mem.sort([sdk.ratelimit.token_id_len]u8, ids.items, {}, struct {
+        fn lt(_: void, a: [sdk.ratelimit.token_id_len]u8, b: [sdk.ratelimit.token_id_len]u8) bool {
+            return std.mem.order(u8, &a, &b) == .lt;
+        }
+    }.lt);
+    for (ids.items) |id| {
+        if (out.items.len >= max_buckets) break;
+        const path = try std.fs.path.join(gpa, &.{ dir_path, try std.fmt.allocPrint(arena, "{s}{s}.json", .{ prefix, &id }) });
+        defer gpa.free(path);
+        const b = readBucketAt(io, gpa, path, service, now) orelse continue;
+        try out.append(arena, .{ .token = try arena.dupe(u8, &id), .file = try arena.dupe(u8, std.fs.path.basename(path)), .bucket = b });
+    }
+    return out.items;
+}
+
+/// This hour's draws per bucket, on `arena`: one row per bucket file
+/// (zero when nothing drew on it) and one per token the draws name
+/// that has no file; the shared one first, then by id. With the
+/// request log as the source every line is the shared bucket's.
+pub fn hourByBucket(arena: Allocator, gpa: Allocator, s: *const ServiceReader, buckets: []const BucketRow, now: f64) Allocator.Error![]const HourRow {
+    var counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
+    defer counts.deinit(gpa);
+    for (buckets) |b| try counts.put(gpa, b.token, 0);
+    const src = s.source();
+    const events: []const Event = switch (src) {
+        .draws => s.draw_events.items,
+        .requests => s.req_events.items,
+        .none => &.{},
+    };
+    for (events) |e| {
+        if (now - e.ts > 3600) continue;
+        if (src == .requests and e.off_wire) continue;
+        const key = if (e.token == no_token) "" else s.names.get(e.token);
+        const gop = try counts.getOrPut(gpa, key);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* += 1;
+    }
+    const rows = try arena.alloc(HourRow, counts.count());
+    for (counts.keys(), counts.values(), rows) |k, v, *r| r.* = .{ .token = try arena.dupe(u8, k), .requests = v };
+    std.mem.sort(HourRow, rows, {}, struct {
+        fn lt(_: void, a: HourRow, b: HourRow) bool {
+            return std.mem.order(u8, a.token, b.token) == .lt;
+        }
+    }.lt);
+    return rows;
 }
 
 /// The file's six keys, each one bounded: a stamp the reader cannot
@@ -1792,4 +1922,70 @@ test "past the names cap everything new is `other`, once, without recursing" {
     try t.expectEqual(a, b);
     try t.expectEqualStrings("other", n.get(a));
     try t.expectEqual(Names.cap + 1, n.list.items.len);
+}
+
+test "a per-token service lists every bucket file, the shared one first and the tokens' by id; the hour counts each bucket's own draws" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const now: f64 = 1_790_000_000;
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit.json", .data = "{\"ts\":1790000000,\"tokens\":7.5,\"rate\":1.2,\"cooldown_until\":1790000090,\"throttles\":4,\"last_429\":1789999760}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-fedcba987654.json", .data = "{\"ts\":1790000000,\"tokens\":9,\"rate\":1.2,\"cooldown_until\":0,\"throttles\":0,\"last_429\":0}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123456789ab.json", .data = "{\"ts\":1790000000,\"tokens\":2,\"rate\":0.6,\"cooldown_until\":0,\"throttles\":9,\"last_429\":1789999970}" });
+    // Not a token's bucket: the wrong length, not hex, another
+    // service, a file that is not a bucket. (No upper-case twin: on a
+    // case-blind file system it would be the same file.)
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123456789zz.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "jira-ratelimit-0123456789ab.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-aaaaaaaaaaaa.json", .data = "not a bucket" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_SHARED_STATE_DIR", root);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const rows = try readBuckets(t.io, a, t.allocator, &env, "bitbucket", now);
+    try t.expectEqual(@as(usize, 3), rows.len);
+    try t.expectEqualStrings("", rows[0].token);
+    try t.expectEqualStrings("bitbucket-ratelimit.json", rows[0].file);
+    try t.expectEqual(@as(u32, 4), rows[0].bucket.throttles);
+    try t.expectEqualStrings("0123456789ab", rows[1].token);
+    try t.expectEqualStrings("bitbucket-ratelimit-0123456789ab.json", rows[1].file);
+    try t.expectEqual(@as(u32, 9), rows[1].bucket.throttles);
+    try t.expectApproxEqAbs(@as(f64, 30), rows[1].bucket.last_429_age.?, 1e-6);
+    try t.expectEqualStrings("fedcba987654", rows[2].token);
+    // Jira keeps one bucket: its limits are not counted per token.
+    try t.expectEqual(@as(usize, 0), (try readBuckets(t.io, a, t.allocator, &env, "jira", now)).len);
+    // A file named outright is the only bucket, as the SDK has it.
+    try env.put("BITBUCKET_RATELIMIT_STATE", try std.fs.path.join(a, &.{ root, "bitbucket-ratelimit.json" }));
+    try t.expectEqual(@as(usize, 1), (try readBuckets(t.io, a, t.allocator, &env, "bitbucket", now)).len);
+
+    // The hour per bucket: draws naming a token count against its
+    // bucket, the rest against the shared one; a token with draws and
+    // no file still has its row; a bad id is the shared bucket's.
+    var s: ServiceReader = .{ .service = try t.allocator.dupe(u8, "bitbucket") };
+    defer s.deinit(t.allocator);
+    s.draws.seen = true;
+    const sink: ServiceReader.DrawSink = .{ .s = &s, .gpa = t.allocator };
+    try sink.line("{\"ts\":1789999990,\"program\":\"mnml-bitbucket\",\"token_id\":\"0123456789ab\"}");
+    try sink.line("{\"ts\":1789999991,\"program\":\"mnml-bitbucket\",\"token_id\":\"0123456789ab\"}");
+    try sink.line("{\"ts\":1789999992,\"program\":\"widget.py\"}");
+    try sink.line("{\"ts\":1789999993,\"program\":\"widget.py\",\"token_id\":\"not-an-id\"}");
+    try sink.line("{\"ts\":1789999994,\"program\":\"cron.sh\",\"token_id\":\"999999999999\"}");
+    // Two hours ago: outside the hour.
+    try sink.line("{\"ts\":1789992800,\"program\":\"cron.sh\",\"token_id\":\"0123456789ab\"}");
+    settle(&s.draw_events, 0, now);
+    const hour = try hourByBucket(a, t.allocator, &s, rows, now);
+    try t.expectEqual(@as(usize, 4), hour.len);
+    try t.expectEqualStrings("", hour[0].token);
+    try t.expectEqual(@as(u32, 2), hour[0].requests);
+    try t.expectEqualStrings("0123456789ab", hour[1].token);
+    try t.expectEqual(@as(u32, 2), hour[1].requests);
+    try t.expectEqualStrings("999999999999", hour[2].token);
+    try t.expectEqual(@as(u32, 1), hour[2].requests);
+    try t.expectEqualStrings("fedcba987654", hour[3].token);
+    try t.expectEqual(@as(u32, 0), hour[3].requests);
 }

@@ -35,6 +35,7 @@ pub fn entry(app: *App, arena: Allocator, p: *const traffic.ApiTrafficPane, id: 
     if (id == traffic.hit_title) return header(arena, p);
     if (id >= traffic.hit_tab_base and id < traffic.hit_tab_base + traffic.max_tabs) return tab(arena, p, id - traffic.hit_tab_base);
     if (traffic.sectionOf(id)) |s| return section(s);
+    if (traffic.bucketRowOf(id)) |i| return try bucketRow(arena, p, i);
     if (traffic.nowRowOf(id)) |r| return try now(arena, p, r);
     if (id >= traffic.hit_legend_base and id < traffic.hit_limit) return try legend(arena, p, id - traffic.hit_legend_base);
     if (id == traffic.hit_limit) return try limit(arena, p);
@@ -104,14 +105,13 @@ fn now(arena: Allocator, p: *const traffic.ApiTrafficPane, r: traffic.NowRow) Al
     const s = p.current() orelse return header(arena, p);
     const n = s.now;
     return switch (r) {
-        .bucket => .{
-            .title = "The shared bucket",
-            .body = if (n.bucket) |b| try std.fmt.allocPrint(arena, "`{s}-ratelimit.json` in the interop directory: {d:.1} of {d:.0} tokens now, refilling at {d:.3}/s ({d} 429s on record). Every process that agrees to the file draws one token per request from it, under one lock, so this is the budget the whole machine shares. A 429 parks it (`cooldown_until`) and cuts the rate until requests succeed again.", .{ s.service, b.tokens, b.capacity, b.rate, b.throttles }) else try std.fmt.allocPrint(arena, "No `{s}-ratelimit.json` was found where the SDK resolves it (`MNML_SHARED_STATE_DIR`, else the data root's `ratelimit/`). Without one, every process paces itself alone and none of them can see the others spending.", .{s.service}),
-            .links = &.{requests_link},
-        },
+        .bucket => try bucketRow(arena, p, 0),
         .hour => .{
             .title = "This hour against the limit",
-            .body = try std.fmt.allocPrint(arena, "{d} requests in the last hour by every program, against {d} an hour — the shared bucket's refill rate times 3600, the same figure an integration's budget chip paces to. `mnml today` is the budget's day tally, which counts mnml's own integrations only.", .{ n.hour_requests, n.hourly_limit }),
+            .body = if (n.hour_by.len < 2)
+                try std.fmt.allocPrint(arena, "{d} requests in the last hour by every program, against {d} an hour — the bucket's refill rate times 3600, the same figure an integration's budget chip paces to. `mnml today` is the budget's day tally, which counts mnml's own integrations only.", .{ n.hour_requests, n.hourly_limit })
+            else
+                try std.fmt.allocPrint(arena, "{d} requests in the last hour, split by the bucket each one drew from: a draw line naming a `token_id` spent that token's bucket, one naming none spent the shared one. Each is against {d} an hour — the refill rate times 3600 — because {s} counts its limit per token, so two tokens each have the whole of it. `mnml today` is the budget's day tally, which counts mnml's own integrations only.", .{ n.hour_requests, n.hourly_limit, s.service }),
             .links = &.{requests_link},
         },
         .broker => .{
@@ -145,6 +145,35 @@ fn now(arena: Allocator, p: *const traffic.ApiTrafficPane, r: traffic.NowRow) Al
             .title = "The shared HTTP cache",
             .body = try std.fmt.allocPrint(arena, "Entries under `$MNML_SHARED_STATE_DIR/http-cache/{s}/`: responses one process fetched that another can answer from without spending a token. The row is only here when the directory exists.", .{s.service}),
         },
+    };
+}
+
+/// NOW's bucket row `i`: which file it is and what it holds.
+fn bucketRow(arena: Allocator, p: *const traffic.ApiTrafficPane, i: usize) Allocator.Error!Entry {
+    const s = p.current() orelse return header(arena, p);
+    const rows = s.now.buckets;
+    if (rows.len == 0) return .{
+        .title = "No bucket file",
+        .body = try std.fmt.allocPrint(arena, "No `{s}-ratelimit.json` was found where the SDK resolves it (`MNML_SHARED_STATE_DIR`, else the data root's `ratelimit/`). Without one, every process paces itself alone and none of them can see the others spending.", .{s.service}),
+        .links = &.{requests_link},
+    };
+    if (i >= rows.len) return section(.now);
+    const br = rows[i];
+    const b = br.bucket;
+    const state = try std.fmt.allocPrint(arena, "{d:.1} of {d:.0} tokens now, refilling at {d:.3}/s ({d} 429s on record). A 429 parks it (`cooldown_until`) and cuts the rate until requests succeed again.", .{ b.tokens, b.capacity, b.rate, b.throttles });
+    if (br.token.len == 0) return .{
+        .title = "The shared bucket",
+        .body = try std.fmt.allocPrint(arena, "`{s}` in the interop directory: {s} Every process that agrees to the file and names no token of its own draws one token per request from it, under one lock.{s}", .{
+            br.file,
+            state,
+            if (rows.len > 1) " The rows below it are the buckets of single tokens, which their own clients spend instead." else "",
+        }),
+        .links = &.{requests_link},
+    };
+    return .{
+        .title = "A token's bucket",
+        .body = try std.fmt.allocPrint(arena, "`{s}` beside the shared bucket: the budget of one token, because {s} counts its limit per token. The id is the first 12 hex of a hash of the credential, never the credential. Every client using that token — mnml's own integration among them — draws from this file, and its draw lines carry `token_id` {s}. {s}", .{ br.file, s.service, br.token, state }),
+        .links = &.{requests_link},
     };
 }
 

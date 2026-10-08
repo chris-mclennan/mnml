@@ -84,6 +84,9 @@ pub const hit_legend_base: u32 = 0x60;
 pub const hit_limit: u32 = 0x70;
 pub const hit_who_head_base: u32 = 0x80;
 pub const hit_section_base: u32 = 0x90;
+/// One per bucket row of NOW (`reader.max_buckets`), the shared one
+/// first.
+pub const hit_bucket_base: u32 = 0xA0;
 /// The window chip and the refresh chip are the header's own
 /// (`ListHit.chip(.sort)` / `.refresh`, 0x100…).
 pub const hit_row_base: u32 = 0x1000;
@@ -105,6 +108,11 @@ pub fn nowRowOf(id: u32) ?NowRow {
 pub fn whoColOf(id: u32) ?WhoCol {
     if (id < hit_who_head_base or id >= hit_who_head_base + @typeInfo(WhoCol).@"enum".fields.len) return null;
     return @enumFromInt(id - hit_who_head_base);
+}
+
+pub fn bucketRowOf(id: u32) ?usize {
+    if (id < hit_bucket_base or id >= hit_bucket_base + reader.max_buckets) return null;
+    return id - hit_bucket_base;
 }
 
 pub fn sectionOf(id: u32) ?Section {
@@ -504,13 +512,14 @@ pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) Comput
         try io.checkCancel();
         var snap: ServiceSnap = .{ .service = try arena.dupe(u8, s.service), .source = s.source() };
         for (Window.all) |w| snap.windows[@intFromEnum(w)] = try reader.buildWindow(arena, gpa, s, w, now);
-        const bucket = reader.readBucket(io, gpa, &job.env, s.service, now);
+        const buckets = try reader.readBuckets(io, arena, gpa, &job.env, s.service, now);
         // A service with no line in any log, no 429 and no bucket file
         // is a name mnml knows, not one anybody spends on: no tab.
-        if (snap.source == .none and bucket == null and !s.requests.seen and s.throttles.items.len == 0) continue;
+        if (snap.source == .none and buckets.len == 0 and !s.requests.seen and s.throttles.items.len == 0) continue;
         snap.now = .{
-            .bucket = bucket,
+            .buckets = buckets,
             .hour_requests = snap.windows[@intFromEnum(Window.hour)].requests,
+            .hour_by = try reader.hourByBucket(arena, gpa, s, buckets, now),
             .hourly_limit = reader.hourlyLimit(s.service),
             .tally_today = reader.readTally(io, gpa, job.data_root, s.service, now),
             .broker = brokerOf(io, gpa, &job.env, s.service, now),
@@ -860,7 +869,11 @@ pub fn seedForAudit(app: *App) Allocator.Error!PaneId {
         }),
     };
     snap.now = .{
-        .bucket = .{ .tokens = 3, .capacity = 40, .rate = 0.22 },
+        .buckets = try a.dupe(reader.BucketRow, &.{
+            .{ .file = "acme-ratelimit.json", .bucket = .{ .tokens = 3, .capacity = 40, .rate = 0.22 } },
+            .{ .token = "0123456789ab", .file = "acme-ratelimit-0123456789ab.json", .bucket = .{ .tokens = 1, .capacity = 40, .rate = 0.22, .throttles = 2, .last_429_age = 30 } },
+        }),
+        .hour_by = try a.dupe(reader.HourRow, &.{ .{ .requests = 1 }, .{ .token = "0123456789ab", .requests = 2 } }),
         .hour_requests = 3,
         .hourly_limit = 792,
         .broker = .{ .where = .off },
@@ -1149,7 +1162,7 @@ test "a draws line stamped 1e30 and a bucket cooling until 1e20 are read and pai
         try computeAt(t.io, t.allocator, job, r, now);
         const s = r.find("jira").?;
         try t.expectEqual(@as(u32, 1), s.win(.hour).requests);
-        try t.expectEqual(@as(f64, 0), s.now.bucket.?.cooldown_secs);
+        try t.expectEqual(@as(f64, 0), s.now.buckets[0].bucket.cooldown_secs);
         try paintAll(r);
     }
 }

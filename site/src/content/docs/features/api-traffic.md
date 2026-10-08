@@ -42,6 +42,10 @@ exact shapes):
   file, the request log is what the pane counts instead.
 - **The shared bucket**, `<service>-ratelimit.json`: the tokens left,
   the refill rate, a cooldown after a 429, and the time of the last one.
+  Bitbucket counts its limit per token, so a client that names its
+  token keeps a bucket of its own beside the shared one,
+  `<service>-ratelimit-<id>.json`, and its draw lines carry that
+  `token_id`. mnml's Bitbucket integration is one of those clients.
 
 Both logs rotate at 4 MB and keep one older generation; the pane reads
 the older generation when it opens and follows the live file from there,
@@ -72,13 +76,28 @@ and `1` / `2` / `3` jump straight to one.
 
 ### NOW
 
-- **bucket** — the tokens left, refilled to this second at the rate in
-  the file, out of the bucket's capacity; the refill rate; a cooldown
-  after a 429 and how long it has left; when the last 429 was.
+- **bucket** — one row per bucket file: the tokens left, refilled to
+  this second at the rate in the file, out of the bucket's capacity;
+  the refill rate; a cooldown after a 429 and how long it has left;
+  when the last 429 was, and how many the file has counted. With only
+  the shared file the row ends in `(shared)`. With a token's file as
+  well, each row starts with its name, the shared one first:
+
+  ```
+  bucket  shared      7.5/40 tokens · 1.20/s · cooling 44s · last 429 4m ago · 4 throttles
+          token 0123… 2.0/40 tokens · 0.60/s · no cooldown · last 429 30s ago · 9 throttles
+  ```
+
+  Each row's hover names its file.
 - **hour** — requests in the last hour by every program, against the
   hourly limit: the bucket's refill rate times 3600, the same figure an
-  integration's budget chip paces itself to. `mnml today` is the
-  budget's day tally, which counts mnml's own integrations only.
+  integration's budget chip paces itself to. With more than one bucket
+  the hour is split by the bucket each draw came out of (a draw line's
+  `token_id`; a line without one spent the shared bucket), each against
+  the whole limit, because each token has a limit of its own:
+  `hour    shared 12 (0 %) · token 0123… 300 (7 %) of 4320 limit each`.
+  `mnml today` is the budget's day tally, which counts mnml's own
+  integrations only.
 - **broker** — whether the [broker](/docs/integrations/sdk) is up (this
   mnml hosting it, or another process) and how many requests are
   queued in each class: interactive, refresh, warm, batch. *Down* means
