@@ -115,6 +115,8 @@ the release ships one file), and one line per change a user can see.
   and a control character inside it is refused, so a stray second line
   can no longer end up in the request. `email:token` is recognised only
   when the part before the colon looks like an email.
+- `mnml-bitbucket --check` and `--diag` exit 1 when the probe fails
+  (nothing listening, a server error, a 429), so `--check && …` stops.
 
 ## v0.3.5 (2026-10-06)
 

@@ -173,6 +173,10 @@ mnml-bitbucket --check      # config, token source + length, whoami, the tabs
 mnml-bitbucket --diag       # the same as a tree, with the rate bucket
 ```
 
+Both exit 1 when anything they print fails — no config, no token, an
+unreadable token file, or a probe that answered `FAIL` (refused, a 5xx,
+a 429) — so `mnml-bitbucket --check && …` stops there.
+
 ```
 token source: <config dir>/token (loaded, 192 chars, not shown)
 auth scheme: Bearer <token> — an `ATCTT…` access token is scoped to a repository, a project or a workspace, not to a person

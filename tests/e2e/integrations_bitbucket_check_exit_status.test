@@ -1,0 +1,26 @@
+# `--check` is a pass/fail probe: a FAIL line — nothing listening, a
+# 500 — exits 1, so `mnml-bitbucket --check && echo ready` stops there.
+# The fake answering is the control: exit 0. A two-line token file
+# sends only its first line (the fake would 401 a header with a raw
+# newline in it).
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/cfg/config.zon
+# env: BITBUCKET_RATELIMIT_STATE=${MNML_E2E_WORKSPACE}/bucket.json
+# env: MNML_BROKER=0
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb.url --life-secs 120 --log-file wire.jsonl >/dev/null 2>&1 &
+write cfg/config.zon ".{ .email = \"dev@acme.example\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{ \"api\" }, .rate = .{ .max_attempts = 1 }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }"
+write cfg/token "ATATTfakeAccount000000000000002\nATATTfakeAccount000000000000009\n"
+expect within 10000 file bb.url contains "http"
+shell BITBUCKET_BASE_URL="$(cat bb.url)" "$MNML_BITBUCKET_INTEGRATION" --check > ok.out 2>&1; test $? -eq 0
+expect file ok.out contains "whoami: ok"
+expect file ok.out contains "(loaded, 31 chars, not shown)"
+shell BITBUCKET_BASE_URL=http://127.0.0.1:1/2.0 "$MNML_BITBUCKET_INTEGRATION" --check > refused.out 2>&1; test $? -eq 1
+expect file refused.out contains "whoami: FAIL"
+shell BITBUCKET_BASE_URL=http://127.0.0.1:1/2.0 "$MNML_BITBUCKET_INTEGRATION" --diag > refused_diag.out 2>&1; test $? -eq 1
+expect file refused_diag.out contains "  ├─ auth scheme: "
+expect file refused_diag.out contains "  ├─ approve token: "
+# A 429 on the probe.
+shell "$MNML_FAKE_BITBUCKET" --port 0 --url-file bb429.url --life-secs 120 --rate-limit-first 3 --retry-after 0 >/dev/null 2>&1 &
+expect within 10000 file bb429.url contains "http"
+shell BITBUCKET_RATELIMIT_STATE="$PWD/bucket429.json" BITBUCKET_BASE_URL="$(cat bb429.url)" "$MNML_BITBUCKET_INTEGRATION" --check > limited.out 2>&1; test $? -eq 1
+expect file limited.out contains "whoami: FAIL"
+expect file limited.out contains "429"

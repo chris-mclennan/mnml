@@ -607,6 +607,9 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
     var res = try worker.run(&job);
     defer res.deinit();
     const who = res.payload.whoami;
+    // A probe that failed is a failing `--check`: `--check && …` must
+    // not go on as if the token and the server were fine.
+    const failed = who.error_text.len > 0;
     // Name the question that was actually asked. An access token has
     // no account, so the probe is the workspace, and saying "whoami"
     // there would be the same lie that sent the user hunting a good
@@ -654,7 +657,7 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         }
         try out.print("\nRuntime\n  ├─ integration: {s}\n  ├─ api: {s}\n  └─ os/arch: {s} / {s}\n", .{ spec.version, s.base_url, @tagName(@import("builtin").os.tag), @tagName(@import("builtin").cpu.arch) });
     }
-    return 0;
+    return if (failed) 1 else 0;
 }
 
 // ─── --values / --refresh ────────────────────────────────────────────────
@@ -2412,6 +2415,58 @@ test "--check refuses a token file it cannot read and names it, rather than spen
     try t.expectEqual(@as(u8, 1), try rig.check(false));
     try t.expect(std.mem.indexOf(u8, rig.text(), "token file exists but cannot be read") != null);
     try t.expect(std.mem.indexOf(u8, rig.text(), "no Bitbucket token") == null);
+}
+
+const fake_account_token = "ATATTfakeAccount000000000000002\n";
+
+test "--check and --diag exit 1 when the probe fails — refused, a 500, a 429 — and 0 when it answers" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    // The control: the fake answers.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        try t.expectEqual(@as(u8, 0), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: ok") != null);
+        try t.expectEqual(@as(u8, 0), try rig.check(true));
+    }
+    // Nothing listening.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init("http://127.0.0.1:1/2.0", fake_account_token);
+        defer rig.deinit();
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+        try t.expectEqual(@as(u8, 1), try rig.check(true));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: ✗") != null);
+    }
+    // A 500.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        srv.failPaths("");
+        defer srv.failPaths(null);
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+    }
+    // A 429.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        srv.retryAfter(0);
+        srv.rateLimitNext(3);
+        defer srv.rateLimitNext(0);
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+        try t.expect(std.mem.indexOf(u8, rig.text(), "429") != null);
+    }
 }
 
 /// The pane on the offline fixture, for the SDK's design-language
