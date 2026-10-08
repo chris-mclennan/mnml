@@ -37,3 +37,12 @@ expect screen lacks "SKIP …"
 command jobs.show
 expect within 3000 screen contains "skipped — under budget"
 key esc
+# Acme's chip hover in the info view: the publisher's first line is the
+# title, then each line its own row and the blank line a gap — never
+# one paragraph ("of yours 1 waiting on you budget: …").
+hover 62 38
+expect within 3000 screen contains "2 open of yours"
+expect screen contains "1 waiting on you"
+expect screen contains "budget: 30 of 40 tokens"
+expect screen lacks "yours 1 waiting"
+expect screen lacks "you budget"

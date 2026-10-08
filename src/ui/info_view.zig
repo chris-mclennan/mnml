@@ -297,17 +297,39 @@ fn seg1(arena: std.mem.Allocator, text: []const u8, style: Style) std.mem.Alloca
 }
 
 /// Rust `wrap_words`: greedy on whitespace, a word longer than the
-/// width hard-broken, counting code points. Empty text is one empty
-/// line.
+/// width hard-broken, counting code points. A `\n` is a hard break and a
+/// blank line (`\n\n`) a paragraph gap — one empty row, however many
+/// blank lines there were; blank lines at either end are dropped. An
+/// integration's chip hover is lines (a summary, a gap, the budget, who
+/// spent it), and flattened into one paragraph it read as one run-on
+/// sentence. Empty text is one empty line.
 pub fn wrapWords(arena: std.mem.Allocator, text: []const u8, width: u16) std.mem.Allocator.Error![]const []const u8 {
     var out: std.ArrayListUnmanaged([]const u8) = .empty;
     if (width == 0 or text.len == 0) {
         try out.append(arena, "");
         return out.items;
     }
+    var gap = false;
+    var paras = std.mem.splitScalar(u8, text, '\n');
+    while (paras.next()) |raw| {
+        const para = std.mem.trim(u8, raw, " \t\r");
+        if (para.len == 0) {
+            gap = out.items.len > 0;
+            continue;
+        }
+        if (gap) try out.append(arena, "");
+        gap = false;
+        try wrapLine(arena, &out, para, width);
+    }
+    if (out.items.len == 0) try out.append(arena, "");
+    return out.items;
+}
+
+/// One hard line of `wrapWords`, greedily wrapped onto `out`.
+fn wrapLine(arena: std.mem.Allocator, out: *std.ArrayListUnmanaged([]const u8), text: []const u8, width: u16) std.mem.Allocator.Error!void {
     var line: std.ArrayListUnmanaged(u8) = .empty;
     var line_len: usize = 0;
-    var words = std.mem.tokenizeAny(u8, text, " \t\r\n");
+    var words = std.mem.tokenizeAny(u8, text, " \t\r");
     while (words.next()) |word| {
         const word_len = std.unicode.utf8CountCodepoints(word) catch word.len;
         if (word_len > width) {
@@ -348,8 +370,6 @@ pub fn wrapWords(arena: std.mem.Allocator, text: []const u8, width: u16) std.mem
         }
     }
     if (line.items.len > 0) try out.append(arena, line.items);
-    if (out.items.len == 0) try out.append(arena, "");
-    return out.items;
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -579,4 +599,28 @@ test "the rule as a handle: its hit over the whole top row wins over the box's, 
     defer h.deinit();
     _ = draw(h.ui(), h.full(), .{ .copy = sidebar_copy });
     try testing.expect(h.hits.at(0, 0).?.info_view == .body);
+}
+
+test "wrapWords: a newline is a hard break and a blank line one paragraph gap, at a wide width and a narrow one" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // An integration's chip hover: a summary, a gap, the budget, who spent it.
+    const text = "3 work items assigned to you\n\n\nbudget: 59 of 60 tokens\nspent by mnml-jira 1 of 1 draws\n";
+    const wide = try wrapWords(arena, text, 40);
+    try testing.expectEqual(@as(usize, 4), wide.len);
+    try testing.expectEqualStrings("3 work items assigned to you", wide[0]);
+    try testing.expectEqualStrings("", wide[1]);
+    try testing.expectEqualStrings("budget: 59 of 60 tokens", wide[2]);
+    try testing.expectEqualStrings("spent by mnml-jira 1 of 1 draws", wide[3]);
+    // Narrow: each line wraps on its own; no line carries a word from the next.
+    const narrow = try wrapWords(arena, text, 16);
+    const want = [_][]const u8{ "3 work items", "assigned to you", "", "budget: 59 of 60", "tokens", "spent by", "mnml-jira 1 of 1", "draws" };
+    try testing.expectEqual(want.len, narrow.len);
+    for (want, narrow) |w, got| try testing.expectEqualStrings(w, got);
+    // CRLF reads the same; blank lines at either end are dropped.
+    const crlf = try wrapWords(arena, "\r\n\r\na\r\nb\r\n\r\n", 10);
+    try testing.expectEqual(@as(usize, 2), crlf.len);
+    try testing.expectEqualStrings("a", crlf[0]);
+    try testing.expectEqualStrings("b", crlf[1]);
 }

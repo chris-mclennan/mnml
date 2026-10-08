@@ -362,15 +362,23 @@ fn dynamic(app: *App, arena: Allocator, slot: u32) Allocator.Error!?Entry {
     var body: std.ArrayListUnmanaged(u8) = .empty;
     if (seg.tooltip) |tip| {
         var it = std.mem.splitScalar(u8, tip, '\n');
-        title = try arena.dupe(u8, it.first());
-        while (it.next()) |l| {
-            // A blank line only separates the publisher's words from
-            // the shared bucket's.
-            if (l.len == 0) continue;
-            if (body.items.len > 0) try body.append(arena, ' ');
+        title = try arena.dupe(u8, std.mem.trim(u8, it.first(), " \r"));
+        // Each of the publisher's lines stays a line, and its blank
+        // line (between its own words and the shared bucket's) stays a
+        // paragraph gap: the info view wraps `\n` as a hard break.
+        var gap = false;
+        while (it.next()) |raw| {
+            const l = std.mem.trim(u8, raw, " \r");
+            if (l.len == 0) {
+                gap = true;
+                continue;
+            }
+            if (body.items.len > 0) try body.appendSlice(arena, if (gap) "\n\n" else "\n");
+            gap = false;
             try body.appendSlice(arena, l);
         }
-        if (body.items.len > 0) try body.appendSlice(arena, " ");
+        // mnml's own words about the chip are a paragraph of their own.
+        if (body.items.len > 0) try body.appendSlice(arena, "\n\n");
     } else {
         title = try std.fmt.allocPrint(arena, "Chip `{s}`", .{seg.id});
         try body.print(arena, "A chip published to the statusline as `{s}`, sent without hover text of its own, so its figure is all it says. ", .{seg.id});

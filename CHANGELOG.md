@@ -64,6 +64,9 @@ the release ships one file), and one line per change a user can see.
   it reads it, so a config asking for a bigger bucket than the shared
   one no longer makes every poll step aside, and a chip's hover no
   longer says "cut from" when nothing was ever throttled.
+- An integration chip's hover keeps its lines: the summary, each count
+  and the budget each on their own line in the info box, with a gap
+  where the integration left one, instead of one run-on sentence.
 
 ### Installed integrations say when they are out of date
 
