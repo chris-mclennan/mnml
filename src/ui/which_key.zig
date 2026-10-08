@@ -130,7 +130,10 @@ pub fn draw(ui: Ui, area: Rect, title: []const u8, entries_in: []const Entry) vo
             x += key_w -| kw;
             x += ui.putStr(x, y, end -| x, e.key, if (e.is_group) key_group else key_leaf);
             x += ui.putStr(x, y, end -| x, arr, arrow_style);
-            _ = ui.putStr(x, y, end -| x, ui.clipStr(e.label, end -| x), if (e.is_group) label_group else label_leaf);
+            // One blank cell always stays between a clipped label's
+            // ellipsis and the next column's glyph.
+            const room = (end -| x) -| 1;
+            _ = ui.putStr(x, y, room, ui.clipStr(e.label, room), if (e.is_group) label_group else label_leaf);
             // The whole cell is the target, not just the painted text.
             if (e.id) |id| ui.hit(Rect.init(inner.x + @as(u16, @intCast(c)) * cell_w, y, end -| (inner.x + @as(u16, @intCast(c)) * cell_w), 1), .{ .overlay_item = id });
         }
@@ -260,6 +263,34 @@ test "the glyph column: a cell per row, the keys still in one column, and no col
     for ([_][]const u8{ "e → explorer", "f → +find", "q → quit", "s → +split" }) |want| {
         try testing.expect(std.mem.indexOf(u8, plain, want) != null);
     }
+}
+
+test "a clipped label keeps a blank cell before the next column (hunt6, 80x24)" {
+    // The leader popup at 80x24: labels clipped to the cell ran their
+    // ellipsis into the next column's glyph. Every `…` on a row is
+    // followed by a blank, or by the box's edge.
+    const wkg = @import("whichkey_glyph.zig");
+    var f = try Fixture.init(80, 24);
+    defer f.deinit();
+    var keys: [30][1]u8 = undefined;
+    var many: [30]Entry = undefined;
+    for (&many, &keys, 0..) |*e, *k, i| {
+        k[0] = @intCast(if (i < 26) 'a' + i else 'A' + i - 26);
+        e.* = .{ .key = &k.*, .label = "open browser (Chrome profile, a long label)", .glyph = wkg.neutral.glyph };
+    }
+    draw(f.ui(), f.full(), "<leader>", &many);
+    var buf: [1024]u8 = undefined;
+    var seen = false;
+    for (0..24) |y| {
+        const row = f.row(@intCast(y), &buf);
+        var it = std.mem.indexOfPos(u8, row, 0, "…");
+        while (it) |at| : (it = std.mem.indexOfPos(u8, row, at + 1, "…")) {
+            seen = true;
+            const next = row[at + "…".len ..];
+            try testing.expect(next.len == 0 or next[0] == ' ' or std.mem.startsWith(u8, next, "│"));
+        }
+    }
+    try testing.expect(seen);
 }
 
 /// `glyph key → label`, the way a row reads on screen.

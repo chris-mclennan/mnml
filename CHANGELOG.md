@@ -232,6 +232,17 @@ the release ships one file), and one line per change a user can see.
   it into the file.
 - `r` then `Enter` splits the line and drops the blanks after the
   replaced character, as Neovim does.
+- The which-key popup keeps a blank cell after a clipped label, so the
+  ellipsis no longer runs into the next column's icon at 80×24.
+- In Insert, `Tab` with spaces fills to the next tab stop rather than
+  always typing four spaces.
+- In Insert, `Ctrl-V` and a code types that character (`065` is `A`;
+  `x41`, `u00e9`, `U…` and `o101` by base); `Ctrl-A` types the last
+  inserted text again. `Ctrl-R =` says the expression register is not
+  supported and drops the expression typed after it, rather than typing
+  it into the file.
+- `r` then `Enter` splits the line and drops the blanks after the
+  replaced character, as Neovim does.
 - In Insert, `Tab` with spaces fills to the next tab stop rather than
   always typing four spaces.
 - In Insert, `Ctrl-V` and a code types that character (`065` is `A`;
