@@ -290,7 +290,7 @@ fn whoText(ui: Ui, by: []const reader.Reason) []const u8 {
 
 /// `12s`, `4m`, `3h`, `2d`.
 pub fn age(ui: Ui, secs: f64) []const u8 {
-    const s: u64 = @intFromFloat(@max(secs, 0));
+    const s = reader.wholeSecs(secs);
     if (s < 60) return ui.fmt("{d}s", .{s});
     if (s < 3600) return ui.fmt("{d}m", .{s / 60});
     if (s < 86400) return ui.fmt("{d}h", .{s / 3600});
@@ -299,7 +299,7 @@ pub fn age(ui: Ui, secs: f64) []const u8 {
 
 /// `14:07` on the local clock, or `Mon 14:00` on the week's strip.
 pub fn clockText(ui: Ui, ts: f64, tz: i64, with_day: bool) []const u8 {
-    const secs: i64 = @as(i64, @intFromFloat(@floor(ts))) + tz;
+    const secs: i64 = reader.floorI64(ts) + std.math.clamp(tz, -86400, 86400);
     const day = @divFloor(secs, 86400);
     const in_day: u64 = @intCast(secs - day * 86400);
     const hm = ui.fmt("{d:0>2}:{d:0>2}", .{ in_day / 3600, (in_day % 3600) / 60 });
@@ -371,7 +371,7 @@ fn drawTimeline(ui: Ui, pane: PaneId, area: Rect, p: *traffic.ApiTrafficPane, s:
     _ = ui.putStrRight(plot_x - 1, strip_top + strip_h - 1, axis_w - 1, "0", axis_style);
     const limit_row: ?u16 = if (limit_on_scale) blk: {
         const frac = per_bucket_limit / scale;
-        const from_bottom: u16 = @intFromFloat(@min(@floor(frac * @as(f64, @floatFromInt(strip_h)) - 0.0001), @as(f64, @floatFromInt(strip_h - 1))));
+        const from_bottom: u16 = @intFromFloat(reader.clampF(@floor(frac * @as(f64, @floatFromInt(strip_h)) - 0.0001), 0, @as(f64, @floatFromInt(strip_h - 1))));
         break :blk strip_top + strip_h - 1 - from_bottom;
     } else null;
     const limit_style: Style = .{ .fg = t.warn_fg.fg, .bg = bg };
@@ -839,4 +839,18 @@ test "before the first look the pane says it is reading; with no services it say
     p.result = try traffic.Result.create(testing.allocator, 0);
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectContains("no API traffic recorded on this machine yet");
+}
+
+test "the ages and the clock labels saturate on any number: NaN, infinity, either sign, past every integer" {
+    var f = try Fixture.init(40, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    for ([_]f64{ std.math.nan(f64), std.math.inf(f64), -std.math.inf(f64), 1e20, 1e300, -1e300, -1, 0, 59.9, 3599, 86399 }) |v| {
+        _ = age(ui, v);
+        _ = clockText(ui, v, 3600, true);
+        _ = clockText(ui, v, -std.math.maxInt(i32), false);
+    }
+    try testing.expectEqualStrings("0s", age(ui, -5));
+    try testing.expectEqualStrings("0s", age(ui, std.math.nan(f64)));
+    try testing.expectEqualStrings("11574074074d", age(ui, 1e20));
 }

@@ -184,7 +184,7 @@ fn whoCol(c: traffic.WhoCol) Entry {
 
 /// `14:07` on the local clock (or `Mon 14:07`).
 fn clock(arena: Allocator, ts: f64, tz: i64, with_day: bool) Allocator.Error![]const u8 {
-    const secs: i64 = @as(i64, @intFromFloat(@floor(ts))) + tz;
+    const secs: i64 = reader.floorI64(ts) + std.math.clamp(tz, -86400, 86400);
     const day = @divFloor(secs, 86400);
     const in_day: u64 = @intCast(secs - day * 86400);
     if (!with_day) return std.fmt.allocPrint(arena, "{d:0>2}:{d:0>2}", .{ in_day / 3600, (in_day % 3600) / 60 });

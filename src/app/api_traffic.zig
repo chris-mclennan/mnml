@@ -494,7 +494,7 @@ pub fn compute(io: Io, gpa: Allocator, job: *Job, r: *Result) ComputeError!void 
 
 pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) ComputeError!void {
     r.now = now;
-    r.tz_offset = sdk.budget.localOffset(@intFromFloat(now));
+    r.tz_offset = sdk.budget.localOffset(reader.floorI64(now));
     const paths: reader.Paths = .{ .data_root = job.data_root, .workspace = job.workspace, .env = &job.env };
     try job.rd.look(io, gpa, paths, &known, now);
     try io.checkCancel();
@@ -1090,4 +1090,109 @@ test "the coalescer: one toast per service per five minutes, services apart" {
     try t.expect(!c.note("bitbucket", 1, 399));
     try t.expect(c.note("jira", 1, 120));
     try t.expect(c.note("bitbucket", 1, 400));
+}
+
+/// A worker's `Job` over the fixture, the way `ensureJob` makes one.
+fn fixtureJob(fx: *const Fixture) !*Job {
+    const job = try t.allocator.create(Job);
+    errdefer t.allocator.destroy(job);
+    var env = std.process.Environ.Map.init(t.allocator);
+    errdefer env.deinit();
+    try env.put("MNML_SHARED_STATE_DIR", fx.shared);
+    job.* = .{ .env = env, .data_root = try t.allocator.dupe(u8, fx.data), .workspace = try t.allocator.dupe(u8, fx.root) };
+    return job;
+}
+
+fn freeJob(job: *Job) void {
+    job.deinit(t.allocator);
+    t.allocator.destroy(job);
+}
+
+/// Every window of every service of `r`, painted at three sizes.
+fn paintAll(r: *Result) !void {
+    const Ui = @import("../ui/test_fixture.zig");
+    const view = @import("../ui/api_traffic_view.zig");
+    for (r.services) |s| for (Window.all) |w| for ([_][2]u16{ .{ 60, 20 }, .{ 120, 40 }, .{ 200, 60 } }) |size| {
+        var p = ApiTrafficPane.init(t.allocator, w);
+        defer p.deinit(t.io);
+        p.result = r;
+        p.service = try t.allocator.dupe(u8, s.service);
+        // The newest column picked, so the readout paints too.
+        p.column = w.buckets() - 1;
+        var f = try Ui.init(size[0], size[1]);
+        defer f.deinit();
+        view.draw(f.ui(), 9, f.full(), &p, true);
+    };
+}
+
+test "a draws line stamped 1e30 and a bucket cooling until 1e20 are read and painted without a panic, on every window" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const now = nowSecs(t.io);
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    try text.print(t.allocator, "{{\"ts\":{d:.3},\"pid\":4100,\"program\":\"widget.py\",\"service\":\"jira\",\"reason\":\"poll\",\"wait_ms\":20,\"tokens_after\":3}}\n", .{now - 30});
+    // The hunt's first vector, byte for byte.
+    try text.appendSlice(t.allocator, "{\"ts\":1e30,\"pid\":7,\"program\":\"clock-skew\",\"service\":\"jira\",\"reason\":\"poll\",\"wait_ms\":0,\"tokens_after\":1}\n");
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/jira-draws.jsonl", .data = text.items });
+    // The second: a cooldown 10^20 seconds out.
+    const bucket = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"tokens\":5,\"rate\":0.33,\"cooldown_until\":1e+20,\"throttles\":1,\"last_429\":{d}}}", .{ now, now - 5 });
+    defer t.allocator.free(bucket);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/jira-ratelimit.json", .data = bucket });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    // Twice: the first look at start, then the next one, which is the
+    // one that crashed every launch.
+    for (0..2) |_| {
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, now);
+        const s = r.find("jira").?;
+        try t.expectEqual(@as(u32, 1), s.win(.hour).requests);
+        try t.expectEqual(@as(f64, 0), s.now.bucket.?.cooldown_secs);
+        try paintAll(r);
+    }
+}
+
+test "every numeric field of every file at its extremes: the worker reads it and the view paints it, whatever the clock" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.createDirPath(t.io, "shared/api-usage");
+    const now = nowSecs(t.io);
+    const values = [_][]const u8{ "1e30", "-1e30", "1e400", "-1e400", "0", "-1", "4294967296", "1.8446744073709552e19", "5e19", "1e21", "1.7976931348623157e308", "1e", "-", "" };
+    var draws: std.ArrayListUnmanaged(u8) = .empty;
+    defer draws.deinit(t.allocator);
+    var reqs: std.ArrayListUnmanaged(u8) = .empty;
+    defer reqs.deinit(t.allocator);
+    var throttles: std.ArrayListUnmanaged(u8) = .empty;
+    defer throttles.deinit(t.allocator);
+    for (values) |v| {
+        for ([_][]const u8{ "ts", "pid", "wait_ms", "tokens_after" }) |k| try draws.print(t.allocator, "{{\"{s}\":{s},\"ts\":{d:.3},\"pid\":4,\"program\":\"widget.py\",\"reason\":\"poll\",\"wait_ms\":2}}\n", .{ k, v, now - 20 });
+        for ([_][]const u8{ "ts", "status", "wait_ms" }) |k| try reqs.print(t.allocator, "{{\"{s}\":{s},\"ts\":{d:.3},\"integration\":\"mnml-acme\",\"path\":\"/x\",\"status\":429,\"wait_ms\":2}}\n", .{ k, v, now - 20 });
+        try throttles.print(t.allocator, "{{\"ts\":{s},\"api\":\"acme\",\"caller\":\"c\"}}\n", .{v});
+    }
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/acme-draws.jsonl", .data = draws.items });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/requests/acme.jsonl", .data = reqs.items });
+    var date: [10]u8 = undefined;
+    const tpath = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{sdk.budget.isoDate(&date, @divFloor(reader.floorI64(now), 86400))});
+    defer t.allocator.free(tpath);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = tpath, .data = throttles.items });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    for (values) |v| for ([_][]const u8{ "ts", "tokens", "rate", "cooldown_until", "last_429" }) |k| {
+        const b = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"tokens\":5,\"rate\":0.3,\"cooldown_until\":0,\"throttles\":1,\"last_429\":0,\"{s}\":{s}}}", .{ now, k, v });
+        defer t.allocator.free(b);
+        try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/acme-ratelimit.json", .data = b });
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, now);
+        try paintAll(r);
+    };
+    // The clock itself far off either way.
+    for ([_]f64{ 0, 1, reader.max_ts, 1e18 }) |clock| {
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, clock);
+        try paintAll(r);
+    }
 }
