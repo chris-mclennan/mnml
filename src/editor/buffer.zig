@@ -2572,3 +2572,22 @@ test "vim: an operator on a text object that finds nothing is abandoned — Norm
     // An empty object is still an object: Insert opens between the pair.
     try vim("ci(X<esc>", "foo(|) z", "foo(|X) z");
 }
+
+test "vim: a count before and after an operator multiply — 2d2w is d4w, 2d2d four lines" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed (`feedkeys(…, "xt")`).
+    try vim("2d2w", "|a b c d e f\n", "|e f\n");
+    try vim("2d2d", "|a\nb\nc\nd\ne\nf\ng\n", "|e\nf\ng\n");
+    try vim("2y2wP", "|a b c d e f\n", "a b c d| a b c d e f\n");
+    try vim("2c2wX<esc>", "|a b c d e f\n", "|X e f\n");
+    try vim("3d2w", "|a b c d e f g h\n", "|g h\n");
+    try vim("2d2j", "|a\nb\nc\nd\ne\nf\n", "|f\n");
+    try vim("2d2f.", "|a.b.c.d.e\n", "|e\n");
+    // `0` after the operator is the motion, not a digit: `2d0` is `d0`.
+    try vim("$2d0", "|abcdef\n", "|f\n");
+    // Six lines either way; the shift width is mnml's own (4).
+    try vim("3>2>", "|a\nb\nc\nd\ne\nf\ng\nh\n", "    |a\n    b\n    c\n    d\n    e\n    f\ng\nh\n");
+    // One count, either side, is unchanged.
+    try vim("2dd", "|a\nb\nc\n", "|c\n");
+    try vim("d2w", "|a b c d\n", "|c d\n");
+    try vim("d10w", "|a b c d e f g h i j k l\n", "|k l\n");
+}

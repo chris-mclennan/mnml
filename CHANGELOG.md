@@ -196,6 +196,11 @@ the release ships one file), and one line per change a user can see.
 - Pressing Enter in the "Quit mnml?" box with unsaved work takes the
   focused Cancel, as before, and now says so in a toast that names the
   keys that save or quit.
+### Vim: closer to Neovim
+
+- A count before an operator and another after it multiply, as in
+  Neovim: `2d3w` deletes six words and `2d2d` four lines. They used to
+  run together, so `2d2d` deleted twenty-two lines.
 
 ## v0.3.5 (2026-10-06)
 

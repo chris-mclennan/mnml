@@ -162,6 +162,11 @@ pub const Vim = struct {
     vmode: VimMode = .normal,
     /// The count being typed (`12` in `12dd`). Null ⇒ 1.
     count: ?u32 = null,
+    /// `2d3w`: once a digit follows the operator, the count typed before
+    /// it waits here and `count` holds the one after; the two multiply
+    /// when the motion comes (`:help operator`), so `2d3w` is `d6w`.
+    op_pre_count: ?u32 = null,
+    op_count_split: bool = false,
     op: ?PendingOp = null,
     prefix: Prefix = .none,
     cmdline: std.ArrayList(u8) = .empty,
@@ -352,8 +357,14 @@ pub const Vim = struct {
             try s.append(arena, '"');
             try appendChar(&s, arena, r);
         }
-        if (self.count) |n| try s.print(arena, "{d}", .{n});
-        if (self.op) |op| try s.appendSlice(arena, op.glyph());
+        if (self.op_count_split) {
+            if (self.op_pre_count) |n| try s.print(arena, "{d}", .{n});
+            if (self.op) |op| try s.appendSlice(arena, op.glyph());
+            if (self.count) |n| try s.print(arena, "{d}", .{n});
+        } else {
+            if (self.count) |n| try s.print(arena, "{d}", .{n});
+            if (self.op) |op| try s.appendSlice(arena, op.glyph());
+        }
         const p: []const u8 = switch (self.prefix) {
             .none => "",
             .g => "g",
@@ -412,6 +423,8 @@ pub const Vim = struct {
 
     fn resetPending(self: *Vim) void {
         self.count = null;
+        self.op_pre_count = null;
+        self.op_count_split = false;
         self.op = null;
         self.prefix = .none;
     }
@@ -1973,10 +1986,23 @@ pub const Vim = struct {
     fn handleOperatorPending(self: *Vim, op: PendingOp, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         const ch = charOf(key);
         if (ch) |c| {
-            if (c >= '0' and c <= '9' and !(c == '0' and self.count == null)) {
+            // The count after the operator is its own number: `2d0` is
+            // `d0` twice over, not `d20`, and `2d2d` is four lines.
+            const post: ?u32 = if (self.op_count_split) self.count else null;
+            if (c >= '0' and c <= '9' and !(c == '0' and post == null)) {
+                if (!self.op_count_split) {
+                    self.op_pre_count = self.count;
+                    self.count = null;
+                    self.op_count_split = true;
+                }
                 self.pushDigit(c - '0');
                 return .consumed;
             }
+        }
+        if (self.op_count_split) {
+            if (self.op_pre_count) |pre| self.count = pre *| (self.count orelse 1);
+            self.op_pre_count = null;
+            self.op_count_split = false;
         }
         const doubled = if (ch) |c| switch (op) {
             .delete => c == 'd',
