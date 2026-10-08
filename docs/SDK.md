@@ -1216,9 +1216,11 @@ gets the log: the point of it is to be there when the slow morning
 happens, not to be switched on afterwards.
 
 Every call site passes a **reason** — `pane_open`, `refresh`, `poll`,
-`prefetch`, `detail`, `builds`, `readiness`, `dispatch`, `user`,
-`warm`, `delta`, `revalidate`, `cache_hit` — because a line that
-cannot be read back to a cause is only a route.
+`check`, `prefetch`, `detail`, `builds`, `readiness`, `dispatch`,
+`user`, `warm`, `delta`, `revalidate`, `cache_hit` — because a line
+that cannot be read back to a cause is only a route. `check` is a
+`--check` / `--diag` probe run by hand: somebody is waiting, and no
+pane was opened.
 
 The last four are the warmer's. `warm` is filling a cache for a tab
 nobody is looking at; `delta` is a window since the last successful

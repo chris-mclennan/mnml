@@ -65,6 +65,9 @@ pub const Reason = enum {
     refresh,
     /// The statusline poller's `--values` run.
     poll,
+    /// A `--check` / `--diag` probe: a person ran it and is waiting,
+    /// but no pane was opened.
+    check,
     /// Filling a cache ahead of a pane that is not open yet.
     prefetch,
     /// One row's detail, fetched because the reader is on it.
@@ -103,7 +106,7 @@ pub const Reason = enum {
     /// this is the half of it the log owns.
     pub fn interactive(r: Reason) bool {
         return switch (r) {
-            .pane_open, .detail, .user, .readiness, .dispatch, .refresh => true,
+            .pane_open, .detail, .user, .readiness, .dispatch, .refresh, .check => true,
             .poll, .prefetch, .builds, .warm, .delta, .revalidate, .cache_hit => false,
         };
     }
@@ -886,7 +889,7 @@ test "a cache hit is a line too — with no status, no wait and no tokens, so co
 
 test "the reasons the warmer added, and which of them yield to a reader" {
     // Somebody is waiting on the answer.
-    for ([_]Reason{ .pane_open, .refresh, .detail, .readiness, .dispatch, .user }) |r| {
+    for ([_]Reason{ .pane_open, .refresh, .detail, .readiness, .dispatch, .user, .check }) |r| {
         try t.expect(r.interactive());
     }
     // Nobody is.
@@ -898,6 +901,7 @@ test "the reasons the warmer added, and which of them yield to a reader" {
     try t.expectEqualStrings("delta", Reason.delta.tag());
     try t.expectEqualStrings("revalidate", Reason.revalidate.tag());
     try t.expectEqualStrings("cache_hit", Reason.cache_hit.tag());
+    try t.expectEqualStrings("check", Reason.check.tag());
 }
 
 test "a line names its route with the ids elided, so one endpoint reads as one and no key or number is quoted" {

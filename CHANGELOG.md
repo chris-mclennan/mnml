@@ -129,6 +129,11 @@ the release ships one file), and one line per change a user can see.
 - On a Bitbucket Pipelines tab the footer describes the Pipelines tab,
   and a PR detail left open on another tab is hidden there instead of
   taking half the table.
+- `mnml-bitbucket --check` prints `state=` only for tabs that have one,
+  and its probe is logged as `check` rather than as a pane opening. A
+  draw on a bucket named by `BITBUCKET_RATELIMIT_STATE` no longer
+  carries a `token_id`, and the README names the right rate-bucket file
+  for an account credential.
 
 ## v0.3.5 (2026-10-06)
 

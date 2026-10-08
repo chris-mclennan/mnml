@@ -528,10 +528,13 @@ pub const Limiter = struct {
         defer gpa.free(p);
         var l = try init(gpa, io, p, configFor(service));
         errdefer l.deinit();
-        l.token_id = id;
         const shared = try statePath(gpa, io, env, service);
         defer gpa.free(shared);
-        if (std.mem.eql(u8, shared, p)) try l.attachBroker(env, service);
+        // `token_id` only when the draws really come out of the
+        // token's own bucket: an override (`<SERVICE>_RATELIMIT_STATE`)
+        // names the shared file, and a draw line there naming a token
+        // would pair one bucket's `tokens_after` with another's id.
+        if (std.mem.eql(u8, shared, p)) try l.attachBroker(env, service) else l.token_id = id;
         return l;
     }
 
@@ -1222,6 +1225,16 @@ test "a limiter for a token spends its own bucket, skips the shared broker, and 
     defer jira.deinit();
     try t.expect(jira.token_id == null);
     try t.expect(std.mem.endsWith(u8, jira.path, "jira-ratelimit.json"));
+
+    // An override names the file outright: no per-token bucket, so no
+    // `token_id` on its draws — `tokens_after` is the override's.
+    const named = try std.fs.path.join(t.allocator, &.{ dir, "named.json" });
+    defer t.allocator.free(named);
+    try env.put("BITBUCKET_RATELIMIT_STATE", named);
+    var over = try Limiter.forToken(t.allocator, t.io, &env, "bitbucket", "Bearer abc");
+    defer over.deinit();
+    try t.expect(over.token_id == null);
+    try sdk_testing.expectPath(named, over.path);
 }
 
 test "a state file written by the Rust crate reads back field for field" {

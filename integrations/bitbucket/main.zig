@@ -606,7 +606,9 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
     var progress: fetch.Progress = .{};
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id, c.workspace);
     defer worker.deinit();
-    var job = try fetch.makeJob(gpa, nowSecs(io), .whoami);
+    // `check`, not `pane_open`: a person ran the probe, and no pane
+    // was opened.
+    var job = try fetch.makeJobFor(gpa, nowSecs(io), .whoami, .check);
     defer job.deinit();
     var res = try worker.run(&job);
     defer res.deinit();
@@ -649,10 +651,14 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
             else => try std.fmt.allocPrint(gpa, "kind={s}", .{@tagName(tab.kind)}),
         };
         defer gpa.free(shape);
+        // `state` is a `pull_requests` tab's alone: the workspace tabs
+        // fix their own, and a pipelines tab has none.
+        var state_buf: [32]u8 = undefined;
+        const state = if (tab.kind == .pull_requests) std.fmt.bufPrint(&state_buf, ", state={s}", .{@tagName(tab.state)}) catch "" else "";
         if (full) {
-            try out.print("      {d}. {s} ({s}, state={s})\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+            try out.print("      {d}. {s} ({s}{s})\n", .{ i + 1, tab.name, shape, state });
         } else {
-            try out.print("  tab {d} ({s}): {s}, state={s}\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+            try out.print("  tab {d} ({s}): {s}{s}\n", .{ i + 1, tab.name, shape, state });
         }
     }
     if (full) {
@@ -2499,6 +2505,36 @@ test "--diag draws every line of its Auth block as a branch of the tree" {
     try t.expect(n >= 4);
     try t.expect(std.mem.indexOf(u8, diag, "  ├─ auth scheme: ") != null);
     try t.expect(std.mem.indexOf(u8, diag, "  ├─ approve token: ") != null);
+}
+
+test "--check prints state only on a pull_requests tab, and its probe's draw says check, not pane_open" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var rig: CheckRig = undefined;
+    try rig.init(base, fake_account_token);
+    defer rig.deinit();
+
+    try t.expectEqual(@as(u8, 0), try rig.check(true));
+    const diag = rig.text();
+    try t.expect(std.mem.indexOf(u8, diag, "Open (kind=workspace_open_prs)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "Merged (kind=workspace_merged_prs)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "Pipelines (kind=workspace_pipelines)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "api (repo=api, state=MERGED)\n") != null);
+
+    try t.expectEqual(@as(u8, 0), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "tab 2 (Merged): kind=workspace_merged_prs\n") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "tab 4 (api): repo=api, state=MERGED\n") != null);
+
+    // The draws: the probe is a `check`, not a pane opening.
+    const draws = try std.fs.path.join(t.allocator, &.{ rig.root, "interop", "bitbucket-draws.jsonl" });
+    defer t.allocator.free(draws);
+    const lines_text = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(lines_text);
+    try t.expect(std.mem.indexOf(u8, lines_text, "\"reason\":\"check\"") != null);
+    try t.expect(std.mem.indexOf(u8, lines_text, "\"reason\":\"pane_open\"") == null);
 }
 
 /// The pane on the offline fixture, for the SDK's design-language

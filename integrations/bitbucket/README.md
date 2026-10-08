@@ -504,12 +504,15 @@ burst of 40, parked 30 s after a 429 (`.rate`'s `rate_per_sec` and
 outright); else `bitbucket-ratelimit-<id>.json` beside the shared
 `bitbucket-ratelimit.json` — under `$MNML_SHARED_STATE_DIR`, else
 `<MNML_DATA_ROOT>/ratelimit/`, else `~/.config/mnml/ratelimit/` —
-where `<id>` is the first 12 hex characters of a sha256 of the token
-(`docs/SDK.md`, "A bucket per token"). Anything else on the machine
+where `<id>` is the first 12 hex characters of a sha256 of the bare
+credential: the token itself for an access token (Bearer), and
+`email:token` for an account credential (Basic) — `docs/SDK.md`, "A
+bucket per token", has the exact rule. Anything else on the machine
 spending the same token and agreeing to the format takes turns on the
 same file; a tool with no token to name stays on the shared one. Every
 draw, whichever bucket, is a line in the one `bitbucket-draws.jsonl`,
-carrying the bucket's `token_id`.
+carrying the bucket's `token_id` — none when an override names the file,
+since that is not a per-token bucket.
 
 The rate broker hands out tokens from the shared file, so a token's own
 bucket does not ask it: the pane and its poller draw straight off their
