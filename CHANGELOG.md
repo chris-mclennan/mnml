@@ -111,6 +111,10 @@ the release ships one file), and one line per change a user can see.
   permission, or a directory named `token`) is now an error that
   `--check` and the pane name, instead of quietly using a token from
   the environment. Only a missing or empty file falls back.
+- Only the first non-empty line of the Bitbucket token file is read,
+  and a control character inside it is refused, so a stray second line
+  can no longer end up in the request. `email:token` is recognised only
+  when the part before the colon looks like an email.
 
 ## v0.3.5 (2026-10-06)
 

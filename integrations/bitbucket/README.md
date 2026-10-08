@@ -115,6 +115,16 @@ cannot be read: <path> (<why>)` and exits 1, and the pane shows the same
 line on its setup screen. It never quietly spends an exported token
 instead.
 
+Only the file's **first non-empty line** is read; anything after it is
+ignored, so a stray second line can never reach the `Authorization`
+header. A control character inside that line (a tab, a carriage return
+mid-token) is refused with an error rather than sent.
+
+`email:token` — in the file or a variable — is read as an email and a
+token only when the part before the first colon looks like an email: it
+holds an `@` and no space. Then only the half after the colon is the
+token. Any other colon is part of the token.
+
 Bitbucket takes two kinds of token and they are **not** interchangeable
 on the wire:
 
@@ -150,7 +160,7 @@ resolve, so a machine that already exports one keeps working:
 | `BITBUCKET_ACCESS_TOKEN` | with no file: the approve token, and the read token unless an account credential follows |
 | `BITBUCKET_API_TOKEN` | an Atlassian scoped API token |
 | `BITBUCKET_APP_PASSWORD` | a Bitbucket app password |
-| `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used |
+| `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used (the email rule above) |
 
 Scopes: **Pull requests: Read**, **Account: Read** for the mine /
 reviewing tabs and the chip, **Pull requests: Write** for approve.

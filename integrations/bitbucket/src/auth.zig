@@ -37,15 +37,20 @@
 //! In full:
 //!
 //!   1. `<config dir>/token` — one line, `chmod 600`; read and approve.
-//!      A file that is there but cannot be read (no permission, a
-//!      directory) is an error — never a silent fall through to the
-//!      environment, which would spend another tool's token. Only an
-//!      absent or empty file falls through.
+//!      Only its first non-empty line is read. A file that is there but
+//!      cannot be read (no permission, a directory), or whose line
+//!      holds a control character, is an error — never a silent fall
+//!      through to the environment, which would spend another tool's
+//!      token. Only an absent or empty file falls through.
 //!   2. `BITBUCKET_ACCESS_TOKEN` — the approve token whenever it is set
 //!   3. `BITBUCKET_API_TOKEN` — an Atlassian API token
 //!   4. `BITBUCKET_APP_PASSWORD` — a Bitbucket app password
 //!   5. `BITBUCKET_PERSONAL_TOKEN` — either kind, often exported as
 //!      `email:token`; only the half after the colon is the token
+//!
+//! `email:token` (in the file or any variable) is recognised only when
+//! the part before the first colon looks like an email: it holds an `@`
+//! and no space. Anything else is the token, colon and all.
 //!
 //! …the variables walked once for an account credential and, failing
 //! that, once for anything at all; with no file, the approve token is
@@ -144,7 +149,7 @@ pub const Tokens = struct {
     read_source: Source = .none,
     write_source: Source = .none,
     /// Non-empty when `<config dir>/token` is there but is no token:
-    /// it cannot be read. The
+    /// it cannot be read, or its line holds a control character. The
     /// environment is then NOT consulted — owned by `arena`.
     file_problem: []const u8 = "",
     arena: std.heap.ArenaAllocator,
@@ -167,11 +172,23 @@ pub const Tokens = struct {
     }
 };
 
-/// Everything after the first colon — an `email:token` export is
-/// common and only the token half is the secret.
+/// Everything after the first colon when what comes before it looks
+/// like an email (an `@`, no space) — an `email:token` export is common
+/// and only the token half is the secret. A colon anywhere else is part
+/// of the token.
 pub fn stripEmailPrefix(s: []const u8) []const u8 {
     const i = std.mem.indexOfScalar(u8, s, ':') orelse return s;
+    const head = s[0..i];
+    if (std.mem.indexOfScalar(u8, head, '@') == null) return s;
+    if (std.mem.indexOfAny(u8, head, " \t") != null) return s;
     return s[i + 1 ..];
+}
+
+/// The first byte that has no business in an HTTP header value: a
+/// control character (CR and LF above all — header injection) or DEL.
+fn hasControlByte(s: []const u8) bool {
+    for (s) |c| if (c < 0x20 or c == 0x7f) return true;
+    return false;
 }
 
 /// Resolve the token (and the approve token). `config_dir` holds
@@ -256,7 +273,17 @@ fn readTokenFile(a: Allocator, io: Io, dir: []const u8) Allocator.Error!FileRead
         error.OutOfMemory => return error.OutOfMemory,
         else => return .{ .problem = .{ .path = p, .token = try std.fmt.allocPrint(a, "token file exists but cannot be read: {s} ({s})", .{ p, @errorName(e) }) } },
     };
-    const token = stripEmailPrefix(std.mem.trim(u8, text, " \t\r\n"));
+    // The first non-empty line, and only it: a second line must never
+    // reach the `Authorization` header.
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const line = while (lines.next()) |l| {
+        const trimmed = std.mem.trim(u8, l, " \t\r");
+        if (trimmed.len > 0) break trimmed;
+    } else return .absent;
+    if (hasControlByte(line)) {
+        return .{ .problem = .{ .path = p, .token = try std.fmt.allocPrint(a, "token file holds a control character in its token line, which cannot go in a header: {s}", .{p}) } };
+    }
+    const token = stripEmailPrefix(line);
     if (token.len == 0) return .absent;
     return .{ .token = .{ .token = token, .path = p } };
 }
@@ -613,3 +640,46 @@ test "a token file that is there and cannot be read is an error, never a fall-th
     try t.expectEqualStrings("", tk.write);
 }
 
+test "only the token file's first non-empty line is read, a control byte in it is refused, and email:token needs an email" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var pbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = pbuf[0..try tmp.dir.realPath(t.io, &pbuf)];
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    const Case = struct { data: []const u8, want: []const u8 };
+    for ([_]Case{
+        // A second line never reaches the header.
+        .{ .data = "ATCTTfakeAccess0000000000000001\nATCTTfakeAccess0000000000000009\n", .want = "ATCTTfakeAccess0000000000000001" },
+        // Nor does one that would be a header of its own — and its colon
+        // does not make the file `email:token`.
+        .{ .data = "ATCTTfakeAccess0000000000000001\nX-Injected: yes\n", .want = "ATCTTfakeAccess0000000000000001" },
+        // Blank lines first, Windows line endings, spaces around.
+        .{ .data = "\n  \r\n  ATATTfakeAccount000000000000002 \r\n", .want = "ATATTfakeAccount000000000000002" },
+        // `email:token`: only the token.
+        .{ .data = "dev@acme.example:ATATTfakeAccount000000000000002\n", .want = "ATATTfakeAccount000000000000002" },
+        // A colon after something that is not an email is part of it.
+        .{ .data = "app:pass:word\n", .want = "app:pass:word" },
+        .{ .data = "my name@acme.example:ATATTx\n", .want = "my name@acme.example:ATATTx" },
+    }) |c| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = c.data });
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expectEqualStrings("", tk.file_problem);
+        try t.expectEqualStrings(c.want, tk.read);
+    }
+    // A control byte inside the line: refused, said, and the
+    // environment still not consulted.
+    try env.put("BITBUCKET_API_TOKEN", "ATATTenv-api-fake");
+    for ([_][]const u8{ "ATCTTfake\x01Access\n", "ATCTTfake\tAccess\n", "ATCTTfake\x7fAccess\n" }) |data| {
+        try tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = data });
+        var tk = try resolve(t.allocator, t.io, &env, dir);
+        defer tk.deinit();
+        try t.expect(!tk.hasRead());
+        try t.expect(std.mem.indexOf(u8, tk.file_problem, "control character") != null);
+    }
+    // The variables follow the same email rule.
+    try t.expectEqualStrings("pass:word", stripEmailPrefix("me@x.com:pass:word"));
+    try t.expectEqualStrings("app:pass", stripEmailPrefix("app:pass"));
+    try t.expectEqualStrings("a b@x:tok", stripEmailPrefix("a b@x:tok"));
+}
