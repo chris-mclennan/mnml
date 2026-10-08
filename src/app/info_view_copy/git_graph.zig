@@ -130,12 +130,12 @@ pub fn wipButton(b: graph_view.WipButton) Entry {
     return switch (b) {
         .stage_all => .{
             .title = "Stage All",
-            .body = "Click stages every change in the working tree, untracked files included (`git add -A`); the files move from Unstaged to Staged. The `[+]` on a row stages that file alone.",
+            .body = "Click stages every change in the working tree, untracked files included (`git add -A`); the files move from Unstaged to Staged. The `[+]` on a row stages that file alone. A narrow column labels it `+ All`.",
             .links = &.{ .{ .command = .{ .id = .@"git.stage_all", .label = "Stage everything" } }, .{ .command = .{ .id = .@"git.unstage_all", .label = "Unstage everything" } } },
         },
         .unstage_all => .{
             .title = "Unstage All",
-            .body = "Click takes every staged change back out of the index; the edits stay in the files, now under Unstaged. Inert with nothing staged. The `[−]` on a row unstages that file alone.",
+            .body = "Click takes every staged change back out of the index; the edits stay in the files, now under Unstaged. Inert with nothing staged. The `[−]` on a row unstages that file alone. A narrow column labels it `− All`.",
             .links = &.{ .{ .command = .{ .id = .@"git.unstage_all", .label = "Unstage everything" } }, .{ .command = .{ .id = .@"git.stage_all", .label = "Stage everything" } } },
         },
         .commit => .{
@@ -145,7 +145,7 @@ pub fn wipButton(b: graph_view.WipButton) Entry {
         },
         .ai_message => .{
             .title = "AI message",
-            .body = "Click asks Claude for a commit message written from the staged diff; it streams into the box, where it can be edited before Commit. Nothing is committed by this button.",
+            .body = "Click asks Claude for a commit message written from the staged diff; it streams into the box, where it can be edited before Commit. Nothing is committed by this button. A narrow column labels it `AI`.",
             .links = &.{.{ .command = .{ .id = .@"git.ai_commit", .label = "Write one with Claude" } }},
         },
         .clear => .{
