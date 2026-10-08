@@ -14,9 +14,13 @@ expect screen contains "git-blame-line"
 expect screen contains "recent-commands"
 expect screen contains "surround-word"
 expect screen contains "todo-list"
-# The badge is `✓ Official`, clipped to the tree's width at the shipped
-# `tree_width = 30`.
-expect screen contains "Offi"
+# The badge is `✓ Official`. At the shipped `tree_width = 30` it does
+# not fit after a row's version, and a row's extras are painted whole or
+# not at all (hunt6: a badge cut to `✓ Offi` or a lone `✓` read as words
+# that are not there) — so here the row is its name and version alone.
+expect screen contains "eslint  1.0.0"
+expect screen lacks "Offi"
+expect screen lacks "1.0.0  ✓"
 # The dead "not live yet" hint is gone: the tab has rows, so no empty
 # state at all.
 expect screen lacks "not live yet"

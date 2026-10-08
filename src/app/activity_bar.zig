@@ -696,6 +696,11 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     // Show on dock: NOTES leaves the bar and its command is pinned; the
     // dock lists it as a pinned panel wearing the section's glyph.
     try showOnDock(&app, .notes);
+    // Every toast it raised names the section, never the command's
+    // title ("Activity: show Notes (…)") — whose ` Notes ` reads as the
+    // dock item (rail_show_on_dock.test).
+    for (app.toasts.items) |tt| try t.expect(std.mem.indexOf(u8, tt.text, "Activity: show") == null);
+    try t.expect(std.mem.startsWith(u8, app.lastToast().?, "Notes: "));
     try t.expect(isHidden(&app, .notes));
     try t.expect(integrations.isPinnedToDock(&app, "view.activity_notes"));
     try app.render();
@@ -715,6 +720,7 @@ test "ui.rail.hidden: a hidden section has no rail row and the rows close up; it
     try t.expectEqual(Config.RailSection.api_traffic, app.cfg.ui.rail.hidden[2]);
     // Move back: unpinned, row restored; TODOs still hidden.
     try moveBackFromDock(&app, .notes);
+    for (app.toasts.items) |tt| try t.expect(std.mem.indexOf(u8, tt.text, "Activity: show") == null);
     try t.expect(!isHidden(&app, .notes));
     try t.expect(!integrations.isPinnedToDock(&app, "view.activity_notes"));
     try t.expectEqual(@as(usize, 2), app.cfg.ui.rail.hidden.len);
