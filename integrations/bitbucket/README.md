@@ -594,7 +594,10 @@ and how many quiet polls in a row got it there.
 
 Anything may append one JSON line per change —
 `{"kind":"pr","key":"api#1234","at":1790000000,"source":"relay"}` — and the pane fetches only that pull request (its row is replaced in place; one that has left the listing, or joined it, costs one conditional GET of the listing instead), once however many lines
-name it, through the same budget as everything else. Moving the file aside and starting a new one
+name it, through the same budget as everything else. The answer lands
+in **every tab that lists pull requests**, whichever tab is on screen
+(a Pipelines tab included); a tab it has joined or left is asked again
+the next time it is shown. Moving the file aside and starting a new one
 (rotation) is noticed whatever the new file's size: it is read from its
 first byte. While the file is
 live the chip says `· feed` and the listing is only swept every

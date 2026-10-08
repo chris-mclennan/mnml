@@ -117,6 +117,9 @@ the release ships one file), and one line per change a user can see.
   when the part before the colon looks like an email.
 - `mnml-bitbucket --check` and `--diag` exit 1 when the probe fails
   (nothing listening, a server error, a 429), so `--check && …` stops.
+- A Bitbucket feed event that arrives while another tab is on screen
+  updates the pull request on every tab that lists it, a Pipelines tab
+  on screen included, instead of being spent on the wrong tab.
 
 ## v0.3.5 (2026-10-06)
 
