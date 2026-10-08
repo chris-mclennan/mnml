@@ -18,6 +18,9 @@ expect screen lacks "The sample, from a release index"
 expect screen lacks "[app] Sample"
 # Nothing was downloaded or linked.
 shell test ! -e "$MNML_DATA_ROOT/integrations/sample" && test ! -e "$MNML_DATA_ROOT/bin/mnml-sample"
+# The integrations' update check, by hand: it says why it does not run.
+command integrations.check_updates_now
+expect screen contains "the update check does not reach the network"
 # mnml's own: GitHub is not asked.
 command app.check_updates
 expect screen contains "update check: offline (MNML_OFFLINE=1)"

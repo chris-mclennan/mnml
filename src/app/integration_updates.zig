@@ -51,6 +51,7 @@ pub const notice_file = "marketplace" ++ std.fs.path.sep_str ++ "update-notice";
 
 pub const table = .{
     .@"integrations.update_from_marketplace" = &updateFromMarketplace,
+    .@"integrations.check_updates_now" = &checkNowCmd,
 };
 
 /// A newer version of an installed integration, and the Marketplace row
@@ -141,6 +142,62 @@ fn check(app: *App, now: i64) void {
     if (marketplace.sourceCount(app) == 0) return;
     marketplace.refresh(app) catch return;
     if (app.marketplace.fetching) app.marketplace.quiet = true;
+}
+
+// ─── checking now ───────────────────────────────────────────────────────
+
+/// `integrations.check_updates_now`: the quiet check's fetch, now, by
+/// hand — and when the listing lands, one toast that says what it found
+/// (`reportText`). The 6-hour clock starts again from here.
+fn checkNowCmd(app: *App) CommandError!void {
+    const off = app.offline();
+    if (off != .online) {
+        app.toast("integrations: {s} \u{2014} the update check does not reach the network", .{off.label()});
+        return;
+    }
+    if (!app.cfg.marketplace.enabled)
+        return app.diag.fail(app.frame.allocator(), "integrations: the Marketplace is off (marketplace.enabled), so there is nothing to check against", .{});
+    if (marketplace.sourceCount(app) == 0)
+        return app.diag.fail(app.frame.allocator(), "integrations: no Marketplace sources to check against (marketplace.sources)", .{});
+    try marketplace.refresh(app);
+    app.marketplace.report_check = true;
+    app.marketplace.checked_at_ms = App.nowMs(app.io);
+    app.toast("integrations: checking the Marketplace for updates\u{2026}", .{});
+}
+
+/// After a check somebody asked for: `3 integrations checked · 1 update:
+/// Jira 0.2.3 → 0.2.4` — counted by binary, so Jira's three chips are
+/// one integration — or `· all up to date`.
+pub fn reportText(app: *App, arena: Allocator) Allocator.Error![]const u8 {
+    var seen: std.ArrayListUnmanaged([]const u8) = .empty;
+    var updates: std.ArrayListUnmanaged(u8) = .empty;
+    var n_updates: usize = 0;
+    const arrow = if (app.cfg.ui.ascii_icons) "->" else "\u{2192}";
+    for (app.integrations.list) |*inst| {
+        if (inst.manifest.isLauncher() or inst.manifest.binary.len == 0) continue;
+        const name = integrations.programName(try integrations.expandEnv(app, arena, inst.manifest.binary));
+        const dup = for (seen.items) |o| {
+            if (std.mem.eql(u8, o, name)) break true;
+        } else false;
+        if (dup) continue;
+        try seen.append(arena, name);
+        const h = (try hintFor(app, arena, inst)) orelse continue;
+        const e = app.marketplace.entries[h.entry];
+        try updates.appendSlice(arena, if (n_updates == 0) ": " else ", ");
+        try updates.print(arena, "{s} {s} {s} {s}", .{ if (e.label.len > 0) e.label else e.id, inst.manifest.version, arrow, h.version });
+        n_updates += 1;
+    }
+    const n = seen.items.len;
+    const head = try std.fmt.allocPrint(arena, "{d} integration{s} checked \u{00b7} ", .{ n, if (n == 1) "" else "s" });
+    if (n_updates == 0) return std.fmt.allocPrint(arena, "{s}all up to date", .{head});
+    return std.fmt.allocPrint(arena, "{s}{d} update{s}{s}", .{ head, n_updates, if (n_updates == 1) "" else "s", updates.items });
+}
+
+/// The listing a check somebody asked for has landed: say what it found.
+pub fn reportCheck(app: *App) Allocator.Error!void {
+    var arena_state = std.heap.ArenaAllocator.init(app.gpa);
+    defer arena_state.deinit();
+    app.toast("{s}", .{try reportText(app, arena_state.allocator())});
 }
 
 // ─── the startup note ───────────────────────────────────────────────────
@@ -463,3 +520,39 @@ test "the quiet check runs only where it may: the terminal loop's mnml, not unde
     tick(&app, 1000 + check_interval_ms);
     try testing.expectEqual(@as(?i64, 1000 + check_interval_ms), app.marketplace.checked_at_ms);
 }
+
+test "integrations.check_updates_now runs the check and, when the listing lands, says what it found: counted by binary, one update named with both versions — or all up to date" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    app.marketplace.entries = &index_rows;
+    const a = app.frame.allocator();
+    // Jira's two chips are one binary: three integrations, Jira behind.
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} 1 update: Jira 0.2.3 \u{2192} 0.2.4", try reportText(&app, a));
+    var rows = index_rows;
+    rows[0].version = "0.2.3";
+    app.marketplace.entries = &rows;
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} all up to date", try reportText(&app, a));
+    rows[0].version = "0.2.4";
+    rows[1].version = "0.2.5";
+    app.cfg.ui.ascii_icons = true;
+    try testing.expectEqualStrings("3 integrations checked \u{00b7} 2 updates: Bitbucket 0.2.4 -> 0.2.5, Jira 0.2.3 -> 0.2.4", try reportText(&app, a));
+}
+
+test "integrations.check_updates_now under the offline switch says so and fetches nothing" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var app = try rig.app();
+    defer app.deinit();
+    try app.env.put("MNML_OFFLINE", "1");
+    app.marketplace.live = true;
+    try testing.expect(!allowed(&app));
+    try command.run(&app, .{ .static = .@"integrations.check_updates_now" });
+    try testing.expect(!app.marketplace.fetching);
+    try testing.expect(!app.marketplace.report_check);
+    try testing.expectEqualStrings("integrations: offline (MNML_OFFLINE=1) \u{2014} the update check does not reach the network", app.lastToast().?);
+}
+

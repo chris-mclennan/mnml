@@ -934,7 +934,7 @@ pub const specs = [_]Spec{
     .{ .id = "integrations.dev_install", .title = "Integrations: install the focused Dev folder (build if needed, then --install)", .group = "integrations" },
     .{ .id = "integrations.dev_rebuild", .title = "Integrations: rebuild + reinstall the focused Dev folder", .group = "integrations" },
     .{ .id = "marketplace.refresh", .title = "Marketplace: refresh (fetch published apps + community launchers)", .group = "integrations" },
-    .{ .id = "integrations.check_updates_now", .title = "Integrations: check for updates now (bypass 6h auto-tick)", .group = "integrations" },
+    .{ .id = "integrations.check_updates_now", .title = "Integrations: check the Marketplace for updates now", .group = "integrations" },
     .{ .id = "integrations.fire_auto_updates_now", .title = "Integrations: fire auto-updates now (opt-in per config)", .group = "integrations" },
     .{ .id = "marketplace.open_detail_focused", .title = "Marketplace: open details for right-clicked entry", .group = "integrations" },
     .{ .id = "marketplace.install_focused", .title = "Marketplace: install right-clicked entry", .group = "integrations" },

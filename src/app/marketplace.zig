@@ -272,6 +272,9 @@ pub const State = struct {
     quiet: bool = false,
     /// When the update check last started a fetch.
     checked_at_ms: ?i64 = null,
+    /// The fetch running was started by `integrations.check_updates_now`:
+    /// when it lands, one toast says what it found.
+    report_check: bool = false,
 
     pub fn deinit(self: *State, gpa: Allocator, io: Io) void {
         self.fetch_group.cancel(io);
@@ -1899,6 +1902,10 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             // The arena moved into the state; only the box goes.
             gpa.destroy(r);
             try integration_updates.afterListing(app, quiet);
+            if (st.report_check) {
+                st.report_check = false;
+                try integration_updates.reportCheck(app);
+            }
             pumpOrToast(app);
         },
         .installed => |i| {
@@ -1917,6 +1924,7 @@ pub fn handle(app: *App, r: *Result) Allocator.Error!void {
             // A superseded fetch's failure says nothing about the one running.
             if (r.generation != st.generation) return;
             st.fetching = false;
+            st.report_check = false;
             if (!st.quiet) try app.toastLevel(.err, "{s}", .{msg});
             st.quiet = false;
             pumpOrToast(app);

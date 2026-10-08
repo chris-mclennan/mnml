@@ -67,6 +67,9 @@ the release ships one file), and one line per change a user can see.
 - An integration chip's hover keeps its lines: the summary, each count
   and the budget each on their own line in the info box, with a gap
   where the integration left one, instead of one run-on sentence.
+- "Integrations: check the Marketplace for updates now" runs the update
+  check right away and says what it found ("3 integrations checked ·
+  1 update: Jira 0.2.3 → 0.2.4"); it used to say updates did not exist.
 
 ### Installed integrations say when they are out of date
 
