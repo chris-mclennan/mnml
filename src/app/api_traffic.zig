@@ -185,15 +185,24 @@ pub const Coalescer = struct {
         }
     };
 
+    /// The service's slot; a new one takes a free slot, else the one
+    /// that toasted longest ago — a slot only holds when its service
+    /// last toasted, so a ninth service never goes quiet for good.
     fn slot(c: *Coalescer, service: []const u8) ?*Slot {
         for (&c.slots) |*sl| if (sl.len > 0 and std.mem.eql(u8, sl.service(), service)) return sl;
         if (service.len > 32) return null;
-        for (&c.slots) |*sl| if (sl.len == 0) {
-            @memcpy(sl.name[0..service.len], service);
-            sl.len = @intCast(service.len);
-            return sl;
-        };
-        return null;
+        var pick = &c.slots[0];
+        for (&c.slots) |*sl| {
+            if (sl.len == 0) {
+                pick = sl;
+                break;
+            }
+            if (sl.last_toast < pick.last_toast) pick = sl;
+        }
+        @memcpy(pick.name[0..service.len], service);
+        pick.len = @intCast(service.len);
+        pick.last_toast = -std.math.inf(f64);
+        return pick;
     }
 
     /// `fresh` new 429s for `service` at `now`: toast, or hold them
@@ -1118,6 +1127,17 @@ test "with 429 toasts off the NOW line still counts them and nothing toasts" {
     try app.handle(.{ .api_traffic = try throttleResult(&app, 1_790_000_000, 5, &.{.{ .reason = "widget.py", .n = 5 }}) });
     try t.expectEqual(@as(usize, 0), throttleToasts(&app));
     try t.expectEqual(@as(u32, 5), app.api_traffic.result.?.services[0].now.throttles.n);
+}
+
+test "the coalescer has room for a ninth service and more: the one that toasted longest ago gives up its slot" {
+    var c: Coalescer = .{};
+    var buf: [16]u8 = undefined;
+    for (0..Coalescer.max_services + 4) |i| {
+        const name = try std.fmt.bufPrint(&buf, "api{d}", .{i});
+        try t.expect(c.note(name, 1, @floatFromInt(i * 10)));
+    }
+    // The newest still hold their five quiet minutes.
+    try t.expect(!c.note(try std.fmt.bufPrint(&buf, "api{d}", .{Coalescer.max_services + 3}), 1, 200));
 }
 
 test "the coalescer: one toast per service per five minutes, services apart" {
