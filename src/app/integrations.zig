@@ -1848,9 +1848,14 @@ pub fn unpinDockId(app: *App, id: []const u8) CommandError!void {
     app.toast("{s}: unpinned from the dock", .{try dockName(app, id)});
 }
 
-/// What a dock toast calls command `id`: the chip that runs it by its
+/// What a dock toast calls command `id`: a sidebar section's own name
+/// (`TODOs`, for *Show on dock instead*), the chip that runs it by its
 /// name (`Jira Work`), else the command's title, else the id itself.
 fn dockName(app: *App, id: []const u8) Allocator.Error![]const u8 {
+    // Before the title: `view.activity_todos`'s is "Activity: show TODOs
+    // (TODO/FIXME/…)", which is no name, and its ` TODOs ` read as the
+    // dock item still being there (rail_show_on_dock.test).
+    if (@import("activity_bar.zig").sectionOfCommandName(id)) |sec| return sec.meta().label;
     const arena = app.frame.allocator();
     for (try allChips(app, arena)) |c| {
         const run = switch (c.action) {
