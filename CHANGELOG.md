@@ -175,6 +175,8 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- The file picker's preview paints code on one background; each
+  highlighted word used to sit in a dark box of the editor's colour.
 - A tab strip that narrows (a split, a resize) keeps the active tab on
   it. With a pinned tab first, the left half of a split used to show
   only the pin and the page counter.
