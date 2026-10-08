@@ -46,7 +46,7 @@ command git.refresh
 wait 500
 key g
 expect screen contains "1 change(s) · 1 new"
-expect screen contains "Unstaged Files (1)"
+expect screen contains "Unstaged (1)"
 expect screen contains "? c.txt"
-expect screen contains "Stage A"
+expect screen contains "Stage All"
 expect screen contains "▾ Commit  · (nothing staged)"

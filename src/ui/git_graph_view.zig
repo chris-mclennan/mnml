@@ -1297,6 +1297,20 @@ fn commitHeight(h: u16) u16 {
     return 0;
 }
 
+/// A WIP section header's label and button for a column `w` wide: the
+/// full pair when it fits beside a one-cell gap, else the label without
+/// "Files", else the short button too, else that pair with the label
+/// clipped at the ellipsis. The button always paints whole.
+fn wipSectionFit(ui: Ui, w: usize, arrow: []const u8, label: []const u8, short: []const u8, n: usize, button: []const u8, button_short: []const u8) struct { label: []const u8, button: []const u8 } {
+    const full = ui.fmt("  {s} {s} ({d})", .{ arrow, label, n });
+    if (chars(full) + 1 + chars(button) <= w) return .{ .label = full, .button = button };
+    const brief = ui.fmt("  {s} {s} ({d})", .{ arrow, short, n });
+    if (chars(brief) + 1 + chars(button) <= w) return .{ .label = brief, .button = button };
+    if (chars(brief) + 1 + chars(button_short) <= w) return .{ .label = brief, .button = button_short };
+    const room = w -| (chars(button_short) + 1);
+    return .{ .label = padOrTruncate(ui.arena, brief, room, ui.ascii) catch "", .button = button_short };
+}
+
 /// The working tree: `─ WIP @ branch · summary`, `▾ Unstaged Files (n)`
 /// with ` Stage All ` at the edge and a `[+]` per row, `▾ Staged Files
 /// (n)` with ` Unstage All ` and `[−]`, then the commit box pinned to the
@@ -1319,20 +1333,30 @@ fn drawWipDetail(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
 
     // Header.
     const head_full = ui.fmt(" WIP @ {s} \u{B7} {s}", .{ wd.branch orelse "(detached)", wd.summary });
-    const head = takeChars(head_full, w -| 1);
+    // A header too long for the column ends in the ellipsis rather
+    // than mid-word: `3 change(s) · 2` read as a count of two.
+    const head = padOrTruncate(arena, head_full, w -| 1, ui.ascii) catch "";
     var hs = Theme.withFg(bg, pal.yellow);
     hs.bold = true;
     lines.append(arena, lineOf(arena, &.{ .{ .text = border.ruleGlyph(.h, ui.ascii), .style = Theme.withFg(bg, pal.line) }, .{ .text = head, .style = hs } }) catch return out) catch return out;
     lines.append(arena, lineOf(arena, &.{}) catch return out) catch return out;
 
-    const sections = [_]struct { label: []const u8, files: []const WipFile, button: []const u8, staged: bool, accent: Color }{
-        .{ .label = "Unstaged Files", .files = wd.unstaged, .button = " Stage All ", .staged = false, .accent = pal.green },
-        .{ .label = "Staged Files", .files = wd.staged, .button = " Unstage All ", .staged = true, .accent = pal.orange },
+    const sections = [_]struct { label: []const u8, short: []const u8, files: []const WipFile, button: []const u8, button_short: []const u8, staged: bool, accent: Color }{
+        .{ .label = "Unstaged Files", .short = "Unstaged", .files = wd.unstaged, .button = " Stage All ", .button_short = " + All ", .staged = false, .accent = pal.green },
+        .{ .label = "Staged Files", .short = "Staged", .files = wd.staged, .button = " Unstage All ", .button_short = " \u{2212} All ", .staged = true, .accent = pal.orange },
     };
     for (sections) |sec| {
-        const label_text = ui.fmt("  {s} {s} ({d})", .{ if (ui.ascii) "v" else "\u{25BE}", sec.label, sec.files.len });
+        // The button is never cut: a narrow column first drops the
+        // label's "Files", then shortens the button to `+ All` /
+        // `− All`, and only then clips the label with the ellipsis. The
+        // old row cut the button at the edge — `Stage A`, which reads
+        // as another action.
+        const arrow = if (ui.ascii) "v" else "\u{25BE}";
+        const sec_fit = wipSectionFit(ui, w, arrow, sec.label, sec.short, sec.files.len, sec.button, sec.button_short);
+        const label_text = sec_fit.label;
         const label_chars = chars(label_text);
-        const btn_chars = chars(sec.button);
+        const btn = sec_fit.button;
+        const btn_chars = chars(btn);
         const padding = @max(w -| (label_chars + btn_chars), 1);
         var ls = Theme.withFg(bg, pal.fg);
         ls.bold = true;
@@ -1343,10 +1367,10 @@ fn drawWipDetail(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
         lines.append(arena, lineOf(arena, &.{
             .{ .text = label_text, .style = ls },
             .{ .text = padOrTruncate(arena, "", padding, ui.ascii) catch "", .style = bg },
-            .{ .text = sec.button, .style = bs },
+            .{ .text = btn, .style = bs },
         }) catch return out) catch return out;
-        const btn: []const u8 = if (sec.staged) " [\u{2212}] " else " [+] ";
-        const btn_w = chars(btn);
+        const row_btn: []const u8 = if (sec.staged) " [\u{2212}] " else " [+] ";
+        const btn_w = chars(row_btn);
         for (sec.files, 0..) |f, i| {
             const prefix = ui.fmt("    {c} ", .{f.letter});
             const prefix_chars = chars(prefix);
@@ -1367,7 +1391,7 @@ fn drawWipDetail(ui: Ui, pane: PaneId, area: Rect, wd: WipDoc) WipPainted {
                 .{ .text = prefix, .style = Theme.withFg(bg, color) },
                 .{ .text = padOrTruncate(arena, f.path, path_avail, ui.ascii) catch "", .style = Theme.withFg(bg, pal.fg) },
                 .{ .text = " ", .style = bg },
-                .{ .text = btn, .style = fbs },
+                .{ .text = row_btn, .style = fbs },
             }) catch return out) catch return out;
         }
         lines.append(arena, lineOf(arena, &.{}) catch return out) catch return out;
@@ -1527,19 +1551,37 @@ fn drawCommitButtons(ui: Ui, pane: PaneId, area: Rect, staged_count: usize, c: C
     const ai_active = staged_count > 0 and !c.ai_streaming;
     const clear_active = c.text.len > 0 and !c.ai_streaming;
     const off = Theme.onBg(Theme.withFg(bg, pal.comment), pal.bg2);
+    // A narrow column tightens the gaps to one cell, then shortens
+    // `AI Message` to `AI`; a button that still does not fit whole is
+    // left out rather than cut (`Clea` read as nothing at all).
+    const fit = commitButtonsFit(area.w, c.ai_streaming);
     const buttons = [_]struct { label: []const u8, style: Style, id: u32 }{
         .{ .label = " Commit ", .style = buttonStyle(bg, pal.bg_dark, pal.green, commit_active, off), .id = wipButtonId(.commit) },
-        .{ .label = if (c.ai_streaming) " AI writing\u{2026} " else " AI Message ", .style = if (c.ai_streaming) buttonStyle(bg, pal.bg_dark, pal.yellow, true, off) else buttonStyle(bg, pal.bg_dark, pal.blue, ai_active, off), .id = wipButtonId(.ai_message) },
+        .{ .label = fit.ai_label, .style = if (c.ai_streaming) buttonStyle(bg, pal.bg_dark, pal.yellow, true, off) else buttonStyle(bg, pal.bg_dark, pal.blue, ai_active, off), .id = wipButtonId(.ai_message) },
         .{ .label = " Clear ", .style = buttonStyle(bg, pal.bg_dark, pal.red, clear_active, off), .id = wipButtonId(.clear) },
     };
     var pen: Pen = .{ .ui = ui, .x = area.x, .y = area.y, .end = area.right() };
-    pen.put("  ", bg);
+    pen.put(fit.gap, bg);
     for (buttons, 0..) |b, i| {
-        if (i > 0) pen.put("  ", bg);
+        const lead: usize = if (i > 0) chars(fit.gap) else 0;
+        if (@as(usize, pen.x - area.x) + lead + chars(b.label) > area.w) break;
+        if (i > 0) pen.put(fit.gap, bg);
         const x = pen.x;
         pen.put(b.label, b.style);
-        ui.hit(Rect.init(x, area.y, @intCast(@min(chars(b.label), @as(usize, area.right() -| x))), 1), .{ .script_hit = .{ .pane = pane, .id = b.id } });
+        ui.hit(Rect.init(x, area.y, @intCast(chars(b.label)), 1), .{ .script_hit = .{ .pane = pane, .id = b.id } });
     }
+}
+
+/// The commit row's spacing and AI label for a row `w` wide: two-cell
+/// gaps and `AI Message` when all three fit, else one-cell gaps, else
+/// `AI` as well.
+fn commitButtonsFit(w: usize, streaming: bool) struct { gap: []const u8, ai_label: []const u8 } {
+    const ai_full: []const u8 = if (streaming) " AI writing\u{2026} " else " AI Message ";
+    const ai_short: []const u8 = if (streaming) " AI\u{2026} " else " AI ";
+    const fixed = chars(" Commit ") + chars(" Clear ");
+    if (fixed + chars(ai_full) + 3 * 2 <= w) return .{ .gap = "  ", .ai_label = ai_full };
+    if (fixed + chars(ai_full) + 3 <= w) return .{ .gap = " ", .ai_label = ai_full };
+    return .{ .gap = " ", .ai_label = ai_short };
 }
 
 // ─── tests ──────────────────────────────────────────────────────────────
@@ -1629,18 +1671,18 @@ test "the spec's rows at 95 wide: the toolbar, the column header, the WIP row, t
         .wip = .{ .branch = "main", .summary = "1 change(s) \u{B7} 1 new", .unstaged = &files },
     });
     try f.expectRow(0, try std.fmt.allocPrint(arena, "    {s} Undo   {s} Redo   {s} Pull   {s} Push   {s} Fetch   {s} Branch   {s} Commit   {s} Stash   {s} Reflog", .{ git_toolbar.glyphOf(.undo), git_toolbar.glyphOf(.redo), git_toolbar.glyphOf(.pull), git_toolbar.glyphOf(.push), git_toolbar.glyphOf(.fetch), git_toolbar.glyphOf(.branch), git_toolbar.glyphOf(.commit), git_toolbar.glyphOf(.stash), git_toolbar.glyphOf(.reflog) }));
-    try f.expectRow(1, "     G\u{2026} \u{2502} COMMIT MESSAGE          \u{2502} DATE / TIME   \u{2502}     SHA    \u{2502}\u{2500} WIP @ main \u{B7} 1 change(s) \u{B7} 1");
+    try f.expectRow(1, "     G\u{2026} \u{2502} COMMIT MESSAGE          \u{2502} DATE / TIME   \u{2502}     SHA    \u{2502}\u{2500} WIP @ main \u{B7} 1 change(s) \u{B7} 1\u{2026}");
     try f.expectRow(2, "\u{258C}\u{25B6}       \u{2502} 1 change(s) \u{B7} 1 new    \u{2502}               \u{2502}            \u{2502}");
     // No BRANCH / TAG column at 95: the refs lead the subject (Rust
     // painted none at this width, and a graph that names no ref cannot
     // say where anything is).
-    try f.expectRow(3, "\u{258C}    \u{25CF}\u{2500}\u{256E} \u{2502} HEAD main merge featu\u{2026} \u{2502}   09/06 20:00 \u{2502} 7ce273514  \u{2502}  \u{25BE} Unstaged Files (1)  Stage A");
+    try f.expectRow(3, "\u{258C}    \u{25CF}\u{2500}\u{256E} \u{2502} HEAD main merge featu\u{2026} \u{2502}   09/06 20:00 \u{2502} 7ce273514  \u{2502}  \u{25BE} Unstaged (1)     Stage All");
     try f.expectRow(4, "\u{258C}    \u{25CF} \u{2502} \u{2502} main work              \u{2502}   09/06 20:00 \u{2502} 34b03ced4  \u{2502}    ? .gitignore           [+]");
     try f.expectRow(5, "\u{258C}    \u{2502} \u{25CF} \u{2502} feature feature work   \u{2502}   09/06 20:00 \u{2502} 3ec2bf9e8  \u{2502}");
-    try f.expectRow(6, "\u{258C}    \u{25CF}\u{2500}\u{256F} \u{2502} init                   \u{2502}   09/06 03:55 \u{2502} 482589dd2  \u{2502}  \u{25BE} Staged Files (0)  Unstage A");
+    try f.expectRow(6, "\u{258C}    \u{25CF}\u{2500}\u{256F} \u{2502} init                   \u{2502}   09/06 03:55 \u{2502} 482589dd2  \u{2502}  \u{25BE} Staged (0)     Unstage All");
     try f.expectRow(27, "                                                               \u{2502}  \u{25BE} Commit  \u{B7} (nothing staged)");
     try f.expectRow(28, "                                                               \u{2502}   click here \u{B7} then type a \u{2026}");
-    try f.expectRow(35, "                                                               \u{2502}   Commit    AI Message    Clea");
+    try f.expectRow(35, "                                                               \u{2502}  Commit   AI Message   Clear");
     try f.expectRow(36, "                                                               \u{2502}  Click textarea to type \u{B7} c c\u{2026}");
     try testing.expect(p.detail.eql(Rect.init(64, 1, 31, 36)));
     try testing.expect(p.textarea.eql(Rect.init(66, 28, 27, 7)));
@@ -1709,6 +1751,36 @@ test "the date column at the walk's pane widths — 96 cells (120 columns) and 5
         try testing.expect(std.mem.indexOf(u8, r2, "09/06 20:00") != null);
         try testing.expect(std.mem.indexOf(u8, r3, "09/06 03:55") != null);
     }
+}
+
+test "a narrow WIP column never cuts a button: the label drops \"Files\", then the button shortens, then the label takes the ellipsis; the commit row tightens, then says AI, then leaves a button out whole" {
+    var f = try Fixture.init(40, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    const Case = struct { w: usize, label: []const u8, button: []const u8 };
+    const cases = [_]Case{
+        .{ .w = 40, .label = "  \u{25BE} Unstaged Files (3)", .button = " Stage All " },
+        .{ .w = 31, .label = "  \u{25BE} Unstaged (3)", .button = " Stage All " },
+        .{ .w = 24, .label = "  \u{25BE} Unstaged (3)", .button = " + All " },
+        .{ .w = 20, .label = "  \u{25BE} Unstage\u{2026}", .button = " + All " },
+    };
+    for (cases) |c| {
+        const got = wipSectionFit(ui, c.w, "\u{25BE}", "Unstaged Files", "Unstaged", 3, " Stage All ", " + All ");
+        try testing.expectEqualStrings(c.label, got.label);
+        try testing.expectEqualStrings(c.button, got.button);
+        try testing.expect(chars(got.label) + 1 + chars(got.button) <= c.w);
+    }
+    try testing.expectEqualStrings("  ", commitButtonsFit(33, false).gap);
+    try testing.expectEqualStrings(" AI Message ", commitButtonsFit(33, false).ai_label);
+    try testing.expectEqualStrings(" ", commitButtonsFit(31, false).gap);
+    try testing.expectEqualStrings(" AI Message ", commitButtonsFit(31, false).ai_label);
+    try testing.expectEqualStrings(" AI ", commitButtonsFit(29, false).ai_label);
+    // Painted at 20 cells: Commit and AI fit, Clear does not and is left
+    // out whole — no `Cl` at the edge, and no hit for it.
+    drawCommitButtons(ui, 1, Rect.init(0, 0, 20, 1), 1, .{ .text = "msg" });
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("  Commit   AI", f.row(0, &buf));
+    try testing.expect(f.hits.at(19, 0) == null);
 }
 
 test "the detail column's width: the drag override wins, then the config, else a third clamped to 28..60; under 80 there is none" {

@@ -175,6 +175,10 @@ the release ships one file), and one line per change a user can see.
   for an account credential.
 ### Small fixes
 
+- The git view's working-tree column paints its buttons whole at
+  120x40 and narrower: the section rows say "Unstaged (3)" so
+  "Stage All" fits, the commit row says "Clear" rather than "Clea", and
+  a header too long for the column ends in "…".
 - A program in a terminal pane that tracks the mouse (vim, htop,
   lazygit) is told the cell you clicked. Every click used to reach it
   one column to the right.
