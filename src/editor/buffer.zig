@@ -2674,3 +2674,11 @@ test "vim Insert: Ctrl-R = drops the expression instead of typing it" {
     try vim("A <c-r>=2*21<cr>Z<esc>", "|x\n", "x |Z\n");
     try vim("A <c-r>=2*21<esc>Z<esc>", "|x\n", "x |Z\n");
 }
+
+test "vim: r<CR> splits the line and drops the blanks after the cut" {
+    // nvchad-probe: `fcr<CR>` on `abc def` → `ab` / `def`.
+    try vim("fcr<cr>", "|abc def\n", "ab\n|def\n");
+    try vim("fb2r<cr>", "|abc  def\n", "a\n|def\n");
+    // Blanks before the cut stay on the first line.
+    try vim("fcr<cr>", "|ab  cd\n", "ab  \n|d\n");
+}

@@ -351,6 +351,11 @@ pub fn replaceCharsWithNewline(ed: *Editor, n: u32, out: *EditOutcome) Allocator
     // One undo step: the cut and the newline's own checkpoint.
     const tok = try ed.beginAtomic();
     defer ed.endAtomic(tok);
+    // The blanks after the replaced characters go too, as a typed line
+    // break's would (Neovim: `fcr<CR>` on `abc def` → `ab` / `def`; the
+    // new line still takes the autoindent).
+    const t = ed.bytes();
+    while (end < eol and (t[end] == ' ' or t[end] == '\t')) end += 1;
     try ed.splice(ed.cursor, end, "");
     try @import("insert.zig").insertNewline(ed, out);
     out.buffer_changed = true;
