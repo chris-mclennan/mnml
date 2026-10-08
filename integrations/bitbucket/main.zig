@@ -215,12 +215,14 @@ pub fn main(init: std.process.Init) !u8 {
     const arena = arena_state.allocator();
     const args = try init.minimal.args.toSlice(arena);
 
+    // Streaming, not positional: `--prefetch >> log` from cron must
+    // append, and a positional writer writes from byte 0 over the log.
     var out_buf: [8192]u8 = undefined;
-    var out_w: Io.File.Writer = .init(.stdout(), io, &out_buf);
+    var out_w: Io.File.Writer = .initStreaming(.stdout(), io, &out_buf);
     const stdout = &out_w.interface;
     defer stdout.flush() catch {};
     var err_buf: [2048]u8 = undefined;
-    var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
+    var err_w: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
     const stderr = &err_w.interface;
     defer stderr.flush() catch {};
 

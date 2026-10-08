@@ -98,6 +98,12 @@ the release ships one file), and one line per change a user can see.
   429s and who met them. Settings → Integrations → **Toast on 429s**
   turns the toasts off (`integrations.throttle_toasts`).
 
+### Bitbucket and Jira: fixes
+
+- `mnml-bitbucket … >> log` and `mnml-jira … >> log` append to the log
+  again. They wrote from the start of the file, over what was there, so
+  a cron or launchd `--prefetch >> log` lost its older lines.
+
 ## v0.3.5 (2026-10-06)
 
 ### One statusline chip per integration
