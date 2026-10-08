@@ -1,0 +1,25 @@
+# A token file that is there but cannot be read — a directory named
+# `token`, or mode 000 — is an error `--check` names and exits 1 on.
+# It never falls through to an exported BITBUCKET_* token (another
+# tool's budget), and with nothing exported it does not tell you to
+# write the file that is already there. Only the token's length is
+# ever printed.
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/cfg/config.zon
+# env: BITBUCKET_BASE_URL=http://127.0.0.1:1/2.0
+# env: BITBUCKET_PERSONAL_TOKEN=x@acme.example:ATATTfakeEnvPersonal05
+write cfg/config.zon ".{ .email = \"dev@acme.example\", .workspace = \"acme\", .repos = .{ \"api\" }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs } } }"
+shell mkdir cfg/token
+shell "$MNML_BITBUCKET_INTEGRATION" --check > dir.out 2>&1; test $? -eq 1
+expect file dir.out contains "TokenFile: token file exists but cannot be read"
+expect file dir.out lacks "BITBUCKET_PERSONAL_TOKEN"
+expect file dir.out lacks "Personal05"
+shell env -u BITBUCKET_PERSONAL_TOKEN "$MNML_BITBUCKET_INTEGRATION" --check > noenv.out 2>&1; test $? -eq 1
+expect file noenv.out contains "token file exists but cannot be read"
+expect file noenv.out lacks "no Bitbucket token"
+# Mode 000: no such mode on Windows, and root reads it anyway — the
+# step writes the expected line itself there, so the check below holds.
+shell rmdir cfg/token && printf 'ATCTTfakeAccess0000000000000001\n' > cfg/token && chmod 000 cfg/token
+shell if cat cfg/token >/dev/null 2>&1; then echo "TokenFile: token file exists but cannot be read (skipped: readable here)" > m000.out; else "$MNML_BITBUCKET_INTEGRATION" --check > m000.out 2>&1; test $? -eq 1; fi
+shell chmod 600 cfg/token
+expect file m000.out contains "token file exists but cannot be read"
+expect file m000.out lacks "Personal05"

@@ -91,7 +91,7 @@ pub fn priorityOf(r: request_log.Reason) Priority {
 /// could be mistaken for.
 pub fn classOf(r: request_log.Reason) broker.Class {
     return switch (r) {
-        .pane_open, .detail, .user, .dispatch, .readiness => .interactive,
+        .pane_open, .detail, .user, .dispatch, .readiness, .check => .interactive,
         .refresh, .poll, .builds, .revalidate => .refresh,
         .warm, .delta, .prefetch, .cache_hit => .warm,
     };

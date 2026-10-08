@@ -220,6 +220,26 @@ pub fn patchPr(ts: *TabState, repo: []const u8, pr: model.PullRequest) bool {
     return false;
 }
 
+/// What a pull request's folded-out builds ran on, for the status line.
+pub fn prBuildsCommitWord(on_merge: bool) []const u8 {
+    return if (on_merge) "merge commit" else "source commit";
+}
+
+/// Is pull request `id` of `repo` among this tab's rows?
+pub fn listsPr(ts: *const TabState, repo: []const u8, id: i64) bool {
+    switch (ts.data) {
+        .repo_pr_tree => |repos| for (repos) |r| {
+            if (!std.mem.eql(u8, r.slug, repo)) continue;
+            for (r.prs) |p| if (p.id == id) return true;
+        },
+        .pull_requests => |prs| for (prs) |p| {
+            if (p.id == id and std.mem.eql(u8, p.repoSlug(), repo)) return true;
+        },
+        else => {},
+    }
+    return false;
+}
+
 fn carryFailedRepos(a: Allocator, old: tabs.TabData, fresh: tabs.TabData, why_buf: []u8) Allocator.Error!Carried {
     switch (fresh) {
         .repo_pr_tree => |rows| {
@@ -306,6 +326,10 @@ pub const TabState = struct {
     /// Arenas holding pull requests an event feed replaced in place;
     /// they go when the data they were patched into does.
     patches: std.ArrayListUnmanaged(std.heap.ArenaAllocator) = .empty,
+    /// An event feed named a pull request this tab's rows may no longer
+    /// match (it was not on screen to be patched): the next time the
+    /// tab is shown its listing is asked again, conditionally.
+    stale: bool = false,
 
     fn dropPatches(ts: *TabState, gpa: Allocator) void {
         for (ts.patches.items) |*a| a.deinit();
@@ -487,6 +511,12 @@ pub const App = struct {
     /// `acme/api#12` are one) before its answer lands is not asked for
     /// twice.
     feed_in_flight: std.StringHashMapUnmanaged(void) = .empty,
+    /// Feed lines naming a workspace (or, with `repos` set, a repo) this
+    /// pane does not show: never fetched — a line in a shared file is
+    /// no reason to send this pane's token anywhere else. The status
+    /// line says so once per session.
+    feed_ignored: u32 = 0,
+    feed_ignored_said: bool = false,
     /// May each open pull request merge, keyed `slug#id`. Filled for
     /// the row the cursor lands on, one cached look each.
     readiness: std.StringHashMapUnmanaged(ReadinessEntry) = .empty,
@@ -1179,7 +1209,14 @@ pub const App = struct {
     pub fn keyContext(app: *App, rows: []const tabs.VisibleRow) keymap.Context {
         const ts = app.activeTab();
         const on_row = ts.selected < rows.len and rows[ts.selected] != .show_more;
-        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detail_visible, .family = ts.spec.kind.family() };
+        return .{ .on_tree = ts.spec.isTree(), .on_row = on_row, .detail_open = app.detailShown(), .family = ts.spec.kind.family() };
+    }
+
+    /// The PR detail panel is a pull-request tab's: on a pipelines tab
+    /// it is hidden (not closed — it is back on the next PR tab), so it
+    /// neither halves the table nor answers `Esc`.
+    pub fn detailShown(app: *App) bool {
+        return app.detail_visible and app.activeTab().spec.kind.family() == .prs;
     }
 
     // ─── input ───────────────────────────────────────────────────────
@@ -1305,13 +1342,13 @@ pub const App = struct {
                     app.filter.clearRetainingCapacity();
                     app.filter_caret = 0;
                     ts.selected = 0;
-                } else if (app.detail_visible) {
+                } else if (app.detailShown()) {
                     app.detail_visible = false;
                 }
             },
         }
         // The cursor moved with the detail open: fetch the new PR's.
-        if (app.detail_visible) {
+        if (app.detailShown()) {
             rows = (try app.visible(a)).rows;
             const after = app.focusedKey(rows);
             if (!sameKey(before, after)) {
@@ -1812,7 +1849,7 @@ pub const App = struct {
             app.dropPrPipelines(slug, pr.id);
         }
         app.setStatus("fetching builds for PR #{d} on {s}…", .{ pr.id, hash[0..@min(hash.len, 7)] });
-        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = hash, .updated_on = pr.updated_on } });
+        try app.enqueue(.{ .pr_pipelines = .{ .tab = app.active, .workspace = ts.spec.workspace, .slug = slug, .id = pr.id, .hash = hash, .updated_on = pr.updated_on, .on_merge = pr.merge_commit.len > 0 } });
     }
 
     fn dropPrPipelines(app: *App, slug: []const u8, id: i64) void {
@@ -2041,7 +2078,10 @@ pub const App = struct {
         app.active = idx;
         app.detail_scroll = 0;
         const ts = app.activeTab();
-        if (!ts.fetched and !ts.loading) try app.refreshTab(idx);
+        if ((!ts.fetched or ts.stale) and !ts.loading) try app.refreshTab(idx);
+        // The footer describes the tab on screen, not the last one that
+        // finished loading.
+        if (!ts.loading and ts.status.len > 0) app.setStatus("{s}", .{ts.status});
     }
 
     pub fn refreshActive(app: *App) Allocator.Error!void {
@@ -2067,13 +2107,24 @@ pub const App = struct {
         app.watch.touch();
     }
 
-    /// The pull requests an event feed named. On the tab on screen,
-    /// each is asked for once, alone, and its row replaced in place.
+    /// The pull requests an event feed named. Each is asked for once,
+    /// alone, whichever tab is on screen — a Pipelines tab included —
+    /// and the answer replaces its row in every tab that lists pull
+    /// requests (`.pr_changed` in `apply`). A key outside the
+    /// configured workspace (or repos) is not fetched at all.
     pub fn feedChanged(app: *App, changes: []const sdk.feed.Change) Allocator.Error!void {
-        const ts = app.activeTab();
-        if (ts.spec.kind.family() != .prs) return;
+        // The workspace a bare `api#12` means: the tab on screen's when
+        // it lists pull requests, else the first one that does.
+        const home: *TabState = if (app.activeTab().spec.kind.family() == .prs) app.activeTab() else for (app.tabs) |*tab| {
+            if (tab.spec.kind.family() == .prs) break tab;
+        } else return;
+        var ignored: u32 = 0;
         for (changes) |c| {
-            const key = parseFeedKey(c.key, ts.spec.workspace, app.config.workspace) orelse continue;
+            const key = parseFeedKey(c.key, home.spec.workspace, app.config.workspace) orelse continue;
+            if (!app.feedKeyShown(key)) {
+                ignored += 1;
+                continue;
+            }
             // The detail the reader may have open for it is stale now.
             var kb: [256]u8 = undefined;
             const kt = keyText(&kb, key);
@@ -2087,6 +2138,26 @@ pub const App = struct {
             try app.enqueueFor(.{ .pr_changed = .{ .tab = app.active, .key = key } }, .delta);
             app.feed_fetches += 1;
         }
+        if (ignored > 0) {
+            app.feed_ignored += ignored;
+            if (!app.feed_ignored_said) {
+                app.feed_ignored_said = true;
+                app.setStatus("feed: ignored {d} event{s} for other workspaces", .{ app.feed_ignored, if (app.feed_ignored == 1) "" else "s" });
+            }
+        }
+    }
+
+    /// Does this pane show `key`'s workspace (the config's, or a tab's
+    /// own) — and, when `repos` narrows the config, its repo?
+    pub fn feedKeyShown(app: *const App, key: fetch.PrKey) bool {
+        const ws_ok = std.ascii.eqlIgnoreCase(key.workspace, app.config.workspace) or for (app.tabs) |tab| {
+            if (tab.spec.kind.family() == .prs and std.ascii.eqlIgnoreCase(tab.spec.workspace, key.workspace)) break true;
+        } else false;
+        if (!ws_ok) return false;
+        if (app.config.repos.len == 0) return true;
+        for (app.config.repos) |r| if (std.ascii.eqlIgnoreCase(r, key.repo)) return true;
+        for (app.tabs) |tab| if (tab.spec.repo.len > 0 and std.ascii.eqlIgnoreCase(tab.spec.repo, key.repo)) return true;
+        return false;
     }
 
     /// `api#12` or `acme/api#12`, as a pull request's key. The workspace
@@ -2100,6 +2171,8 @@ pub const App = struct {
         const repo = if (slash) |i| left[i + 1 ..] else left;
         const ws = if (slash) |i| left[0..i] else if (tab_workspace.len > 0) tab_workspace else default_workspace;
         if (repo.len == 0 or ws.len == 0) return null;
+        // One path segment each: `a/b/c#1` is not a key, it is a path.
+        if (std.mem.indexOfScalar(u8, ws, '/') != null) return null;
         return .{ .workspace = ws, .repo = repo, .id = id };
     }
 
@@ -2110,6 +2183,7 @@ pub const App = struct {
     pub fn refreshTabMode(app: *App, idx: usize, full: bool) Allocator.Error!void {
         const ts = &app.tabs[idx];
         if (ts.loading) return;
+        ts.stale = false;
         // The cursor survives the swap: remember the PR it is on, since
         // the row it sits on will have moved by the time the new rows
         // land.
@@ -2692,25 +2766,57 @@ pub const App = struct {
             .pr_changed => |c| {
                 var kb: [256]u8 = undefined;
                 if (app.feed_in_flight.fetchRemove(keyText(&kb, c.key))) |kv| app.gpa.free(kv.key);
-                if (c.tab >= app.tabs.len) return;
-                const ts = &app.tabs[c.tab];
                 const pr = c.pr orelse {
                     if (c.refused) {
                         app.setStatus("{s}", .{bucket_wait_text});
                     } else app.setStatus("{s}", .{c.error_text});
                     return;
                 };
-                // A listing already on its way will carry it.
-                if (ts.loading) return;
-                if (patchPr(ts, c.key.repo, pr)) {
-                    try ts.patches.append(app.gpa, res.arena);
-                    keep_arena = true;
-                    app.setStatus("{s}#{d} changed — updated from the event feed", .{ c.key.repo, c.key.id });
-                } else {
-                    // New to this listing, or gone out of it: the
-                    // listing is asked again, conditionally.
-                    try app.refreshTab(c.tab);
+                // Every tab that lists pull requests, not just the one
+                // on screen: an event spent on the wrong tab left the
+                // right one stale until the next sweep.
+                var patched = false;
+                for (app.tabs, 0..) |*ts, i| {
+                    if (ts.spec.kind.family() != .prs) continue;
+                    // Never loaded: its first load carries it. Loading:
+                    // the listing on its way does.
+                    if (!ts.fetched or ts.loading) continue;
+                    // The first tab patched owns the result's arena;
+                    // any other gets a copy of its own, since a tab's
+                    // patches go when its data does.
+                    try ts.patches.ensureUnusedCapacity(app.gpa, 1);
+                    const landed = if (!keep_arena) blk: {
+                        if (!patchPr(ts, c.key.repo, pr)) break :blk false;
+                        ts.patches.appendAssumeCapacity(res.arena);
+                        keep_arena = true;
+                        break :blk true;
+                    } else blk: {
+                        var copy = std.heap.ArenaAllocator.init(app.gpa);
+                        const dup = sdk.pane.work.dupeDeep(model.PullRequest, copy.allocator(), pr) catch |e| {
+                            copy.deinit();
+                            return e;
+                        };
+                        if (!patchPr(ts, c.key.repo, dup)) {
+                            copy.deinit();
+                            break :blk false;
+                        }
+                        ts.patches.appendAssumeCapacity(copy);
+                        break :blk true;
+                    };
+                    if (landed) {
+                        patched = true;
+                        continue;
+                    }
+                    // New to this listing (its state is one the tab
+                    // lists), or gone out of it (a row it no longer
+                    // matches): the tab on screen is asked again now,
+                    // conditionally; any other when it is next shown.
+                    // A pull request this tab neither lists nor would
+                    // list is no business of its.
+                    if (!stateLoaded(ts.loaded_states, pr.state) and !listsPr(ts, c.key.repo, pr.id)) continue;
+                    if (i == app.active) try app.refreshTab(i) else ts.stale = true;
                 }
+                if (patched) app.setStatus("{s}#{d} changed — updated from the event feed", .{ c.key.repo, c.key.id });
             },
             .detail => |d| {
                 var buf: [256]u8 = undefined;
@@ -2748,7 +2854,9 @@ pub const App = struct {
                 if (p.error_text.len > 0) {
                     app.say(.err, "PR #{d} {s}", .{ p.id, p.error_text });
                 } else {
-                    app.setStatus("PR #{d}: {d} pipeline(s) on merge commit", .{ p.id, p.pipelines.len });
+                    // The commit it really asked about: a merged PR's
+                    // merge commit, an open one's source head.
+                    app.setStatus("PR #{d}: {d} pipeline(s) on {s}", .{ p.id, p.pipelines.len, prBuildsCommitWord(p.on_merge) });
                 }
             },
             .approve => |ap| {
@@ -4179,4 +4287,75 @@ test "a changed pull request replaces its row in place while its state still bel
     // Not in this listing at all.
     try t.expect(!patchPr(&ts, "api", .{ .id = 9, .title = "new", .state = "OPEN" }));
     try t.expect(!patchPr(&ts, "web", .{ .id = 2, .title = "x", .state = "OPEN" }));
+}
+
+test "a feed event lands in every tab that lists pull requests, whichever tab is on screen — a Pipelines tab included" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    try t.expectEqual(@as(usize, 0), r.app.tabs[0].patches.items.len);
+    // On Merged: #1234 is open, so it is the Open tab's row that is
+    // replaced — not spent on the tab on screen and lost.
+    try r.app.switchTab(1);
+    try r.drain();
+    try r.app.feedChanged(&.{.{ .key = "api#1234" }});
+    try r.drain();
+    try t.expectEqual(@as(usize, 1), r.app.tabs[0].patches.items.len);
+    try t.expect(!r.app.tabs[0].stale);
+    // Merged neither lists an open PR nor would: left alone.
+    try t.expectEqual(@as(usize, 0), r.app.tabs[1].patches.items.len);
+    try t.expect(!r.app.tabs[1].stale);
+    try t.expectEqualStrings("api#1234 changed — updated from the event feed", r.app.status.items);
+
+    // On Pipelines the event is not dropped.
+    try r.app.switchTab(2);
+    try r.drain();
+    try r.app.feedChanged(&.{ .{ .key = "api#1234" }, .{ .key = "api#1100" } });
+    try r.drain();
+    try t.expectEqual(@as(u32, 3), r.app.feed_fetches);
+    try t.expectEqual(@as(usize, 2), r.app.tabs[0].patches.items.len);
+    // #1100 is merged: the Merged tab's row, a copy of its own.
+    try t.expectEqual(@as(usize, 1), r.app.tabs[1].patches.items.len);
+    // Back on Open, the patched row is what is shown; nothing is stale.
+    try r.app.switchTab(0);
+    try r.drain();
+    try t.expect(!r.app.tabs[0].stale);
+}
+
+test "a feed key for another workspace, or a repo outside `repos`, is never fetched; the status line says so once" {
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    const served = r.srv.snapshot().served;
+    try r.app.feedChanged(&.{ .{ .key = "otherws/api#1234" }, .{ .key = "acme/secret#1" }, .{ .key = "a/b/c#1" } });
+    try t.expectEqual(@as(u32, 0), r.app.feed_fetches);
+    try r.drain();
+    try t.expectEqual(served, r.srv.snapshot().served);
+    try t.expectEqualStrings("feed: ignored 2 events for other workspaces", r.app.status.items);
+    // Once per session: a later one is counted, not said again.
+    r.app.setStatus("something else", .{});
+    try r.app.feedChanged(&.{.{ .key = "otherws/web#7" }});
+    try t.expectEqual(@as(u32, 3), r.app.feed_ignored);
+    try t.expectEqualStrings("something else", r.app.status.items);
+    // The control: this workspace, a listed repo — case aside.
+    try r.app.feedChanged(&.{.{ .key = "ACME/api#1234" }});
+    try t.expectEqual(@as(u32, 1), r.app.feed_fetches);
+    try r.drain();
+    try t.expect(r.srv.snapshot().served > served);
+}
+
+test "folding out an open PR's builds says source commit; a merged one's says merge commit" {
+    try t.expectEqualStrings("source commit", prBuildsCommitWord(false));
+    try t.expectEqualStrings("merge commit", prBuildsCommitWord(true));
+    const r = try Rig.init(acme, .{});
+    defer r.deinit();
+    // api, then #1234 (OPEN).
+    _ = try r.key("j");
+    _ = try r.key("enter");
+    try t.expect(std.mem.startsWith(u8, r.app.status.items, "PR #1234: "));
+    try t.expect(std.mem.endsWith(u8, r.app.status.items, " on source commit"));
+    try r.app.switchTab(1);
+    try r.drain();
+    _ = try r.key("g");
+    _ = try r.key("j");
+    _ = try r.key("enter");
+    try t.expect(std.mem.endsWith(u8, r.app.status.items, " on merge commit"));
 }

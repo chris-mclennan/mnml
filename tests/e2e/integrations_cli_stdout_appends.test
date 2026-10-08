@@ -1,0 +1,20 @@
+# A cron line — `mnml-bitbucket --prefetch >> log 2>&1` — must APPEND:
+# the integrations' stdout and stderr are streaming writers, never
+# positional ones that write from byte 0 over the log that was there.
+# Bitbucket, Jira and the sample, both streams.
+# env: MNML_BITBUCKET_CONFIG=${MNML_E2E_WORKSPACE}/none/config.zon
+write bb.log "old line one, from yesterday's run\nold line two\n"
+write jira.log "keep me: an earlier Jira line\n"
+write sample.log "keep me: an earlier sample line\n"
+shell "$MNML_BITBUCKET_INTEGRATION" --help >> bb.log
+shell "$MNML_BITBUCKET_INTEGRATION" --check >> bb.log 2>&1; test $? -eq 1
+shell "$MNML_BITBUCKET_INTEGRATION" --no-such-flag 2>> bb.log; test $? -eq 2
+shell "$MNML_JIRA" --help >> jira.log
+shell "$MNML_JIRA" --no-such-flag 2>> jira.log || true
+shell "$MNML_SAMPLE_INTEGRATION" --version 2>> sample.log
+expect file bb.log contains "old line one, from yesterday's run\nold line two\n"
+expect file bb.log contains "mnml-bitbucket: unknown argument"
+expect file bb.log contains "config:"
+expect file jira.log contains "keep me: an earlier Jira line\n"
+expect file jira.log contains "mnml-jira"
+expect file sample.log contains "keep me: an earlier sample line\nmnml-sample "

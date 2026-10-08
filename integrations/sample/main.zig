@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !u8 {
     defer arena_state.deinit();
     const args = try init.minimal.args.toSlice(arena_state.allocator());
     var err_buf: [1024]u8 = undefined;
-    var err_w: std.Io.File.Writer = .init(.stderr(), io, &err_buf);
+    var err_w: std.Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
     const stderr = &err_w.interface;
 
     for (args[1..]) |a| {

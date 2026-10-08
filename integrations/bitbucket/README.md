@@ -108,6 +108,23 @@ rate limit per token, so a pane that took the exported one would spend
 — and be throttled on — every other tool's budget. Give mnml a token of
 its own, in the file, and its budget is its own too (see Rate limiting).
 
+Only an **absent or empty** file falls through to the environment. A
+file that is there but cannot be read — no permission, a directory
+named `token` — is an error: `--check` says `token file exists but
+cannot be read: <path> (<why>)` and exits 1, and the pane shows the same
+line on its setup screen. It never quietly spends an exported token
+instead.
+
+Only the file's **first non-empty line** is read; anything after it is
+ignored, so a stray second line can never reach the `Authorization`
+header. A control character inside that line (a tab, a carriage return
+mid-token) is refused with an error rather than sent.
+
+`email:token` — in the file or a variable — is read as an email and a
+token only when the part before the first colon looks like an email: it
+holds an `@` and no space. Then only the half after the colon is the
+token. Any other colon is part of the token.
+
 Bitbucket takes two kinds of token and they are **not** interchangeable
 on the wire:
 
@@ -143,7 +160,7 @@ resolve, so a machine that already exports one keeps working:
 | `BITBUCKET_ACCESS_TOKEN` | with no file: the approve token, and the read token unless an account credential follows |
 | `BITBUCKET_API_TOKEN` | an Atlassian scoped API token |
 | `BITBUCKET_APP_PASSWORD` | a Bitbucket app password |
-| `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used |
+| `BITBUCKET_PERSONAL_TOKEN` | either kind; `email:token` is fine — only the half after the colon is used (the email rule above) |
 
 Scopes: **Pull requests: Read**, **Account: Read** for the mine /
 reviewing tabs and the chip, **Pull requests: Write** for approve.
@@ -155,6 +172,10 @@ came from and how many characters it is, and nothing else:
 mnml-bitbucket --check      # config, token source + length, whoami, the tabs
 mnml-bitbucket --diag       # the same as a tree, with the rate bucket
 ```
+
+Both exit 1 when anything they print fails — no config, no token, an
+unreadable token file, or a probe that answered `FAIL` (refused, a 5xx,
+a 429) — so `mnml-bitbucket --check && …` stops there.
 
 ```
 token source: <config dir>/token (loaded, 192 chars, not shown)
@@ -483,12 +504,15 @@ burst of 40, parked 30 s after a 429 (`.rate`'s `rate_per_sec` and
 outright); else `bitbucket-ratelimit-<id>.json` beside the shared
 `bitbucket-ratelimit.json` — under `$MNML_SHARED_STATE_DIR`, else
 `<MNML_DATA_ROOT>/ratelimit/`, else `~/.config/mnml/ratelimit/` —
-where `<id>` is the first 12 hex characters of a sha256 of the token
-(`docs/SDK.md`, "A bucket per token"). Anything else on the machine
+where `<id>` is the first 12 hex characters of a sha256 of the bare
+credential: the token itself for an access token (Bearer), and
+`email:token` for an account credential (Basic) — `docs/SDK.md`, "A
+bucket per token", has the exact rule. Anything else on the machine
 spending the same token and agreeing to the format takes turns on the
 same file; a tool with no token to name stays on the shared one. Every
 draw, whichever bucket, is a line in the one `bitbucket-draws.jsonl`,
-carrying the bucket's `token_id`.
+carrying the bucket's `token_id` — none when an override names the file,
+since that is not a per-token bucket.
 
 The rate broker hands out tokens from the shared file, so a token's own
 bucket does not ask it: the pane and its poller draw straight off their
@@ -573,7 +597,16 @@ and how many quiet polls in a row got it there.
 
 Anything may append one JSON line per change —
 `{"kind":"pr","key":"api#1234","at":1790000000,"source":"relay"}` — and the pane fetches only that pull request (its row is replaced in place; one that has left the listing, or joined it, costs one conditional GET of the listing instead), once however many lines
-name it, through the same budget as everything else. While the file is
+name it, through the same budget as everything else. The answer lands
+in **every tab that lists pull requests**, whichever tab is on screen
+(a Pipelines tab included); a tab it has joined or left is asked again
+the next time it is shown. A key naming another workspace — or, with
+`repos` set, a repo outside it — is never fetched: the file is shared,
+and a line in it is no reason to send this pane's token anywhere else.
+The status line says `feed: ignored N events for other workspaces`
+once per session. Moving the file aside and starting a new one
+(rotation) is noticed whatever the new file's size: it is read from its
+first byte. While the file is
 live the chip says `· feed` and the listing is only swept every
 `sweep_secs`, in case a line was lost. If the file goes missing, or has
 had no line (an event or a `{"kind":"heartbeat",…}`) for `stale_secs`,

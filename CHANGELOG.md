@@ -98,6 +98,43 @@ the release ships one file), and one line per change a user can see.
   429s and who met them. Settings → Integrations → **Toast on 429s**
   turns the toasts off (`integrations.throttle_toasts`).
 
+### Bitbucket and Jira: fixes
+
+- `mnml-bitbucket … >> log` and `mnml-jira … >> log` append to the log
+  again. They wrote from the start of the file, over what was there, so
+  a cron or launchd `--prefetch >> log` lost its older lines.
+- Rotating an event feed file (moving it aside and starting a new one)
+  is noticed whatever the new file's size; before, a new file that was
+  not smaller than the old one lost its first events. Bitbucket and
+  Jira both.
+- A Bitbucket token file that is there but cannot be read (no
+  permission, or a directory named `token`) is now an error that
+  `--check` and the pane name, instead of quietly using a token from
+  the environment. Only a missing or empty file falls back.
+- Only the first non-empty line of the Bitbucket token file is read,
+  and a control character inside it is refused, so a stray second line
+  can no longer end up in the request. `email:token` is recognised only
+  when the part before the colon looks like an email.
+- `mnml-bitbucket --check` and `--diag` exit 1 when the probe fails
+  (nothing listening, a server error, a 429), so `--check && …` stops.
+- A Bitbucket feed event that arrives while another tab is on screen
+  updates the pull request on every tab that lists it, a Pipelines tab
+  on screen included, instead of being spent on the wrong tab.
+- A Bitbucket feed line naming another workspace, or a repo outside
+  `repos`, is ignored instead of fetched with your token; the status
+  line says how many were ignored, once per session.
+- `mnml-bitbucket --diag` draws every Auth line as a branch of the tree.
+- Folding out an open pull request's builds says "source commit", not
+  "merge commit".
+- On a Bitbucket Pipelines tab the footer describes the Pipelines tab,
+  and a PR detail left open on another tab is hidden there instead of
+  taking half the table.
+- `mnml-bitbucket --check` prints `state=` only for tabs that have one,
+  and its probe is logged as `check` rather than as a pane opening. A
+  draw on a bucket named by `BITBUCKET_RATELIMIT_STATE` no longer
+  carries a `token_id`, and the README names the right rate-bucket file
+  for an account credential.
+
 ## v0.3.5 (2026-10-06)
 
 ### One statusline chip per integration

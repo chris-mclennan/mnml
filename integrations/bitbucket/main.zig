@@ -215,12 +215,14 @@ pub fn main(init: std.process.Init) !u8 {
     const arena = arena_state.allocator();
     const args = try init.minimal.args.toSlice(arena);
 
+    // Streaming, not positional: `--prefetch >> log` from cron must
+    // append, and a positional writer writes from byte 0 over the log.
     var out_buf: [8192]u8 = undefined;
-    var out_w: Io.File.Writer = .init(.stdout(), io, &out_buf);
+    var out_w: Io.File.Writer = .initStreaming(.stdout(), io, &out_buf);
     const stdout = &out_w.interface;
     defer stdout.flush() catch {};
     var err_buf: [2048]u8 = undefined;
-    var err_w: Io.File.Writer = .init(.stderr(), io, &err_buf);
+    var err_w: Io.File.Writer = .initStreaming(.stderr(), io, &err_buf);
     const stderr = &err_w.interface;
     defer stderr.flush() catch {};
 
@@ -458,7 +460,7 @@ const Session = struct {
     }
 };
 
-const SessionError = error{ NoConfig, NoToken, BaseUrl } || Allocator.Error;
+const SessionError = error{ NoConfig, NoToken, TokenFile, BaseUrl } || Allocator.Error;
 
 /// Load everything a command needs; `why` explains a refusal.
 fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why: *[]const u8) SessionError!Session {
@@ -471,6 +473,15 @@ fn openSession(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, why:
     const config_dir = std.fs.path.dirname(loaded.path) orelse ".";
     var tokens = try auth.resolve(gpa, io, env, config_dir);
     errdefer tokens.deinit();
+    // The token file is there and is no token: that, not "no token",
+    // is the thing to fix — and the exported variables were rightly
+    // not consulted.
+    if (tokens.file_problem.len > 0) {
+        const n = @min(tokens.file_problem.len, token_file_why.len);
+        @memcpy(token_file_why[0..n], tokens.file_problem[0..n]);
+        why.* = token_file_why[0..n];
+        return error.TokenFile;
+    }
     if (!tokens.hasRead()) {
         why.* = no_token_text;
         return error.NoToken;
@@ -543,6 +554,9 @@ fn resolveBaseUrl(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, c
 
 const base_url_env = "BITBUCKET_BASE_URL";
 var base_url_why: [1024]u8 = undefined;
+/// `why` for `error.TokenFile`, copied out of the tokens' arena, which
+/// the failed session frees.
+var token_file_why: [1024]u8 = undefined;
 /// How long a missing `@<path>` is waited for: the fake writes it once
 /// it listens. A test that proves the refusal does not sit out 5 s.
 const url_file_wait_ms: u32 = if (@import("builtin").is_test) 50 else 5000;
@@ -574,7 +588,11 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         try out.print("config: {s}\n{s}", .{ s.loaded.path, tk });
         try out.print("workspace: {s}\nemail: {s}\nrefresh_interval_secs: {d}\nscope: {s}\nrecent_window_days: {d}\n", .{ c.workspace, c.email, c.refresh_interval_secs, @tagName(c.scope), c.recent_window_days });
     } else {
-        try out.print("mnml-bitbucket · diagnostics\n\nAuth\n  ├─ {s}  ├─ email: {s}\n", .{ tk, c.email });
+        // The block is several lines; every one is a branch of the tree.
+        try out.writeAll("mnml-bitbucket · diagnostics\n\nAuth\n");
+        var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, tk, "\n"), '\n');
+        while (lines.next()) |l| try out.print("  ├─ {s}\n", .{l});
+        try out.print("  ├─ email: {s}\n", .{c.email});
     }
     // Said before anything is asked: the token file's access token has
     // no account, and the tabs that filter to yours cannot work
@@ -588,11 +606,16 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
     var progress: fetch.Progress = .{};
     var worker = fetch.Worker.init(gpa, io, &s.client, &progress, c.account_id, c.workspace);
     defer worker.deinit();
-    var job = try fetch.makeJob(gpa, nowSecs(io), .whoami);
+    // `check`, not `pane_open`: a person ran the probe, and no pane
+    // was opened.
+    var job = try fetch.makeJobFor(gpa, nowSecs(io), .whoami, .check);
     defer job.deinit();
     var res = try worker.run(&job);
     defer res.deinit();
     const who = res.payload.whoami;
+    // A probe that failed is a failing `--check`: `--check && …` must
+    // not go on as if the token and the server were fine.
+    const failed = who.error_text.len > 0;
     // Name the question that was actually asked. An access token has
     // no account, so the probe is the workspace, and saying "whoami"
     // there would be the same lie that sent the user hunting a good
@@ -628,10 +651,14 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
             else => try std.fmt.allocPrint(gpa, "kind={s}", .{@tagName(tab.kind)}),
         };
         defer gpa.free(shape);
+        // `state` is a `pull_requests` tab's alone: the workspace tabs
+        // fix their own, and a pipelines tab has none.
+        var state_buf: [32]u8 = undefined;
+        const state = if (tab.kind == .pull_requests) std.fmt.bufPrint(&state_buf, ", state={s}", .{@tagName(tab.state)}) catch "" else "";
         if (full) {
-            try out.print("      {d}. {s} ({s}, state={s})\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+            try out.print("      {d}. {s} ({s}{s})\n", .{ i + 1, tab.name, shape, state });
         } else {
-            try out.print("  tab {d} ({s}): {s}, state={s}\n", .{ i + 1, tab.name, shape, @tagName(tab.state) });
+            try out.print("  tab {d} ({s}): {s}{s}\n", .{ i + 1, tab.name, shape, state });
         }
     }
     if (full) {
@@ -640,7 +667,7 @@ fn diagnose(gpa: Allocator, io: Io, env: *const std.process.Environ.Map, out: *I
         }
         try out.print("\nRuntime\n  ├─ integration: {s}\n  ├─ api: {s}\n  └─ os/arch: {s} / {s}\n", .{ spec.version, s.base_url, @tagName(@import("builtin").os.tag), @tagName(@import("builtin").cpu.arch) });
     }
-    return 0;
+    return if (failed) 1 else 0;
 }
 
 // ─── --values / --refresh ────────────────────────────────────────────────
@@ -2337,6 +2364,177 @@ test "with a token file, --check spends that token's own bucket against the fake
     const lines = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
     defer t.allocator.free(lines);
     try t.expect(std.mem.indexOf(u8, lines, "\"token_id\":\"24ff31a5fe5e\"") != null);
+}
+
+/// `--check` / `--diag` against the in-process fake, in a private
+/// directory: a token file, a config with four tabs (a workspace PR
+/// tab, a merged one, a pipelines one and a repo's merged PRs), every
+/// state path inside.
+const CheckRig = struct {
+    tmp: std.testing.TmpDir,
+    env: std.process.Environ.Map,
+    root_buf: [std.fs.max_path_bytes]u8 = undefined,
+    root: []const u8 = "",
+    out: Io.Writer.Allocating,
+
+    fn init(rig: *CheckRig, base: []const u8, token: ?[]const u8) !void {
+        rig.* = .{ .tmp = t.tmpDir(.{}), .env = .init(t.allocator), .out = .init(t.allocator) };
+        rig.root = rig.root_buf[0..try rig.tmp.dir.realPath(t.io, &rig.root_buf)];
+        try rig.tmp.dir.createDirPath(t.io, "interop");
+        try rig.tmp.dir.writeFile(t.io, .{ .sub_path = "config.zon", .data = ".{ .email = \"me@example.com\", .workspace = \"acme\", .account_id = \"acct-max\", .repos = .{\"api\"}, .rate = .{ .max_attempts = 1 }, .tabs = .{ .{ .name = \"Open\", .kind = .workspace_open_prs }, .{ .name = \"Merged\", .kind = .workspace_merged_prs }, .{ .name = \"Pipelines\", .kind = .workspace_pipelines }, .{ .name = \"api\", .kind = .pull_requests, .repo = \"api\", .state = .MERGED } } }" });
+        if (token) |tok| try rig.tmp.dir.writeFile(t.io, .{ .sub_path = "token", .data = tok });
+        inline for (.{ .{ "MNML_DATA_ROOT", "data" }, .{ "MNML_BITBUCKET_CONFIG", "config.zon" }, .{ "MNML_SHARED_STATE_DIR", "interop" } }) |kv| {
+            const p = try std.fs.path.join(t.allocator, &.{ rig.root, kv[1] });
+            defer t.allocator.free(p);
+            try rig.env.put(kv[0], p);
+        }
+        try rig.env.put("MNML_BROKER", "0");
+        try rig.env.put(base_url_env, base);
+    }
+
+    fn check(rig: *CheckRig, full: bool) !u8 {
+        rig.out.clearRetainingCapacity();
+        return diagnose(t.allocator, t.io, &rig.env, &rig.out.writer, full);
+    }
+
+    fn text(rig: *CheckRig) []const u8 {
+        return rig.out.written();
+    }
+
+    fn deinit(rig: *CheckRig) void {
+        rig.out.deinit();
+        rig.env.deinit();
+        rig.tmp.cleanup();
+    }
+};
+
+test "--check refuses a token file it cannot read and names it, rather than spend the exported token" {
+    var rig: CheckRig = undefined;
+    // Nothing is asked, so no server is needed.
+    try rig.init("http://127.0.0.1:1/2.0", null);
+    defer rig.deinit();
+    try rig.tmp.dir.createDirPath(t.io, "token");
+    try rig.env.put("BITBUCKET_PERSONAL_TOKEN", "x@acme.example:ATATTfakeEnvPersonal05");
+    try t.expectEqual(@as(u8, 1), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "TokenFile: token file exists but cannot be read") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "BITBUCKET_PERSONAL_TOKEN") == null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "Personal05") == null);
+    // With nothing exported the cause is the same — never "write a token
+    // file", which is already there.
+    _ = rig.env.swapRemove("BITBUCKET_PERSONAL_TOKEN");
+    try t.expectEqual(@as(u8, 1), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "token file exists but cannot be read") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "no Bitbucket token") == null);
+}
+
+const fake_account_token = "ATATTfakeAccount000000000000002\n";
+
+test "--check and --diag exit 1 when the probe fails — refused, a 500, a 429 — and 0 when it answers" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+
+    // The control: the fake answers.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        try t.expectEqual(@as(u8, 0), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: ok") != null);
+        try t.expectEqual(@as(u8, 0), try rig.check(true));
+    }
+    // Nothing listening.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init("http://127.0.0.1:1/2.0", fake_account_token);
+        defer rig.deinit();
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+        try t.expectEqual(@as(u8, 1), try rig.check(true));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: ✗") != null);
+    }
+    // A 500.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        srv.failPaths("");
+        defer srv.failPaths(null);
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+    }
+    // A 429.
+    {
+        var rig: CheckRig = undefined;
+        try rig.init(base, fake_account_token);
+        defer rig.deinit();
+        srv.retryAfter(0);
+        srv.rateLimitNext(3);
+        defer srv.rateLimitNext(0);
+        try t.expectEqual(@as(u8, 1), try rig.check(false));
+        try t.expect(std.mem.indexOf(u8, rig.text(), "whoami: FAIL") != null);
+        try t.expect(std.mem.indexOf(u8, rig.text(), "429") != null);
+    }
+}
+
+test "--diag draws every line of its Auth block as a branch of the tree" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var rig: CheckRig = undefined;
+    try rig.init(base, fake_account_token);
+    defer rig.deinit();
+
+    try t.expectEqual(@as(u8, 0), try rig.check(true));
+    const diag = rig.text();
+    const auth_at = std.mem.indexOf(u8, diag, "Auth\n").?;
+    var lines = std.mem.splitScalar(u8, diag[auth_at + "Auth\n".len ..], '\n');
+    var n: usize = 0;
+    while (lines.next()) |l| {
+        if (l.len == 0) break;
+        if (!std.mem.startsWith(u8, l, "  ├─ ") and !std.mem.startsWith(u8, l, "  └─ ") and !std.mem.startsWith(u8, l, "     ")) {
+            std.debug.print("--diag said:\n{s}\n", .{diag});
+            return error.TestUnexpectedResult;
+        }
+        n += 1;
+    }
+    try t.expect(n >= 4);
+    try t.expect(std.mem.indexOf(u8, diag, "  ├─ auth scheme: ") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "  ├─ approve token: ") != null);
+}
+
+test "--check prints state only on a pull_requests tab, and its probe's draw says check, not pane_open" {
+    const listener = @import("tools/fake_bitbucket/listener.zig");
+    const srv = try listener.Server.start(t.allocator, t.io, 0);
+    defer srv.stop();
+    const base = try srv.baseUrl(t.allocator);
+    defer t.allocator.free(base);
+    var rig: CheckRig = undefined;
+    try rig.init(base, fake_account_token);
+    defer rig.deinit();
+
+    try t.expectEqual(@as(u8, 0), try rig.check(true));
+    const diag = rig.text();
+    try t.expect(std.mem.indexOf(u8, diag, "Open (kind=workspace_open_prs)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "Merged (kind=workspace_merged_prs)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "Pipelines (kind=workspace_pipelines)\n") != null);
+    try t.expect(std.mem.indexOf(u8, diag, "api (repo=api, state=MERGED)\n") != null);
+
+    try t.expectEqual(@as(u8, 0), try rig.check(false));
+    try t.expect(std.mem.indexOf(u8, rig.text(), "tab 2 (Merged): kind=workspace_merged_prs\n") != null);
+    try t.expect(std.mem.indexOf(u8, rig.text(), "tab 4 (api): repo=api, state=MERGED\n") != null);
+
+    // The draws: the probe is a `check`, not a pane opening.
+    const draws = try std.fs.path.join(t.allocator, &.{ rig.root, "interop", "bitbucket-draws.jsonl" });
+    defer t.allocator.free(draws);
+    const lines_text = try Io.Dir.cwd().readFileAlloc(t.io, draws, t.allocator, .limited(1 << 16));
+    defer t.allocator.free(lines_text);
+    try t.expect(std.mem.indexOf(u8, lines_text, "\"reason\":\"check\"") != null);
+    try t.expect(std.mem.indexOf(u8, lines_text, "\"reason\":\"pane_open\"") == null);
 }
 
 /// The pane on the offline fixture, for the SDK's design-language
