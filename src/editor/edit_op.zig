@@ -17,6 +17,10 @@ pub const CaseTransform = enum { lower, upper, toggle };
 /// made in (`:help gv`).
 pub const SelectionShape = enum { charwise, linewise, block };
 
+/// The text objects a count extends (`d3iw`, `v2ap`, `:help v_iw`).
+/// `quote_marks`: `2i"` takes the quotes and no white space.
+pub const CountedObject = enum { inner_word, around_word, inner_big_word, around_big_word, inner_sentence, around_sentence, inner_paragraph, around_paragraph, quote_marks };
+
 pub const EditOp = union(enum) {
     // ── motion ──
     move_left,
@@ -90,6 +94,13 @@ pub const EditOp = union(enum) {
     // ── selection ──
     select_start,
     select_clear,
+    /// Charwise Visual's `Esc`: the selection is remembered with the
+    /// character under its far end taken in — the half-open shape a
+    /// Visual operator remembers — so `gv` has all of it back.
+    select_clear_inclusive,
+    /// One more of the object after the selection's far end: `d3iw` is
+    /// `iw` and this twice (`:help iw`: white space counts as a word).
+    extend_by_object: CountedObject,
     remember_selection,
     select_line,
     select_line_to_end,
@@ -197,6 +208,9 @@ pub const EditOp = union(enum) {
     // ── insert ──
     insert_char: u21,
     insert_str: []const u8,
+    /// Insert `Tab` with spaces (vim's `expandtab`): spaces to the next
+    /// multiple of `width` display columns, not a fixed `width`.
+    insert_soft_tab: u32,
     insert_char_from_line: struct { above: bool },
     insert_newline,
     insert_newline_below,
@@ -252,6 +266,9 @@ pub const EditOp = union(enum) {
     move_line_down,
     duplicate_line,
     join_lines: struct { keep_space: bool },
+    /// Visual `J` / `gJ`: join every line from the anchor's to the
+    /// cursor's (at least two), one undo step (`:help v_J`).
+    join_selection_lines: struct { keep_space: bool },
     transform_selection_case: CaseTransform,
     /// Visual block `U` / `u` / `~`: the case inside the rectangle.
     block_case: CaseTransform,
@@ -310,7 +327,7 @@ pub const EditOp = union(enum) {
     atomic: []const EditOp,
 
     comptime {
-        std.debug.assert(compat.unionFields(EditOp).len == 172);
+        std.debug.assert(compat.unionFields(EditOp).len == 176);
     }
 
     /// Whether the op can change buffer text (vs. move / select / yank / meta).
@@ -324,7 +341,7 @@ pub const EditOp = union(enum) {
             // motions
             .move_left, .move_right, .move_up, .move_down, .move_word_left, .move_word_right, .move_word_right_no_cross_line, .move_right_no_cross_line, .move_left_no_cross_line, .move_right_wrap, .move_left_wrap, .move_word_end, .move_word_end_cw, .move_big_word_end_cw, .move_word_end_back, .move_big_word_right, .move_big_word_right_no_cross_line, .move_big_word_left, .move_big_word_end, .move_big_word_end_back, .move_line_start, .move_line_first_non_ws, .move_down_first_non_ws, .move_up_first_non_ws, .move_line_last_non_ws, .move_paragraph, .move_to_unmatched, .move_sentence, .move_line_end, .move_line_last_char, .move_bracket_match, .move_to_find_match, .move_visual_down, .move_visual_up, .move_visual_line_start, .move_visual_line_end, .move_buffer_start, .move_buffer_end, .move_to_line, .move_to_line_keep_col, .move_to_col, .set_cursor_byte, .page_up, .page_down, .half_page_up, .half_page_down => false,
             // selection
-            .select_start, .select_clear, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .abort_unless_moved, .mark_operator_start, .cursor_to_operator_start, .select_count_lines, .exclusive_motion_rule, .find_char_on_line, .select_find_match => false,
+            .select_start, .select_clear, .select_clear_inclusive, .extend_by_object, .remember_selection, .select_line, .select_line_to_end, .select_all, .select_word, .select_inner_word, .select_around_word, .select_inner_big_word, .select_around_big_word, .select_inner_quote, .select_around_quote, .select_inner_smart_quote, .select_around_smart_quote, .select_inner_bracket, .select_around_bracket, .select_inner_tag, .select_around_tag, .select_inner_paragraph, .select_around_paragraph, .select_inner_sentence, .select_around_sentence, .select_inner_function, .select_around_function, .select_inner_class, .select_around_class, .select_inner_argument, .select_around_argument, .select_inner_indent_block, .select_around_indent_block, .select_outer_indent_block, .restore_last_selection, .swap_anchor_cursor, .move_cursor_to_selection_start, .normalize_linewise_selection, .normalize_linewise_selection_inner, .make_selection_inclusive, .continue_insert_run, .abort_unless_selection, .abort_unless_moved, .mark_operator_start, .cursor_to_operator_start, .select_count_lines, .exclusive_motion_rule, .find_char_on_line, .select_find_match => false,
             .add_cursor_below, .add_cursor_above, .clear_extra_cursors, .add_cursor_at_next_word, .select_all_word_occurrences, .block_select_start, .block_select_clear, .block_eol, .yank_block, .block_other_end_of_row => false,
             .set_register_hint, .yank_line, .yank_lines_count, .yank_selection, .yank_selection_linewise, .register_selection_delete, .undo, .redo, .replace_session_begin => false,
             else => true,

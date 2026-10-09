@@ -12,6 +12,7 @@ const input = @import("mod.zig");
 const Key = input.Key;
 const KeyCode = input.KeyCode;
 const EditOp = input.EditOp;
+const edit_op_mod = @import("../editor/edit_op.zig");
 const EditCtx = input.EditCtx;
 const InputResult = input.InputResult;
 const AppCommand = input.AppCommand;
@@ -162,6 +163,11 @@ pub const Vim = struct {
     vmode: VimMode = .normal,
     /// The count being typed (`12` in `12dd`). Null ⇒ 1.
     count: ?u32 = null,
+    /// `2d3w`: once a digit follows the operator, the count typed before
+    /// it waits here and `count` holds the one after; the two multiply
+    /// when the motion comes (`:help operator`), so `2d3w` is `d6w`.
+    op_pre_count: ?u32 = null,
+    op_count_split: bool = false,
     op: ?PendingOp = null,
     prefix: Prefix = .none,
     cmdline: std.ArrayList(u8) = .empty,
@@ -179,6 +185,15 @@ pub const Vim = struct {
     pending_register: ?u21 = null,
     insert_waiting_for_register: bool = false,
     insert_literal_next: bool = false,
+    /// `i_CTRL-V` then digits (`:help i_CTRL-V_digit`): `065` is `A`,
+    /// `x41` / `u2014` / `U0001F600` / `o101` the same by base. The
+    /// code is typed once the most digits for the base are in, or a
+    /// key that is not one of its digits ends it early.
+    insert_literal_code: ?struct { base: u8, max_digits: u8, value: u32 = 0, digits: u8 = 0 } = null,
+    /// After `i_CTRL-R =`: mnml has no expression register, so the
+    /// expression typed after it is dropped, up to its Enter or Esc,
+    /// rather than landing in the buffer.
+    insert_dropping_expr: bool = false,
     /// Mirror of the buffer's macro state: decides what `q` does.
     is_recording_macro: bool = false,
     /// Insert `Ctrl+O`: one normal command, then back to insert.
@@ -213,9 +228,13 @@ pub const Vim = struct {
         self.use_tabs = cfg.use_tabs;
     }
 
-    /// What Tab types in insert / replace: one `\t` or a tab stop of spaces.
-    fn tabText(self: *const Vim, arena: Allocator) Allocator.Error![]const u8 {
-        return if (self.use_tabs) "\t" else try spaces(arena, self.tab_width);
+    /// A `Ctrl-V` code as a character; past Unicode, or a surrogate, is
+    /// U+FFFD.
+    fn literalCharFor(base: u8, v: u32) u21 {
+        // Decimal and octal codes are bytes: `300` is ÿ (Neovim).
+        if (base == 10 or base == 8) return @intCast(@min(v, 255));
+        if (v > 0x10FFFF or (v >= 0xD800 and v <= 0xDFFF)) return 0xFFFD;
+        return @intCast(v);
     }
 
     pub fn deinit(self: *Vim) void {
@@ -278,9 +297,14 @@ pub const Vim = struct {
     /// Insert-mode `Ctrl+N` / `Ctrl+P` / `Ctrl+O` are vim's before they
     /// are the keymap's (lowercase only: `Ctrl+Shift+P` stays the palette).
     pub fn reservesKey(self: *const Vim, k: Key) bool {
-        if (self.vmode != .insert or !k.mods.ctrl or k.mods.alt or k.mods.super or k.mods.shift) return false;
+        const typing = self.vmode == .insert or self.vmode == .replace;
+        if (!typing or !k.mods.ctrl or k.mods.alt or k.mods.super or k.mods.shift) return false;
         return switch (k.code) {
-            .char => |c| c == 'n' or c == 'p' or c == 'o',
+            // `Ctrl-H` / `J` / `K` / `L` switch windows from Normal only:
+            // while typing they are vim's own (`i_CTRL-H` backspace,
+            // `i_CTRL-J` a line break), so the editor never stays in
+            // Insert with the keyboard gone to the tree.
+            .char => |c| c == 'h' or c == 'j' or c == 'k' or c == 'l' or (self.vmode == .insert and (c == 'n' or c == 'p' or c == 'o')),
             else => false,
         };
     }
@@ -352,8 +376,14 @@ pub const Vim = struct {
             try s.append(arena, '"');
             try appendChar(&s, arena, r);
         }
-        if (self.count) |n| try s.print(arena, "{d}", .{n});
-        if (self.op) |op| try s.appendSlice(arena, op.glyph());
+        if (self.op_count_split) {
+            if (self.op_pre_count) |n| try s.print(arena, "{d}", .{n});
+            if (self.op) |op| try s.appendSlice(arena, op.glyph());
+            if (self.count) |n| try s.print(arena, "{d}", .{n});
+        } else {
+            if (self.count) |n| try s.print(arena, "{d}", .{n});
+            if (self.op) |op| try s.appendSlice(arena, op.glyph());
+        }
         const p: []const u8 = switch (self.prefix) {
             .none => "",
             .g => "g",
@@ -412,6 +442,8 @@ pub const Vim = struct {
 
     fn resetPending(self: *Vim) void {
         self.count = null;
+        self.op_pre_count = null;
+        self.op_count_split = false;
         self.op = null;
         self.prefix = .none;
     }
@@ -428,6 +460,8 @@ pub const Vim = struct {
     fn enterNormal(self: *Vim) void {
         self.vmode = .normal;
         self.resetPending();
+        self.insert_literal_code = null;
+        self.insert_dropping_expr = false;
         self.cmdline_open = false;
         self.cmdline.clearRetainingCapacity();
         self.cmdline_cursor = 0;
@@ -444,6 +478,36 @@ pub const Vim = struct {
     fn pushDigit(self: *Vim, d: u32) void {
         const cur = self.count orelse 0;
         self.count = cur *| 10 +| d;
+    }
+
+    /// The objects a count extends rather than nests (brackets and tags
+    /// nest: `d2i(` is the second pair out).
+    fn countedObjectOf(op: EditOp) ?edit_op_mod.CountedObject {
+        return switch (op) {
+            .select_inner_word => .inner_word,
+            .select_around_word => .around_word,
+            .select_inner_big_word => .inner_big_word,
+            .select_around_big_word => .around_big_word,
+            .select_inner_sentence => .inner_sentence,
+            .select_around_sentence => .around_sentence,
+            .select_inner_paragraph => .inner_paragraph,
+            .select_around_paragraph => .around_paragraph,
+            // `2i"` is the string with its quotes and no white space
+            // (`:help i"`); a higher count is the same.
+            .select_inner_quote, .select_inner_smart_quote => .quote_marks,
+            else => null,
+        };
+    }
+
+    fn pushObjectCount(b: *Builder, op: EditOp, n: u32) Allocator.Error!void {
+        const k = countedObjectOf(op) orelse return;
+        if (k == .quote_marks) return b.push(.{ .extend_by_object = k });
+        try b.pushRepeated(.{ .extend_by_object = k }, n - 1);
+    }
+
+    /// The window and the cursor move together; the app knows the height.
+    fn pageScroll(kind: input.PageScroll, count: u32) InputResult {
+        return .{ .app = .{ .page_scroll = .{ .kind = kind, .count = count } } };
     }
 
     fn runCmd(id: CommandId) InputResult {
@@ -770,8 +834,52 @@ pub const Vim = struct {
 
     fn handleInsert(self: *Vim, key: Key, arena: Allocator) Allocator.Error!InputResult {
         const ctrl = key.mods.ctrl;
+        if (self.insert_dropping_expr) {
+            if (key.code == .enter or key.code == .esc or isCtrlChar(key, 'c')) self.insert_dropping_expr = false;
+            return .consumed;
+        }
+        if (self.insert_literal_code) |*lc| {
+            const digit: ?u32 = if (charOf(key)) |c| (if (key.mods.ctrl or key.mods.alt) null else std.fmt.charToDigit(@intCast(@min(c, 0x7F)), lc.base) catch null) else null;
+            if (digit) |d| {
+                lc.value = lc.value *% lc.base +% d;
+                lc.digits += 1;
+                if (lc.digits < lc.max_digits) return .consumed;
+                const v = lc.value;
+                const lc_base = lc.base;
+                self.insert_literal_code = null;
+                return ops(arena, &.{.{ .insert_char = literalCharFor(lc_base, v) }});
+            }
+            const done = lc.*;
+            self.insert_literal_code = null;
+            const rest = try self.handleInsert(key, arena);
+            if (done.digits == 0) return rest;
+            const typed: EditOp = .{ .insert_char = literalCharFor(done.base, done.value) };
+            return switch (rest) {
+                .ops => |list| blk: {
+                    const all = try arena.alloc(EditOp, list.len + 1);
+                    all[0] = typed;
+                    @memcpy(all[1..], list);
+                    break :blk .{ .ops = all };
+                },
+                else => ops(arena, &.{typed}),
+            };
+        }
         if (self.insert_literal_next) {
             self.insert_literal_next = false;
+            if (!key.mods.ctrl and !key.mods.alt) if (charOf(key)) |c| {
+                const code: ?@TypeOf(self.insert_literal_code.?) = switch (c) {
+                    '0'...'9' => .{ .base = 10, .max_digits = 3, .value = c - '0', .digits = 1 },
+                    'x', 'X' => .{ .base = 16, .max_digits = 2 },
+                    'u' => .{ .base = 16, .max_digits = 4 },
+                    'U' => .{ .base = 16, .max_digits = 8 },
+                    'o', 'O' => .{ .base = 8, .max_digits = 3 },
+                    else => null,
+                };
+                if (code) |cd| {
+                    self.insert_literal_code = cd;
+                    return .consumed;
+                }
+            };
             return switch (key.code) {
                 .char => |c| ops(arena, &.{.{ .insert_char = c }}),
                 .tab => ops(arena, &.{.{ .insert_char = '\t' }}),
@@ -791,6 +899,12 @@ pub const Vim = struct {
                     '/' => return runCmd(.@"editor.insert_last_search"),
                     ':' => return runCmd(.@"editor.insert_last_cmdline"),
                     '.' => return runCmd(.@"editor.insert_last_inserted"),
+                    // No expression register: say so, and drop the
+                    // expression rather than type it into the buffer.
+                    '=' => {
+                        self.insert_dropping_expr = true;
+                        return .{ .app = .{ .ex_command = "echo expression register not supported" } };
+                    },
                     else => {},
                 }
                 const valid = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '*' or c == '_' or c == '-' or c == '"';
@@ -810,6 +924,8 @@ pub const Vim = struct {
                     self.insert_oneshot_normal = true;
                     return .consumed;
                 },
+                // `i_CTRL-A`: the text the last Insert typed, again.
+                'a' => return runCmd(.@"editor.insert_last_inserted"),
                 'n' => return runCmd(.@"editor.keyword_complete"),
                 'p' => return runCmd(.@"editor.keyword_complete_back"),
                 'f' => return runCmd(.@"picker.files"),
@@ -841,6 +957,11 @@ pub const Vim = struct {
                     return .consumed;
                 },
                 'j' => return ops(arena, &.{.insert_newline}),
+                // `i_CTRL-L` types a form feed in Neovim (no 'insertmode');
+                // `i_CTRL-K`'s digraphs are not supported, and the key is
+                // taken so it never reaches the window chord.
+                'l' => return ops(arena, &.{.{ .insert_char = 0x0C }}),
+                'k' => return .consumed,
                 else => return .ignored,
             }
         }
@@ -851,7 +972,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .insert_char = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
+            .tab => ops(arena, &.{if (self.use_tabs) .{ .insert_str = "\t" } else .{ .insert_soft_tab = @intCast(@min(self.tab_width, 64)) }}),
             .backspace => ops(arena, &.{.backspace}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),
@@ -870,6 +991,11 @@ pub const Vim = struct {
             self.enterNormal();
             return .consumed;
         }
+        // As in Insert: `Ctrl-H` steps back (restoring what was
+        // overwritten), `Ctrl-J` breaks the line.
+        if (isCtrlChar(key, 'h')) return ops(arena, &.{.replace_undo_one});
+        if (isCtrlChar(key, 'j')) return ops(arena, &.{.insert_newline});
+        if (isCtrlChar(key, 'k') or isCtrlChar(key, 'l')) return .consumed;
         return switch (key.code) {
             .esc => blk: {
                 self.enterNormal();
@@ -877,7 +1003,7 @@ pub const Vim = struct {
             },
             .char => |c| if (key.mods.ctrl or key.mods.alt or key.mods.super) .ignored else ops(arena, &.{.{ .overwrite_char_and_advance = c }}),
             .enter => ops(arena, &.{.insert_newline}),
-            .tab => ops(arena, &.{.{ .insert_str = try self.tabText(arena) }}),
+            .tab => ops(arena, &.{if (self.use_tabs) .{ .insert_str = "\t" } else .{ .insert_soft_tab = @intCast(@min(self.tab_width, 64)) }}),
             .backspace => ops(arena, &.{.replace_undo_one}),
             .delete => ops(arena, &.{.delete_forward}),
             .left => ops(arena, &.{.move_left}),
@@ -1251,6 +1377,8 @@ pub const Vim = struct {
                 var b = Builder.init(arena);
                 // `2di{` / `d2it`: the count-th enclosing pair (`:help i{`).
                 if (counted and n > 1) try b.pushRepeated(select_op, n) else try b.push(select_op);
+                // `d3iw` / `y2aw` / `d2ap`: the object, then n-1 more.
+                if (n > 1) try pushObjectCount(&b, select_op, n);
                 // No object under the cursor (`ci(` outside parens): the
                 // operator is abandoned, not run on nothing.
                 try b.push(.abort_unless_selection);
@@ -1507,6 +1635,7 @@ pub const Vim = struct {
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
 
         const n = self.count1();
+        const typed_count: u32 = self.count orelse 0;
         switch (key.code) {
             .esc => {
                 self.resetPending();
@@ -1543,10 +1672,10 @@ pub const Vim = struct {
                             break :blk .consumed;
                         },
                         '^', '6' => runCmd(.@"buffer.last"),
-                        'd' => ops(arena, &.{.half_page_down}),
-                        'u' => ops(arena, &.{.half_page_up}),
-                        'f' => ops(arena, &.{.page_down}),
-                        'b' => ops(arena, &.{.page_up}),
+                        'd' => pageScroll(.half_down, typed_count),
+                        'u' => pageScroll(.half_up, typed_count),
+                        'f' => pageScroll(.page_down, typed_count),
+                        'b' => pageScroll(.page_up, typed_count),
                         'v' => blk: {
                             self.vmode = .visual_block;
                             break :blk ops(arena, &.{.block_select_start});
@@ -1973,10 +2102,23 @@ pub const Vim = struct {
     fn handleOperatorPending(self: *Vim, op: PendingOp, key: Key, ctx: EditCtx, arena: Allocator) Allocator.Error!InputResult {
         const ch = charOf(key);
         if (ch) |c| {
-            if (c >= '0' and c <= '9' and !(c == '0' and self.count == null)) {
+            // The count after the operator is its own number: `2d0` is
+            // `d0` twice over, not `d20`, and `2d2d` is four lines.
+            const post: ?u32 = if (self.op_count_split) self.count else null;
+            if (c >= '0' and c <= '9' and !(c == '0' and post == null)) {
+                if (!self.op_count_split) {
+                    self.op_pre_count = self.count;
+                    self.count = null;
+                    self.op_count_split = true;
+                }
                 self.pushDigit(c - '0');
                 return .consumed;
             }
+        }
+        if (self.op_count_split) {
+            if (self.op_pre_count) |pre| self.count = pre *| (self.count orelse 1);
+            self.op_pre_count = null;
+            self.op_count_split = false;
         }
         const doubled = if (ch) |c| switch (op) {
             .delete => c == 'd',
@@ -2309,6 +2451,11 @@ pub const Vim = struct {
                     return ops(arena, &.{ w, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = true } } });
                 }
                 switch (c) {
+                    // `v_gJ`: the selected lines join with nothing between.
+                    'J' => {
+                        self.enterNormal();
+                        return ops(arena, &.{ .remember_selection, .{ .join_selection_lines = .{ .keep_space = false } }, .select_clear });
+                    },
                     'A' => {
                         // The alignment char arrives next; widen now so
                         // the last line is inside the range.
@@ -2368,6 +2515,13 @@ pub const Vim = struct {
                 if (counted and n > 1 and op != .select_inner_bracket) return repeated(arena, op, n);
                 // `vip` / `vap` make the selection linewise (`:help v_ip`).
                 if (op == .select_inner_paragraph or op == .select_around_paragraph) self.vmode = .visual_line;
+                // `v3iw` / `v2ap`: the object, then n-1 more.
+                if (n > 1 and countedObjectOf(op) != null) {
+                    var cb = Builder.init(arena);
+                    try cb.push(op);
+                    try pushObjectCount(&cb, op, n);
+                    return cb.finish();
+                }
                 // `vi{` over a body on its own lines takes the last line's
                 // break too, so `vi{d` leaves no empty line (`:help v_i{`).
                 if (op == .select_inner_bracket) {
@@ -2422,17 +2576,17 @@ pub const Vim = struct {
                 return ops(arena, &.{ widen, .{ .change_numbers_in_selection = .{ .delta = d, .progressive = false } } });
             }
             if (ch) |c| {
-                const scroll: ?EditOp = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
+                const scroll: ?input.PageScroll = switch (std.ascii.toLower(@intCast(@min(c, 0x7F)))) {
                     'b' => .page_up,
                     'f' => .page_down,
-                    'u', 'y' => .half_page_up,
-                    'd', 'e' => .half_page_down,
+                    'u', 'y' => .half_up,
+                    'd', 'e' => .half_down,
                     else => null,
                 };
                 if (scroll) |s| {
-                    const n = self.count1();
+                    const typed: u32 = self.count orelse 0;
                     self.count = null;
-                    return repeated(arena, s, n);
+                    return pageScroll(s, typed);
                 }
             }
         }
@@ -2455,9 +2609,11 @@ pub const Vim = struct {
         if (try self.findCharKey(key, ctx, arena)) |r| return r;
         // `v2it`: the count rides on to the text object.
         if (!(ch == 'i' or ch == 'a')) self.count = null;
-        if (key.code == .esc) {
+        // `Esc` / `Ctrl-C` leave Visual; charwise remembers its last
+        // character too, so `gv` reselects all of it (`:help gv`).
+        if (key.code == .esc or isCtrlChar(key, 'c')) {
             self.enterNormal();
-            return ops(arena, &.{.select_clear});
+            return ops(arena, &.{if (linewise) .select_clear else .select_clear_inclusive});
         }
         const c = ch orelse return .consumed;
         switch (c) {
@@ -2467,7 +2623,7 @@ pub const Vim = struct {
                     return .consumed;
                 }
                 self.enterNormal();
-                return ops(arena, &.{.select_clear});
+                return ops(arena, &.{.select_clear_inclusive});
             },
             'V' => {
                 if (linewise) {
@@ -2545,7 +2701,7 @@ pub const Vim = struct {
             },
             'J' => {
                 self.enterNormal();
-                return ops(arena, &.{ .move_cursor_to_selection_start, .select_clear, .{ .join_lines = .{ .keep_space = true } } });
+                return ops(arena, &.{ .remember_selection, .{ .join_selection_lines = .{ .keep_space = true } }, .select_clear });
             },
             'p', 'P' => {
                 self.enterNormal();

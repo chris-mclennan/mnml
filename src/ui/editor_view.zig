@@ -279,10 +279,24 @@ pub const ViewState = struct {
     scroll_line: u32 = 0,
     scroll_col: u32 = 0,
     pin: ?usize = null,
+    /// While pinned, rows past the last line may show (vim's `zt` / `zz`
+    /// on the last line, `Ctrl-F` onto it); the usual tail clamp waits
+    /// until the cursor moves.
+    pin_tail: bool = false,
+    /// vim's window-local 'scroll': the lines `Ctrl-D` / `Ctrl-U` move,
+    /// set by a count (`5 Ctrl-D`); 0 = half the window.
+    scroll_amount: u32 = 0,
 
     /// Keep the view where the app put it until the cursor moves.
     pub fn pinAt(v: *ViewState, cursor: usize) void {
         v.pin = cursor;
+        v.pin_tail = false;
+    }
+
+    /// `pinAt`, and rows past the end may stay blank meanwhile.
+    pub fn pinAllowingTail(v: *ViewState, cursor: usize) void {
+        v.pin = cursor;
+        v.pin_tail = true;
     }
 };
 
@@ -893,8 +907,12 @@ fn keepCursorVisible(ui: Ui, doc: Doc, lines: Lines, view: *ViewState, text_w: u
     if (view.scroll_line >= total) view.scroll_line = total - 1;
     view.scroll_line = visibleOwner(doc.folds, view.scroll_line);
     if (view.pin) |p| {
-        if (p == doc.cursor) return tailClamp(ui, doc, lines, view, text_w, text_h);
+        if (p == doc.cursor) {
+            if (!view.pin_tail) try tailClamp(ui, doc, lines, view, text_w, text_h);
+            return;
+        }
         view.pin = null;
+        view.pin_tail = false;
     }
 
     const cur_line = visibleOwner(doc.folds, lines.lineOf(doc.cursor));

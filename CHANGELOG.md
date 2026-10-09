@@ -196,6 +196,49 @@ the release ships one file), and one line per change a user can see.
 - Pressing Enter in the "Quit mnml?" box with unsaved work takes the
   focused Cancel, as before, and now says so in a toast that names the
   keys that save or quit.
+### Vim: closer to Neovim
+
+- A count before an operator and another after it multiply, as in
+  Neovim: `2d3w` deletes six words and `2d2d` four lines. They used to
+  run together, so `2d2d` deleted twenty-two lines.
+- In Insert and Replace, `Ctrl-H` is backspace and `Ctrl-J` a line
+  break, as in Neovim. The window keys `Ctrl-H/J/K/L` now move between
+  windows from Normal only; with the file tree showing, a `Ctrl-H` typed
+  in Insert used to send the keyboard to the tree. `Ctrl-L` in Insert
+  types a form feed as Neovim does; `Ctrl-K` digraphs are not supported
+  and the key does nothing.
+- Visual `J` joins every selected line, not just two, and Visual `gJ`
+  joins them with nothing between; `u` takes the join back in one step.
+- `Ctrl-D`, `Ctrl-U`, `Ctrl-F` and `Ctrl-B` scroll the window as well
+  as the cursor, the way Neovim does: `Ctrl-D` moves both half a window,
+  `Ctrl-F` a window less two lines. Before, only the cursor moved and the
+  view followed once it ran off the edge. A count before `Ctrl-D` /
+  `Ctrl-U` sets how far they move from then on, as vim's `scroll` does.
+- `zz`, `zt` and `zb` on the last lines put them where asked, leaving
+  blank rows below the end the way Neovim does, until the cursor moves.
+- `gv` after leaving Visual with `Esc` (or `v`) reselects all of it; it
+  used to come back one character short. `Ctrl-C` leaves Visual as `Esc`
+  does — it used to act as `c` and start changing the selection.
+- A count on a word, sentence or paragraph object takes that many:
+  `d3iw`, `c2aw`, `y2aw`, `v3iw`, `d2is`, `d2ap`. They used to act on
+  one. `2i"` takes the string with its quotes. Asking for more objects
+  than there are does nothing, as in Neovim.
+- In Insert, `Tab` with spaces fills to the next tab stop rather than
+  always typing four spaces.
+- In Insert, `Ctrl-V` and a code types that character (`065` is `A`;
+  `x41`, `u00e9`, `U…` and `o101` by base); `Ctrl-A` types the last
+  inserted text again. `Ctrl-R =` says the expression register is not
+  supported and drops the expression typed after it, rather than typing
+  it into the file.
+- `r` then `Enter` splits the line and drops the blanks after the
+  replaced character, as Neovim does.
+- The which-key popup keeps a blank cell after a clipped label, so the
+  ellipsis no longer runs into the next column's icon at 80×24.
+- A statusline chip at the right edge shows whole or not at all; at 80
+  columns the language chip no longer painted as a cut `p`.
+- The keymap parity page now says that `s` is flash-jump in mnml, not
+  vim's substitute (`cl` substitutes), and that a count before it is
+  ignored.
 
 ## v0.3.5 (2026-10-06)
 

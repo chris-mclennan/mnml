@@ -19,7 +19,7 @@ binds the chord to something else; **missing** — mnml binds nothing there
 
 | oracle | same | different | missing |
 |---|---|---|---|
-| NvChad / Neovim (vim profile) | 36 | 9 | 16 |
+| NvChad / Neovim (vim profile) | 36 | 10 | 16 |
 | VS Code 1.138 (standard profile) | 117 | 27 | 39 |
 
 mnml's own chords (bound in mnml, defined by neither oracle): **253** in the vim
@@ -186,6 +186,7 @@ Each is one line and a recommendation; none was changed on this branch.
 | `Y` | y$ | same | the handler |  |
 | `&` | :&& | same | editor.repeat_last_substitute | keeps the last `:s` flags since vimfix3 (it dropped them before, so the row was wrong) |
 | `g&` | :%s//~/& | same | editor.repeat_last_substitute_all | added on vimfix3 |
+| `s` / `{count}s` | substitute characters (vim built-in, `:help s`; NvChad ships no flash) | different | `s` + two chars: flash-jump labels (`src/app/flash.zig`) | a deliberate choice (docs/PARITY.md "Flash-motion `s`"): `cl` / `{count}cl` is the substitute; a count before `s` is ignored, the labels are the same with or without one |
 | `:term` / `:term {cmd}` | a terminal buffer in the current window; `:b#` back to the file | same | a new tab in the focused leaf (`termEx`) | since termvim; the standard profile's `:term` still splits below, and a tool's `term` line (launchers, integrations, tasks) opens below in both profiles (`termTool`) |
 
 *NvChad insert mode*

@@ -188,6 +188,13 @@ pub const Seg = struct {
         return .{ .fg = s.fg, .bg = s.bg, .bold = s.bold };
     }
 
+    /// The blanks the chip ends in — padding, not content.
+    fn trailingBlanks(s: Seg) u16 {
+        const last = if (s.tail.len > 0) s.tail else if (s.accent) |a| a.text else s.text;
+        const kept = std.mem.trimEnd(u8, last, " ");
+        return @intCast(last.len - kept.len);
+    }
+
     fn cols(s: Seg, ui: Ui) u16 {
         var w = ui.width(s.text);
         if (s.accent) |a| w += ui.width(a.text);
@@ -391,9 +398,12 @@ pub fn draw(ui: Ui, area: Rect, info: Info) void {
         // leave the chip nothing past its leading blanks, the row would
         // end on a dangling arrow (the round-7 hunt's 80x24 row), so the
         // arrow goes with its chip.
-        const lead: u16 = @intCast(std.mem.indexOfNone(u8, s.text, " ") orelse s.text.len);
+        // A chip the edge would cut through goes whole, its arrow
+        // with it: half a chip reads as a different word (hunt6, 80x24:
+        // the `py` language chip painted as `p`). Only its trailing
+        // padding may fall off the edge.
         const arrow_w: u16 = if (arrows and !Color.eql(prev, s.bg)) 1 else 0;
-        if (rx + arrow_w + @min(lead + 1, s.cols(ui)) > right_edge) break;
+        if (rx + arrow_w + s.cols(ui) -| s.trailingBlanks() > right_edge) break;
         if (arrows and !Color.eql(prev, s.bg)) {
             rx += ui.putStr(rx, y, right_edge -| rx, pl_left, .{ .fg = s.bg, .bg = prev });
         }
@@ -479,6 +489,26 @@ test "row 38 at 120 columns is the Rust dump, less the cut chips: arrows hand th
     const ui = g.ui();
     draw(ui, g.full(), .{ .left = &spec_left, .right = try withCluster(ui.arena) });
     try g.expectRow(0, row_left ++ repeat(" ", 39) ++ pl_left_nerd ++ " " ++ coverage_glyph ++ " F 57% ▲1.0 " ++ row_cluster ++ row_tail);
+}
+
+test "a right chip the edge would cut goes whole: the language chip shows its full name or nothing (hunt6, 80x24)" {
+    const right = [_]Seg{
+        Seg.init(" 17:50 ", P.comment, P.bg2),
+        Seg.init(folder_glyph ++ " ws ", P.blue, P.bg3).strong(),
+        Seg.init(" py ", P.bg_darker, P.blue).strong(),
+    };
+    const left = [_]Seg{Seg.init(" NORMAL  file.py ", P.bg_darker, P.green).strong()};
+    var w: u16 = 16;
+    while (w < 48) : (w += 1) {
+        var f = try Fixture.init(w, 1);
+        defer f.deinit();
+        draw(f.ui(), f.full(), .{ .left = &left, .right = &right });
+        var buf: [512]u8 = undefined;
+        const row = f.row(0, &buf);
+        const trimmed = std.mem.trimEnd(u8, row, " ");
+        // The row never ends in a bare `p` (the half-painted chip).
+        try testing.expect(!std.mem.endsWith(u8, trimmed, " p"));
+    }
 }
 
 test "a right lane cut at the edge never ends on an arrow: the arrow goes with the chip it leads into" {

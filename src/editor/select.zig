@@ -22,6 +22,80 @@ pub fn selectClear(ed: *Editor) void {
     for (ed.extra_anchors.items) |*a| a.* = null;
 }
 
+/// Leave charwise Visual: what `gv` reselects is the inclusive range
+/// widened to half-open (`widenInclusive`) — one character is a
+/// selection too — the same shape `v…y` leaves behind.
+pub fn selectClearInclusive(ed: *Editor) void {
+    if (ed.anchor) |a| {
+        const w = widenInclusive(ed, a, ed.cursor);
+        if (w[0] != w[1]) ed.last_selection = w;
+    }
+    ed.anchor = null;
+    for (ed.extra_anchors.items) |*x| x.* = null;
+}
+
+/// A count on a text object (`d3iw`, `y2aw`, `d2is`, `v2ap`): the
+/// selection grows past its far end by one more object. For the inner
+/// objects the white space between two is an object of its own, as in
+/// vim (`d3iw` on `a b c d` takes `a b`); word counts stop at the line's
+/// end. `quote_marks` widens `i"` by the quote on each side (`2i"`).
+pub fn extendByObject(ed: *Editor, kind: edit_op.CountedObject) bool {
+    const a = ed.anchor orelse return false;
+    const lo = @min(a, ed.cursor);
+    const hi = @max(a, ed.cursor);
+    const t = ed.bytes();
+    if (kind == .quote_marks) {
+        ed.anchor = if (lo > 0) ed.prevBoundary(lo) else lo;
+        ed.cursor = if (hi < t.len) ed.nextBoundary(hi) else hi;
+        return true;
+    }
+    if (hi >= t.len) return false;
+    const blank = t[hi] == ' ' or t[hi] == '\t';
+    var end = hi;
+    switch (kind) {
+        .inner_word, .inner_big_word, .around_word, .around_big_word => {
+            if (t[hi] == '\n') return false;
+            const big = kind == .inner_big_word or kind == .around_big_word;
+            const inner = kind == .inner_word or kind == .inner_big_word;
+            var from = hi;
+            if (!inner) {
+                while (from < t.len and (t[from] == ' ' or t[from] == '\t')) from += 1;
+            }
+            if (from >= t.len or t[from] == '\n') return false;
+            end = (if (big) bigWordBoundsAt(ed, from) else wordBoundsAt(ed, from))[1];
+            if (!inner) {
+                while (end < t.len and (t[end] == ' ' or t[end] == '\t')) end += 1;
+            }
+        },
+        .inner_sentence, .around_sentence => {
+            if (kind == .inner_sentence and blank) {
+                while (end < t.len and (t[end] == ' ' or t[end] == '\t')) end += 1;
+            } else {
+                const saved = ed.cursor;
+                ed.cursor = hi;
+                end = sentenceBounds(ed, kind == .around_sentence)[1];
+                ed.cursor = saved;
+            }
+        },
+        .inner_paragraph, .around_paragraph => {
+            const saved = ed.cursor;
+            // The far end is the last line's `\n`: the next one starts after it.
+            ed.cursor = if (t[hi] == '\n') hi + 1 else hi;
+            if (ed.cursor >= t.len) {
+                ed.cursor = saved;
+                return false;
+            }
+            end = paragraphBounds(ed, kind == .around_paragraph)[1];
+            ed.cursor = saved;
+        },
+        .quote_marks => unreachable,
+    }
+    if (end <= hi) return false;
+    ed.anchor = lo;
+    ed.cursor = end;
+    return true;
+}
+
 pub fn selectAll(ed: *Editor) void {
     ed.anchor = 0;
     ed.cursor = ed.len();

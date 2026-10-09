@@ -1,0 +1,44 @@
+# In Insert (and Replace) `Ctrl-H` is backspace and `Ctrl-J` a line break,
+# vim's own (`:help i_CTRL-H`, `i_CTRL-J`; nvchad-probe: `A baz<C-h>X<Esc>`
+# on `foo bar` -> `foo bar baX`, `A<C-j>X<Esc>` on `foo` -> `foo` / `X`).
+# The window chords `Ctrl-H/J/K/L` are Normal's: with the tree visible a
+# typed `Ctrl-H` used to move the keyboard to the tree and leave the
+# editor in Insert. Normal-mode `Ctrl-H` still walks into the tree.
+write f.txt "foo bar\n"
+write g.txt "foo\n"
+open f.txt
+command editor.use_vim
+command view.focus_tree
+command tree.refresh
+command view.focus_pane
+key A
+type " baz"
+key ctrl+h
+expect status contains "\"focus\":\"pane\""
+expect status contains "\"mode\":\"INSERT\""
+type X
+key ctrl+k
+key ctrl+l
+key backspace
+key esc
+ex w
+expect file f.txt contains "foo bar baX\n"
+open g.txt
+key A
+key ctrl+j
+type X
+key esc
+ex w
+expect file g.txt contains "foo\nX\n"
+expect status contains "\"focus\":\"pane\""
+key l
+key R
+type Y
+key ctrl+h
+key ctrl+j
+expect status contains "\"focus\":\"pane\""
+key esc
+ex w
+expect file g.txt contains "foo\n\nX\n"
+key ctrl+h
+expect status contains "\"focus\":\"tree\""

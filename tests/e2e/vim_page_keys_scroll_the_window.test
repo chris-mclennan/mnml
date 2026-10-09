@@ -1,0 +1,64 @@
+# vim's Ctrl-D / Ctrl-U / Ctrl-F / Ctrl-B scroll the WINDOW and move the
+# cursor the same number of lines (`:help CTRL-D`); before, only the
+# cursor moved and the view followed once it ran off the bottom. The
+# editor shows 36 rows here, so half a page is 18 lines and a page 34
+# (the height less two). nvchad-probe, 38 rows: `gg<C-d>` top 20 cursor
+# 20; `<C-d><C-d>` 39/39; `<C-f>` 37/37; `<C-f><C-b>` top 1 cursor 38;
+# `5<C-d><C-d>` 11/11; `Gzz` top 82 of 100; `Gzt` top 100; `Gzb` top 63.
+# Rows are read off the screen: `L00018` is line 18's text.
+write big.txt "L00001 text\nL00002 text\nL00003 text\nL00004 text\nL00005 text\nL00006 text\nL00007 text\nL00008 text\nL00009 text\nL00010 text\nL00011 text\nL00012 text\nL00013 text\nL00014 text\nL00015 text\nL00016 text\nL00017 text\nL00018 text\nL00019 text\nL00020 text\nL00021 text\nL00022 text\nL00023 text\nL00024 text\nL00025 text\nL00026 text\nL00027 text\nL00028 text\nL00029 text\nL00030 text\nL00031 text\nL00032 text\nL00033 text\nL00034 text\nL00035 text\nL00036 text\nL00037 text\nL00038 text\nL00039 text\nL00040 text\nL00041 text\nL00042 text\nL00043 text\nL00044 text\nL00045 text\nL00046 text\nL00047 text\nL00048 text\nL00049 text\nL00050 text\nL00051 text\nL00052 text\nL00053 text\nL00054 text\nL00055 text\nL00056 text\nL00057 text\nL00058 text\nL00059 text\nL00060 text\nL00061 text\nL00062 text\nL00063 text\nL00064 text\nL00065 text\nL00066 text\nL00067 text\nL00068 text\nL00069 text\nL00070 text\nL00071 text\nL00072 text\nL00073 text\nL00074 text\nL00075 text\nL00076 text\nL00077 text\nL00078 text\nL00079 text\nL00080 text\nL00081 text\nL00082 text\nL00083 text\nL00084 text\nL00085 text\nL00086 text\nL00087 text\nL00088 text\nL00089 text\nL00090 text\nL00091 text\nL00092 text\nL00093 text\nL00094 text\nL00095 text\nL00096 text\nL00097 text\nL00098 text\nL00099 text\nL00100 text\nL00101 text\nL00102 text\nL00103 text\nL00104 text\nL00105 text\nL00106 text\nL00107 text\nL00108 text\nL00109 text\nL00110 text\nL00111 text\nL00112 text\nL00113 text\nL00114 text\nL00115 text\nL00116 text\nL00117 text\nL00118 text\nL00119 text\nL00120 text\nL00121 text\nL00122 text\nL00123 text\nL00124 text\nL00125 text\nL00126 text\nL00127 text\nL00128 text\nL00129 text\nL00130 text\nL00131 text\nL00132 text\nL00133 text\nL00134 text\nL00135 text\nL00136 text\nL00137 text\nL00138 text\nL00139 text\nL00140 text\nL00141 text\nL00142 text\nL00143 text\nL00144 text\nL00145 text\nL00146 text\nL00147 text\nL00148 text\nL00149 text\nL00150 text\nL00151 text\nL00152 text\nL00153 text\nL00154 text\nL00155 text\nL00156 text\nL00157 text\nL00158 text\nL00159 text\nL00160 text\nL00161 text\nL00162 text\nL00163 text\nL00164 text\nL00165 text\nL00166 text\nL00167 text\nL00168 text\nL00169 text\nL00170 text\nL00171 text\nL00172 text\nL00173 text\nL00174 text\nL00175 text\nL00176 text\nL00177 text\nL00178 text\nL00179 text\nL00180 text\nL00181 text\nL00182 text\nL00183 text\nL00184 text\nL00185 text\nL00186 text\nL00187 text\nL00188 text\nL00189 text\nL00190 text\nL00191 text\nL00192 text\nL00193 text\nL00194 text\nL00195 text\nL00196 text\nL00197 text\nL00198 text\nL00199 text\nL00200 text\nL00201 text\nL00202 text\nL00203 text\nL00204 text\nL00205 text\nL00206 text\nL00207 text\nL00208 text\nL00209 text\nL00210 text\nL00211 text\nL00212 text\nL00213 text\nL00214 text\nL00215 text\nL00216 text\nL00217 text\nL00218 text\nL00219 text\nL00220 text\nL00221 text\nL00222 text\nL00223 text\nL00224 text\nL00225 text\nL00226 text\nL00227 text\nL00228 text\nL00229 text\nL00230 text\nL00231 text\nL00232 text\nL00233 text\nL00234 text\nL00235 text\nL00236 text\nL00237 text\nL00238 text\nL00239 text\nL00240 text\nL00241 text\nL00242 text\nL00243 text\nL00244 text\nL00245 text\nL00246 text\nL00247 text\nL00248 text\nL00249 text\nL00250 text\nL00251 text\nL00252 text\nL00253 text\nL00254 text\nL00255 text\nL00256 text\nL00257 text\nL00258 text\nL00259 text\nL00260 text\nL00261 text\nL00262 text\nL00263 text\nL00264 text\nL00265 text\nL00266 text\nL00267 text\nL00268 text\nL00269 text\nL00270 text\nL00271 text\nL00272 text\nL00273 text\nL00274 text\nL00275 text\nL00276 text\nL00277 text\nL00278 text\nL00279 text\nL00280 text\nL00281 text\nL00282 text\nL00283 text\nL00284 text\nL00285 text\nL00286 text\nL00287 text\nL00288 text\nL00289 text\nL00290 text\nL00291 text\nL00292 text\nL00293 text\nL00294 text\nL00295 text\nL00296 text\nL00297 text\nL00298 text\nL00299 text\nL00300 text\n"
+open big.txt
+command editor.use_vim
+key ctrl+d
+expect screen contains "Ln 19/300"
+expect screen contains "L00019"
+expect screen lacks "L00018"
+expect screen contains "L00054"
+key ctrl+d
+expect screen contains "Ln 37/300"
+expect screen contains "L00037"
+expect screen lacks "L00036"
+key ctrl+u
+expect screen contains "Ln 19/300"
+expect screen contains "L00019"
+expect screen lacks "L00018"
+key g
+key g
+key ctrl+f
+expect screen contains "Ln 35/300"
+expect screen contains "L00035"
+expect screen lacks "L00034"
+key ctrl+b
+expect screen contains "Ln 35/300"
+expect screen contains "L00001"
+key g
+key g
+key 5
+key ctrl+d
+key ctrl+d
+expect screen contains "Ln 11/300"
+expect screen contains "L00011"
+expect screen lacks "L00010"
+key G
+key z
+key z
+expect screen contains "L00283"
+expect screen lacks "L00282"
+expect screen contains "L00300"
+key z
+key t
+expect screen contains "L00300"
+expect screen lacks "L00299"
+key z
+key b
+expect screen contains "L00265"
+expect screen lacks "L00264"
+key g
+key g
+# Visual pages too, and the `5` above set 'scroll' for later ones.
+key v
+key ctrl+d
+expect screen contains "Ln 6/300"
+expect screen contains "L00006"
+expect screen lacks "L00005"
+key esc

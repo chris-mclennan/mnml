@@ -527,9 +527,13 @@ pub const Buffer = struct {
             // The run the two share up to the hull is equal by construction.
             var prefix: usize = @min(old.p, n);
             while (prefix < n and old.at(prefix) == now[prefix]) prefix += 1;
-            // A change that starts at a line's `\n` (a deleted last
-            // line) begins on the line after it, where the cursor was.
-            const changed = if (prefix < old_len and old.at(prefix) == '\n') prefix + 1 else prefix;
+            // A change that starts at a line's `\n` and runs to the end
+            // (a deleted last line) begins on the line after it, where
+            // the cursor was. A join also starts at a `\n`, but the text
+            // after it stays: that change begins on the first line.
+            var suffix: usize = 0;
+            while (suffix < n - prefix and old.at(old_len - 1 - suffix) == now[now.len - 1 - suffix]) suffix += 1;
+            const changed = if (prefix < old_len and old.at(prefix) == '\n' and suffix == 0) prefix + 1 else prefix;
             const changed_line_start = if (old.lastIndexOfScalar(changed, '\n')) |i| i + 1 else 0;
             const cursor_line_start = if (old.lastIndexOfScalar(cursor_before, '\n')) |i| i + 1 else 0;
             const typing = mode_before == .insert or mode_before == .replace or mode_before == .none;
@@ -550,7 +554,7 @@ pub const Buffer = struct {
     /// `eleven`). The goal column is untouched, so the next `j` / `k`
     /// still reaches the remembered column. Insert's one-shot `Ctrl-O`
     /// is exempt: there the cursor may sit past the end (`:help i_CTRL-O`).
-    fn clampNormalCursor(self: *Buffer) void {
+    pub fn clampNormalCursor(self: *Buffer) void {
         const v = switch (self.input) {
             .vim => |*v| v,
             .standard => return,
@@ -1489,9 +1493,9 @@ test "vim motions" {
     // A shorter line clamps onto its last char; the goal column survives.
     try vim("$k", "ab\n|abcdef", "a|b\nabcdef");
     try vim("$kj", "ab\n|abcdef", "ab\nabcde|f");
-    // Ctrl-F onto the last line: on a char, at the goal column (`G$<C-f>` → 13:22).
-    try vim("G$<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\ngamm|a");
-    try vim("<c-f>", "|alpha\nbeta\ngamma", "alpha\nbeta\n|gamma");
+    // Ctrl-F / Ctrl-D move the window, which lives in the app: they are
+    // `page_scroll` app commands, covered by vim_paragraph_page.test
+    // (`G$<C-f>` → 13:22) and vim_page_keys_scroll_the_window.test.
     // `}` / `{`: the next EMPTY line after some text — the line just
     // below counts (`5G}` → 6), a blank-only line does not (`2G}` → 6
     // past a `"  "` line 3); at the end, the last line's last char.
@@ -1523,8 +1527,6 @@ test "vim motions" {
     try vim("Ta", "abcab|c", "abca|bc");
     try vim("3|", "|abcdef", "ab|cdef");
     try vim("50%", "|a\nb\nc\nd", "a\n|b\nc\nd");
-    try vim("<c-d>", "|a\nb\nc\nd\ne\nf\ng\nh", "a\nb\nc\nd\ne\n|f\ng\nh");
-    try vim("<c-f><c-b>", "|a\nb\nc", "|a\nb\nc");
     try vim("<c-right><c-left>", "|hello world", "|hello world");
     try vim("<end><home>", "|abc", "|abc");
 }
@@ -2571,4 +2573,112 @@ test "vim: an operator on a text object that finds nothing is abandoned — Norm
     try vim("$di(", "|foo(bar) baz qux", "foo(bar) baz qu|x");
     // An empty object is still an object: Insert opens between the pair.
     try vim("ci(X<esc>", "foo(|) z", "foo(|X) z");
+}
+
+test "vim: a count before and after an operator multiply — 2d2w is d4w, 2d2d four lines" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed (`feedkeys(…, "xt")`).
+    try vim("2d2w", "|a b c d e f\n", "|e f\n");
+    try vim("2d2d", "|a\nb\nc\nd\ne\nf\ng\n", "|e\nf\ng\n");
+    try vim("2y2wP", "|a b c d e f\n", "a b c d| a b c d e f\n");
+    try vim("2c2wX<esc>", "|a b c d e f\n", "|X e f\n");
+    try vim("3d2w", "|a b c d e f g h\n", "|g h\n");
+    try vim("2d2j", "|a\nb\nc\nd\ne\nf\n", "|f\n");
+    try vim("2d2f.", "|a.b.c.d.e\n", "|e\n");
+    // `0` after the operator is the motion, not a digit: `2d0` is `d0`.
+    try vim("$2d0", "|abcdef\n", "|f\n");
+    // Six lines either way; the shift width is mnml's own (4).
+    try vim("3>2>", "|a\nb\nc\nd\ne\nf\ng\nh\n", "    |a\n    b\n    c\n    d\n    e\n    f\ng\nh\n");
+    // One count, either side, is unchanged.
+    try vim("2dd", "|a\nb\nc\n", "|c\n");
+    try vim("d2w", "|a b c d\n", "|c d\n");
+    try vim("d10w", "|a b c d e f g h i j k l\n", "|k l\n");
+}
+
+test "vim: Visual J / gJ join every selected line, one undo step" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("VjjJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    try vim("vjjJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    try vim("VjjjJ", "|a\nb\nc\nd\n", "a b c| d\n");
+    try vim("VjjgJ", "|a\nb\nc\nd\n", "ab|c\nd\n");
+    try vim("vjjgJ", "|a\nb\nc\nd\n", "ab|c\nd\n");
+    // One line selected still joins two; the selection may run upwards.
+    try vim("VJ", "|a\nb\nc\n", "a| b\nc\n");
+    try vim("GkVkkJ", "|a\nb\nc\nd\n", "a b| c\nd\n");
+    // `u` takes the whole join back and lands on the first line.
+    try vim("VjjJu", "|a\nb\nc\nd\n", "|a\nb\nc\nd\n");
+    // `gv` has the lines back (Neovim: `jVjJgvd` leaves `a` / `d`).
+    try vim("jVjJgvd", "|a\nb\nc\nd\n", "a\n|d\n");
+}
+
+test "vim: gv after leaving charwise Visual with Esc, Ctrl-C or v has the whole selection" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("wve<esc>0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("wvl<esc>0gvd", "|abc def ghi\n", "abc |f ghi\n");
+    try vim("wvee<esc>0gvy$p", "|abc def ghi\n", "abc def ghidef gh|i\n");
+    try vim("wvev0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("wve<c-c>0gvd", "|abc def ghi\n", "abc | ghi\n");
+    try vim("evb<esc>$gvd", "|abc def ghi\n", "| def ghi\n");
+    // One character is a selection too.
+    try vim("v<esc>jj0gvd", "|abc def\nghi\n", "|bc def\nghi\n");
+    // The operator path keeps the same shape.
+    try vim("wvey0gvd", "|abc def ghi\n", "abc | ghi\n");
+}
+
+test "vim: a count on iw / aw / iW / aW / is / as / ip / ap takes that many objects" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("d3iw", "|a b c d\n", "| c d\n");
+    try vim("3diw", "|a b c d\n", "| c d\n");
+    try vim("wd3iw", "|a b c d e\n", "a | d e\n");
+    try vim("d2aw", "|a b c d\n", "|c d\n");
+    try vim("y2aw$p", "|a b c d\n", "a b c da b| \n");
+    try vim("v3iwd", "|a b c d\n", "| c d\n");
+    try vim("v2awd", "|a b c d\n", "|c d\n");
+    try vim("c3iwX<esc>", "|a b c d\n", "|X c d\n");
+    try vim("d2iW", "|a.x b.y c\n", "|b.y c\n");
+    try vim("d2aW", "|a.x b.y c\n", "|c\n");
+    try vim("d2is", "|A b. C d. E f. G\n", "|C d. E f. G\n");
+    try vim("d2as", "|A b. C d. E f. G\n", "|E f. G\n");
+    try vim("d2ip", "|a\n\nb\n\nc\n", "|b\n\nc\n");
+    try vim("d2ap", "|a\n\nb\n\nc\n\nd\n", "|c\n\nd\n");
+    // `2i"` is the string with its quotes, no white space (`:help i"`).
+    try vim("fad2i\"", "|x \"a\" \"b\" y\n", "x | \"b\" y\n");
+    // More objects than the line holds: the command fails, nothing goes
+    // (Neovim leaves the cursor on `b`; mnml at the object's start).
+    try vim("d5iw", "|a b\n", "|a b\n");
+}
+
+test "vim Insert: Tab with spaces reaches the next tab stop" {
+    // Neovim with expandtab fills to the next multiple of the tab stop
+    // (nvchad-probe at its 2: `ab  x`, `abc x`); the harness's stop is 4.
+    try vim("A<tab>x<esc>", "|ab\n", "ab  |x\n");
+    try vim("A<tab>x<esc>", "|abc\n", "abc |x\n");
+    try vim("A<tab>x<esc>", "|abcd\n", "abcd    |x\n");
+    try vim("0a<tab>x<esc>", "|abcd\n", "a   |xbcd\n");
+}
+
+test "vim Insert: Ctrl-V and a code types that character" {
+    // nvchad-probe (Neovim 0.12.5 + NvChad), keys typed.
+    try vim("a<c-v>065<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>65y<esc>", "|ab\n", "aA|yb\n");
+    try vim("a<c-v>65<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>300<esc>", "|ab\n", "a|ÿb\n");
+    try vim("a<c-v>x41<esc>", "|ab\n", "a|Ab\n");
+    try vim("a<c-v>u00e9<esc>", "|ab\n", "a|éb\n");
+    // A plain key after Ctrl-V is still itself.
+    try vim("a<c-v>z<esc>", "|ab\n", "a|zb\n");
+}
+
+test "vim Insert: Ctrl-R = drops the expression instead of typing it" {
+    // No expression register: the line says so (an `:echo`), and what is
+    // typed up to Enter or Esc never reaches the buffer.
+    try vim("A <c-r>=2*21<cr>Z<esc>", "|x\n", "x |Z\n");
+    try vim("A <c-r>=2*21<esc>Z<esc>", "|x\n", "x |Z\n");
+}
+
+test "vim: r<CR> splits the line and drops the blanks after the cut" {
+    // nvchad-probe: `fcr<CR>` on `abc def` → `ab` / `def`.
+    try vim("fcr<cr>", "|abc def\n", "ab\n|def\n");
+    try vim("fb2r<cr>", "|abc  def\n", "a\n|def\n");
+    // Blanks before the cut stay on the first line.
+    try vim("fcr<cr>", "|ab  cd\n", "ab  \n|d\n");
 }
