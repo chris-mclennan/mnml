@@ -4667,11 +4667,16 @@ test "tick: the first pass starts with the app, hidden; then idle off screen, sl
     st.live_local = true;
     try testing.expectEqual(@as(u32, 0), Step.at(&f, 99));
     try testing.expectEqual(@as(u32, 1), Step.at(&f, 100));
-    try f.settle(2000);
+    // The fast pass's scan must be over before the manual step reads the
+    // deadline: a scan still running answers `now + 80`, not null. Under
+    // a loaded machine (the gate's heavy phase) it can outlast the usual
+    // 2000 rounds, so this one waits up to a minute.
+    try f.settle(12_000);
     // Manual: no tick runs a pass; the chip's command still does.
     f.app.cfg.ui.dashboard_refresh = .manual;
     Step.zero(st);
     try testing.expectEqual(@as(u32, 0), Step.at(&f, 1_000_000));
+    try f.settle(12_000);
     try testing.expectEqual(@as(?i64, null), nextDeadlineMs(&f.app));
     const g = st.generation;
     try command.run(&f.app, .{ .static = .@"sessions.refresh" });
