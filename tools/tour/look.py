@@ -12,6 +12,11 @@ harness — see docs/LOOK.md.
 The window's state lives under its root (default `.verify/look/<ws
 name>/` in this checkout); `.verify/look/current` names the root the
 other verbs act on, so an agent says `launch` once and then just verbs.
+
+Several agents at once: each pins its own root with `--root DIR` on every
+verb, or `MNML_LOOK_ROOT=DIR` in its environment (the flag wins). A pinned
+root never reads, writes or deletes `current`, so one agent's verbs cannot
+reach another's window.
 """
 
 import json
@@ -72,17 +77,27 @@ def open_window(root=None):
     return w
 
 
+def pinned_root(args):
+    """The root this agent pinned — `--root`, else `MNML_LOOK_ROOT` —
+    or None, when the verbs share `.verify/look/current`."""
+    root = args.root or os.environ.get("MNML_LOOK_ROOT") or None
+    return os.path.abspath(root) if root else None
+
+
 def run(args):
     verb = args.verb
     rest = args.rest
+    pinned = pinned_root(args)
     if verb == "launch":
         if not rest:
             return die("launch needs a workspace")
         ws = os.path.abspath(rest[0])
         if not os.path.isdir(ws):
             return die(f"no such workspace: {ws}")
-        root = os.path.abspath(args.root or os.path.join(LOOK, os.path.basename(ws.rstrip("/"))))
-        cur = open_window()
+        root = pinned or os.path.abspath(os.path.join(LOOK, os.path.basename(ws.rstrip("/"))))
+        # A pinned root answers only for itself: another agent's window
+        # behind `current` is not this one's business.
+        cur = open_window(root) if pinned else open_window()
         if cur and cur.alive():
             return die(f"a window is already up (pid {cur.pid}, root {cur.run_dir}); `look.sh quit` first — one window per agent")
         if not args.exe:
@@ -107,22 +122,24 @@ def run(args):
             w.launch()
         except DriveError as e:
             return die(str(e), 3)
-        os.makedirs(LOOK, exist_ok=True)
-        with open(CURRENT, "w", encoding="utf-8") as f:
-            f.write(root)
+        if not pinned:
+            os.makedirs(LOOK, exist_ok=True)
+            with open(CURRENT, "w", encoding="utf-8") as f:
+                f.write(root)
         print(f"up: pid {w.pid}, {args.cols}x{args.rows}, root {root}")
         print(f"channel: {w.ipc}/command (input on)")
         return 0
 
-    w = open_window(args.root)
+    w = open_window(pinned)
     if w is None:
         return die("no window — `look.sh launch WS` first")
     if verb == "quit":
         w.quit()
-        try:
-            os.unlink(CURRENT)
-        except OSError:
-            pass
+        if not pinned:
+            try:
+                os.unlink(CURRENT)
+            except OSError:
+                pass
         print("quit")
         return 0
     if not w.alive():

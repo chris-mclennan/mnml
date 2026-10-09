@@ -11,6 +11,8 @@
 #   tools/look.sh pixel X Y [FX FY]    prints #rrggbb (FX/FY: 0..1 in the cell)
 #   tools/look.sh screen | status      the live dumps
 #   tools/look.sh quit
+#   Every verb takes --root DIR (or MNML_LOOK_ROOT=DIR): agents running at
+#   once each pin their own root and never touch .verify/look/current.
 #
 # Never `mnml-drive focus`; one window per agent; quit when done.
 # `launch` rebuilds a stale mnml-drive first (MNML_DRIVE_NO_REBUILD=1
@@ -19,7 +21,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -x "$ROOT/zig-out/bin/mnml-drive" ] || { echo "look.sh: build the driver first: zig build -Ddrive" >&2; exit 64; }
 case "${1:-}" in
-  ""|-h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|-h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   # A driver older than tools/drive/ is rebuilt (MNML_DRIVE_NO_REBUILD=1:
   # refused) before a window opens; the other verbs act on that window.
   launch) MNML_STAMP_WHO=look.sh python3 "$ROOT/tools/tour/stamp.py" drive || exit $? ;;

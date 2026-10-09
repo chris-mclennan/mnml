@@ -1,0 +1,26 @@
+# width: 120
+# height: 40
+# The git view's working-tree column at 120x40 — about 31 cells wide —
+# paints every button whole. The section rows drop "Files" to keep
+# `Stage All` / `Unstage All` entire, the commit row tightens its gaps
+# so `Clear` fits, and a header too long for the column ends in the
+# ellipsis. Before, the edge cut them to `Stage A`, `Unstage A` and
+# `Clea`, with nothing to say they were cut.
+shell git init -q -b main
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write src/app.ts "export const name = 1;\n"
+shell git add -A
+shell git commit -q -m "first commit"
+write src/app.ts "export const label = 1;\n"
+write docs/longline.txt "a\n"
+write notes.txt "b\n"
+key ctrl+shift+g
+wait 500
+key g
+expect within 3000 screen contains "3 change(s)"
+expect screen contains "▾ Unstaged (3)     Stage All"
+expect screen contains "▾ Staged (0)     Unstage All"
+expect screen contains "  Commit   AI Message   Clear"
+expect screen lacks "Stage A "
+expect screen contains "WIP @ main · 3 change(s) · 2…"

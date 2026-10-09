@@ -35,6 +35,14 @@ pub const Leaf = struct {
     /// active tab the window was fitted for).
     strip_first: usize = 0,
     strip_anchor: ?PaneId = null,
+    /// What the window was last fitted against besides the active tab:
+    /// the strip's width and the active tab's place in it. A split, a
+    /// resize or a pin that reorders the tabs changes one of them, and
+    /// the window re-fits — a window fitted for a wider strip left the
+    /// active tab off a narrow one, the strip showing a pinned tab and
+    /// a pager instead.
+    strip_fit_w: u16 = 0,
+    strip_fit_pos: usize = 0,
     /// Tabs past the window's right edge as of the last paint — what a
     /// wheel-down has to scroll into.
     strip_hidden_right: usize = 0,

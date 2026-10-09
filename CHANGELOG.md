@@ -173,6 +173,29 @@ the release ships one file), and one line per change a user can see.
   draw on a bucket named by `BITBUCKET_RATELIMIT_STATE` no longer
   carries a `token_id`, and the README names the right rate-bucket file
   for an account credential.
+### Small fixes
+
+- The first-run tip about AI ghost-text suggestions goes away on its
+  own after a few seconds, and opening Find takes it down at once; it
+  used to stay over the find bar's toggles until closed by hand.
+- At narrow widths the statusline makes room for its right-hand chips
+  by shortening the left ones, counting the separators too, so the
+  workspace chip is no longer cut to its first letter.
+- The file picker's preview paints code on one background; each
+  highlighted word used to sit in a dark box of the editor's colour.
+- A tab strip that narrows (a split, a resize) keeps the active tab on
+  it. With a pinned tab first, the left half of a split used to show
+  only the pin and the page counter.
+- The git view's working-tree column paints its buttons whole at
+  120x40 and narrower: the section rows say "Unstaged (3)" so
+  "Stage All" fits, the commit row says "Clear" rather than "Clea", and
+  a header too long for the column ends in "…".
+- A program in a terminal pane that tracks the mouse (vim, htop,
+  lazygit) is told the cell you clicked. Every click used to reach it
+  one column to the right.
+- Pressing Enter in the "Quit mnml?" box with unsaved work takes the
+  focused Cancel, as before, and now says so in a toast that names the
+  keys that save or quit.
 
 ## v0.3.5 (2026-10-06)
 

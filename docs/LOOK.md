@@ -110,6 +110,26 @@ artifacts and sessions homes and the proxies stay the window's own, and
 an `--env` naming one is refused. The pairs are kept in the root's
 `look.json`.
 
+## Several agents at once
+
+`.verify/look/current` is one pointer per checkout: every verb without a
+root reads it, so two agents sharing a checkout drive whichever window
+launched last — five hunters did exactly that to each other. An agent
+that may not be alone pins its own root, on every verb, with
+`--root DIR` or `MNML_LOOK_ROOT=DIR` in its environment (the flag wins):
+
+```bash
+export MNML_LOOK_ROOT=$PWD/.verify/hunt/look
+tools/look.sh launch "$WS"
+tools/look.sh key ctrl+p
+tools/look.sh shot picker
+tools/look.sh quit
+```
+
+A pinned `launch` checks only its own root for a live window and never
+writes `current`; a pinned `quit` never deletes it. Give each agent a
+root of its own — and, as above, a workspace of its own.
+
 ## Reading what you see
 
 `look.sh shot NAME` prints a PNG path; `Read` it. Beside it is

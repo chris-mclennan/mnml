@@ -558,8 +558,23 @@ fn maybeShowHint(app: *App) Allocator.Error!void {
     if (Io.Dir.cwd().access(app.io, marker, .{})) |_| return else |_| {}
     Io.Dir.cwd().createDirPath(app.io, dir) catch {};
     Io.Dir.cwd().writeFile(app.io, .{ .sub_path = marker, .data = "" }) catch {};
-    try app.toastPersistent(suggest.hint_toast_id, suggest.setup_hint, .info);
+    showHint(app);
 }
+
+/// The tip itself. A tip, not a state: it times out like any other
+/// toast, given the time a sentence this long takes to read.
+/// Persistent, it sat over the find bar's toggles until someone found
+/// its `×`; the find bar also takes it down when it opens.
+fn showHint(app: *App) void {
+    app.toastReplace(suggest.hint_toast_id, "{s}", .{suggest.setup_hint});
+    const last = app.toasts.items.len -| 1;
+    if (app.toasts.items.len > 0) if (app.toasts.items[last].id) |id| if (std.mem.eql(u8, id, suggest.hint_toast_id)) {
+        app.toasts.items[last].expires_ms = app.now_ms + hint_ttl_ms;
+    };
+}
+
+/// How long the one-time ghost-text tip stays up.
+pub const hint_ttl_ms: i64 = 12_000;
 
 /// The ghost-text worker. Owns every string it was handed.
 ///
@@ -2242,6 +2257,24 @@ const screen_mod = @import("../ipc/screen.zig");
 fn screenText(app: *App) ![]u8 {
     try app.render();
     return screen_mod.toTestText(t.allocator, &app.screen);
+}
+
+test "the one-time ghost-text tip times out, and the find bar opening takes it down" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    showHint(&app);
+    const tip = app.toasts.items[app.toasts.items.len - 1];
+    try t.expectEqualStrings(suggest.hint_toast_id, tip.id.?);
+    try t.expectEqual(app.now_ms + hint_ttl_ms, tip.expires_ms);
+    // It goes on its own once its time is up.
+    try app.tick(app.now_ms + hint_ttl_ms + 1);
+    for (app.toasts.items) |x| if (x.id) |id| try t.expect(!std.mem.eql(u8, id, suggest.hint_toast_id));
+    // Up again, the find bar takes it down: the bar's rows are its.
+    showHint(&app);
+    try command.run(&app, .{ .static = .@"find.find" });
+    try t.expect(app.find_bar != null);
+    for (app.toasts.items) |x| if (x.id) |id| try t.expect(!std.mem.eql(u8, id, suggest.hint_toast_id));
 }
 
 test "ghost text: Tab accepts at the cursor, ctrl+right a word, ctrl+down a line, any other key dismisses" {

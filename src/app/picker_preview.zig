@@ -120,7 +120,7 @@ fn buildRow(app: *App, line: []const u8, line_off: usize, spans: []const highlig
     }
     var num_buf: [gutter_w + 8]u8 = undefined;
     const num = std.fmt.bufPrint(&num_buf, "{d: >4} ", .{number}) catch "     ";
-    try segs.append(gpa, .{ .text = try gpa.dupe(u8, num), .style = th.muted });
+    try segs.append(gpa, .{ .text = try gpa.dupe(u8, num), .style = groundless(th.muted) });
 
     // Drop spans that ended before this line; they cannot come back.
     while (span_at.* < spans.len and spans[span_at.*].end <= line_off) span_at.* += 1;
@@ -145,7 +145,12 @@ fn buildRow(app: *App, line: []const u8, line_off: usize, spans: []const highlig
                 end = @min(line.len, s_start);
             }
         }
-        // A hit splits the run so the match keeps the search style.
+        // The theme's role styles carry the EDITOR's ground; in the
+        // picker that painted every token as a dark box on the overlay's
+        // lighter one. Tokens take the column's ground (`.default`).
+        style = groundless(style);
+        // A hit splits the run so the match keeps the search style —
+        // the one segment that names its own ground.
         if (hit != null and hit_hi > hit_lo) {
             if (pos < hit_lo) {
                 end = @min(end, hit_lo);
@@ -187,6 +192,13 @@ fn expandTabs(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
     return out;
 }
 
+/// `st` without its background: the picker paints the column's own.
+fn groundless(st: Theme.Style) Theme.Style {
+    var out = st;
+    out.bg = .default;
+    return out;
+}
+
 /// One row saying why there is nothing to show — an unreadable file, a
 /// pane that is not a file. The column is never blank without a reason.
 pub fn note(app: *App, text: []const u8) Allocator.Error![][]Segment {
@@ -195,7 +207,7 @@ pub fn note(app: *App, text: []const u8) Allocator.Error![][]Segment {
     errdefer gpa.free(rows);
     const segs = try gpa.alloc(Segment, 1);
     errdefer gpa.free(segs);
-    segs[0] = .{ .text = try gpa.dupe(u8, text), .style = app.theme.muted };
+    segs[0] = .{ .text = try gpa.dupe(u8, text), .style = groundless(app.theme.muted) };
     rows[0] = segs;
     return rows;
 }
@@ -290,4 +302,8 @@ test "a grammar colours the preview; plain text leaves it in the foreground" {
     // No grammar: one run for the whole line, in the plain foreground.
     try t.expectEqual(@as(usize, 2), plain.rows[0].len);
     try t.expect(std.meta.eql(app.theme.fg.fg, plain.rows[0][1].style.fg));
+    // Every segment leaves the ground to the picker: no token keeps the
+    // editor's background inside the overlay.
+    for (zig_built.rows[0]) |seg| try t.expect(std.meta.activeTag(seg.style.bg) == .default);
+    for (plain.rows[0]) |seg| try t.expect(std.meta.activeTag(seg.style.bg) == .default);
 }

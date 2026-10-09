@@ -311,7 +311,6 @@ fn shortened(ui: Ui, width: u16, info: Info, ground: Color) []const Seg {
 /// the gap, down to three cells. A clipped copy lives on the arena; OOM
 /// keeps the lane as given and the paint clips it.
 fn clipLeft(ui: Ui, width: u16, segs: []const Seg, right_w: u16, ground: Color) []const Seg {
-    _ = ground;
     var left_cols: u16 = 0;
     var longest: ?usize = null;
     var longest_cols: u16 = 0;
@@ -323,10 +322,17 @@ fn clipLeft(ui: Ui, width: u16, segs: []const Seg, right_w: u16, ground: Color) 
             longest_cols = c;
         }
     }
+    // Rust's measure counts the chips and lets the gap absorb the
+    // arrows. A lane with more changes of ground than the gap holds (the
+    // symbol chip brings its own) still overflowed by the difference,
+    // and the right lane, painted after the left, lost those cells at
+    // the edge — ` ws ` painted as ` w`. The painted width, arrows
+    // included, has to fit too.
     const avail = width -| (right_w + lane_gap);
-    if (left_cols <= avail) return segs;
+    const painted_over = (@as(u32, leftWidth(ui, segs, ground)) + right_w) -| width;
+    if (left_cols <= avail and painted_over == 0) return segs;
     const idx = longest orelse return segs;
-    const overshoot = left_cols - avail;
+    const overshoot: u16 = @intCast(@max(left_cols -| avail, painted_over));
     const target = @max(longest_cols -| overshoot, min_left_chip);
     if (target >= longest_cols) return segs;
     const copy = ui.arena.dupe(Seg, segs) catch return segs;
@@ -568,6 +574,37 @@ test "at 80 columns the longest left chip is clipped to make room, as Rust clipp
     try testing.expectEqual(seg_app_base, f.hits.at(7, 0).?.statusline_seg);
     try testing.expectEqual(seg_app_base, f.hits.at(15, 0).?.statusline_seg);
     try testing.expect(f.hits.at(16, 0) == null);
+}
+
+test "a left lane with more changes of ground than the gap holds still leaves the right lane whole: the workspace chip is never cut to its first letter" {
+    // The hunt's 80x24 row: the mode, the file and the symbol chip each
+    // on a ground of their own, the clock and the workspace on the right.
+    const left = [_]Seg{
+        Seg.init(" EDIT ", P.bg_darker, P.green).strong(),
+        Seg.init(" \u{2026}  app.ts ", P.fg, P.bg2),
+        Seg.init(" \u{203A} User ", P.fg, P.bg_dark),
+        Seg.init(" LSP 1? ", P.fg, P.bg2),
+        Seg.init(" 266B ", P.fg, P.bg_dark),
+        Seg.init(" Ln 1/12 Col 1 ", P.fg, P.bg2),
+    };
+    const right = [_]Seg{ Seg.init(" 08:19 ", P.comment, P.bg2), Seg.init(" ws ", P.bg_darker, P.blue) };
+    var f = try Fixture.init(60, 1);
+    defer f.deinit();
+    const ui = f.ui();
+    // Wide enough by the chips alone, short by the left lane's arrows.
+    var cols: u16 = 0;
+    for (left) |sg| cols += sg.cols(ui);
+    const right_w = rightWidth(ui, &right, P.statusline);
+    const w: u16 = cols + lane_gap + right_w;
+    // Two cells over: the edge would take ` ws `'s letter, not only its pad.
+    try testing.expect(leftWidth(ui, &left, P.statusline) + right_w >= w + 2);
+    var g = try Fixture.init(w, 1);
+    defer g.deinit();
+    draw(g.ui(), g.full(), .{ .left = &left, .right = &right });
+    var buf: [512]u8 = undefined;
+    const row = g.row(0, &buf);
+    try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, row, " "), " ws"));
+    try testing.expect(std.mem.indexOf(u8, row, " 08:19 ") != null);
 }
 
 // At 60 columns Rust paints the whole right lane from where it would

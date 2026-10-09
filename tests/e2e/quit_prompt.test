@@ -61,6 +61,17 @@ key c
 expect screen lacks "Quit mnml?"
 expect dirty true
 
+# Enter takes the focused Cancel, and says so — the box vanishing with
+# nothing saved and nothing quit used to read as a key that did nothing
+# (the delete box's cancel toast, the same rule).
+key ctrl+q
+expect screen contains "Quit mnml?"
+key enter
+expect screen lacks "Quit mnml?"
+expect quit false
+expect dirty true
+expect screen contains "cancelled — nothing saved"
+
 # The arrows move the focus off Cancel and Enter fires what they land on
 # — left once from Cancel is Quit anyway, twice is Save all. Save all
 # writes every dirty buffer and then ENDS THE SESSION (`cmd_app.zig`,

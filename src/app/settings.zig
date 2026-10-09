@@ -1402,6 +1402,64 @@ test "adjust writes the row's file live; Esc restores bytes (and absence); Enter
     try t.expectEqual(input.Style.standard, app.input_style);
 }
 
+test "the Reset all ask owns the keys: arrows inside it never reach the list, its Esc closes only it, and the Esc after that still reverts every edit" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(t.io, &buf);
+    const root = buf[0..n];
+    try tmp.dir.createDirPath(t.io, "ws/.mnml");
+    try tmp.dir.createDirPath(t.io, "home");
+    const ws = try std.fs.path.join(t.allocator, &.{ root, "ws" });
+    defer t.allocator.free(ws);
+    const home = try std.fs.path.join(t.allocator, &.{ root, "home" });
+    defer t.allocator.free(home);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = ws, .data_root = home, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    try command.run(&app, .{ .static = .@"view.settings" });
+    // An edit, live and on disk.
+    try app.handle(.{ .key = Key.named(.right) });
+    try t.expect(!app.cfg.ui.line_numbers);
+    {
+        const text = (try readOrNull(tmp, "ws/.mnml/config.zon")).?;
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, ".line_numbers = false") != null);
+    }
+    // The Reset row, and → on it raises the ask, as the hunt did.
+    try app.handle(.{ .key = Key.named(.end) });
+    const st = &app.overlay.settings;
+    const last = st.ui.cursor;
+    try app.handle(.{ .key = Key.named(.right) });
+    try app.render();
+    try t.expect(st.ui.confirm != null);
+    // Every key the list would take: the ask swallows them, the cursor
+    // stays on the Reset row, and nothing more is written.
+    for ([_]Key{ Key.named(.left), Key.named(.right), Key.named(.down), Key.named(.up), Key.named(.home), Key.named(.tab), Key.char('x') }) |k| {
+        try app.handle(.{ .key = k });
+        try app.render();
+        try t.expect(app.overlay == .settings);
+        try t.expect(st.ui.confirm != null);
+        try t.expectEqual(last, st.ui.cursor);
+        try t.expect(!st.ui.filter.active());
+    }
+    try t.expect(!app.cfg.ui.line_numbers);
+    // Esc on the ask: the ask goes, Settings stays, the edit with it.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try app.render();
+    try t.expect(app.overlay == .settings);
+    try t.expect(app.overlay.settings.ui.confirm == null);
+    try t.expect(!app.cfg.ui.line_numbers);
+    // Esc on Settings: back to the opened state — live and on disk.
+    try app.handle(.{ .key = Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expect(app.cfg.ui.line_numbers);
+    if (try readOrNull(tmp, "ws/.mnml/config.zon")) |text| {
+        defer t.allocator.free(text);
+        try t.expect(std.mem.indexOf(u8, text, "line_numbers") == null);
+    }
+}
+
 test "the overlay renders the sections and the footer names the target file" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = "/tmp/ws", .data_root = "/tmp/home", .cols = 100, .rows = 80 });
     defer app.deinit();

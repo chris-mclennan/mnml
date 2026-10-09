@@ -411,6 +411,50 @@ test "app.quit asks first, clean or dirty" {
     try t.expect(app.quit);
 }
 
+/// The screen cell where `needle` starts, from the test text dump.
+fn cellOf(text: []const u8, needle: []const u8) ?[2]u16 {
+    var row: u16 = 0;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| : (row += 1) {
+        const i = std.mem.indexOf(u8, line, needle) orelse continue;
+        return .{ @intCast(std.unicode.utf8CountCodepoints(line[0..i]) catch i), row };
+    }
+    return null;
+}
+
+test "the unsaved quit box: Cancel is the marked default, Enter takes it and says so, Esc stays silent" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    _ = try app.openScratch();
+    const e = app.activeEditor().?;
+    try e.buf.editor.setText("x");
+    e.buf.doc.dirty = true;
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.render();
+    // The focused chip is the accent one, as on the delete box: the
+    // `[C]ancel` cells wear `chip_active`, `[S]ave all` the plain chip.
+    const txt = try @import("../ipc/screen.zig").toTestText(t.allocator, &app.screen);
+    defer t.allocator.free(txt);
+    const cancel = cellOf(txt, "[C]ancel").?;
+    const save = cellOf(txt, "[S]ave all").?;
+    const Color = @import("vaxis").Color;
+    try t.expect(Color.eql(app.screen.readCell(cancel[0] + 1, cancel[1]).?.style.bg, app.theme.chip_active.bg));
+    try t.expect(!Color.eql(app.screen.readCell(save[0] + 1, save[1]).?.style.bg, app.theme.chip_active.bg));
+    // Enter: nothing saved, nothing quit, and a toast says which keys do.
+    try app.handle(.{ .key = app_mod.Key.named(.enter) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit);
+    try t.expect(app.activeEditor().?.buf.doc.dirty);
+    try t.expectEqualStrings("cancelled — nothing saved, mnml stays open; `s` saves all, `q` quits", app.lastToast().?);
+    // Esc closes it without a word.
+    app.dismissToasts();
+    try command.run(&app, .{ .static = .@"app.quit" });
+    try app.handle(.{ .key = app_mod.Key.named(.esc) });
+    try t.expect(app.overlay == .none);
+    try t.expect(!app.quit);
+    try t.expectEqual(@as(usize, 0), app.toasts.items.len);
+}
+
 test "ui.confirm_quit = false keeps the old quit: the box only when something is unsaved" {
     var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace });
     defer app.deinit();

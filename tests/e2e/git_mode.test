@@ -23,15 +23,15 @@ expect screen contains " 󰐅 WORKTREES"
 expect screen contains "󰋜 main"
 expect screen contains "COMMIT MESSAGE"
 expect screen contains "1 change(s) · 1 new"
-expect screen contains "Unstaged Files (1)"
+expect screen contains "Unstaged (1)"
 expect screen contains "? new.txt"
-expect screen contains "Staged Files (0)"
+expect screen contains "Staged (0)"
 expect screen lacks "git graph"
 # The file's [+] stages it: it moves to the Staged list.
 click 117 6
 wait 1500
-expect screen contains "Unstaged Files (0)"
-expect screen contains "Staged Files (1)"
+expect screen contains "Unstaged (0)"
+expect screen contains "Staged (1)"
 expect screen contains "A new.txt"
 expect screen contains "1 change(s) · 1 staged"
 # The commit box takes a click and the typed text.
