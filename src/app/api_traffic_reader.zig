@@ -14,7 +14,10 @@
 //!     mnml's own request log — the statuses (`304`, `429`) and cache
 //!     hits the draws file cannot say. With no draws file at all, it is
 //!     the source instead (its lines that reached the wire).
-//!   * `<interop dir>/<service>-ratelimit.json`: the six-key bucket.
+//!   * `<interop dir>/<service>-ratelimit.json`: the six-key bucket —
+//!     and, for a service whose limit is counted per token, one more
+//!     per token, `<service>-ratelimit-<id>.json` beside it. A draw out
+//!     of one of those names its `token_id`.
 //!
 //! Both logs are tailed by byte offset, complete lines only (the
 //! feed's and the IPC reader's rule). A file smaller than the offset
@@ -47,6 +50,8 @@ pub const max_series: usize = 7;
 pub const max_reasons: usize = 8;
 /// Pids a Who row keeps.
 pub const max_pids: usize = 8;
+/// Bucket files a service shows: the shared one and the tokens'.
+pub const max_buckets: usize = 8;
 
 /// The windows the pane offers: the header, the timeline and the Who
 /// table all read the selected one.
@@ -115,11 +120,24 @@ pub const Event = struct {
     wait_ms: u32 = 0,
     /// The request log's status; 0 for none (a failure, a draw line).
     status: u16 = 0,
+    /// The draw's `token_id`, interned; `no_token` for a draw out of
+    /// the shared bucket (and every request-log line).
+    token: u16 = no_token,
     /// The request log only: a line that never reached the wire (a
     /// `cache_hit`, a dry run).
     off_wire: bool = false,
     cache_hit: bool = false,
 };
+
+/// `Event.token` for a draw that names no token of its own.
+pub const no_token: u16 = std.math.maxInt(u16);
+
+/// A `token_id` as the SDK writes one: `token_id_len` lowercase hex.
+pub fn validTokenId(id: []const u8) bool {
+    if (id.len != sdk.ratelimit.token_id_len) return false;
+    for (id) |c| if (!(std.ascii.isDigit(c) or (c >= 'a' and c <= 'f'))) return false;
+    return true;
+}
 
 /// Strings seen in one service's logs, each kept once. A program that
 /// shows up ten thousand times is one entry here and a `u16` per line.
@@ -137,9 +155,13 @@ pub const Names = struct {
         n.map.deinit(gpa);
     }
 
-    pub fn intern(n: *Names, gpa: Allocator, s: []const u8) Allocator.Error!u16 {
+    pub fn intern(n: *Names, gpa: Allocator, name: []const u8) Allocator.Error!u16 {
+        if (n.map.get(name)) |id| return id;
+        // Full: everything new is `other`, which gets the one slot past
+        // the cap the first time it is needed — never a second lookup
+        // of a name that is not there yet.
+        const s = if (n.list.items.len >= cap) "other" else name;
         if (n.map.get(s)) |id| return id;
-        if (n.list.items.len >= cap) return n.intern(gpa, "other");
         const owned = try gpa.dupe(u8, s);
         errdefer gpa.free(owned);
         const id: u16 = @intCast(n.list.items.len);
@@ -277,6 +299,69 @@ pub fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
+/// `"key":"…"` with its escapes decoded into `buf`, for a name the pane
+/// shows: `\"` `\\` `\/` and `\uXXXX` (a surrogate pair as one
+/// character, a lone half as U+FFFD); a control character, escaped or
+/// not, is a space. Cut at `buf.len`. Null when the key is not a string.
+pub fn jsonText(buf: []u8, line: []const u8, key: []const u8) ?[]const u8 {
+    return unescape(buf, jsonString(line, key) orelse return null);
+}
+
+/// The JSON string body `raw` decoded into `buf` (see `jsonText`).
+pub fn unescape(buf: []u8, raw: []const u8) []const u8 {
+    var o: usize = 0;
+    var i: usize = 0;
+    while (i < raw.len) {
+        var cp: u21 = raw[i];
+        if (raw[i] == '\\' and i + 1 < raw.len) {
+            const e = raw[i + 1];
+            i += 2;
+            cp = switch (e) {
+                'u' => blk: {
+                    const hi = hex4(raw, i) orelse break :blk 0xFFFD;
+                    i += 4;
+                    if (hi >= 0xD800 and hi <= 0xDBFF) {
+                        if (i + 1 < raw.len and raw[i] == '\\' and raw[i + 1] == 'u') if (hex4(raw, i + 2)) |lo| if (lo >= 0xDC00 and lo <= 0xDFFF) {
+                            i += 6;
+                            break :blk 0x10000 + ((@as(u21, hi) - 0xD800) << 10) + (lo - 0xDC00);
+                        };
+                        break :blk 0xFFFD;
+                    }
+                    if (hi >= 0xDC00 and hi <= 0xDFFF) break :blk 0xFFFD;
+                    break :blk hi;
+                },
+                'b', 'f', 'n', 'r', 't' => ' ',
+                else => e,
+            };
+            if (cp < 0x20 or cp == 0x7f) cp = ' ';
+            var tmp: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(cp, &tmp) catch 0;
+            if (o + n > buf.len) break;
+            @memcpy(buf[o .. o + n], tmp[0..n]);
+            o += n;
+            continue;
+        }
+        if (o >= buf.len) break;
+        buf[o] = if (raw[i] < 0x20 or raw[i] == 0x7f) ' ' else raw[i];
+        o += 1;
+        i += 1;
+    }
+    return buf[0..o];
+}
+
+fn hex4(raw: []const u8, at: usize) ?u16 {
+    if (at + 4 > raw.len) return null;
+    for (raw[at .. at + 4]) |c| if (!std.ascii.isHex(c)) return null;
+    return std.fmt.parseInt(u16, raw[at .. at + 4], 16) catch null;
+}
+
+/// A name for the pane: decoded, and `fallback` when it is missing or
+/// blank.
+fn nameOf(buf: []u8, line: []const u8, key: []const u8, fallback: []const u8) []const u8 {
+    const text = jsonText(buf, line, key) orelse return fallback;
+    return if (std.mem.trim(u8, text, " ").len == 0) fallback else text;
+}
+
 fn valueAfter(line: []const u8, key: []const u8) ?[]const u8 {
     var kbuf: [40]u8 = undefined;
     const needle = std.fmt.bufPrint(&kbuf, "\"{s}\"", .{key}) catch return null;
@@ -294,10 +379,62 @@ fn valueAfter(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
+// ─── numbers out of a file anybody can write ─────────────────────────────
+//
+// Every number below came out of a file another program wrote, so none
+// of them is trusted: a float becomes an integer only through one of
+// these, which reject NaN and infinity and saturate instead of trapping.
+
 fn clampU32(v: f64) u32 {
     if (!(v > 0)) return 0;
     if (v >= 4_294_967_295) return std.math.maxInt(u32);
     return @intFromFloat(v);
+}
+
+/// The latest stamp the reader places: 2100-01-01. Far past any clock
+/// skew between two processes, near enough that a bucket index or a
+/// clock label always fits its integer.
+pub const max_ts: f64 = 4_102_444_800;
+
+/// How far ahead of the clock a line may be stamped and still be kept:
+/// another process's clock can run fast, not a day fast.
+pub const future_secs: f64 = 86400;
+
+/// A stamp read from a file, or null for one the reader cannot place:
+/// not finite, negative, or past `max_ts`.
+pub fn saneTs(v: f64) ?f64 {
+    if (!std.math.isFinite(v) or v < 0 or v > max_ts) return null;
+    return v;
+}
+
+/// Whole seconds of a span: NaN and negatives are 0, anything past
+/// 10^15 (thirty million years) is 10^15.
+pub fn wholeSecs(v: f64) u64 {
+    if (!(v > 0)) return 0;
+    if (v >= 1e15) return 1_000_000_000_000_000;
+    return @intFromFloat(v);
+}
+
+/// `12s`, `4m`, `3h`, `2d` into `buf` — every age the pane shows,
+/// its hovers included, so the same moment reads the same everywhere.
+pub fn ageText(buf: []u8, secs: f64) []const u8 {
+    const s = wholeSecs(secs);
+    if (s < 60) return std.fmt.bufPrint(buf, "{d}s", .{s}) catch "?";
+    if (s < 3600) return std.fmt.bufPrint(buf, "{d}m", .{s / 60}) catch "?";
+    if (s < 86400) return std.fmt.bufPrint(buf, "{d}h", .{s / 3600}) catch "?";
+    return std.fmt.bufPrint(buf, "{d}d", .{s / 86400}) catch "?";
+}
+
+/// `@floor(v)` as an i64, clamped to ±10^15; NaN is 0.
+pub fn floorI64(v: f64) i64 {
+    if (std.math.isNan(v)) return 0;
+    return @intFromFloat(std.math.clamp(@floor(v), -1e15, 1e15));
+}
+
+/// `v` inside `[lo, hi]`; NaN is `lo`.
+pub fn clampF(v: f64, lo: f64, hi: f64) f64 {
+    if (std.math.isNan(v)) return lo;
+    return std.math.clamp(v, lo, hi);
 }
 
 // ─── one service ─────────────────────────────────────────────────────────
@@ -340,13 +477,16 @@ pub const ServiceReader = struct {
         s: *ServiceReader,
         gpa: Allocator,
         fn line(k: DrawSink, l: []const u8) Allocator.Error!void {
-            const ts = jsonNumber(l, "ts") orelse return;
+            const ts = saneTs(jsonNumber(l, "ts") orelse return) orelse return;
+            var name_buf: [256]u8 = undefined;
+            var reason_buf: [256]u8 = undefined;
             try k.s.draw_events.append(k.gpa, .{
                 .ts = ts,
                 .pid = @intCast(@min(clampU32(jsonNumber(l, "pid") orelse 0), std.math.maxInt(i32))),
-                .program = try k.s.names.intern(k.gpa, jsonString(l, "program") orelse "unknown"),
-                .reason = try k.s.names.intern(k.gpa, jsonString(l, "reason") orelse ""),
+                .program = try k.s.names.intern(k.gpa, nameOf(&name_buf, l, "program", "unknown")),
+                .reason = try k.s.names.intern(k.gpa, jsonText(&reason_buf, l, "reason") orelse ""),
                 .wait_ms = clampU32(jsonNumber(l, "wait_ms") orelse 0),
+                .token = if (jsonString(l, "token_id")) |id| (if (validTokenId(id)) try k.s.names.intern(k.gpa, id) else no_token) else no_token,
             });
         }
     };
@@ -357,8 +497,9 @@ pub const ServiceReader = struct {
         /// Whether a 429 read now is news (`fresh`).
         news: bool,
         fn line(k: ReqSink, l: []const u8) Allocator.Error!void {
-            const ts = jsonNumber(l, "ts") orelse return;
+            const ts = saneTs(jsonNumber(l, "ts") orelse return) orelse return;
             if (jsonString(l, "path") == null) return;
+            var name_buf: [256]u8 = undefined;
             const reason = jsonString(l, "reason") orelse "";
             const cache = jsonString(l, "cache") orelse "none";
             const hit = std.mem.eql(u8, reason, "cache_hit");
@@ -366,7 +507,7 @@ pub const ServiceReader = struct {
             const status = jsonNumber(l, "status");
             try k.s.req_events.append(k.gpa, .{
                 .ts = ts,
-                .program = try k.s.names.intern(k.gpa, jsonString(l, "integration") orelse "mnml"),
+                .program = try k.s.names.intern(k.gpa, nameOf(&name_buf, l, "integration", "mnml")),
                 .reason = try k.s.names.intern(k.gpa, reason),
                 .wait_ms = clampU32(jsonNumber(l, "wait_ms") orelse 0),
                 .status = if (status) |st| @intCast(@min(clampU32(st), std.math.maxInt(u16))) else 0,
@@ -375,7 +516,7 @@ pub const ServiceReader = struct {
             });
             // mnml's own 429s: the fleet's throttles file is the rest
             // of the machine's, so the view is only whole with these.
-            if (status) |st| if (st == 429) try k.s.noteThrottle(k.gpa, ts, jsonString(l, "integration") orelse "mnml", k.news);
+            if (status) |st| if (st == 429) try k.s.noteThrottle(k.gpa, ts, nameOf(&name_buf, l, "integration", "mnml"), k.news);
         }
     };
 
@@ -403,7 +544,9 @@ fn byTs(_: void, a: Event, b: Event) bool {
     return a.ts < b.ts;
 }
 
-/// Keep `list` sorted, inside the window and under the cap.
+/// Keep `list` sorted, inside the window and under the cap. A line
+/// stamped more than `future_secs` ahead is dropped too: it would
+/// otherwise outlive every window.
 fn settle(list: *std.ArrayListUnmanaged(Event), added_from: usize, now: f64) void {
     const items = list.items;
     if (items.len > added_from) {
@@ -415,14 +558,16 @@ fn settle(list: *std.ArrayListUnmanaged(Event), added_from: usize, now: f64) voi
         };
         if (!sorted) std.mem.sort(Event, items, {}, byTs);
     }
-    // Oldest first, so the cut is a prefix: the window's edge, or the
-    // cap, whichever removes more.
+    // Oldest first, so the far future is a suffix and the cut a
+    // prefix: the window's edge, or the cap, whichever removes more.
+    var end = items.len;
+    while (end > 0 and items[end - 1].ts - now > future_secs) : (end -= 1) {}
     var cut: usize = 0;
-    while (cut < items.len and now - items[cut].ts > keep_secs) : (cut += 1) {}
-    if (items.len - cut > max_events) cut = items.len - max_events;
-    if (cut == 0) return;
-    std.mem.copyForwards(Event, items[0 .. items.len - cut], items[cut..]);
-    list.shrinkRetainingCapacity(items.len - cut);
+    while (cut < end and now - items[cut].ts > keep_secs) : (cut += 1) {}
+    if (end - cut > max_events) cut = end - max_events;
+    if (cut == 0 and end == items.len) return;
+    std.mem.copyForwards(Event, items[0 .. end - cut], items[cut..end]);
+    list.shrinkRetainingCapacity(end - cut);
 }
 
 // ─── where the files are ─────────────────────────────────────────────────
@@ -578,12 +723,14 @@ pub const Reader = struct {
             const th = parseThrottle(l) orelse return;
             if (!validService(th.api)) return;
             const s = try k.r.ensure(k.io, k.gpa, k.paths, th.api);
-            try s.noteThrottle(k.gpa, th.ts, th.caller, k.news);
+            var caller_buf: [256]u8 = undefined;
+            const caller = nameOf(&caller_buf, l, "caller", "unknown");
+            try s.noteThrottle(k.gpa, th.ts, caller, k.news);
         }
     };
 
     fn lookThrottles(r: *Reader, io: Io, gpa: Allocator, paths: Paths, now: f64, news: bool) Allocator.Error!void {
-        const today: i64 = @intFromFloat(@floor(now / 86400));
+        const today: i64 = floorI64(now / 86400);
         // Drop the days past yesterday; open today's and yesterday's.
         var i: usize = 0;
         while (i < r.throttle_files.items.len) {
@@ -631,7 +778,8 @@ pub const Throttle = struct { ts: f64, api: []const u8, caller: []const u8 };
 /// stamp, no API, or the test leakage.
 pub fn parseThrottle(l: []const u8) ?Throttle {
     if (jsonString(l, "where")) |w| if (std.mem.eql(u8, w, leakage_where)) return null;
-    const ts = jsonNumber(l, "ts") orelse (if (jsonString(l, "ts")) |iso| parseIso(iso) else null) orelse return null;
+    const raw = jsonNumber(l, "ts") orelse (if (jsonString(l, "ts")) |iso| parseIso(iso) else null) orelse return null;
+    const ts = saneTs(raw) orelse return null;
     const api = jsonString(l, "api") orelse return null;
     return .{ .ts = ts, .api = api, .caller = jsonString(l, "caller") orelse "unknown" };
 }
@@ -681,6 +829,23 @@ pub const Bucket = struct {
     throttles: u32 = 0,
 };
 
+/// One bucket file of a service, as NOW shows it.
+pub const BucketRow = struct {
+    /// Empty for the shared `<service>-ratelimit.json`; else the token
+    /// id its file is named by.
+    token: []const u8 = "",
+    /// The file's base name.
+    file: []const u8 = "",
+    bucket: Bucket = .{},
+};
+
+/// This hour's requests out of one bucket: the draws naming `token`,
+/// or naming none for the shared one (`token` empty).
+pub const HourRow = struct {
+    token: []const u8 = "",
+    requests: u32 = 0,
+};
+
 pub const BrokerWhere = enum { unknown, off, hosted, client };
 
 pub const Broker = struct {
@@ -714,10 +879,15 @@ pub const Feed = struct {
 };
 
 pub const Now = struct {
-    /// Null: no bucket file (or one that is not one).
-    bucket: ?Bucket = null,
+    /// Every bucket file of the service, the shared one first, then the
+    /// tokens' by id. Empty: no bucket file (or none that is one).
+    buckets: []const BucketRow = &.{},
     /// Requests the source counts in the last hour, every program.
     hour_requests: u32 = 0,
+    /// The same hour per bucket: one row per bucket file and per token
+    /// the hour's draws name, the shared one first. Its limit is each
+    /// bucket's own, because the limit is counted per token.
+    hour_by: []const HourRow = &.{},
     /// The shared bucket's refill an hour — what an integration's
     /// `budget.hourly_budget` is set from (`rate_per_sec × 3600`).
     hourly_limit: u32 = 0,
@@ -768,6 +938,17 @@ pub fn throttlesIn(arena: Allocator, gpa: Allocator, s: *const ServiceReader, ev
 }
 
 pub const Reason = struct { reason: []const u8, n: u32 };
+
+/// How many of `events` are stamped inside the last `span` seconds —
+/// the same test `throttlesIn` counts by.
+pub fn countWithin(events: []const Event, span: f64, now: f64) u32 {
+    var n: u32 = 0;
+    for (events) |e| {
+        if (now - e.ts > span) continue;
+        n +|= 1;
+    }
+    return n;
+}
 
 pub const WhoRow = struct {
     program: []const u8,
@@ -1000,7 +1181,7 @@ pub fn buildWindow(arena: Allocator, gpa: Allocator, s: *const ServiceReader, w:
     const counts = try arena.alloc(u32, nb * series.len);
     @memset(counts, 0);
     if (series.len > 0) for (events) |e| {
-        if (e.ts < out.start or e.ts < cutoff) continue;
+        if (e.ts < out.start or e.ts < cutoff or e.ts >= end) continue;
         if (src == .requests and e.off_wire) continue;
         const bi: usize = @intFromFloat(@floor((e.ts - out.start) / bsecs));
         if (bi >= nb) continue;
@@ -1016,20 +1197,114 @@ pub fn buildWindow(arena: Allocator, gpa: Allocator, s: *const ServiceReader, w:
 pub fn readBucket(io: Io, gpa: Allocator, env: *const std.process.Environ.Map, service: []const u8, now: f64) ?Bucket {
     const path = sdk.ratelimit.statePath(gpa, io, env, service) catch return null;
     defer gpa.free(path);
+    return readBucketAt(io, gpa, path, service, now);
+}
+
+fn readBucketAt(io: Io, gpa: Allocator, path: []const u8, service: []const u8, now: f64) ?Bucket {
     const text = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024)) catch return null;
     defer gpa.free(text);
     return bucketOf(text, sdk.ratelimit.configFor(service).capacity, now);
 }
 
+/// Every bucket file of `service`, on `arena`: the shared
+/// `<service>-ratelimit.json`, then each token's
+/// `<service>-ratelimit-<id>.json` beside it, by id — where the SDK
+/// puts them (`statePathForId`). A service the SDK keeps one bucket for
+/// (not counted per token, or `<SERVICE>_RATELIMIT_STATE` naming the
+/// file outright) has only the one. At most `max_buckets`.
+pub fn readBuckets(io: Io, arena: Allocator, gpa: Allocator, env: *const std.process.Environ.Map, service: []const u8, now: f64) Allocator.Error![]const BucketRow {
+    var out: std.ArrayListUnmanaged(BucketRow) = .empty;
+    const shared = try sdk.ratelimit.statePath(gpa, io, env, service);
+    defer gpa.free(shared);
+    if (readBucketAt(io, gpa, shared, service, now)) |b| try out.append(arena, .{ .file = try arena.dupe(u8, std.fs.path.basename(shared)), .bucket = b });
+    // Where a token's file would go: the SDK's own answer, with an id
+    // that names nobody. The same path back means one bucket only.
+    const probe = try sdk.ratelimit.statePathForId(gpa, io, env, service, @as(sdk.ratelimit.TokenId, @splat('0')));
+    defer gpa.free(probe);
+    if (std.mem.eql(u8, probe, shared)) return out.items;
+    const dir_path = std.fs.path.dirname(probe) orelse return out.items;
+    // `<svc>-ratelimit-` and `.json` around the id, as the SDK spells
+    // the service (`sanitize`).
+    const probe_name = std.fs.path.basename(probe);
+    const prefix = probe_name[0 .. probe_name.len - sdk.ratelimit.token_id_len - ".json".len];
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close(io);
+    var ids: std.ArrayListUnmanaged([sdk.ratelimit.token_id_len]u8) = .empty;
+    defer ids.deinit(gpa);
+    var it = dir.iterate();
+    var seen: usize = 0;
+    while (it.next(io) catch null) |entry| {
+        seen += 1;
+        if (seen > 2000) break;
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+        if (name.len != prefix.len + sdk.ratelimit.token_id_len + ".json".len) continue;
+        if (!std.mem.startsWith(u8, name, prefix) or !std.mem.endsWith(u8, name, ".json")) continue;
+        const id = name[prefix.len..][0..sdk.ratelimit.token_id_len];
+        if (!validTokenId(id)) continue;
+        try ids.append(gpa, id.*);
+    }
+    std.mem.sort([sdk.ratelimit.token_id_len]u8, ids.items, {}, struct {
+        fn lt(_: void, a: [sdk.ratelimit.token_id_len]u8, b: [sdk.ratelimit.token_id_len]u8) bool {
+            return std.mem.order(u8, &a, &b) == .lt;
+        }
+    }.lt);
+    for (ids.items) |id| {
+        if (out.items.len >= max_buckets) break;
+        const path = try std.fs.path.join(gpa, &.{ dir_path, try std.fmt.allocPrint(arena, "{s}{s}.json", .{ prefix, &id }) });
+        defer gpa.free(path);
+        const b = readBucketAt(io, gpa, path, service, now) orelse continue;
+        try out.append(arena, .{ .token = try arena.dupe(u8, &id), .file = try arena.dupe(u8, std.fs.path.basename(path)), .bucket = b });
+    }
+    return out.items;
+}
+
+/// This hour's draws per bucket, on `arena`: one row per bucket file
+/// (zero when nothing drew on it) and one per token the draws name
+/// that has no file; the shared one first, then by id. With the
+/// request log as the source every line is the shared bucket's.
+pub fn hourByBucket(arena: Allocator, gpa: Allocator, s: *const ServiceReader, buckets: []const BucketRow, now: f64) Allocator.Error![]const HourRow {
+    var counts: std.StringArrayHashMapUnmanaged(u32) = .empty;
+    defer counts.deinit(gpa);
+    for (buckets) |b| try counts.put(gpa, b.token, 0);
+    const src = s.source();
+    const events: []const Event = switch (src) {
+        .draws => s.draw_events.items,
+        .requests => s.req_events.items,
+        .none => &.{},
+    };
+    for (events) |e| {
+        if (now - e.ts > 3600) continue;
+        if (src == .requests and e.off_wire) continue;
+        const key = if (e.token == no_token) "" else s.names.get(e.token);
+        const gop = try counts.getOrPut(gpa, key);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* += 1;
+    }
+    const rows = try arena.alloc(HourRow, counts.count());
+    for (counts.keys(), counts.values(), rows) |k, v, *r| r.* = .{ .token = try arena.dupe(u8, k), .requests = v };
+    std.mem.sort(HourRow, rows, {}, struct {
+        fn lt(_: void, a: HourRow, b: HourRow) bool {
+            return std.mem.order(u8, a.token, b.token) == .lt;
+        }
+    }.lt);
+    return rows;
+}
+
+/// The file's six keys, each one bounded: a stamp the reader cannot
+/// place (`saneTs`) counts as none, and a rate or a token count outside
+/// what a bucket can hold is clamped to it.
 pub fn bucketOf(text: []const u8, capacity: f64, now: f64) ?Bucket {
     const st = sdk.ratelimit.parseState(text) orelse return null;
-    const elapsed = @max(now - st.ts, 0);
+    const cap = clampF(capacity, 0, 1e9);
+    const rate = clampF(st.rate, 0, 1e6);
+    const elapsed = if (saneTs(st.ts)) |ts| clampF(now - ts, 0, max_ts) else 0;
     return .{
-        .tokens = @min(capacity, @max(st.tokens, 0) + elapsed * @max(st.rate, 0)),
-        .capacity = capacity,
-        .rate = st.rate,
-        .cooldown_secs = @max(st.cooldown_until - now, 0),
-        .last_429_age = if (st.last_429 > 0) @max(now - st.last_429, 0) else null,
+        .tokens = clampF(clampF(st.tokens, 0, cap) + elapsed * rate, 0, cap),
+        .capacity = cap,
+        .rate = rate,
+        .cooldown_secs = if (saneTs(st.cooldown_until)) |c| clampF(c - now, 0, max_ts) else 0,
+        .last_429_age = if (saneTs(st.last_429)) |l| (if (l > 0) clampF(now - l, 0, max_ts) else null) else null,
         .throttles = st.throttles,
     };
 }
@@ -1049,7 +1324,7 @@ pub fn readTally(io: Io, gpa: Allocator, data_root: []const u8, service: []const
     const text = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(16 * 1024)) catch return null;
     defer gpa.free(text);
     const tally = sdk.budget.Tally.parse(text);
-    const secs: i64 = @intFromFloat(now);
+    const secs: i64 = floorI64(now);
     return tally.counts(sdk.budget.dayOf(secs, sdk.budget.localOffset(secs))).today;
 }
 
@@ -1599,4 +1874,224 @@ test "an ISO stamp reads as epoch seconds, with or without an offset or a fracti
     try t.expect(parseIso("yesterday") == null);
     try t.expect(parseThrottle("{\"ts\":5,\"api\":\"bitbucket\",\"where\":\"api.bitbucket.org/2.0/x\"}") == null);
     try t.expectEqualStrings("unknown", parseThrottle("{\"ts\":5,\"api\":\"jira\"}").?.caller);
+}
+
+/// Numbers a writer outside mnml can put in any numeric field: huge,
+/// negative, infinite (JSON's `1e400` parses as inf), subnormal, past
+/// every integer type, and the half-numbers a broken writer leaves.
+const hostile_numbers = [_][]const u8{
+    "1e30",                    "-1e30",                 "1e400",  "-1e400", "1e-400", "0",          "-0",          "-1",
+    "4294967296",              "1.8446744073709552e19", "9.3e18", "1e21",   "5e19",   "1e+20",      "2e9",         "1.7976931348623157e308",
+    "-1.7976931348623157e308", "1e",                    "-",      "+5",     "",       "nan",        "inf",         "1.2.3",
+    "--1",                     "0.0000001",             "65536",  "429",    "-429",   "2147483648", "-2147483649",
+};
+
+test "nothing a shared file holds can panic the reader: every numeric field at its extremes, every window, the throttles and the bucket" {
+    const gpa = t.allocator;
+    const now: f64 = 1_790_000_000;
+    var s: ServiceReader = .{ .service = try gpa.dupe(u8, "acme") };
+    defer s.deinit(gpa);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const draws: ServiceReader.DrawSink = .{ .s = &s, .gpa = gpa };
+    const reqs: ServiceReader.ReqSink = .{ .s = &s, .gpa = gpa, .news = true };
+    const draw_keys = [_][]const u8{ "ts", "pid", "wait_ms", "tokens_after" };
+    const req_keys = [_][]const u8{ "ts", "status", "wait_ms", "ms", "bytes" };
+    for (hostile_numbers) |v| {
+        for (draw_keys) |k| {
+            var buf: [512]u8 = undefined;
+            // Every other field ordinary, this one hostile.
+            const l = try std.fmt.bufPrint(&buf, "{{\"ts\":{d},\"pid\":7,\"program\":\"p\",\"reason\":\"poll\",\"wait_ms\":3,\"tokens_after\":1,\"{s}\":{s}}}", .{ now - 30, k, v });
+            // The duplicate key is the hostile one: `valueAfter` reads
+            // the first, so put it first as well.
+            const l2 = try std.fmt.bufPrint(buf[l.len..], "{{\"{s}\":{s},\"ts\":{d},\"pid\":7,\"program\":\"p\",\"wait_ms\":3}}", .{ k, v, now - 30 });
+            try draws.line(l);
+            try draws.line(l2);
+        }
+        for (req_keys) |k| {
+            var buf: [512]u8 = undefined;
+            const l = try std.fmt.bufPrint(&buf, "{{\"{s}\":{s},\"ts\":{d},\"path\":\"/x\",\"status\":200,\"wait_ms\":1,\"integration\":\"mnml-acme\"}}", .{ k, v, now - 20 });
+            try reqs.line(l);
+        }
+        var buf: [256]u8 = undefined;
+        if (parseThrottle(try std.fmt.bufPrint(&buf, "{{\"ts\":{s},\"api\":\"acme\",\"caller\":\"c\"}}", .{v}))) |th| try s.noteThrottle(gpa, th.ts, th.caller, true);
+    }
+    // Lines no writer meant: random bytes and JSON-shaped fragments.
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rnd = prng.random();
+    const frags = [_][]const u8{ "{", "}", "\"ts\":", "\"pid\":", "\"wait_ms\":", "\"status\":", "\"program\":\"", "\"", "\\", "\\u", "d83d", "1e999", "-", "9", ".", ",", ":", " ", "\x00", "\xff", "\"path\":\"/\"", "\"reason\":\"" };
+    for (0..3000) |_| {
+        var line: std.ArrayListUnmanaged(u8) = .empty;
+        defer line.deinit(gpa);
+        try line.append(gpa, '{');
+        for (0..rnd.intRangeAtMost(usize, 0, 24)) |_| {
+            if (rnd.boolean()) try line.appendSlice(gpa, frags[rnd.uintLessThan(usize, frags.len)]) else try line.append(gpa, rnd.int(u8));
+        }
+        try draws.line(line.items);
+        try reqs.line(line.items);
+        if (parseThrottle(line.items)) |th| try s.noteThrottle(gpa, th.ts, th.caller, true);
+    }
+    settle(&s.draw_events, 0, now);
+    settle(&s.req_events, 0, now);
+    settle(&s.throttles, 0, now);
+    // Every kept stamp is one the windows can place.
+    for ([_][]const Event{ s.draw_events.items, s.req_events.items, s.throttles.items }) |list| for (list) |e| {
+        try t.expect(saneTs(e.ts) != null);
+        try t.expect(e.ts - now <= future_secs);
+    };
+    s.draws.seen = true;
+    for (Window.all) |w| {
+        _ = try buildWindow(a, gpa, &s, w, now);
+        // A clock far off either way builds too.
+        _ = try buildWindow(a, gpa, &s, w, 0);
+        _ = try buildWindow(a, gpa, &s, w, max_ts);
+    }
+    s.draws.seen = false;
+    for (Window.all) |w| _ = try buildWindow(a, gpa, &s, w, now);
+    _ = try throttlesIn(a, gpa, &s, s.throttles.items, 3600, now);
+    _ = try throttlesIn(a, gpa, &s, s.fresh.items, 300, now);
+
+    // The bucket: each of the six keys hostile in turn.
+    const keys = [_][]const u8{ "ts", "tokens", "rate", "cooldown_until", "throttles", "last_429" };
+    for (hostile_numbers) |v| for (keys) |k| {
+        var buf: [256]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{{\"ts\":1789999990,\"tokens\":2,\"rate\":0.2,\"cooldown_until\":0,\"throttles\":1,\"last_429\":0,\"{s}\":{s}}}", .{ k, v });
+        const b = bucketOf(text, 40, now) orelse continue;
+        for ([_]f64{ b.tokens, b.capacity, b.rate, b.cooldown_secs, b.last_429_age orelse 0 }) |f| {
+            try t.expect(std.math.isFinite(f));
+            try t.expect(f >= 0);
+        }
+        try t.expect(b.tokens <= b.capacity);
+        try t.expect(b.cooldown_secs <= max_ts);
+    };
+    // The integer helpers saturate rather than trap.
+    for ([_]f64{ std.math.nan(f64), std.math.inf(f64), -std.math.inf(f64), 1e300, -1e300, -1, 0 }) |f| {
+        _ = wholeSecs(f);
+        _ = floorI64(f);
+        _ = clampU32(f);
+        _ = clampF(f, 0, 1);
+    }
+}
+
+test "the two reproductions: a draw stamped 1e30 is dropped, not a bucket index; a cooldown_until of 1e20 is no cooldown" {
+    const gpa = t.allocator;
+    const now: f64 = 1_790_000_000;
+    var s: ServiceReader = .{ .service = try gpa.dupe(u8, "jira") };
+    defer s.deinit(gpa);
+    s.draws.seen = true;
+    const draws: ServiceReader.DrawSink = .{ .s = &s, .gpa = gpa };
+    try draws.line("{\"ts\":1e30,\"pid\":7,\"program\":\"clock-skew\",\"service\":\"jira\",\"reason\":\"poll\",\"wait_ms\":0,\"tokens_after\":1}");
+    try t.expectEqual(@as(usize, 0), s.draw_events.items.len);
+    // Inside `max_ts` but days ahead: kept by the parse, dropped by the
+    // window's edge, so it never outlives every window either.
+    try draws.line("{\"ts\":1790500000,\"pid\":7,\"program\":\"clock-skew\"}");
+    try draws.line("{\"ts\":1789999990,\"pid\":7,\"program\":\"widget.py\"}");
+    settle(&s.draw_events, 0, now);
+    try t.expectEqual(@as(usize, 1), s.draw_events.items.len);
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const w = try buildWindow(arena_state.allocator(), gpa, &s, .hour, now);
+    try t.expectEqual(@as(u32, 1), w.requests);
+
+    const b = bucketOf("{\"ts\":1789999990,\"tokens\":5,\"rate\":0.33,\"cooldown_until\":1e+20,\"throttles\":1,\"last_429\":1789999995}", 60, now).?;
+    try t.expectEqual(@as(f64, 0), b.cooldown_secs);
+    try t.expectApproxEqAbs(@as(f64, 5), b.last_429_age.?, 1e-6);
+}
+
+test "past the names cap everything new is `other`, once, without recursing" {
+    var n: Names = .{};
+    defer n.deinit(t.allocator);
+    for (0..Names.cap) |i| {
+        var buf: [16]u8 = undefined;
+        _ = try n.intern(t.allocator, try std.fmt.bufPrint(&buf, "p{d}", .{i}));
+    }
+    const a = try n.intern(t.allocator, "one-more");
+    const b = try n.intern(t.allocator, "and-another");
+    try t.expectEqual(a, b);
+    try t.expectEqualStrings("other", n.get(a));
+    try t.expectEqual(Names.cap + 1, n.list.items.len);
+}
+
+test "a per-token service lists every bucket file, the shared one first and the tokens' by id; the hour counts each bucket's own draws" {
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(t.io, &buf)];
+    const now: f64 = 1_790_000_000;
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit.json", .data = "{\"ts\":1790000000,\"tokens\":7.5,\"rate\":1.2,\"cooldown_until\":1790000090,\"throttles\":4,\"last_429\":1789999760}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-fedcba987654.json", .data = "{\"ts\":1790000000,\"tokens\":9,\"rate\":1.2,\"cooldown_until\":0,\"throttles\":0,\"last_429\":0}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123456789ab.json", .data = "{\"ts\":1790000000,\"tokens\":2,\"rate\":0.6,\"cooldown_until\":0,\"throttles\":9,\"last_429\":1789999970}" });
+    // Not a token's bucket: the wrong length, not hex, another
+    // service, a file that is not a bucket. (No upper-case twin: on a
+    // case-blind file system it would be the same file.)
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-0123456789zz.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "jira-ratelimit-0123456789ab.json", .data = "{\"ts\":1}" });
+    try tmp.dir.writeFile(t.io, .{ .sub_path = "bitbucket-ratelimit-aaaaaaaaaaaa.json", .data = "not a bucket" });
+    var env = std.process.Environ.Map.init(t.allocator);
+    defer env.deinit();
+    try env.put("MNML_SHARED_STATE_DIR", root);
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    const rows = try readBuckets(t.io, a, t.allocator, &env, "bitbucket", now);
+    try t.expectEqual(@as(usize, 3), rows.len);
+    try t.expectEqualStrings("", rows[0].token);
+    try t.expectEqualStrings("bitbucket-ratelimit.json", rows[0].file);
+    try t.expectEqual(@as(u32, 4), rows[0].bucket.throttles);
+    try t.expectEqualStrings("0123456789ab", rows[1].token);
+    try t.expectEqualStrings("bitbucket-ratelimit-0123456789ab.json", rows[1].file);
+    try t.expectEqual(@as(u32, 9), rows[1].bucket.throttles);
+    try t.expectApproxEqAbs(@as(f64, 30), rows[1].bucket.last_429_age.?, 1e-6);
+    try t.expectEqualStrings("fedcba987654", rows[2].token);
+    // Jira keeps one bucket: its limits are not counted per token.
+    try t.expectEqual(@as(usize, 0), (try readBuckets(t.io, a, t.allocator, &env, "jira", now)).len);
+    // A file named outright is the only bucket, as the SDK has it.
+    try env.put("BITBUCKET_RATELIMIT_STATE", try std.fs.path.join(a, &.{ root, "bitbucket-ratelimit.json" }));
+    try t.expectEqual(@as(usize, 1), (try readBuckets(t.io, a, t.allocator, &env, "bitbucket", now)).len);
+
+    // The hour per bucket: draws naming a token count against its
+    // bucket, the rest against the shared one; a token with draws and
+    // no file still has its row; a bad id is the shared bucket's.
+    var s: ServiceReader = .{ .service = try t.allocator.dupe(u8, "bitbucket") };
+    defer s.deinit(t.allocator);
+    s.draws.seen = true;
+    const sink: ServiceReader.DrawSink = .{ .s = &s, .gpa = t.allocator };
+    try sink.line("{\"ts\":1789999990,\"program\":\"mnml-bitbucket\",\"token_id\":\"0123456789ab\"}");
+    try sink.line("{\"ts\":1789999991,\"program\":\"mnml-bitbucket\",\"token_id\":\"0123456789ab\"}");
+    try sink.line("{\"ts\":1789999992,\"program\":\"widget.py\"}");
+    try sink.line("{\"ts\":1789999993,\"program\":\"widget.py\",\"token_id\":\"not-an-id\"}");
+    try sink.line("{\"ts\":1789999994,\"program\":\"cron.sh\",\"token_id\":\"999999999999\"}");
+    // Two hours ago: outside the hour.
+    try sink.line("{\"ts\":1789992800,\"program\":\"cron.sh\",\"token_id\":\"0123456789ab\"}");
+    settle(&s.draw_events, 0, now);
+    const hour = try hourByBucket(a, t.allocator, &s, rows, now);
+    try t.expectEqual(@as(usize, 4), hour.len);
+    try t.expectEqualStrings("", hour[0].token);
+    try t.expectEqual(@as(u32, 2), hour[0].requests);
+    try t.expectEqualStrings("0123456789ab", hour[1].token);
+    try t.expectEqual(@as(u32, 2), hour[1].requests);
+    try t.expectEqualStrings("999999999999", hour[2].token);
+    try t.expectEqual(@as(u32, 1), hour[2].requests);
+    try t.expectEqualStrings("fedcba987654", hour[3].token);
+    try t.expectEqual(@as(u32, 0), hour[3].requests);
+}
+
+test "program names read as written: escapes decoded, a blank name is `unknown`, a control character a space" {
+    var s: ServiceReader = .{ .service = try t.allocator.dupe(u8, "acme") };
+    defer s.deinit(t.allocator);
+    const sink: ServiceReader.DrawSink = .{ .s = &s, .gpa = t.allocator };
+    try sink.line("{\"ts\":1789999990,\"program\":\"esc\\\"aped\\\\name\",\"pid\":3}");
+    try sink.line("{\"ts\":1789999991,\"program\":\"caf\\u00e9 \\ud83d\\ude00\"}");
+    try sink.line("{\"ts\":1789999992,\"program\":\"\",\"pid\":-5}");
+    try sink.line("{\"ts\":1789999993,\"program\":\"  \"}");
+    try sink.line("{\"ts\":1789999994,\"program\":\"a\\nb\\ud800c\"}");
+    const names = [_][]const u8{ "esc\"aped\\name", "café 😀", "unknown", "unknown", "a b\u{FFFD}c" };
+    for (s.draw_events.items, names) |e, want| try t.expectEqualStrings(want, s.names.get(e.program));
+    // A name longer than the buffer is cut, never past it.
+    var buf: [4]u8 = undefined;
+    try t.expectEqualStrings("caf", unescape(&buf, "caf\\u00e9"));
+    try t.expectEqualStrings("ab", unescape(&buf, "ab\\u"));
 }

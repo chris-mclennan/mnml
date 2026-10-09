@@ -6,28 +6,36 @@
 # appends a line: mnml's integrations, a fleet's loops, a script),
 # mnml's own request log, and the bucket itself.
 #
-# Every file here is this file's own: the runner points
-# `BITBUCKET_RATELIMIT_STATE` at `$MNML_DATA_ROOT`, so the draws file
-# beside it is `$MNML_DATA_ROOT/bitbucket-draws.jsonl`, and the request
-# log is `$MNML_DATA_ROOT/requests/`. Invented programs and hosts only;
-# stamped seconds ago, because the window is the last hour.
+# Every file here is this file's own: the interop directory is
+# `$MNML_DATA_ROOT` (and the runner's single-file bucket override is
+# cleared, so a token's own bucket can sit beside the shared one, as
+# the SDK puts it), the draws file is
+# `$MNML_DATA_ROOT/bitbucket-draws.jsonl`, and the request log is
+# `$MNML_DATA_ROOT/requests/`. Invented programs, hosts and token ids
+# only; stamped seconds ago, because the window is the last hour.
+# env: BITBUCKET_RATELIMIT_STATE=
+# env: MNML_SHARED_STATE_DIR=$MNML_DATA_ROOT
 shell now=$(date +%s); for i in 1 2 3; do printf '{"ts":%s.0,"pid":4100,"program":"widget.py","service":"bitbucket","reason":"poll","wait_ms":20,"tokens_after":3}\n' $((now-40-i)); done > "$MNML_DATA_ROOT/bitbucket-draws.jsonl"
 shell now=$(date +%s); for i in 1 2; do printf '{"ts": %s.0, "pid": 4200, "program": "widget.py", "service": "bitbucket", "reason": "user", "wait_ms": 2500, "tokens_after": 2}\n' $((now-30-i)); done >> "$MNML_DATA_ROOT/bitbucket-draws.jsonl"
-shell now=$(date +%s); for i in 1 2; do printf '{"ts":%s.0,"pid":77,"program":"mnml-bitbucket","service":"bitbucket","reason":"pane_open","wait_ms":0,"tokens_after":1}\n' $((now-20-i)); done >> "$MNML_DATA_ROOT/bitbucket-draws.jsonl"
+# mnml's own Bitbucket draws from its token's bucket, and says which.
+shell now=$(date +%s); for i in 1 2; do printf '{"ts":%s.0,"pid":77,"program":"mnml-bitbucket","service":"bitbucket","reason":"pane_open","wait_ms":0,"tokens_after":1,"token_id":"0123456789ab"}\n' $((now-20-i)); done >> "$MNML_DATA_ROOT/bitbucket-draws.jsonl"
 shell now=$(date +%s); printf '{"ts":%s.0,"pid":9,"program":"cron.sh","service":"bitbucket","reason":"batch","wait_ms":5,"tokens_after":1}\n' $((now-10)) >> "$MNML_DATA_ROOT/bitbucket-draws.jsonl"
 # mnml's own request log: the 304 share in the header is its.
 shell mkdir -p "$MNML_DATA_ROOT/requests" && now=$(date +%s) && printf '{"ts":%s.0,"service":"bitbucket","integration":"mnml-bitbucket","method":"GET","host":"api.example.org","path":"/2.0/widgets","status":304,"ms":80,"bytes":0,"reason":"poll","wait_ms":0,"cache":"miss"}\n{"ts":%s.0,"service":"bitbucket","integration":"mnml-bitbucket","method":"GET","host":"api.example.org","path":"/2.0/widgets","status":200,"ms":90,"bytes":10,"reason":"pane_open","wait_ms":0,"cache":"miss"}\n' $((now-22)) $((now-21)) > "$MNML_DATA_ROOT/requests/bitbucket.jsonl"
-# The bucket: rate 0 so the token count holds still while the test reads it.
-shell now=$(date +%s); printf '{"ts":%s,"tokens":12.5,"rate":0,"cooldown_until":0,"throttles":2,"last_429":0}\n' $now > "$BITBUCKET_RATELIMIT_STATE"
+# The buckets: the shared one, and the token's beside it. Rate 0 so the
+# token counts hold still while the test reads them.
+shell now=$(date +%s); printf '{"ts":%s,"tokens":12.5,"rate":0,"cooldown_until":0,"throttles":2,"last_429":0}\n' $now > "$MNML_DATA_ROOT/bitbucket-ratelimit.json"
+shell now=$(date +%s); printf '{"ts":%s,"tokens":3.5,"rate":0,"cooldown_until":0,"throttles":9,"last_429":%s}\n' $now $((now-30)) > "$MNML_DATA_ROOT/bitbucket-ratelimit-0123456789ab.json"
 command view.api_traffic
 # The header: the busiest service, the window, the count and the share
 # of mnml's own answered requests that came back 304.
 expect screen contains "BITBUCKET · last 1h · 8 requests · 50 % 304"
 expect screen contains " window: 1h "
-# NOW: the bucket as its file has it.
-expect screen contains "bucket  12.5/40 tokens"
-expect screen contains "2 throttles"
-expect screen contains "hour    8 of 4320 limit"
+# NOW: a row per bucket file, each as its file has it, and the hour
+# against each bucket's own limit — the limit is counted per token.
+expect screen contains "bucket  shared      12.5/40 tokens · 0.00/s · no cooldown · no 429 on record"
+expect screen contains "token 0123… 3.5/40 tokens · 0.00/s · no cooldown · last 429"
+expect screen contains "hour    shared 6 (0 %) · token 0123… 2 (0 %) of 4320 limit each"
 # The legend: mnml's own marked.
 expect screen contains "mnml-bitbucket (mnml)"
 # WHO: busiest first, the share, the top reason, the worst wait and the
@@ -41,10 +49,12 @@ expect screen contains "cron.sh"
 # comes from; a WHO row says its numbers, its reasons and its pids.
 hover 40 5
 expect screen contains "The shared bucket"
-hover 40 24
+hover 40 6
+expect screen contains "A token's bucket"
+hover 40 25
 expect screen contains "5 requests in the"
 # Right-click: REQUESTS filtered to the program, and its newest pid.
-rightclick 40 24
+rightclick 40 25
 expect screen contains "Open in REQUESTS"
 expect screen contains "Copy pid 4200"
 key esc

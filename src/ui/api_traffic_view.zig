@@ -106,7 +106,9 @@ pub fn draw(ui: Ui, pane: PaneId, area: Rect, p: *traffic.ApiTrafficPane, focuse
     // all of it drops the strip first, then NOW's detail rows.
     const total_h = rows_left(y, bottom);
     const hint_h: u16 = if (total_h >= 22) 1 else 0;
-    const now_h: u16 = if (total_h >= 15) 5 else if (total_h >= 8) 2 else 0;
+    // A bucket row per bucket file: the shared one, then each token's.
+    const bucket_rows: u16 = @intCast(@max(@min(s.now.buckets.len, reader.max_buckets), 1));
+    const now_h: u16 = if (total_h >= 15) @max(@min(4 + bucket_rows, total_h -| 10), 5) else if (total_h >= 8) 2 else 0;
     const who_fixed: u16 = 2; // heading + column header
     const tl_fixed: u16 = 4; // heading + legend + axis + readout
     const room = total_h -| (now_h + who_fixed + hint_h + 3);
@@ -143,23 +145,75 @@ fn upper(ui: Ui, s: []const u8) []const u8 {
 }
 
 /// ` Bitbucket 412 ` per service with files; the active one is the
-/// accent pill, the others muted — the Integrations view's tabs.
-fn drawTabs(ui: Ui, pane: PaneId, row: Rect, p: *const traffic.ApiTrafficPane, r: *const traffic.Result) void {
+/// accent pill, the others muted — the Integrations view's tabs. When
+/// they do not all fit, the run shown always holds the active tab, and
+/// a ` …+3 ` cue at the end counts the rest; clicking it shows the next
+/// hidden one (`p.more_tab`).
+fn drawTabs(ui: Ui, pane: PaneId, row: Rect, p: *traffic.ApiTrafficPane, r: *const traffic.Result) void {
     const t = ui.theme;
     ui.fill(row, t.bg);
-    var x = row.x + 1;
+    p.more_tab = null;
+    const n = @min(r.services.len, traffic.max_tabs);
+    if (n == 0) return;
     const cur = p.current();
-    for (r.services, 0..) |*s, i| {
-        if (i >= traffic.max_tabs) break;
-        const name = titleCase(ui, s.service);
-        const text = ui.fmt(" {s} {d} ", .{ name, s.win(p.window).requests });
+    var texts: [traffic.max_tabs][]const u8 = undefined;
+    var active: usize = 0;
+    var total: u32 = 0;
+    for (r.services[0..n], 0..) |*s, i| {
+        texts[i] = ui.fmt(" {s} {d} ", .{ titleCase(ui, s.service), s.win(p.window).requests });
+        total += ui.width(texts[i]) + 1;
+        if (cur != null and std.mem.eql(u8, cur.?.service, s.service)) active = i;
+    }
+    const room: u32 = row.w -| 1;
+    var lo: usize = 0;
+    var hi: usize = n;
+    if (total > room) {
+        // The cue's room first, at its widest.
+        const avail = room -| (ui.width(cueText(ui, n)) + 1);
+        hi = fitFrom(ui, texts[0..n], 0, avail);
+        if (active >= hi) {
+            // Back from the active tab as far as it fits.
+            lo = active;
+            var used: u32 = ui.width(texts[active]) + 1;
+            while (lo > 0 and used + ui.width(texts[lo - 1]) + 1 <= avail) {
+                lo -= 1;
+                used += ui.width(texts[lo]) + 1;
+            }
+            hi = active + 1;
+        }
+    }
+    var x = row.x + 1;
+    for (texts[lo..hi], lo..) |text, i| {
         const tw = ui.width(text);
         if (x + tw > row.right()) break;
-        const active = cur != null and std.mem.eql(u8, cur.?.service, s.service);
-        const style = if (active) t.chip_active else Theme.onBg(t.muted, t.bg.bg);
+        const style = if (i == active) t.chip_active else Theme.onBg(t.muted, t.bg.bg);
         _ = chip.paintTarget(ui, x, row.y, tw, text, style, .{ .script_hit = .{ .pane = pane, .id = traffic.hit_tab_base + @as(u32, @intCast(i)) } });
         x += tw + 1;
     }
+    const hidden = n - (hi - lo);
+    if (hidden == 0) return;
+    const cue = cueText(ui, hidden);
+    const cw = ui.width(cue);
+    if (x + cw > row.right()) return;
+    p.more_tab = if (hi < n) hi else 0;
+    _ = chip.paintTarget(ui, x, row.y, cw, cue, Theme.onBg(t.muted, t.bg.bg), .{ .script_hit = .{ .pane = pane, .id = traffic.hit_tab_more } });
+}
+
+/// ` …+3 `: how many tabs the strip could not show.
+fn cueText(ui: Ui, hidden: usize) []const u8 {
+    return ui.fmt(" {s}+{d} ", .{ ui.ellipsisText(), hidden });
+}
+
+/// The end of the run of tabs from `from` that fits in `avail` cells.
+fn fitFrom(ui: Ui, texts: []const []const u8, from: usize, avail: u32) usize {
+    var used: u32 = 0;
+    var i = from;
+    while (i < texts.len) : (i += 1) {
+        const w = ui.width(texts[i]) + 1;
+        if (used + w > avail) break;
+        used += w;
+    }
+    return @max(i, from + 1);
 }
 
 /// The app-wide "this thing is that colour" mark (`list_panel`'s
@@ -185,7 +239,62 @@ fn nowHit(pane: PaneId, row: traffic.NowRow) hit.HitTarget {
     return .{ .script_hit = .{ .pane = pane, .id = traffic.hit_now_base + @intFromEnum(row) } };
 }
 
-/// NOW: the heading and up to three rows. Returns the rows used.
+/// `(shared)`, or `(token 0123…)` — which file a bucket row is.
+pub fn bucketName(ui: Ui, token: []const u8) []const u8 {
+    if (token.len == 0) return "shared";
+    return ui.fmt("token {s}{s}", .{ token[0..@min(token.len, 4)], ui.ellipsisText() });
+}
+
+/// One bucket file's row: its tokens, rate, cooldown and 429s. Alone,
+/// the file it is follows as `(shared)`; with others, each row leads
+/// with its name, in a column of its own, so a narrow pane clips the
+/// numbers and never which bucket they belong to.
+pub fn bucketLine(ui: Ui, row: reader.BucketRow, rows: usize, i: usize) []const u8 {
+    const b = row.bucket;
+    const numbers = ui.fmt("{d:.1}/{d:.0} tokens · {d:.2}/s{s}{s}{s}", .{
+        b.tokens,
+        b.capacity,
+        b.rate,
+        if (b.cooldown_secs > 0) ui.fmt(" · cooling {s}", .{age(ui, b.cooldown_secs)}) else " · no cooldown",
+        if (b.last_429_age) |a| ui.fmt(" · last 429 {s} ago", .{age(ui, a)}) else " · no 429 on record",
+        if (b.throttles > 0) ui.fmt(" · {d} throttle{s}", .{ b.throttles, if (b.throttles == 1) "" else "s" }) else "",
+    });
+    const name = bucketName(ui, row.token);
+    if (rows <= 1) return ui.fmt("  bucket  {s} ({s})", .{ numbers, name });
+    const pad = 12 -| ui.width(name);
+    return ui.fmt("{s}{s}{s}{s}", .{ if (i == 0) "  bucket  " else "          ", name, "            "[0..pad], numbers });
+}
+
+/// `hour    8 of 4320 limit (0 %)`; with draws on more than one
+/// bucket, each bucket's against its own limit:
+/// `hour    shared 12 (0 %) · token 0123… 300 (7 %) of 4320 limit each`.
+/// The second value is the busiest bucket's share, for the warning ink.
+pub fn hourLine(ui: Ui, n: reader.Now) struct { text: []const u8, pct: f64 } {
+    const lim: f64 = @floatFromInt(n.hourly_limit);
+    const pctOf = struct {
+        fn f(x: u32, l: f64) f64 {
+            return if (l > 0) @as(f64, @floatFromInt(x)) * 100.0 / l else 0;
+        }
+    }.f;
+    const day = if (n.tally_today) |d| ui.fmt(" · mnml today {d}", .{d}) else "";
+    if (n.hour_by.len < 2) {
+        const pct = pctOf(n.hour_requests, lim);
+        return .{ .text = ui.fmt("  hour    {d} of {d} limit ({d:.0} %){s}", .{ n.hour_requests, n.hourly_limit, pct, day }), .pct = pct };
+    }
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    out.appendSlice(ui.arena, "  hour    ") catch {};
+    var worst: f64 = 0;
+    for (n.hour_by, 0..) |h, i| {
+        const pct = pctOf(h.requests, lim);
+        worst = @max(worst, pct);
+        out.print(ui.arena, "{s}{s} {d} ({d:.0} %)", .{ if (i > 0) " · " else "", bucketName(ui, h.token), h.requests, pct }) catch {};
+    }
+    out.print(ui.arena, " of {d} limit each{s}", .{ n.hourly_limit, day }) catch {};
+    return .{ .text = out.items, .pct = worst };
+}
+
+/// NOW: the heading, a row per bucket file, the hour, the 429s and the
+/// broker line. Returns the rows used.
 fn drawNow(ui: Ui, pane: PaneId, area: Rect, s: *const reader.ServiceSnap, now: f64) u16 {
     _ = now;
     const t = ui.theme;
@@ -196,51 +305,49 @@ fn drawNow(ui: Ui, pane: PaneId, area: Rect, s: *const reader.ServiceSnap, now: 
     const muted = Theme.onBg(t.muted, t.bg.bg);
     const warn = Theme.onBg(t.warn_fg, t.bg.bg);
 
-    // The bucket.
-    {
-        const r = area.row(1);
-        const line = if (n.bucket) |b| ui.fmt("  bucket  {d:.1}/{d:.0} tokens · {d:.2}/s{s}{s}{s}", .{
-            b.tokens,
-            b.capacity,
-            b.rate,
-            if (b.cooldown_secs > 0) ui.fmt(" · cooling {s}", .{age(ui, b.cooldown_secs)}) else " · no cooldown",
-            if (b.last_429_age) |a| ui.fmt(" · last 429 {s} ago", .{age(ui, a)}) else " · no 429 on record",
-            if (b.throttles > 0) ui.fmt(" · {d} throttle{s}", .{ b.throttles, if (b.throttles == 1) "" else "s" }) else "",
-        }) else "  bucket  no shared bucket file — every process on its own pacing";
-        const style = if (n.bucket) |b| (if (b.cooldown_secs > 0) warn else fg) else muted;
-        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(line, r.w), style);
-        ui.hit(r, nowHit(pane, .bucket));
+    // The buckets: as many rows as the area leaves after the three
+    // below them, at least one.
+    var y: u16 = 1;
+    if (n.buckets.len == 0) {
+        const r = area.row(y);
+        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr("  bucket  no shared bucket file — every process on its own pacing", r.w), muted);
+        ui.hit(r, bucketHit(pane, 0));
+        y += 1;
+    } else {
+        const room: usize = @max(area.h -| 4, 1);
+        for (n.buckets[0..@min(n.buckets.len, room, reader.max_buckets)], 0..) |row, i| {
+            const r = area.row(y);
+            _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(bucketLine(ui, row, n.buckets.len, i), r.w), if (row.bucket.cooldown_secs > 0) warn else fg);
+            ui.hit(r, bucketHit(pane, i));
+            y += 1;
+        }
     }
-    if (area.h < 3) return 2;
+    if (area.h <= y) return y;
 
     // This hour against the limit, and mnml's day.
     {
-        const r = area.row(2);
-        const pct: f64 = if (n.hourly_limit > 0) @as(f64, @floatFromInt(n.hour_requests)) * 100.0 / @as(f64, @floatFromInt(n.hourly_limit)) else 0;
-        const line = ui.fmt("  hour    {d} of {d} limit ({d:.0} %){s}", .{
-            n.hour_requests,
-            n.hourly_limit,
-            pct,
-            if (n.tally_today) |d| ui.fmt(" · mnml today {d}", .{d}) else "",
-        });
-        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(line, r.w), if (pct >= 85) warn else fg);
+        const r = area.row(y);
+        const hl = hourLine(ui, n);
+        _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(hl.text, r.w), if (hl.pct >= 85) warn else fg);
         ui.hit(r, nowHit(pane, .hour));
+        y += 1;
     }
-    if (area.h < 4) return 3;
+    if (area.h <= y) return y;
 
     // The 429s on the machine for this API, this hour.
     {
-        const r = area.row(3);
+        const r = area.row(y);
         const th = n.throttles;
         const line = if (th.n == 0) "  throttles  none in the last hour" else ui.fmt("  throttles  {d} in the last hour · last {s} ago · {s}", .{ th.n, age(ui, th.last_age orelse 0), whoText(ui, th.by) });
         _ = ui.putStr(r.x, r.y, r.w, ui.clipStr(line, r.w), if (th.n == 0) muted else warn);
         ui.hit(r, nowHit(pane, .throttles));
+        y += 1;
     }
-    if (area.h < 5) return 4;
+    if (area.h <= y) return y;
 
     // Broker · feed · cache, each its own hover.
     {
-        const r = area.row(4);
+        const r = area.row(y);
         var x = r.x;
         const b = n.broker;
         const broker_text = switch (b.where) {
@@ -272,7 +379,11 @@ fn drawNow(ui: Ui, pane: PaneId, area: Rect, s: *const reader.ServiceSnap, now: 
             ui.hit(Rect.init(x, r.y, cw, 1), nowHit(pane, .cache));
         };
     }
-    return 5;
+    return y + 1;
+}
+
+fn bucketHit(pane: PaneId, i: usize) hit.HitTarget {
+    return .{ .script_hit = .{ .pane = pane, .id = traffic.hit_bucket_base + @as(u32, @intCast(i)) } };
 }
 
 /// `widget.py (2), mnml-bitbucket (1)` — the callers, the most first.
@@ -290,16 +401,13 @@ fn whoText(ui: Ui, by: []const reader.Reason) []const u8 {
 
 /// `12s`, `4m`, `3h`, `2d`.
 pub fn age(ui: Ui, secs: f64) []const u8 {
-    const s: u64 = @intFromFloat(@max(secs, 0));
-    if (s < 60) return ui.fmt("{d}s", .{s});
-    if (s < 3600) return ui.fmt("{d}m", .{s / 60});
-    if (s < 86400) return ui.fmt("{d}h", .{s / 3600});
-    return ui.fmt("{d}d", .{s / 86400});
+    var buf: [32]u8 = undefined;
+    return ui.fmt("{s}", .{reader.ageText(&buf, secs)});
 }
 
 /// `14:07` on the local clock, or `Mon 14:00` on the week's strip.
 pub fn clockText(ui: Ui, ts: f64, tz: i64, with_day: bool) []const u8 {
-    const secs: i64 = @as(i64, @intFromFloat(@floor(ts))) + tz;
+    const secs: i64 = reader.floorI64(ts) + std.math.clamp(tz, -86400, 86400);
     const day = @divFloor(secs, 86400);
     const in_day: u64 = @intCast(secs - day * 86400);
     const hm = ui.fmt("{d:0>2}:{d:0>2}", .{ in_day / 3600, (in_day % 3600) / 60 });
@@ -371,7 +479,7 @@ fn drawTimeline(ui: Ui, pane: PaneId, area: Rect, p: *traffic.ApiTrafficPane, s:
     _ = ui.putStrRight(plot_x - 1, strip_top + strip_h - 1, axis_w - 1, "0", axis_style);
     const limit_row: ?u16 = if (limit_on_scale) blk: {
         const frac = per_bucket_limit / scale;
-        const from_bottom: u16 = @intFromFloat(@min(@floor(frac * @as(f64, @floatFromInt(strip_h)) - 0.0001), @as(f64, @floatFromInt(strip_h - 1))));
+        const from_bottom: u16 = @intFromFloat(reader.clampF(@floor(frac * @as(f64, @floatFromInt(strip_h)) - 0.0001), 0, @as(f64, @floatFromInt(strip_h - 1))));
         break :blk strip_top + strip_h - 1 - from_bottom;
     } else null;
     const limit_style: Style = .{ .fg = t.warn_fg.fg, .bg = bg };
@@ -497,14 +605,22 @@ fn cellFor(bounds: []const f64, lo: f64) Cell {
     return .{ .fill = fill, .bottom = si, .top = if (above != null and bounds[above.? + 1] >= top_edge - 0.5) above else null };
 }
 
-/// Requests a bucket, averaged over the column's buckets.
+/// The buckets a column starting at bucket `first` really holds: a
+/// whole `span`, except the newest column, which stops at the window's
+/// last bucket — the one holding now. Never 0, so it divides.
+pub fn realBuckets(nb: usize, first: usize, span: usize) usize {
+    return @max(@min(span, nb -| first), 1);
+}
+
+/// Requests a bucket, averaged over the buckets the column holds — a
+/// partly-filled newest column is not drawn as if the rest were empty.
 fn colRate(w: *const reader.WinSnap, c: usize, span: usize) f64 {
     var n: u64 = 0;
     const first = c * span;
     var b = first;
     const nb = w.window.buckets();
     while (b < first + span and b < nb) : (b += 1) n += w.total(b);
-    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(span));
+    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(realBuckets(nb, first, span)));
 }
 
 fn seriesRate(w: *const reader.WinSnap, c: usize, span: usize, si: usize) f64 {
@@ -513,7 +629,7 @@ fn seriesRate(w: *const reader.WinSnap, c: usize, span: usize, si: usize) f64 {
     var b = first;
     const nb = w.window.buckets();
     while (b < first + span and b < nb) : (b += 1) n += w.at(b, si);
-    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(span));
+    return @as(f64, @floatFromInt(n)) / @as(f64, @floatFromInt(realBuckets(nb, first, span)));
 }
 
 fn rateText(ui: Ui, v: f64) []const u8 {
@@ -533,7 +649,9 @@ pub fn readout(ui: Ui, p: *const traffic.ApiTrafficPane, w: *const reader.WinSna
     var b = first;
     while (b < first + span and b < nb) : (b += 1) n += w.total(b);
     if (span * @as(usize, @intCast(p.window.bucketSecs())) > 60) {
-        const to = from + @as(f64, @floatFromInt(span)) * bsecs;
+        // The column's last real bucket, and never past now.
+        const real_to = from + @as(f64, @floatFromInt(realBuckets(nb, first, span))) * bsecs;
+        const to = if (p.result) |r| @min(real_to, @max(r.now, from)) else real_to;
         out.print(ui.arena, "{s}–{s}", .{ clockText(ui, from, tz, with_day), clockText(ui, to, tz, false) }) catch return "";
     } else out.appendSlice(ui.arena, clockText(ui, from, tz, with_day)) catch return "";
     out.print(ui.arena, " · {d} request{s}", .{ n, if (n == 1) "" else "s" }) catch {};
@@ -708,7 +826,7 @@ fn fixturePane(now: f64) !traffic.ApiTrafficPane {
         }),
     };
     bb.now = .{
-        .bucket = .{ .tokens = 12.4, .capacity = 40, .rate = 0.22, .last_429_age = 240, .throttles = 3 },
+        .buckets = try a.dupe(reader.BucketRow, &.{.{ .file = "bitbucket-ratelimit.json", .bucket = .{ .tokens = 12.4, .capacity = 40, .rate = 0.22, .last_429_age = 240, .throttles = 3 } }}),
         .hour_requests = 10,
         .hourly_limit = 792,
         .tally_today = 1204,
@@ -744,7 +862,7 @@ test "the view paints the header line, the tabs, NOW, a stacked strip and the Wh
             try testing.expect(h.rect.bottom() <= size[1]);
         }
         if (size[1] >= 40) {
-            try f.expectContains("12.4/40 tokens · 0.22/s · no cooldown · last 429 4m ago · 3 throttles");
+            try f.expectContains("12.4/40 tokens · 0.22/s · no cooldown · last 429 4m ago · 3 throttles (shared)");
             try f.expectContains("10 of 792 limit (1 %) · mnml today 1204");
             try f.expectContains("broker  up · queue 3 (1 interactive · 0 refresh · 0 warm · 2 batch)");
             try f.expectContains("feed live · 12s ago");
@@ -839,4 +957,139 @@ test "before the first look the pane says it is reading; with no services it say
     p.result = try traffic.Result.create(testing.allocator, 0);
     draw(f.ui(), 9, f.full(), &p, true);
     try f.expectContains("no API traffic recorded on this machine yet");
+}
+
+test "the ages and the clock labels saturate on any number: NaN, infinity, either sign, past every integer" {
+    var f = try Fixture.init(40, 4);
+    defer f.deinit();
+    const ui = f.ui();
+    for ([_]f64{ std.math.nan(f64), std.math.inf(f64), -std.math.inf(f64), 1e20, 1e300, -1e300, -1, 0, 59.9, 3599, 86399 }) |v| {
+        _ = age(ui, v);
+        _ = clockText(ui, v, 3600, true);
+        _ = clockText(ui, v, -std.math.maxInt(i32), false);
+    }
+    try testing.expectEqualStrings("0s", age(ui, -5));
+    try testing.expectEqualStrings("0s", age(ui, std.math.nan(f64)));
+    try testing.expectEqualStrings("11574074074d", age(ui, 1e20));
+}
+
+test "NOW shows a row per bucket file, each its own tokens and 429s, and the hour against each bucket's limit; one bucket only gains a suffix" {
+    const now: f64 = 1_790_000_000;
+    var p = try fixturePane(now);
+    defer p.deinit(testing.io);
+    defer p.result.?.destroy(testing.allocator);
+    const a = p.result.?.arena.allocator();
+    const bb = &p.result.?.services[0];
+    bb.now.buckets = try a.dupe(reader.BucketRow, &.{
+        .{ .file = "bitbucket-ratelimit.json", .bucket = .{ .tokens = 7.5, .capacity = 40, .rate = 1.2, .cooldown_secs = 44, .last_429_age = 240, .throttles = 4 } },
+        .{ .token = "0123456789ab", .file = "bitbucket-ratelimit-0123456789ab.json", .bucket = .{ .tokens = 2, .capacity = 40, .rate = 0.6, .last_429_age = 30, .throttles = 9 } },
+    });
+    bb.now.hourly_limit = 4320;
+    bb.now.hour_by = try a.dupe(reader.HourRow, &.{ .{ .requests = 12 }, .{ .token = "0123456789ab", .requests = 300 } });
+    var f = try Fixture.init(140, 40);
+    defer f.deinit();
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains("  bucket  shared      7.5/40 tokens · 1.20/s · cooling 44s · last 429 4m ago · 4 throttles");
+    try f.expectContains("          token 0123… 2.0/40 tokens · 0.60/s · no cooldown · last 429 30s ago · 9 throttles");
+    try f.expectContains("hour    shared 12 (0 %) · token 0123… 300 (7 %) of 4320 limit each · mnml today 1204");
+    // Each row is its own hover target.
+    var seen = [_]bool{ false, false };
+    for (f.hits.items.items) |h| switch (h.target) {
+        .script_hit => |sh| if (traffic.bucketRowOf(sh.id)) |i| {
+            seen[i] = true;
+        },
+        else => {},
+    };
+    try testing.expect(seen[0] and seen[1]);
+    // One bucket: the line it always was, and which file.
+    bb.now.buckets = bb.now.buckets[1..];
+    bb.now.hour_by = bb.now.hour_by[1..];
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains("  bucket  2.0/40 tokens · 0.60/s · no cooldown · last 429 30s ago · 9 throttles (token 0123…)");
+    try f.expectContains("hour    10 of 4320 limit (0 %)");
+}
+
+test "on the week the newest column, only partly inside the window, is averaged over the buckets it has, and its readout ends now" {
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .week);
+    defer p.deinit(testing.io);
+    const r = try traffic.Result.create(testing.allocator, 0);
+    defer r.destroy(testing.allocator);
+    p.result = r;
+    const bsecs: f64 = @floatFromInt(reader.Window.week.bucketSecs());
+    // Five minutes into a ten-minute bucket.
+    const now: f64 = @floor(1_790_000_000 / bsecs) * bsecs + 300;
+    r.now = now;
+    const a = r.arena.allocator();
+    const nb = reader.Window.week.buckets();
+    const counts = try a.alloc(u32, nb);
+    @memset(counts, 0);
+    // 300 requests over the newest seven buckets, the hunt's numbers.
+    for (nb - 7..nb, 0..) |b, i| counts[b] = if (i < 6) 43 else 42;
+    var snap: reader.ServiceSnap = .{ .service = "bitbucket", .source = .draws };
+    const end = (@floor(now / bsecs) + 1) * bsecs;
+    snap.windows[@intFromEnum(reader.Window.week)] = .{
+        .window = .week,
+        .requests = 300,
+        .series = try a.dupe(reader.Series, &.{.{ .label = "widget.py" }}),
+        .counts = counts,
+        .start = end - @as(f64, @floatFromInt(nb)) * bsecs,
+        .who = try a.dupe(reader.WhoRow, &.{.{ .program = "widget.py", .requests = 300, .share_pct = 100 }}),
+    };
+    r.services = try a.dupe(reader.ServiceSnap, &.{snap});
+    p.service = try testing.allocator.dupe(u8, "bitbucket");
+    const w = p.currentWin().?;
+    // Thirteen buckets a column: the newest holds seven of them.
+    const g = geometry(nb, 78);
+    try testing.expectEqual(@as(usize, 13), g.span);
+    const last = g.cols - 1;
+    try testing.expectEqual(@as(usize, 7), nb - last * g.span);
+    try testing.expectApproxEqAbs(@as(f64, 300.0 / 7.0), colRate(w, last, g.span), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 300.0 / 7.0), seriesRate(w, last, g.span, 0), 1e-9);
+    // A full column is still its sum over the whole span.
+    try testing.expectApproxEqAbs(@as(f64, 0), colRate(w, last - 1, g.span), 1e-9);
+    var f = try Fixture.init(100, 30);
+    defer f.deinit();
+    const text = readout(f.ui(), &p, w, last * g.span, g.span, 0);
+    // From the column's first bucket to now, never past it.
+    const want_to = clockText(f.ui(), now, 0, false);
+    try testing.expect(std.mem.indexOf(u8, text, ui_dash(want_to, f.ui())) != null);
+    try testing.expect(std.mem.indexOf(u8, text, "300 requests") != null);
+}
+
+fn ui_dash(to: []const u8, ui: Ui) []const u8 {
+    return ui.fmt("–{s} ·", .{to});
+}
+
+test "tabs that do not fit leave a `…+N` cue, and the shown service's tab is always on the strip" {
+    var p = traffic.ApiTrafficPane.init(testing.allocator, .hour);
+    defer p.deinit(testing.io);
+    const r = try traffic.Result.create(testing.allocator, 0);
+    defer r.destroy(testing.allocator);
+    p.result = r;
+    const a = r.arena.allocator();
+    const names = [_][]const u8{ "jira", "bitbucket", "acmeapi", "widgetapi", "alphaapi", "betaapi", "deltaapi", "epsapi", "zetaapi", "etaapi" };
+    const snaps = try a.alloc(reader.ServiceSnap, names.len);
+    for (snaps, names) |*s, n| s.* = .{ .service = n };
+    r.services = snaps;
+    var f = try Fixture.init(60, 20);
+    defer f.deinit();
+    p.service = try testing.allocator.dupe(u8, "jira");
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains(" Jira 0 ");
+    try f.expectContains("\u{2026}+");
+    try testing.expect(p.more_tab != null);
+    // Walked to a service far past the edge: its tab is on the strip.
+    try traffic.stepTab(&p, -2);
+    try testing.expectEqualStrings("zetaapi", p.service);
+    draw(f.ui(), 9, f.full(), &p, true);
+    try f.expectContains(" Zetaapi 0 ");
+    try f.expectContains("\u{2026}+");
+    // Every tab hit stays inside the pane.
+    for (f.hits.items.items) |h| try testing.expect(h.rect.right() <= 60);
+    // All of them fit at 200 columns: no cue.
+    var wide = try Fixture.init(200, 20);
+    defer wide.deinit();
+    draw(wide.ui(), 9, wide.full(), &p, true);
+    try testing.expect(p.more_tab == null);
+    try wide.expectContains(" Etaapi 0");
 }

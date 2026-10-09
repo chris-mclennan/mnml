@@ -117,9 +117,11 @@ the release ships one file), and one line per change a user can see.
   gear's *Show hidden sections ▸* puts it on the bar.
 - A tab per service. The header gives the window's requests, the share
   of mnml's requests that came back unchanged (`304`), the 429s and the
-  cache hits. NOW shows the bucket's tokens, rate and cooldown, the
-  last hour against the hourly limit, the broker's queue, the event
-  feed and the shared cache.
+  cache hits. NOW shows each bucket's tokens, rate, cooldown and 429s,
+  one row per bucket file (the shared one, and for Bitbucket each
+  token's own), the last hour against the hourly limit (per bucket,
+  when there is more than one), the broker's queue, the event feed and
+  the shared cache.
 - The timeline shows requests a minute over the last hour, day or week,
   stacked by program in its own colour, with the hourly limit drawn
   across. Point at a column to read its minute and who drew in it.

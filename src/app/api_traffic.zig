@@ -79,11 +79,16 @@ pub const known = broker_app.services;
 pub const hit_title: u32 = 0x01;
 pub const hit_tab_base: u32 = 0x10;
 pub const max_tabs: u32 = 0x20;
+/// The tab strip's ` …+3 ` cue: the tabs that did not fit.
+pub const hit_tab_more: u32 = 0x30;
 pub const hit_now_base: u32 = 0x40;
 pub const hit_legend_base: u32 = 0x60;
 pub const hit_limit: u32 = 0x70;
 pub const hit_who_head_base: u32 = 0x80;
 pub const hit_section_base: u32 = 0x90;
+/// One per bucket row of NOW (`reader.max_buckets`), the shared one
+/// first.
+pub const hit_bucket_base: u32 = 0xA0;
 /// The window chip and the refresh chip are the header's own
 /// (`ListHit.chip(.sort)` / `.refresh`, 0x100…).
 pub const hit_row_base: u32 = 0x1000;
@@ -105,6 +110,11 @@ pub fn nowRowOf(id: u32) ?NowRow {
 pub fn whoColOf(id: u32) ?WhoCol {
     if (id < hit_who_head_base or id >= hit_who_head_base + @typeInfo(WhoCol).@"enum".fields.len) return null;
     return @enumFromInt(id - hit_who_head_base);
+}
+
+pub fn bucketRowOf(id: u32) ?usize {
+    if (id < hit_bucket_base or id >= hit_bucket_base + reader.max_buckets) return null;
+    return id - hit_bucket_base;
 }
 
 pub fn sectionOf(id: u32) ?Section {
@@ -177,15 +187,24 @@ pub const Coalescer = struct {
         }
     };
 
+    /// The service's slot; a new one takes a free slot, else the one
+    /// that toasted longest ago — a slot only holds when its service
+    /// last toasted, so a ninth service never goes quiet for good.
     fn slot(c: *Coalescer, service: []const u8) ?*Slot {
         for (&c.slots) |*sl| if (sl.len > 0 and std.mem.eql(u8, sl.service(), service)) return sl;
         if (service.len > 32) return null;
-        for (&c.slots) |*sl| if (sl.len == 0) {
-            @memcpy(sl.name[0..service.len], service);
-            sl.len = @intCast(service.len);
-            return sl;
-        };
-        return null;
+        var pick = &c.slots[0];
+        for (&c.slots) |*sl| {
+            if (sl.len == 0) {
+                pick = sl;
+                break;
+            }
+            if (sl.last_toast < pick.last_toast) pick = sl;
+        }
+        @memcpy(pick.name[0..service.len], service);
+        pick.len = @intCast(service.len);
+        pick.last_toast = -std.math.inf(f64);
+        return pick;
     }
 
     /// `fresh` new 429s for `service` at `now`: toast, or hold them
@@ -210,9 +229,12 @@ pub const State = struct {
     /// When the last look started (`app.now_ms`); 0 before the first.
     last_ms: i64 = 0,
     coalescer: Coalescer = .{},
-    /// The service a toast's offer opens the pane on.
-    focus: [32]u8 = undefined,
-    focus_len: u8 = 0,
+    /// The service the newest throttle toast named, for
+    /// `view.api_traffic_throttled` alone. A toast's own button carries
+    /// its service (`ToastAction.api_traffic`), and a plain open never
+    /// reads this.
+    last_toasted: [32]u8 = undefined,
+    last_toasted_len: u8 = 0,
 
     /// Cancel the worker before anything it holds goes.
     pub fn deinit(st: *State, gpa: Allocator, io: Io) void {
@@ -249,6 +271,9 @@ pub const ApiTrafficPane = struct {
     /// Buckets per timeline column at the last paint — what a column's
     /// hit id (its first bucket) spans, for its hover.
     col_span: usize = 1,
+    /// The service index the tab strip's overflow cue shows when
+    /// clicked, at the last paint; null with every tab on screen.
+    more_tab: ?usize = null,
     was_shown: bool = false,
 
     pub fn init(gpa: Allocator, window: Window) ApiTrafficPane {
@@ -300,9 +325,27 @@ pub fn windowOf(w: config.ApiTrafficWindow) Window {
 }
 
 /// `view.api_traffic`: the one pane, below the active pane; a refresh
-/// when it is already open. A throttle toast's offer names a service,
-/// and the pane opens on its tab.
+/// when it is already open, on the tab it was on.
 fn showCmd(app: *App) CommandError!void {
+    _ = try openPane(app);
+    try refresh(app);
+}
+
+/// The pane on `service`'s tab, then a read: a throttle toast's offer.
+/// The same tab keeps its cursor; another starts at the top.
+pub fn openOn(app: *App, service: []const u8) CommandError!void {
+    const p = try openPane(app);
+    if (!std.mem.eql(u8, p.service, service)) {
+        try setService(p, service);
+        p.cursor = 0;
+        p.scroll = 0;
+        p.column = null;
+    }
+    try refresh(app);
+}
+
+/// The one pane, made below the active pane when there is none, shown.
+fn openPane(app: *App) CommandError!*ApiTrafficPane {
     const st = &app.api_traffic;
     const id = find(app) orelse blk: {
         var pane = ApiTrafficPane.init(app.gpa, windowOf(app.cfg.integrations.api_traffic_window));
@@ -320,16 +363,10 @@ fn showCmd(app: *App) CommandError!void {
     };
     app.showPane(id);
     const p = get(app, id).?;
-    if (st.focus_len > 0) {
-        try setService(p, st.focus[0..st.focus_len]);
-        st.focus_len = 0;
-        p.cursor = 0;
-        p.scroll = 0;
-        p.column = null;
-    } else if (p.service.len == 0) {
+    if (p.service.len == 0) {
         if (st.result) |r| try pickBusiest(p, r);
     }
-    try refresh(app);
+    return p;
 }
 
 pub fn get(app: *App, id: PaneId) ?*ApiTrafficPane {
@@ -494,7 +531,7 @@ pub fn compute(io: Io, gpa: Allocator, job: *Job, r: *Result) ComputeError!void 
 
 pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) ComputeError!void {
     r.now = now;
-    r.tz_offset = sdk.budget.localOffset(@intFromFloat(now));
+    r.tz_offset = sdk.budget.localOffset(reader.floorI64(now));
     const paths: reader.Paths = .{ .data_root = job.data_root, .workspace = job.workspace, .env = &job.env };
     try job.rd.look(io, gpa, paths, &known, now);
     try io.checkCancel();
@@ -504,13 +541,14 @@ pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) Comput
         try io.checkCancel();
         var snap: ServiceSnap = .{ .service = try arena.dupe(u8, s.service), .source = s.source() };
         for (Window.all) |w| snap.windows[@intFromEnum(w)] = try reader.buildWindow(arena, gpa, s, w, now);
-        const bucket = reader.readBucket(io, gpa, &job.env, s.service, now);
+        const buckets = try reader.readBuckets(io, arena, gpa, &job.env, s.service, now);
         // A service with no line in any log, no 429 and no bucket file
         // is a name mnml knows, not one anybody spends on: no tab.
-        if (snap.source == .none and bucket == null and !s.requests.seen and s.throttles.items.len == 0) continue;
+        if (snap.source == .none and buckets.len == 0 and !s.requests.seen and s.throttles.items.len == 0) continue;
         snap.now = .{
-            .bucket = bucket,
+            .buckets = buckets,
             .hour_requests = snap.windows[@intFromEnum(Window.hour)].requests,
+            .hour_by = try reader.hourByBucket(arena, gpa, s, buckets, now),
             .hourly_limit = reader.hourlyLimit(s.service),
             .tally_today = reader.readTally(io, gpa, job.data_root, s.service, now),
             .broker = brokerOf(io, gpa, &job.env, s.service, now),
@@ -518,7 +556,10 @@ pub fn computeAt(io: Io, gpa: Allocator, job: *Job, r: *Result, now: f64) Comput
             .cache_entries = reader.countCache(io, gpa, &job.env, s.service),
             .throttles = try reader.throttlesIn(arena, gpa, s, s.throttles.items, 3600, now),
         };
-        snap.fresh = @intCast(s.fresh.items.len);
+        // News for a toast: the new lines stamped inside the toast's own
+        // window. One written late (a batching loop, yesterday's file
+        // read after midnight) updates NOW and never toasts.
+        snap.fresh = reader.countWithin(s.fresh.items, Coalescer.window_secs, now);
         snap.last5 = try reader.throttlesIn(arena, gpa, s, s.throttles.items, Coalescer.window_secs, now);
         try out.append(arena, snap);
     }
@@ -584,13 +625,13 @@ fn toastThrottles(app: *App, result: *const Result) Allocator.Error!void {
         const text = try throttleText(app.frame.allocator(), s);
         const label = try app.gpa.dupe(u8, "API traffic");
         errdefer app.gpa.free(label);
-        const id = try app.gpa.dupe(u8, "view.api_traffic_throttled");
-        errdefer app.gpa.free(id);
-        if (s.service.len <= st.focus.len) {
-            @memcpy(st.focus[0..s.service.len], s.service);
-            st.focus_len = @intCast(s.service.len);
+        const service = try app.gpa.dupe(u8, s.service);
+        errdefer app.gpa.free(service);
+        if (s.service.len <= st.last_toasted.len) {
+            @memcpy(st.last_toasted[0..s.service.len], s.service);
+            st.last_toasted_len = @intCast(s.service.len);
         }
-        try app.toastWithAction(.warn, .{ .command = .{ .label = label, .id = id } }, "{s}", .{text});
+        try app.toastWithAction(.warn, .{ .api_traffic = .{ .label = label, .service = service } }, "{s}", .{text});
     }
 }
 
@@ -616,13 +657,19 @@ pub fn isThrottleToast(app: *const App, id: u32) bool {
     const i = if (id >= toast_ui.close_base) id - toast_ui.close_base else if (id >= toast_ui.action_base) id - toast_ui.action_base else id - toast_ui.button_base;
     if (i >= app.toasts.items.len) return false;
     const a = app.toasts.items[app.toasts.items.len - 1 - i].action orelse return false;
-    return a == .command and std.mem.eql(u8, a.command.id, "view.api_traffic_throttled");
+    return a == .api_traffic;
 }
 
-/// `view.api_traffic_throttled`: the pane, on the service the last
-/// throttle toast named.
+/// `view.api_traffic_throttled`: the pane, on the service the newest
+/// throttle toast named (the palette's way to it once the toast has
+/// gone); a plain open before any toast.
 fn throttledCmd(app: *App) CommandError!void {
-    return showCmd(app);
+    const st = &app.api_traffic;
+    if (st.last_toasted_len == 0) return showCmd(app);
+    var buf: [32]u8 = undefined;
+    const n = st.last_toasted_len;
+    @memcpy(buf[0..n], st.last_toasted[0..n]);
+    return openOn(app, buf[0..n]);
 }
 
 fn pickBusiest(p: *ApiTrafficPane, result: *const Result) Allocator.Error!void {
@@ -765,6 +812,18 @@ pub fn click(app: *App, id: PaneId, p: *ApiTrafficPane, hit_id: u32, m: Mouse) A
         if (m.button == .right) return openRowMenu(app, p, m.x, m.y);
         return;
     }
+    if (hit_id == hit_tab_more) {
+        if (m.button != .left) return;
+        const r = p.result orelse return;
+        const i = p.more_tab orelse return;
+        if (i < r.services.len) {
+            try setService(p, r.services[i].service);
+            p.cursor = 0;
+            p.scroll = 0;
+            p.column = null;
+        }
+        return;
+    }
     if (hit_id >= hit_tab_base and hit_id < hit_tab_base + max_tabs) {
         if (m.button != .left) return;
         const r = p.result orelse return;
@@ -809,10 +868,11 @@ pub fn openRowMenu(app: *App, p: *const ApiTrafficPane, x: u16, y: u16) Allocato
 
 /// The window chip's right-click: every window, the current one ticked.
 pub fn openWindowMenu(app: *App, x: u16, y: u16) Allocator.Error!void {
+    const cur: Window = if (find(app)) |id| (if (get(app, id)) |p| p.window else windowOf(app.cfg.integrations.api_traffic_window)) else windowOf(app.cfg.integrations.api_traffic_window);
     const rows = try context_menus.items(app, &.{
-        .{ .label = "Last hour", .action = .{ .command = .@"view.api_traffic_window_hour" } },
-        .{ .label = "Last 24 hours", .action = .{ .command = .@"view.api_traffic_window_day" } },
-        .{ .label = "Last 7 days", .action = .{ .command = .@"view.api_traffic_window_week" } },
+        .{ .label = "Last hour", .action = .{ .command = .@"view.api_traffic_window_hour" }, .checked = cur == .hour, .checkable = true },
+        .{ .label = "Last 24 hours", .action = .{ .command = .@"view.api_traffic_window_day" }, .checked = cur == .day, .checkable = true },
+        .{ .label = "Last 7 days", .action = .{ .command = .@"view.api_traffic_window_week" }, .checked = cur == .week, .checkable = true },
     });
     errdefer app.gpa.free(rows);
     try app.openMenu("Window", rows, x, y);
@@ -860,7 +920,11 @@ pub fn seedForAudit(app: *App) Allocator.Error!PaneId {
         }),
     };
     snap.now = .{
-        .bucket = .{ .tokens = 3, .capacity = 40, .rate = 0.22 },
+        .buckets = try a.dupe(reader.BucketRow, &.{
+            .{ .file = "acme-ratelimit.json", .bucket = .{ .tokens = 3, .capacity = 40, .rate = 0.22 } },
+            .{ .token = "0123456789ab", .file = "acme-ratelimit-0123456789ab.json", .bucket = .{ .tokens = 1, .capacity = 40, .rate = 0.22, .throttles = 2, .last_429_age = 30 } },
+        }),
+        .hour_by = try a.dupe(reader.HourRow, &.{ .{ .requests = 1 }, .{ .token = "0123456789ab", .requests = 2 } }),
         .hour_requests = 3,
         .hourly_limit = 792,
         .broker = .{ .where = .off },
@@ -1013,6 +1077,25 @@ test "the Who row's menu opens REQUESTS filtered to the program and copies its n
     try t.expectEqualStrings("4242", app.overlay.menu.items[1].action.copy_text);
 }
 
+test "the window chip's menu ticks the window the pane is on" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    try command.run(&app, .{ .static = .@"view.api_traffic" });
+    const p = get(&app, find(&app).?).?;
+    setWindow(p, .day);
+    try openWindowMenu(&app, 5, 5);
+    const items = app.overlay.menu.items;
+    try t.expectEqual(@as(usize, 3), items.len);
+    try t.expect(!items[0].checked);
+    try t.expect(items[1].checked);
+    try t.expect(!items[2].checked);
+    var tries: usize = 0;
+    while (app.api_traffic.loading and tries < 200) : (tries += 1) {
+        try app.tick(app.now_ms);
+        if (app.api_traffic.loading) try t.io.sleep(.fromMilliseconds(10), .awake);
+    }
+}
+
 test "the cadence: a look at open, again when due while on screen, none off screen, none under manual" {
     const c = cadence;
     try t.expect(refresh_cadence.isDue(c, .fast, 0, 2000));
@@ -1059,7 +1142,7 @@ test "429 toasts coalesce: five new in two minutes is one toast with the counts,
     const last = app.toasts.items[app.toasts.items.len - 1];
     try t.expectEqualStrings("Bitbucket throttled — 5 × 429 in the last 5 min (3 from widget.py, 2 from mnml-bitbucket)", last.text);
     try t.expectEqual(app_mod.ToastLevel.warn, last.level);
-    try t.expectEqualStrings("view.api_traffic_throttled", last.action.?.command.id);
+    try t.expectEqualStrings("bitbucket", last.action.?.api_traffic.service);
     // More inside the window: held, not a toast per line.
     try app.handle(.{ .api_traffic = try throttleResult(&app, t0 + 60, 1, &.{.{ .reason = "widget.py", .n = 6 }}) });
     try app.handle(.{ .api_traffic = try throttleResult(&app, t0 + 200, 2, &.{.{ .reason = "widget.py", .n = 8 }}) });
@@ -1083,6 +1166,17 @@ test "with 429 toasts off the NOW line still counts them and nothing toasts" {
     try t.expectEqual(@as(u32, 5), app.api_traffic.result.?.services[0].now.throttles.n);
 }
 
+test "the coalescer has room for a ninth service and more: the one that toasted longest ago gives up its slot" {
+    var c: Coalescer = .{};
+    var buf: [16]u8 = undefined;
+    for (0..Coalescer.max_services + 4) |i| {
+        const name = try std.fmt.bufPrint(&buf, "api{d}", .{i});
+        try t.expect(c.note(name, 1, @floatFromInt(i * 10)));
+    }
+    // The newest still hold their five quiet minutes.
+    try t.expect(!c.note(try std.fmt.bufPrint(&buf, "api{d}", .{Coalescer.max_services + 3}), 1, 200));
+}
+
 test "the coalescer: one toast per service per five minutes, services apart" {
     var c: Coalescer = .{};
     try t.expect(!c.note("bitbucket", 0, 0));
@@ -1090,4 +1184,223 @@ test "the coalescer: one toast per service per five minutes, services apart" {
     try t.expect(!c.note("bitbucket", 1, 399));
     try t.expect(c.note("jira", 1, 120));
     try t.expect(c.note("bitbucket", 1, 400));
+}
+
+/// A worker's `Job` over the fixture, the way `ensureJob` makes one.
+fn fixtureJob(fx: *const Fixture) !*Job {
+    const job = try t.allocator.create(Job);
+    errdefer t.allocator.destroy(job);
+    var env = std.process.Environ.Map.init(t.allocator);
+    errdefer env.deinit();
+    try env.put("MNML_SHARED_STATE_DIR", fx.shared);
+    job.* = .{ .env = env, .data_root = try t.allocator.dupe(u8, fx.data), .workspace = try t.allocator.dupe(u8, fx.root) };
+    return job;
+}
+
+fn freeJob(job: *Job) void {
+    job.deinit(t.allocator);
+    t.allocator.destroy(job);
+}
+
+/// Every window of every service of `r`, painted at three sizes.
+fn paintAll(r: *Result) !void {
+    const Ui = @import("../ui/test_fixture.zig");
+    const view = @import("../ui/api_traffic_view.zig");
+    for (r.services) |s| for (Window.all) |w| for ([_][2]u16{ .{ 60, 20 }, .{ 120, 40 }, .{ 200, 60 } }) |size| {
+        var p = ApiTrafficPane.init(t.allocator, w);
+        defer p.deinit(t.io);
+        p.result = r;
+        p.service = try t.allocator.dupe(u8, s.service);
+        // The newest column picked, so the readout paints too.
+        p.column = w.buckets() - 1;
+        var f = try Ui.init(size[0], size[1]);
+        defer f.deinit();
+        view.draw(f.ui(), 9, f.full(), &p, true);
+    };
+}
+
+test "a draws line stamped 1e30 and a bucket cooling until 1e20 are read and painted without a panic, on every window" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const now = nowSecs(t.io);
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    defer text.deinit(t.allocator);
+    try text.print(t.allocator, "{{\"ts\":{d:.3},\"pid\":4100,\"program\":\"widget.py\",\"service\":\"jira\",\"reason\":\"poll\",\"wait_ms\":20,\"tokens_after\":3}}\n", .{now - 30});
+    // The hunt's first vector, byte for byte.
+    try text.appendSlice(t.allocator, "{\"ts\":1e30,\"pid\":7,\"program\":\"clock-skew\",\"service\":\"jira\",\"reason\":\"poll\",\"wait_ms\":0,\"tokens_after\":1}\n");
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/jira-draws.jsonl", .data = text.items });
+    // The second: a cooldown 10^20 seconds out.
+    const bucket = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"tokens\":5,\"rate\":0.33,\"cooldown_until\":1e+20,\"throttles\":1,\"last_429\":{d}}}", .{ now, now - 5 });
+    defer t.allocator.free(bucket);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/jira-ratelimit.json", .data = bucket });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    // Twice: the first look at start, then the next one, which is the
+    // one that crashed every launch.
+    for (0..2) |_| {
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, now);
+        const s = r.find("jira").?;
+        try t.expectEqual(@as(u32, 1), s.win(.hour).requests);
+        try t.expectEqual(@as(f64, 0), s.now.buckets[0].bucket.cooldown_secs);
+        try paintAll(r);
+    }
+}
+
+test "every numeric field of every file at its extremes: the worker reads it and the view paints it, whatever the clock" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.createDirPath(t.io, "shared/api-usage");
+    const now = nowSecs(t.io);
+    const values = [_][]const u8{ "1e30", "-1e30", "1e400", "-1e400", "0", "-1", "4294967296", "1.8446744073709552e19", "5e19", "1e21", "1.7976931348623157e308", "1e", "-", "" };
+    var draws: std.ArrayListUnmanaged(u8) = .empty;
+    defer draws.deinit(t.allocator);
+    var reqs: std.ArrayListUnmanaged(u8) = .empty;
+    defer reqs.deinit(t.allocator);
+    var throttles: std.ArrayListUnmanaged(u8) = .empty;
+    defer throttles.deinit(t.allocator);
+    for (values) |v| {
+        for ([_][]const u8{ "ts", "pid", "wait_ms", "tokens_after" }) |k| try draws.print(t.allocator, "{{\"{s}\":{s},\"ts\":{d:.3},\"pid\":4,\"program\":\"widget.py\",\"reason\":\"poll\",\"wait_ms\":2}}\n", .{ k, v, now - 20 });
+        for ([_][]const u8{ "ts", "status", "wait_ms" }) |k| try reqs.print(t.allocator, "{{\"{s}\":{s},\"ts\":{d:.3},\"integration\":\"mnml-acme\",\"path\":\"/x\",\"status\":429,\"wait_ms\":2}}\n", .{ k, v, now - 20 });
+        try throttles.print(t.allocator, "{{\"ts\":{s},\"api\":\"acme\",\"caller\":\"c\"}}\n", .{v});
+    }
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/acme-draws.jsonl", .data = draws.items });
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "data/requests/acme.jsonl", .data = reqs.items });
+    var date: [10]u8 = undefined;
+    const tpath = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{sdk.budget.isoDate(&date, @divFloor(reader.floorI64(now), 86400))});
+    defer t.allocator.free(tpath);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = tpath, .data = throttles.items });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    for (values) |v| for ([_][]const u8{ "ts", "tokens", "rate", "cooldown_until", "last_429" }) |k| {
+        const b = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"tokens\":5,\"rate\":0.3,\"cooldown_until\":0,\"throttles\":1,\"last_429\":0,\"{s}\":{s}}}", .{ now, k, v });
+        defer t.allocator.free(b);
+        try fx.tmp.dir.writeFile(t.io, .{ .sub_path = "shared/acme-ratelimit.json", .data = b });
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, now);
+        try paintAll(r);
+    };
+    // The clock itself far off either way.
+    for ([_]f64{ 0, 1, reader.max_ts, 1e18 }) |clock| {
+        const r = try Result.create(t.allocator, 0);
+        defer r.destroy(t.allocator);
+        try computeAt(t.io, t.allocator, job, r, clock);
+        try paintAll(r);
+    }
+}
+
+/// A result whose services each have `fresh` new 429s, one caller each.
+fn throttleResultFor(app: *App, now: f64, services: []const []const u8, fresh: u32) !*Result {
+    const r = try Result.create(t.allocator, app.api_traffic.generation);
+    const a = r.arena.allocator();
+    r.now = now;
+    const snaps = try a.alloc(ServiceSnap, services.len);
+    for (snaps, services) |*snap, name| {
+        snap.* = .{ .service = try a.dupe(u8, name), .source = .draws, .fresh = fresh };
+        snap.last5 = .{ .n = fresh, .last_age = 1, .by = try a.dupe(reader.Reason, &.{.{ .reason = "widget.py", .n = fresh }}) };
+        snap.now.throttles = snap.last5;
+    }
+    r.services = snaps;
+    return r;
+}
+
+fn toastFor(app: *const App, service_title: []const u8) ?ToastAction {
+    for (app.toasts.items) |tt| if (std.mem.startsWith(u8, tt.text, service_title)) return tt.action;
+    return null;
+}
+
+const ToastAction = app_mod.ToastAction;
+
+test "each throttle toast's button opens its own service, and a plain open keeps the tab the user is on" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const t0: f64 = 1_790_000_000;
+    // Two services throttled in one read: two toasts.
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0, &.{ "alphaapi", "betaapi" }, 0) });
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0 + 1, &.{ "alphaapi", "betaapi" }, 2) });
+    try t.expectEqual(@as(usize, 2), throttleToasts(&app));
+    // The FIRST toast's button: its own service, not the last one's.
+    try app.runToastAction(toastFor(&app, "Alphaapi").?);
+    const p = get(&app, find(&app).?).?;
+    try t.expectEqualStrings("alphaapi", p.service);
+    try app.runToastAction(toastFor(&app, "Betaapi").?);
+    try t.expectEqualStrings("betaapi", p.service);
+
+    // The user walks to another tab and moves the cursor; a toast for a
+    // third service comes and goes unclicked (the other two are inside
+    // their five quiet minutes).
+    try setService(p, "alphaapi");
+    try app.handle(.{ .api_traffic = try throttleResultFor(&app, t0 + 2, &.{ "alphaapi", "betaapi", "gammaapi" }, 1) });
+    try t.expect(toastFor(&app, "Gammaapi") != null);
+    p.cursor = 3;
+    // A plain open — the chord, the View menu, the rail row — reads
+    // again and stays where the user was.
+    try command.run(&app, .{ .static = .@"view.api_traffic" });
+    try t.expectEqualStrings("alphaapi", p.service);
+    try t.expectEqual(@as(usize, 3), p.cursor);
+}
+
+test "a 429 line written late — stamped before the last five minutes — updates NOW but never raises a `0 × 429` toast" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.tmp.dir.createDirPath(t.io, "shared/api-usage");
+    const now: f64 = 1_790_000_000;
+    var date: [10]u8 = undefined;
+    const tpath = try std.fmt.allocPrint(t.allocator, "shared/api-usage/{s}.throttles.jsonl", .{sdk.budget.isoDate(&date, @divFloor(reader.floorI64(now), 86400))});
+    defer t.allocator.free(tpath);
+    try fx.tmp.dir.writeFile(t.io, .{ .sub_path = tpath, .data = "" });
+    const job = try fixtureJob(&fx);
+    defer freeJob(job);
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const look = struct {
+        fn f(a: *App, j: *Job, at: f64) !void {
+            const r = try Result.create(t.allocator, a.api_traffic.generation);
+            computeAt(t.io, t.allocator, j, r, at) catch |err| {
+                r.destroy(t.allocator);
+                return err;
+            };
+            try a.handle(.{ .api_traffic = r });
+        }
+    }.f;
+    // The first look: history.
+    try look(&app, job, now);
+    // A line lands now, stamped fifteen minutes ago (a loop that
+    // batches its writes): news, but not inside the toast's window.
+    const late = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"acme\",\"caller\":\"widget.py\",\"status\":429}}\n", .{now - 900});
+    defer t.allocator.free(late);
+    try appendFile(fx.tmp.dir, tpath, late);
+    try look(&app, job, now + 5);
+    try t.expectEqual(@as(usize, 0), throttleToasts(&app));
+    // NOW still counts it.
+    try t.expectEqual(@as(u32, 1), app.api_traffic.result.?.find("acme").?.now.throttles.n);
+    // One stamped now: the toast, with a count that is not zero.
+    const fresh = try std.fmt.allocPrint(t.allocator, "{{\"ts\":{d},\"api\":\"acme\",\"caller\":\"widget.py\",\"status\":429}}\n", .{now + 8});
+    defer t.allocator.free(fresh);
+    try appendFile(fx.tmp.dir, tpath, fresh);
+    try look(&app, job, now + 10);
+    try t.expectEqual(@as(usize, 1), throttleToasts(&app));
+    try t.expectEqualStrings("Acme throttled — 1 × 429 in the last 5 min (1 from widget.py)", app.toasts.items[app.toasts.items.len - 1].text);
+}
+
+fn appendFile(dir: std.Io.Dir, sub: []const u8, data: []const u8) !void {
+    const f = try dir.createFile(t.io, sub, .{ .read = true, .truncate = false });
+    defer f.close(t.io);
+    try f.writePositionalAll(t.io, data, try f.length(t.io));
+}
+
+test "the throttles row's hover says the newest 429's age the way the row does" {
+    var app = try App.initWith(t.allocator, t.io, .{ .workspace = App.scratch_workspace, .cols = 120, .rows = 40 });
+    defer app.deinit();
+    const id = try seedForAudit(&app);
+    const p = get(&app, id).?;
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The seed's newest 429 is 240 s old: the row says `4m ago`.
+    const e = try @import("info_view_copy/api_traffic.zig").entry(&app, a, p, hit_now_base + @intFromEnum(NowRow.throttles));
+    try t.expect(std.mem.indexOf(u8, e.body, "the newest 4m ago") != null);
+    try t.expect(std.mem.indexOf(u8, e.body, "240s") == null);
 }
